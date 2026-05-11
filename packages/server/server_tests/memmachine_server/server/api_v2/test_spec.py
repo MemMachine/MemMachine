@@ -5,13 +5,17 @@ import pytest
 from dateutil.tz import tzoffset
 from memmachine_common.api.spec import (
     DEFAULT_ORG_AND_PROJECT_ID,
+    MAX_FIELD_NAME_LENGTH,
+    AddFeatureSpec,
     AddMemoriesResponse,
     AddMemoriesSpec,
     AddMemoryResult,
     CreateProjectSpec,
+    CreateSemanticSetTypeSpec,
     DeleteEpisodicMemorySpec,
     DeleteProjectSpec,
     DeleteSemanticMemorySpec,
+    DisableSemanticCategorySpec,
     InvalidNameError,
     ListMemoriesSpec,
     MemoryMessage,
@@ -19,6 +23,8 @@ from memmachine_common.api.spec import (
     ProjectResponse,
     SearchMemoriesSpec,
     SearchResult,
+    UpdateFeatureSpec,
+    _is_valid_field_name,
     _is_valid_name,
 )
 from pydantic import ValidationError
@@ -414,3 +420,95 @@ def test_timestamp_invalid_type():
         MemoryMessage.model_validate(
             {"content": "hello", "timestamp": {"bad": "value"}}
         )
+
+
+# --- Field/property name validation (#1383) ----------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["a", "foo", "foo_bar", "a1", "user_id", "a" * MAX_FIELD_NAME_LENGTH],
+)
+def test_validate_field_name_valid(value):
+    assert _is_valid_field_name(value) == value
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_phrase"),
+    [
+        ("", "1-32 chars"),
+        ("a" * (MAX_FIELD_NAME_LENGTH + 1), "1-32 chars"),
+        ("_internal", "reserved for system"),
+        ("0", "start with a-z and contain only"),  # digit-leading
+        ("Foo", "start with a-z and contain only"),  # uppercase
+        ("foo-bar", "start with a-z and contain only"),  # hyphen
+        ("foo bar", "start with a-z and contain only"),  # space
+    ],
+)
+def test_validate_field_name_invalid(value, expected_phrase):
+    with pytest.raises(InvalidNameError) as exc_info:
+        _is_valid_field_name(value)
+    assert expected_phrase in str(exc_info.value)
+
+
+def test_dict_key_wiring_via_memory_message_metadata():
+    """One sample of `dict[SafeFieldName, V]` enforcement; same wiring is
+    reused on `*.set_metadata`, `feature_metadata`, `UpdateFeatureSpec.metadata`."""
+    with pytest.raises(ValidationError):
+        MemoryMessage(content="hi", metadata={"Bad-Key": "x"})
+    msg = MemoryMessage(content="hi", metadata={"user_id": "alice"})
+    assert msg.metadata == {"user_id": "alice"}
+
+
+def test_scalar_wiring_via_add_feature_spec():
+    """One sample of scalar `SafeFieldName` enforcement; same wiring is
+    reused on `tag`, `feature`, `name`, `category_name` (create paths),
+    `tag_name`."""
+    with pytest.raises(ValidationError):
+        AddFeatureSpec(
+            org_id="org",
+            project_id="proj",
+            set_id="set:legacy",
+            category_name="prefs",
+            tag="Bad-Tag",
+            feature="favorite_food",
+            value="pizza",
+        )
+
+
+def test_list_item_wiring_via_metadata_tags():
+    """One sample of `list[SafeFieldName]` enforcement."""
+    with pytest.raises(ValidationError):
+        CreateSemanticSetTypeSpec(
+            org_id="org",
+            project_id="proj",
+            metadata_tags=["user_id", "Session Id"],
+        )
+
+
+def test_lookup_carveout_stays_permissive():
+    """Lookup-by-name fields (`AddFeatureSpec.category_name`,
+    `UpdateFeatureSpec.category_name`, `DisableSemanticCategorySpec.category_name`)
+    remain permissive so legacy categories can still be addressed —
+    `SemanticMemory.add_new_feature` raises `CategoryNotFoundError` for
+    unknowns, so the API can't reject names it doesn't own."""
+    spec = DisableSemanticCategorySpec(
+        org_id="org",
+        project_id="proj",
+        set_id="set:legacy",
+        category_name="Old-Cat",
+    )
+    assert spec.category_name == "Old-Cat"
+
+
+def test_update_feature_spec_partial_update_skips_unset_fields():
+    """None defaults skip validation, so PATCH-style updates that omit
+    name fields keep working."""
+    spec = UpdateFeatureSpec(
+        org_id="org",
+        project_id="proj",
+        feature_id="feat-uuid",
+        value="new_value",
+    )
+    assert spec.value == "new_value"
+    assert spec.tag is None

@@ -1449,7 +1449,7 @@ class TestMemory:
         result = memory.create_semantic_set_type(
             metadata_tags=["user_id", "session_id"],
             is_org_level=False,
-            name="User Sessions",
+            name="user_sessions",
             description="Set type for user sessions",
         )
 
@@ -1463,7 +1463,7 @@ class TestMemory:
         assert json_data["project_id"] == "test_project"
         assert json_data["metadata_tags"] == ["user_id", "session_id"]
         assert json_data["is_org_level"] is False
-        assert json_data["name"] == "User Sessions"
+        assert json_data["name"] == "user_sessions"
         assert json_data["description"] == "Set type for user sessions"
 
     def test_create_semantic_set_type_minimal(self, mock_client):

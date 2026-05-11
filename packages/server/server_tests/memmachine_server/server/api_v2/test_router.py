@@ -867,12 +867,14 @@ def test_update_feature_error(client, mock_memmachine):
 
 
 def test_create_semantic_set_type(client, mock_memmachine):
+    # `name` and `metadata_tags` items must conform to the #1383 rule
+    # (lowercase alphanumeric/underscore, ≤32 chars, no leading "_").
     payload = {
         "org_id": "test_org",
         "project_id": "test_proj",
         "metadata_tags": ["user_id", "session_id"],
         "is_org_level": False,
-        "name": "User Sessions",
+        "name": "user_sessions",
         "description": "Set type for user sessions",
     }
 
@@ -887,7 +889,7 @@ def test_create_semantic_set_type(client, mock_memmachine):
     assert call_args["session_data"].session_key == "test_org/test_proj"
     assert call_args["metadata_tags"] == ["user_id", "session_id"]
     assert call_args["is_org_level"] is False
-    assert call_args["name"] == "User Sessions"
+    assert call_args["name"] == "user_sessions"
     assert call_args["description"] == "Set type for user sessions"
 
 

@@ -161,10 +161,47 @@ def _validate_int_compatible(v: str) -> str:
     return v
 
 
+# Stricter rule for user-supplied field/property names (issue #1383),
+# distinct from `_is_valid_name`/`SafeId` which validates *identifiers*
+# (org_id, project_id, UIDs) and stays permissive for backward compat.
+MAX_FIELD_NAME_LENGTH = 32
+RESERVED_FIELD_NAME_PREFIX = "_"
+_FIELD_NAME_REGEX = regex.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _is_valid_field_name(v: str) -> str:
+    """Validate a field/property name against the rule from issue #1383.
+
+    - 1-32 characters
+    - starts with a lowercase letter, then ``[a-z0-9_]``
+    - leading underscore reserved for system use
+
+    Three checks instead of one combined regex so the error message names
+    the specific rule that was violated.
+    """
+    if not v or len(v) > MAX_FIELD_NAME_LENGTH:
+        raise InvalidNameError(
+            f"Field/property name must be 1-{MAX_FIELD_NAME_LENGTH} chars, "
+            f"got {len(v)}: '{v}'",
+        )
+    if v.startswith(RESERVED_FIELD_NAME_PREFIX):
+        raise InvalidNameError(
+            "Field/property names beginning with '_' are reserved for system "
+            f"use: '{v}'",
+        )
+    if not _FIELD_NAME_REGEX.fullmatch(v):
+        raise InvalidNameError(
+            "Field/property name must start with a-z and contain only "
+            f"[a-z0-9_]: '{v}'",
+        )
+    return v
+
+
 IntCompatibleId = Annotated[str, AfterValidator(_validate_int_compatible), Field(...)]
 
 SafeId = Annotated[str, AfterValidator(_is_valid_name), Field(...)]
 SafeIdWithDefault = Annotated[SafeId, Field(default=DEFAULT_ORG_AND_PROJECT_ID)]
+SafeFieldName = Annotated[str, AfterValidator(_is_valid_field_name), Field(...)]
 
 
 class _WithOrgAndProj(BaseModel):
@@ -386,7 +423,7 @@ class MemoryMessage(BaseModel):
         default="",
         description=SpecDoc.MEMORY_ROLE,
     )
-    metadata: dict[str, str] = Field(
+    metadata: dict[SafeFieldName, str] = Field(
         default_factory=dict,
         description=SpecDoc.MEMORY_METADATA,
     )
@@ -495,7 +532,7 @@ class SearchMemoriesSpec(_WithOrgAndProj):
         ),
     ]
     set_metadata: Annotated[
-        dict[str, JsonValue] | None,
+        dict[SafeFieldName, JsonValue] | None,
         Field(
             default=None,
             description=SpecDoc.SET_METADATA,
@@ -585,7 +622,7 @@ class ListMemoriesSpec(_WithOrgAndProj):
         ),
     ]
     set_metadata: Annotated[
-        dict[str, JsonValue] | None,
+        dict[SafeFieldName, JsonValue] | None,
         Field(
             default=None,
             description=SpecDoc.SET_METADATA,
@@ -686,6 +723,10 @@ class AddFeatureSpec(_WithOrgAndProj):
             description=SpecDoc.FEATURE_SET_ID,
         ),
     ]
+    # Lookup field referencing an existing category by name (see
+    # ``SemanticMemory.add_new_feature``, which raises ``CategoryNotFoundError``
+    # for unknown categories). Kept on permissive ``str`` so features can
+    # still be added to legacy categories whose names predate the #1383 rule.
     category_name: Annotated[
         str,
         Field(
@@ -694,14 +735,14 @@ class AddFeatureSpec(_WithOrgAndProj):
         ),
     ]
     tag: Annotated[
-        str,
+        SafeFieldName,
         Field(
             ...,
             description=SpecDoc.FEATURE_TAG,
         ),
     ]
     feature: Annotated[
-        str,
+        SafeFieldName,
         Field(
             ...,
             description=SpecDoc.FEATURE_NAME,
@@ -715,7 +756,7 @@ class AddFeatureSpec(_WithOrgAndProj):
         ),
     ]
     feature_metadata: Annotated[
-        dict[str, JsonValue] | None,
+        dict[SafeFieldName, JsonValue] | None,
         Field(
             default=None,
             description=SpecDoc.FEATURE_METADATA,
@@ -771,6 +812,9 @@ class UpdateFeatureSpec(_WithOrgAndProj):
             description=SpecDoc.FEATURE_ID,
         ),
     ]
+    # Lookup of an existing category by name (see ``SemanticMemory.add_new_feature``
+    # at ``semantic_memory.py:299``). Permissive so legacy categories stay
+    # addressable, matching ``AddFeatureSpec.category_name``.
     category_name: Annotated[
         str | None,
         Field(
@@ -779,14 +823,14 @@ class UpdateFeatureSpec(_WithOrgAndProj):
         ),
     ]
     tag: Annotated[
-        str | None,
+        SafeFieldName | None,
         Field(
             default=None,
             description=SpecDoc.FEATURE_TAG,
         ),
     ]
     feature: Annotated[
-        str | None,
+        SafeFieldName | None,
         Field(
             default=None,
             description=SpecDoc.FEATURE_NAME,
@@ -800,7 +844,7 @@ class UpdateFeatureSpec(_WithOrgAndProj):
         ),
     ]
     metadata: Annotated[
-        dict[str, str] | None,
+        dict[SafeFieldName, str] | None,
         Field(
             default=None,
             description=SpecDoc.FEATURE_METADATA,
@@ -968,14 +1012,14 @@ class CreateSemanticSetTypeSpec(_WithOrgAndProj):
         ),
     ]
     metadata_tags: Annotated[
-        list[str],
+        list[SafeFieldName],
         Field(
             ...,
             description=SpecDoc.SET_TYPE_METADATA_TAGS,
         ),
     ]
     name: Annotated[
-        str | None,
+        SafeFieldName | None,
         Field(
             default=None,
             description=SpecDoc.SET_TYPE_NAME,
@@ -1081,14 +1125,14 @@ class GetSemanticSetIdSpec(_WithOrgAndProj):
         ),
     ]
     metadata_tags: Annotated[
-        list[str],
+        list[SafeFieldName],
         Field(
             ...,
             description=SpecDoc.SET_TYPE_METADATA_TAGS,
         ),
     ]
     set_metadata: Annotated[
-        dict[str, JsonValue] | None,
+        dict[SafeFieldName, JsonValue] | None,
         Field(
             default=None,
             description=SpecDoc.SET_METADATA,
@@ -1112,7 +1156,7 @@ class ListSemanticSetIdsSpec(_WithOrgAndProj):
     """Specification model for listing semantic set IDs."""
 
     set_metadata: Annotated[
-        dict[str, JsonValue] | None,
+        dict[SafeFieldName, JsonValue] | None,
         Field(
             default=None,
             description=SpecDoc.SET_METADATA,
@@ -1257,7 +1301,7 @@ class AddSemanticCategorySpec(_WithOrgAndProj):
         ),
     ]
     category_name: Annotated[
-        str,
+        SafeFieldName,
         Field(
             ...,
             description=SpecDoc.CATEGORY_NAME,
@@ -1302,7 +1346,7 @@ class AddSemanticCategoryTemplateSpec(_WithOrgAndProj):
         ),
     ]
     category_name: Annotated[
-        str,
+        SafeFieldName,
         Field(
             ...,
             description=SpecDoc.CATEGORY_NAME,
@@ -1398,6 +1442,9 @@ class DisableSemanticCategorySpec(_WithOrgAndProj):
             description=SpecDoc.SEMANTIC_SET_ID,
         ),
     ]
+    # Lookup field referencing an existing category by name; kept on the
+    # permissive `str` type so legacy categories remain disable-able even
+    # if their names predate the #1383 rule.
     category_name: Annotated[
         str,
         Field(
@@ -1457,7 +1504,7 @@ class AddSemanticTagSpec(_WithOrgAndProj):
         ),
     ]
     tag_name: Annotated[
-        str,
+        SafeFieldName,
         Field(
             ...,
             description=SpecDoc.TAG_NAME,
