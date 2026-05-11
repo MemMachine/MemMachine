@@ -455,8 +455,10 @@ def test_dict_key_wiring_via_memory_message_metadata():
     """One sample of `dict[SafeFieldName, V]` enforcement; same wiring is
     reused on `*.set_metadata`, `feature_metadata`, `UpdateFeatureSpec.metadata`."""
     with pytest.raises(ValidationError):
-        MemoryMessage(content="hi", metadata={"Bad-Key": "x"})
-    msg = MemoryMessage(content="hi", metadata={"user_id": "alice"})
+        MemoryMessage.model_validate({"content": "hi", "metadata": {"Bad-Key": "x"}})
+    msg = MemoryMessage.model_validate(
+        {"content": "hi", "metadata": {"user_id": "alice"}}
+    )
     assert msg.metadata == {"user_id": "alice"}
 
 
@@ -465,24 +467,28 @@ def test_scalar_wiring_via_add_feature_spec():
     reused on `tag`, `feature`, `name`, `category_name` (create paths),
     `tag_name`."""
     with pytest.raises(ValidationError):
-        AddFeatureSpec(
-            org_id="org",
-            project_id="proj",
-            set_id="set:legacy",
-            category_name="prefs",
-            tag="Bad-Tag",
-            feature="favorite_food",
-            value="pizza",
+        AddFeatureSpec.model_validate(
+            {
+                "org_id": "org",
+                "project_id": "proj",
+                "set_id": "set:legacy",
+                "category_name": "prefs",
+                "tag": "Bad-Tag",
+                "feature": "favorite_food",
+                "value": "pizza",
+            }
         )
 
 
 def test_list_item_wiring_via_metadata_tags():
     """One sample of `list[SafeFieldName]` enforcement."""
     with pytest.raises(ValidationError):
-        CreateSemanticSetTypeSpec(
-            org_id="org",
-            project_id="proj",
-            metadata_tags=["user_id", "Session Id"],
+        CreateSemanticSetTypeSpec.model_validate(
+            {
+                "org_id": "org",
+                "project_id": "proj",
+                "metadata_tags": ["user_id", "Session Id"],
+            }
         )
 
 
@@ -492,11 +498,13 @@ def test_lookup_carveout_stays_permissive():
     remain permissive so legacy categories can still be addressed —
     `SemanticMemory.add_new_feature` raises `CategoryNotFoundError` for
     unknowns, so the API can't reject names it doesn't own."""
-    spec = DisableSemanticCategorySpec(
-        org_id="org",
-        project_id="proj",
-        set_id="set:legacy",
-        category_name="Old-Cat",
+    spec = DisableSemanticCategorySpec.model_validate(
+        {
+            "org_id": "org",
+            "project_id": "proj",
+            "set_id": "set:legacy",
+            "category_name": "Old-Cat",
+        }
     )
     assert spec.category_name == "Old-Cat"
 
@@ -504,11 +512,13 @@ def test_lookup_carveout_stays_permissive():
 def test_update_feature_spec_partial_update_skips_unset_fields():
     """None defaults skip validation, so PATCH-style updates that omit
     name fields keep working."""
-    spec = UpdateFeatureSpec(
-        org_id="org",
-        project_id="proj",
-        feature_id="feat-uuid",
-        value="new_value",
+    spec = UpdateFeatureSpec.model_validate(
+        {
+            "org_id": "org",
+            "project_id": "proj",
+            "feature_id": "feat-uuid",
+            "value": "new_value",
+        }
     )
     assert spec.value == "new_value"
     assert spec.tag is None

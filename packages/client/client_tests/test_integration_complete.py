@@ -1217,7 +1217,7 @@ class TestMemMachineIntegration:
         set_type_id = memory.create_semantic_set_type(
             metadata_tags=["user_id", "session_id"],
             is_org_level=False,
-            name="User Sessions",
+            name="user_sessions",
             description="Set type for user sessions",
         )
 
@@ -1239,7 +1239,7 @@ class TestMemMachineIntegration:
         # Create a set type first
         memory.create_semantic_set_type(
             metadata_tags=["list_test_tag"],
-            name="List Test Set Type",
+            name="list_test_set_type",
         )
 
         # List set types
@@ -1254,7 +1254,7 @@ class TestMemMachineIntegration:
         # Create a set type to delete
         set_type_id = memory.create_semantic_set_type(
             metadata_tags=["delete_test_tag"],
-            name="Delete Test Set Type",
+            name="delete_test_set_type",
         )
 
         # Delete it
@@ -1341,7 +1341,7 @@ class TestMemMachineIntegration:
         # Step 1: Create set type
         set_type_id = memory.create_semantic_set_type(
             metadata_tags=["lifecycle_tag"],
-            name="Lifecycle Test",
+            name="lifecycle_test",
             description="Testing full lifecycle",
         )
         assert set_type_id is not None
@@ -1416,7 +1416,7 @@ class TestMemMachineIntegration:
         # Step 1: Create a set type for templates
         set_type_id = memory.create_semantic_set_type(
             metadata_tags=["template_test_tag"],
-            name="Template Test Type",
+            name="template_test_type",
             description="Testing category templates",
         )
         assert set_type_id is not None
@@ -1480,7 +1480,7 @@ class TestMemMachineIntegration:
         # Step 1: Create a set type with a category template
         set_type_id = memory.create_semantic_set_type(
             metadata_tags=["disable_test_tag"],
-            name="Disable Test Type",
+            name="disable_test_type",
         )
         assert set_type_id is not None
 
