@@ -1,5 +1,6 @@
 """Configuration wizard for MemMachine."""
 
+import importlib.util
 import logging
 from dataclasses import dataclass
 from functools import cached_property
@@ -25,6 +26,8 @@ from memmachine_server.common.configuration.database_conf import (
     Neo4jConf,
     QdrantConf,
     SqlAlchemyConf,
+    SQLiteVectorStoreConf,
+    SQLiteVecVectorStoreConf,
     SupportedDB,
 )
 from memmachine_server.common.configuration.embedder_conf import (
@@ -70,10 +73,28 @@ class ConfigurationWizard:
 
     NEO4J_DB_ID = "neo4j_db"
     SQLITE_DB_ID = "sqlite_db"
+    SQLITE_VECTOR_STORE_ID = "sqlite_vector_store"
+    SQLITE_VEC_VECTOR_STORE_ID = "sqlite_vec_vector_store"
     QDRANT_VECTOR_STORE_ID = "qdrant_vector_store"
     LANGUAGE_MODEL_NAME = "llm_model"
     EMBEDDER_NAME = "my_embedder"
     RERANKER_NAME = "my_reranker"
+
+    # Vector-store choice keys exposed to the user at the prompt.
+    _VECTOR_STORE_QDRANT = "qdrant"
+    _VECTOR_STORE_SQLITE = "sqlite_vector_store"
+    _VECTOR_STORE_SQLITE_VEC = "sqlite_vec"
+
+    @staticmethod
+    def _qdrant_available() -> bool:
+        """Return True if the `qdrant-client` extra is installed.
+
+        Used as a proxy for "user intends to run Qdrant". The package is the
+        `[qdrant]` extra of memmachine-server, so its presence signals the user
+        opted in. We don't try to connect — the resulting cfg.yml may still
+        fail at runtime if no Qdrant server is reachable, same risk as Neo4j.
+        """
+        return importlib.util.find_spec("qdrant_client") is not None
 
     @dataclass
     class Params:
@@ -141,14 +162,111 @@ class ConfigurationWizard:
 
     @cached_property
     def long_term_memory_conf(self) -> LongTermMemoryConfPartial:
-        """Generate long-term memory configuration (event-backend default)."""
+        """Generate long-term memory configuration (event-backend default).
+
+        Vector store selection: see `vector_store_id`.
+        """
         return LongTermMemoryConfPartial(
             backend="event",
             embedder=self.EMBEDDER_NAME,
             reranker=self.RERANKER_NAME,
-            vector_store=self.QDRANT_VECTOR_STORE_ID,
+            vector_store=self.vector_store_id,
             segment_store=self.SQLITE_DB_ID,
         )
+
+    @cached_property
+    def vector_store_id(self) -> str:
+        """Pick the vector store backend.
+
+        Three options, but Qdrant is only listed when the `qdrant-client`
+        extra is installed:
+          - `qdrant`: external Qdrant server, recommended for production.
+            Requires `pip install memmachine-server[qdrant]` and a running
+            Qdrant instance.
+          - `sqlite_vector_store`: in-process USearch index. Broad
+            compatibility — no host SQLite extension support needed.
+          - `sqlite_vec`: sqlite-vec extension. Requires host SQLite built
+            with loadable-extension support.
+
+        The default (empty input) is `qdrant` when its extra is installed,
+        otherwise `sqlite_vector_store` (the compatibility default — we do
+        NOT silently use `sqlite_vec` because it depends on host SQLite
+        being compiled with extension loading).
+
+        The user must type a key (or hit Enter for the default) to switch.
+        The chosen backend is always logged, plus a hint if Qdrant isn't
+        available.
+        """
+        qdrant_ok = self._qdrant_available()
+        if qdrant_ok:
+            valid = {
+                self._VECTOR_STORE_QDRANT,
+                self._VECTOR_STORE_SQLITE,
+                self._VECTOR_STORE_SQLITE_VEC,
+            }
+            default_choice = self._VECTOR_STORE_QDRANT
+        else:
+            valid = {
+                self._VECTOR_STORE_SQLITE,
+                self._VECTOR_STORE_SQLITE_VEC,
+            }
+            default_choice = self._VECTOR_STORE_SQLITE
+
+        if self.prompt:
+            logger.info("Available vector stores:")
+            if qdrant_ok:
+                logger.info(
+                    "  qdrant              - external Qdrant server "
+                    "(recommended for production)"
+                )
+            else:
+                logger.info(
+                    "  (qdrant            - install memmachine-server[qdrant] "
+                    "extra to enable)"
+                )
+            logger.info(
+                "  sqlite_vector_store - in-process USearch index "
+                "(broad compatibility, no SQLite extension support needed)"
+            )
+            logger.info(
+                "  sqlite_vec          - sqlite-vec extension "
+                "(requires host SQLite with loadable-extension support)"
+            )
+
+        choice = default_choice
+        while True:
+            raw = (
+                self.ask_for(
+                    "Choose vector store (" + "/".join(sorted(valid)) + ")",
+                    default_choice,
+                )
+                .strip()
+                .lower()
+            )
+            if raw in valid:
+                choice = raw
+                break
+            if not self.prompt:
+                # Silent mode: ask_for always returns the default, which is valid.
+                break
+            logger.info(
+                "Invalid choice %r. Pick one of: %s (or press Enter for the default).",
+                raw,
+                ", ".join(sorted(valid)),
+            )
+
+        logger.info("Vector store selected: %s.", choice)
+        if not qdrant_ok:
+            logger.info(
+                "Tip: install the `memmachine-server[qdrant]` extra to use "
+                "Qdrant for production deployments."
+            )
+
+        return {
+            self._VECTOR_STORE_QDRANT: self.QDRANT_VECTOR_STORE_ID,
+            self._VECTOR_STORE_SQLITE: self.SQLITE_VECTOR_STORE_ID,
+            self._VECTOR_STORE_SQLITE_VEC: self.SQLITE_VEC_VECTOR_STORE_ID,
+        }[choice]
 
     @cached_property
     def retrieval_agent_conf(self) -> RetrievalAgentConf:
@@ -320,15 +438,29 @@ class ConfigurationWizard:
             SqlAlchemyConf,
             db_provider.build_config({"path": "memmachine.db"}),
         )
-        # Default vector store for server deployment is Qdrant. Localhost
-        # defaults assume `docker run -p 6333:6333 qdrant/qdrant` or similar;
-        # the user can edit cfg.yml afterwards to point at a remote Qdrant.
-        qdrant_vector_store_conf = QdrantConf()
-        return DatabasesConf(
+        databases = DatabasesConf(
             neo4j_confs={self.NEO4J_DB_ID: neo4j_db_conf},
             relational_db_confs={self.SQLITE_DB_ID: sqlite_db_conf},
-            qdrant_confs={self.QDRANT_VECTOR_STORE_ID: qdrant_vector_store_conf},
         )
+        match self.vector_store_id:
+            case self.QDRANT_VECTOR_STORE_ID:
+                # Localhost defaults assume `docker run -p 6333:6333 qdrant/qdrant`
+                # or similar; user can edit cfg.yml to point at a remote Qdrant.
+                databases.qdrant_confs = {self.QDRANT_VECTOR_STORE_ID: QdrantConf()}
+            case self.SQLITE_VECTOR_STORE_ID:
+                databases.sqlite_vector_store_confs = {
+                    self.SQLITE_VECTOR_STORE_ID: SQLiteVectorStoreConf(
+                        path="memmachine_vectors.db",
+                        index_directory="memmachine_vector_indexes",
+                    )
+                }
+            case self.SQLITE_VEC_VECTOR_STORE_ID:
+                databases.sqlite_vec_vector_store_confs = {
+                    self.SQLITE_VEC_VECTOR_STORE_ID: SQLiteVecVectorStoreConf(
+                        path="memmachine_vectors.db",
+                    )
+                }
+        return databases
 
     @cached_property
     def neo4j_configs(self) -> Neo4jConf:

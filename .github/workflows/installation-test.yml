@@ -73,8 +73,11 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          whl_name=$(ls *server*.whl)
-          python -m pip install --find-links . "$whl_name"
+          # Install every locally built memmachine_* wheel by direct path so
+          # pip never resolves an internal package to an older stable release
+          # on PyPI (dev versions are excluded by default).
+          # Third-party deps still resolve normally via PyPI.
+          python -m pip install --find-links . memmachine_*.whl
 
       #
       # ─────────────────────────────────────
@@ -105,8 +108,8 @@ jobs:
         run: |
           set -eo pipefail
           export PYTHONUTF8=1
-          whl_name=$(ls *server*.whl)
-          python -m pip install --find-links . "$whl_name"
+          # See Linux step for rationale.
+          python -m pip install --find-links . memmachine_*.whl
 
       #
       # ─────────────────────────────────────
@@ -124,8 +127,8 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          whl_name=$(ls *server*.whl)
-          python -m pip install --find-links . "$whl_name"
+          # See Linux step for rationale.
+          python -m pip install --find-links . memmachine_*.whl
 
       #
       # ─────────────────────────────────────
@@ -174,8 +177,15 @@ jobs:
       - name: Run memmachine-configure
         shell: bash
         run: |
+          # Inputs (in order of wizard prompts):
+          #   y     → install Neo4j locally
+          #   (blank) → accept default vector store (sqlite_vector_store, since
+          #             qdrant-client extra is not installed in this CI job)
+          #   Ollama, qwen3:0.6b, (blank api key), base url, embedder model,
+          #   embedder dims, host, port → standard LM / embedder / server config
           memmachine-configure << EOF
           y
+
           Ollama
           qwen3:0.6b
 
