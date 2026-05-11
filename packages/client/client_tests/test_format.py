@@ -99,6 +99,59 @@ class TestFormatEpisodes:
         result = format_episodes([ep])
         assert json.dumps('She said "hello"') in result
 
+    def test_non_ascii_content_preserved_literally(self):
+        """Non-ASCII characters must appear literally in the LLM context, not
+        as ``\\uXXXX`` escapes — escaping bloats token counts and degrades
+        recall on multilingual content."""
+        ep = EpisodeResponse(
+            uid="1",
+            content="寿司 café 🍕 naïve résumé Привет",
+            producer_id="user_1",
+            producer_role="user",
+            created_at=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        )
+        result = format_episodes([ep])
+        assert "寿司" in result
+        assert "café" in result
+        assert "🍕" in result
+        assert "naïve" in result
+        assert "résumé" in result
+        assert "Привет" in result
+        # Sanity: no escaped CJK / cyrillic / accented sequences.
+        assert "\\u" not in result
+
+    def test_non_ascii_content_lossless_roundtrip(self):
+        """The JSON-encoded portion must round-trip back to the original
+        string so downstream LLM consumers (and any client-side
+        post-processing) still see correct text."""
+        original = '日本語 — "quoted" + emoji 🎉'
+        ep = EpisodeResponse(
+            uid="1",
+            content=original,
+            producer_id="user_1",
+            producer_role="user",
+            created_at=None,
+        )
+        result = format_episodes([ep])
+        json_part = result.removeprefix("user_1: ").rstrip("\n")
+        assert json.loads(json_part) == original
+
+    def test_output_is_utf8_encodable(self):
+        """The LLM-visible string must be safe to send over UTF-8 transports
+        (HTTP body, logging sinks). ``ensure_ascii=False`` produces
+        unescaped surrogates only for malformed inputs; clean Unicode must
+        encode without error."""
+        ep = EpisodeResponse(
+            uid="1",
+            content="Mixed: ASCII + 中文 + 🚀",
+            producer_id="user_1",
+            producer_role="user",
+            created_at=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+        )
+        result = format_episodes([ep])
+        encoded = result.encode("utf-8")
+        assert encoded.decode("utf-8") == result
+
 
 class TestFormatSemanticMemories:
     """Tests for format_semantic_memories."""
@@ -145,6 +198,32 @@ class TestFormatSemanticMemories:
             "preferences": {"food": "pizza", "color": "blue"},
             "background": {"role": "engineer"},
         }
+
+    def test_non_ascii_value_preserved_literally(self):
+        feature = SemanticFeature(
+            category="profile",
+            tag="prefs",
+            feature_name="favorite_food",
+            value="寿司 🍣",
+        )
+        result = format_semantic_memories([feature])
+        assert "寿司" in result
+        assert "🍣" in result
+        assert "\\u" not in result
+        # And the JSON is still valid.
+        assert json.loads(result) == {"prefs": {"favorite_food": "寿司 🍣"}}
+
+    def test_non_ascii_tag_and_feature_name_preserved(self):
+        feature = SemanticFeature(
+            category="profile",
+            tag="préférences",
+            feature_name="種類",
+            value="ramen",
+        )
+        result = format_semantic_memories([feature])
+        assert "préférences" in result
+        assert "種類" in result
+        assert json.loads(result) == {"préférences": {"種類": "ramen"}}
 
     def test_metadata_excluded(self):
         feature = SemanticFeature(

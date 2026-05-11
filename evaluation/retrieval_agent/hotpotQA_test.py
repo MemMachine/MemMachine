@@ -71,7 +71,7 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]], config_path: str):
     resource_manager = agent_utils.load_eval_config(config_path)
 
     # Notice that the index of items must align between ingestion and search
-    memory, _, _ = await agent_utils.init_memmachine_params(
+    memory, _, _, _, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id="hotpotqa_group",
     )
@@ -132,7 +132,13 @@ async def hotpotqa_search(
     num_searched = 0
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, model, query_agent = await agent_utils.init_memmachine_params(
+    (
+        memory,
+        answer_model,
+        query_agent,
+        agent_model_id,
+        answer_model_id,
+    ) = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id="hotpotqa_group",
         agent_name=agent_name,
@@ -160,14 +166,18 @@ async def hotpotqa_search(
                 answer_prompt=ANSWER_PROMPT,
                 query_agent=query_agent,
                 memory=memory,
-                answer_model=model,
+                answer_model=answer_model,
                 question=data["question"],
                 answer=data["answer"],
                 category=(data["type"]),
                 supporting_facts=supporting_facts,
                 search_limit=20,
                 full_content=full_content_str if pure_llm else None,
-                extra_attributes={"level": data["level"]},
+                extra_attributes={
+                    "level": data["level"],
+                    "agent_model_id": agent_model_id,
+                    "answer_model_id": answer_model_id,
+                },
             )
         )
 
@@ -196,7 +206,7 @@ async def hotpotqa_delete(config_path: str):
     from evaluation.utils import agent_utils
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, _, _ = await agent_utils.init_memmachine_params(
+    memory, _, _, _, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id="hotpotqa_group",
     )

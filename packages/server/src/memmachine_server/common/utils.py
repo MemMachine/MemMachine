@@ -9,7 +9,10 @@ from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, cast
 
+import numpy as np
 from nltk import sent_tokenize
+
+from .data_types import SimilarityMetric
 
 T = TypeVar("T")
 P = ParamSpec("P")
@@ -269,3 +272,95 @@ def cluster_texts(
         clusters.append(current_cluster)
 
     return clusters
+
+
+def compute_similarity(
+    query_embedding: list[float],
+    candidate_embeddings: list[list[float]],
+    similarity_metric: SimilarityMetric | None = None,
+) -> list[float]:
+    """
+    Compute similarity scores between a query embedding and candidate embeddings.
+
+    Args:
+        query_embedding (list[float]): The embedding of the query.
+        candidate_embeddings (list[list[float]]): A list of candidate embeddings to compare against.
+        similarity_metric (SimilarityMetric | None): The similarity metric to use (default: None).
+
+    Returns:
+        list[float]: A list of similarity scores for each candidate embedding.
+
+    """
+    if not candidate_embeddings:
+        return []
+
+    query_embedding_np = np.array(query_embedding)
+    candidate_embeddings_np = np.array(candidate_embeddings)
+
+    match similarity_metric:
+        case SimilarityMetric.COSINE:
+            magnitude_products = np.linalg.norm(
+                candidate_embeddings_np,
+                axis=-1,
+            ) * np.linalg.norm(query_embedding_np)
+            magnitude_products[magnitude_products == 0] = float("inf")
+
+            scores = (
+                np.dot(candidate_embeddings_np, query_embedding_np) / magnitude_products
+            )
+        case SimilarityMetric.DOT:
+            scores = np.dot(candidate_embeddings_np, query_embedding_np)
+        case SimilarityMetric.EUCLIDEAN:
+            scores = np.linalg.norm(
+                candidate_embeddings_np - query_embedding_np,
+                axis=-1,
+            )
+        case SimilarityMetric.MANHATTAN:
+            scores = np.sum(
+                np.abs(candidate_embeddings_np - query_embedding_np),
+                axis=-1,
+            )
+        case _:
+            # Default to cosine similarity.
+            magnitude_products = np.linalg.norm(
+                candidate_embeddings_np,
+                axis=-1,
+            ) * np.linalg.norm(query_embedding_np)
+            magnitude_products[magnitude_products == 0] = float("inf")
+
+            scores = (
+                np.dot(candidate_embeddings_np, query_embedding_np) / magnitude_products
+            )
+
+    return scores.astype(float).tolist()
+
+
+def similarity_gt(
+    similarity_metric: SimilarityMetric | None = None,
+) -> Callable[[float, float], bool]:
+    """
+    Return a comparator for similarity scores.
+
+    The returned function `gt(a, b)` returns True when score `a`
+    represents greater similarity than score `b` under the given metric.
+
+    For COSINE and DOT, higher scores mean greater similarity (`a > b`).
+    For EUCLIDEAN and MANHATTAN, lower scores mean greater similarity (`a < b`).
+
+    Args:
+        similarity_metric (SimilarityMetric | None):
+            The similarity metric.
+            If None, defaults to greater-than comparison (`a > b`)
+            (default: None).
+
+    Returns:
+        Callable[[float, float], bool]: A comparator for similarity scores.
+
+    """
+    import operator
+
+    match similarity_metric:
+        case SimilarityMetric.EUCLIDEAN | SimilarityMetric.MANHATTAN:
+            return operator.lt
+        case _:
+            return operator.gt

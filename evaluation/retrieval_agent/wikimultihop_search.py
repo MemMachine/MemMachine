@@ -113,7 +113,13 @@ async def run_wiki(
         eval_result_path = epath
 
     resource_manager = agent_utils.load_eval_config(args.config_path)
-    memory, model, query_agent = await agent_utils.init_memmachine_params(
+    (
+        memory,
+        answer_model,
+        query_agent,
+        agent_model_id,
+        answer_model_id,
+    ) = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id="group1",  # Wikimultihop dataset does not have session concept
         agent_name="ToolSelectAgent"
@@ -139,13 +145,17 @@ async def run_wiki(
                 ANSWER_PROMPT,
                 query_agent,
                 memory,
-                model,
+                answer_model,
                 q,
                 a,
                 t,
                 f_list,
                 "",
                 full_content=full_content if args.test_target == "llm" else None,
+                extra_attributes={
+                    "agent_model_id": agent_model_id,
+                    "answer_model_id": answer_model_id,
+                },
             )
 
     for index, (q, a, t, f_list) in enumerate(

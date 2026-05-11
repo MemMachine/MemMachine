@@ -130,7 +130,7 @@ async def longmemeval_ingest(
     per_batch = 1000
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, _, _ = await agent_utils.init_memmachine_params(
+    memory, _, _, _, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id=session_id,
     )
@@ -188,7 +188,13 @@ async def longmemeval_search(
     num_searched = 0
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, answer_model, query_agent = await agent_utils.init_memmachine_params(
+    (
+        memory,
+        answer_model,
+        query_agent,
+        agent_model_id,
+        answer_model_id,
+    ) = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id=session_id,
         agent_name=agent_name,
@@ -220,6 +226,8 @@ async def longmemeval_search(
                 extra_attributes={
                     "question_id": sample.get("question_id", ""),
                     "split": sample.get("split", ""),
+                    "agent_model_id": agent_model_id,
+                    "answer_model_id": answer_model_id,
                 },
             )
         )

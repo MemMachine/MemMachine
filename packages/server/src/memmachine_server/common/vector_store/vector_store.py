@@ -25,6 +25,12 @@ class VectorStoreCollection(ABC):
 
     Identified by a (namespace, name) pair.
     All data operations are scoped to this logical collection.
+
+    Implementations must support storing, filtering on, and returning
+    record properties not declared in the configured indexed properties schema.
+
+    The schema exists to support indexing on fixed-type record properties.
+    Record properties not declared in the schema may have mixed-type values.
     """
 
     @property

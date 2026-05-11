@@ -35,7 +35,7 @@ async def main():
         group_id = f"group_{idx}"
         print(f"Deleting episodes for group {group_id}...")
 
-        memory, _, _ = await agent_utils.init_memmachine_params(
+        memory, _, _, _, _ = await agent_utils.init_memmachine_params(
             resource_manager=resource_manager,
             session_id=group_id,
         )
