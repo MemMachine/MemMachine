@@ -17,6 +17,7 @@ from unittest.mock import create_autospec
 
 import pytest
 
+from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.episode_store import (
     Episode,
     EpisodeEntry,
@@ -254,6 +255,23 @@ async def test_drop_session_partition_calls_parent_lifecycle_hooks(
     segment_store.delete_partition.assert_awaited_once_with("sess1")
 
 
+async def test_event_backend_unusable_after_drop_session_partition(
+    long_term_memory,
+    episodes,
+):
+    """After dropping the partition, the EventMemory handles point at deleted
+    resources. Reusing the LongTermMemory must fail loudly rather than
+    silently operate on a stale (or recreated) collection.
+    """
+    await long_term_memory.drop_session_partition()
+    with pytest.raises(RuntimeError, match="drop_session_partition"):
+        await long_term_memory.add_episodes(episodes)
+    with pytest.raises(RuntimeError, match="drop_session_partition"):
+        await long_term_memory.search_scored("anything", num_episodes_limit=1)
+    with pytest.raises(RuntimeError, match="drop_session_partition"):
+        await long_term_memory.delete_episodes(["ep-1"])
+
+
 async def test_user_metadata_filter_round_trips(
     long_term_memory,
     fake_episode_storage,
@@ -333,3 +351,193 @@ async def test_system_field_filter_round_trips(
 async def test_close_is_a_noop(long_term_memory):
     # Should not raise.
     await long_term_memory.close()
+
+
+async def test_unknown_bare_filter_field_raises(long_term_memory):
+    """Typo'd bare system field surfaces as ValueError, not silent empty.
+
+    Without this guard, segment store / vector store would treat the unknown
+    name as an exact JSON property lookup and silently return zero results.
+    """
+    with pytest.raises(ValueError, match="Unknown filter field 'producre_id'"):
+        await long_term_memory.search_scored(
+            "msg",
+            num_episodes_limit=10,
+            property_filter=FilterComparison(
+                field="producre_id", op="=", value="alice"
+            ),
+        )
+
+
+async def test_unknown_user_metadata_field_passes_when_no_schema(long_term_memory):
+    """With empty `user_property_keys`, any `m.<x>` is accepted.
+
+    The default fixture leaves `properties_schema` unset, so validation is
+    permissive on user metadata. Matches the documented behavior in
+    `_validate_event_backend_filter`.
+    """
+    # Doesn't raise.
+    scored = await long_term_memory.search_scored(
+        "msg",
+        num_episodes_limit=10,
+        property_filter=FilterComparison(field="m.anything", op="=", value="x"),
+    )
+    assert scored == []
+
+
+async def test_unknown_user_metadata_field_raises_when_schema_configured(
+    fake_embedder,
+    vector_store,
+    vector_store_collection,
+    segment_store,
+    segment_store_partition,
+    fake_episode_storage,
+):
+    """With a configured schema, typo'd `m.<x>` surfaces as ValueError."""
+    ltm = LongTermMemory(
+        EventBackendParams(
+            session_id="sess1",
+            vector_store=vector_store,
+            vector_store_collection=vector_store_collection,
+            vector_store_collection_namespace="long_term_memory",
+            segment_store=segment_store,
+            segment_store_partition=segment_store_partition,
+            partition_key="sess1",
+            episode_storage=fake_episode_storage,
+            embedder=fake_embedder,
+            segmenter=PassthroughSegmenter(),
+            deriver=WholeTextDeriver(),
+            user_property_keys=frozenset({"color"}),
+        ),
+    )
+    with pytest.raises(
+        ValueError, match=r"Unknown user-metadata filter field 'm\.coloor'"
+    ):
+        await ltm.search_scored(
+            "msg",
+            num_episodes_limit=10,
+            property_filter=FilterComparison(field="m.coloor", op="=", value="red"),
+        )
+
+
+async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
+    """`timestamp` is a valid bare filter field (segment store has it as a column)."""
+    await long_term_memory.add_episodes(episodes)
+    # Doesn't raise; whether anything matches depends on the embedder/score path.
+    await long_term_memory.search_scored(
+        "anything",
+        num_episodes_limit=10,
+        property_filter=FilterComparison(
+            field="timestamp",
+            op=">=",
+            value=datetime(2000, 1, 1, tzinfo=UTC),
+        ),
+    )
+
+
+def _make_ltm_with_metric(
+    metric: SimilarityMetric,
+    episodes: list[Episode],
+) -> LongTermMemory:
+    """Build a self-contained LongTermMemory whose vector store uses `metric`.
+
+    Avoids the shared fixtures so each test can pick its own similarity metric.
+    No reranker is configured — that's the failure mode under euclidean.
+    """
+    fake_embedder = FakeEmbedder(similarity_metric=metric)
+    vector_store_collection = InMemoryVectorStoreCollection(
+        VectorStoreCollectionConfig(
+            vector_dimensions=fake_embedder.dimensions,
+            similarity_metric=metric,
+            indexed_properties_schema={
+                **EventMemory.expected_vector_store_collection_schema(),
+                **EVENT_BACKEND_SYSTEM_FIELDS,
+            },
+        )
+    )
+    return LongTermMemory(
+        EventBackendParams(
+            session_id="sess1",
+            vector_store=create_autospec(VectorStore, instance=True),
+            vector_store_collection=vector_store_collection,
+            vector_store_collection_namespace="long_term_memory",
+            segment_store=create_autospec(SegmentStore, instance=True),
+            segment_store_partition=InMemorySegmentStorePartition(),
+            partition_key="sess1",
+            episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),
+            embedder=fake_embedder,
+            segmenter=PassthroughSegmenter(),
+            deriver=WholeTextDeriver(),
+        ),
+    )
+
+
+async def test_score_threshold_drops_low_scores_under_cosine():
+    """Cosine: higher score = better match. With FakeEmbedder, "abc" → [3,-3]
+    and "abc def" → [7,-7] are colinear and score ~1.0 each. A threshold
+    above 1 should drop everything; default None should keep everything.
+    """
+    episodes = [
+        _episode("near", "abc"),
+        _episode("far", "abcdefghij"),
+    ]
+    ltm = _make_ltm_with_metric(SimilarityMetric.COSINE, episodes)
+    await ltm.add_episodes(episodes)
+
+    kept_all = await ltm.search_scored("abc", num_episodes_limit=10)
+    assert {ep.uid for _, ep in kept_all} == {"near", "far"}
+
+    kept_none = await ltm.search_scored(
+        "abc", num_episodes_limit=10, score_threshold=2.0
+    )
+    assert kept_none == []
+
+
+async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
+    """Regression: with no reranker the threshold filter must respect
+    similarity_metric.higher_is_better. Under euclidean, scores are distances
+    (lower = better). The filter must DROP scores ABOVE the threshold, not
+    BELOW it.
+
+    Without this fix, `score < threshold` keeps far matches and drops close
+    ones — leaking unrelated content past a "max-distance" gate.
+    """
+    # WholeTextDeriver prepends "alice: " to each segment, so the embedded
+    # text length is len(producer + ": " + content):
+    #   - producer "alice": prefix "alice: " (length 7)
+    #   - "near"  → embedded "alice: abc"        → vector [10, -10]
+    #   - "far"   → embedded "alice: abcdefghij" → vector [17, -17]
+    # Query "abc" → vector [3, -3].
+    # Euclidean distances from query:
+    #   - near: sqrt(7^2 + 7^2)   = ~9.9
+    #   - far:  sqrt(14^2 + 14^2) = ~19.8
+    # A threshold of 15.0 cleanly separates them.
+    episodes = [
+        _episode("near", "abc"),
+        _episode("far", "abcdefghij"),
+    ]
+    ltm = _make_ltm_with_metric(SimilarityMetric.EUCLIDEAN, episodes)
+    await ltm.add_episodes(episodes)
+
+    kept = await ltm.search_scored("abc", num_episodes_limit=10, score_threshold=15.0)
+    uids = {ep.uid for _, ep in kept}
+    assert "near" in uids, (
+        "Close match (distance ~9.9) was dropped — threshold filter is "
+        "inverted for euclidean."
+    )
+    assert "far" not in uids, (
+        "Far match (distance ~19.8) was kept — threshold filter is inverted "
+        "for euclidean."
+    )
+
+
+async def test_score_threshold_none_keeps_all_results_under_euclidean():
+    """Regression for the prior `-inf` sentinel: under euclidean (lower=better)
+    the default "no threshold" must NOT drop everything. Default is now
+    `score_threshold=None` which short-circuits the filter."""
+    episodes = [_episode("only", "abc")]
+    ltm = _make_ltm_with_metric(SimilarityMetric.EUCLIDEAN, episodes)
+    await ltm.add_episodes(episodes)
+
+    scored = await ltm.search_scored("abc", num_episodes_limit=10)
+    assert [ep.uid for _, ep in scored] == ["only"]

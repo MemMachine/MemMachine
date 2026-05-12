@@ -26,6 +26,35 @@ UTC = timezone.utc
 PropertyValue = bool | int | float | str | datetime
 """Type for stored property values (duplicated here to avoid server dependency)."""
 
+# Canonical type-name set accepted in `properties_schema`. Mirrors
+# `memmachine_server.common.data_types.PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE` but
+# lives here so the API contract validates types at request time rather than
+# deferring failures to service-locator wire-up.
+VALID_PROPERTY_TYPE_NAMES: frozenset[str] = frozenset(
+    {"bool", "int", "float", "str", "datetime"}
+)
+
+
+def validate_properties_schema_types(value: dict[str, str]) -> dict[str, str]:
+    """Reject unknown type names in `properties_schema`.
+
+    Without this check, an unknown type name like `"date"` or `"integer"` is
+    only caught later when service-locator builds the VectorStore collection
+    schema — surfacing as a 500 instead of a 400 at API time.
+    """
+    bad = sorted(
+        f"{name}={type_name!r}"
+        for name, type_name in value.items()
+        if type_name not in VALID_PROPERTY_TYPE_NAMES
+    )
+    if bad:
+        raise ValueError(
+            "properties_schema contains unknown type names "
+            f"(allowed: {sorted(VALID_PROPERTY_TYPE_NAMES)}): {bad}"
+        )
+    return value
+
+
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
 logger = logging.getLogger(__name__)
@@ -257,6 +286,11 @@ class ProjectConfig(BaseModel):
             ),
         ),
     ]
+
+    @field_validator("properties_schema")
+    @classmethod
+    def _validate_properties_schema_types(cls, value: dict[str, str]) -> dict[str, str]:
+        return validate_properties_schema_types(value)
 
 
 class CreateProjectSpec(BaseModel):

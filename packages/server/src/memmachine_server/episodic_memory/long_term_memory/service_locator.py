@@ -155,6 +155,7 @@ async def _event_params(
         reranker=reranker,
         segmenter=segmenter,
         deriver=deriver,
+        user_property_keys=frozenset(config.properties_schema),
     )
 
 

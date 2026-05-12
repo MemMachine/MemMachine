@@ -186,7 +186,7 @@ class MemMachine:
             if ltm.reranker is None:
                 try:
                     ltm.reranker = self._conf.default_long_term_memory_reranker
-                except (ConfigurationError, Exception):
+                except ConfigurationError:
                     ltm.reranker = None
 
             # vector_store + segment_store are required to materialize an
@@ -214,7 +214,7 @@ class MemMachine:
             return current_value
         try:
             return default_getter()
-        except (ConfigurationError, Exception):
+        except ConfigurationError:
             self._disable_long_term_memory(missing_warning)
             return None
 

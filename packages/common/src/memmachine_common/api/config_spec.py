@@ -3,9 +3,10 @@
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from memmachine_common.api.doc import SpecDoc
+from memmachine_common.api.spec import validate_properties_schema_types
 
 
 class ResourceStatus(str, Enum):
@@ -115,6 +116,15 @@ class LongTermMemoryConfigResponse(BaseModel):
         bool,
         Field(default=True, description=SpecDoc.LTM_CONFIG_ENABLED),
     ]
+
+    @field_validator("properties_schema")
+    @classmethod
+    def _validate_properties_schema_types(
+        cls, value: dict[str, str] | None
+    ) -> dict[str, str] | None:
+        if value is None:
+            return value
+        return validate_properties_schema_types(value)
 
 
 class ShortTermMemoryConfigResponse(BaseModel):
@@ -453,6 +463,15 @@ class UpdateLongTermMemorySpec(BaseModel):
             description="User-defined filterable properties (event backend only)",
         ),
     ]
+
+    @field_validator("properties_schema")
+    @classmethod
+    def _validate_properties_schema_types(
+        cls, value: dict[str, str] | None
+    ) -> dict[str, str] | None:
+        if value is None:
+            return value
+        return validate_properties_schema_types(value)
 
 
 class UpdateShortTermMemorySpec(BaseModel):

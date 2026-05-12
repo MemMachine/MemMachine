@@ -17,6 +17,7 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
+    demangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
@@ -83,6 +84,14 @@ EVENT_BACKEND_SYSTEM_FIELDS: dict[str, type[PropertyValue]] = {
     _CREATED_AT_FIELD: datetime.datetime,
 }
 
+# Bare client-API filter names for the system fields above (e.g. `producer_id`,
+# not `_producer_id`). Used to validate filter expressions on the event backend
+# so a typo'd field name surfaces as a ValueError rather than silently matching
+# nothing in the storage layer.
+_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES: frozenset[str] = frozenset(
+    key.removeprefix("_") for key in EVENT_BACKEND_SYSTEM_FIELDS
+) | {"timestamp"}
+
 # Filterable-metadata sentinel: Episode.filterable_metadata=None vs {} carry
 # different semantics in the declarative backend; preserve that here too.
 _FILTERABLE_METADATA_NONE_FLAG = "_filterable_metadata_none"
@@ -136,6 +145,15 @@ class EventBackendParams(BaseModel):
     reranker: InstanceOf[Reranker] | None = Field(default=None)
     segmenter: InstanceOf[Segmenter] = Field(...)
     deriver: InstanceOf[Deriver] = Field(...)
+    user_property_keys: frozenset[str] = Field(
+        default_factory=frozenset,
+        description=(
+            "Configured user-property names (from properties_schema). When "
+            "non-empty, filter expressions on `m.<key>` are validated against "
+            "this set; empty means no validation (any user-metadata key "
+            "accepted)."
+        ),
+    )
 
 
 LongTermMemoryParams = Annotated[
@@ -162,6 +180,18 @@ class LongTermMemory:
         self._segment_store: SegmentStore | None = None
         self._partition_key: str | None = None
         self._episode_storage: EpisodeStorage | None = None
+        # Event backend only: whether scores from `EventMemory.query` are
+        # higher-is-better. Matches the same derivation inside EventMemory.query
+        # (reranker scores are higher-is-better; raw vector scores depend on the
+        # collection's similarity metric — cosine is higher-is-better, euclidean
+        # is lower-is-better). Used to apply `score_threshold` in the correct
+        # direction so it doesn't invert under euclidean with no reranker.
+        self._score_higher_is_better: bool = True
+        # Event backend only: configured user-property names from
+        # properties_schema. Empty means "no validation"; non-empty means the
+        # set is closed and filter expressions referencing `m.<unknown>` raise
+        # ValueError at the LongTermMemory layer.
+        self._user_property_keys: frozenset[str] = frozenset()
         self._session_id: str = params.session_id
 
         match params:
@@ -191,6 +221,11 @@ class LongTermMemory:
                 self._segment_store = params.segment_store
                 self._partition_key = params.partition_key
                 self._episode_storage = params.episode_storage
+                self._score_higher_is_better = (
+                    params.reranker is not None
+                    or params.vector_store_collection.config.similarity_metric.higher_is_better
+                )
+                self._user_property_keys = params.user_property_keys
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
@@ -201,9 +236,9 @@ class LongTermMemory:
             )
             return
 
-        assert self._event_memory is not None
+        event_memory = self._require_event_backend_live()
         events = [LongTermMemory._episode_to_event(episode) for episode in episodes]
-        await self._event_memory.encode_events(events)
+        await event_memory.encode_events(events)
 
     async def search_scored(
         self,
@@ -211,9 +246,18 @@ class LongTermMemory:
         *,
         num_episodes_limit: int,
         expand_context: int = 0,
-        score_threshold: float = -float("inf"),
+        score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
     ) -> list[tuple[float, Episode]]:
+        """Score-thresholded query.
+
+        `score_threshold=None` (default) keeps every result. With a numeric
+        value, the comparison direction matches the scoring metric:
+        higher-is-better metrics (cosine, dot, any reranker) drop scores BELOW
+        the threshold; lower-is-better metrics (raw euclidean / manhattan with
+        no reranker) drop scores ABOVE it. Avoids the prior `-inf` sentinel,
+        which silently inverted to "drop everything" under euclidean.
+        """
         if self._backend == "declarative":
             return await self._search_scored_declarative(
                 query,
@@ -236,7 +280,7 @@ class LongTermMemory:
         *,
         num_episodes_limit: int,
         expand_context: int,
-        score_threshold: float,
+        score_threshold: float | None,
         property_filter: FilterExpr | None,
     ) -> list[tuple[float, Episode]]:
         assert self._declarative_memory is not None
@@ -254,7 +298,7 @@ class LongTermMemory:
                 LongTermMemory._episode_from_declarative_memory_episode(dm_episode),
             )
             for score, dm_episode in scored
-            if score >= score_threshold
+            if score_threshold is None or score >= score_threshold
         ]
 
     async def _search_scored_event(
@@ -263,11 +307,12 @@ class LongTermMemory:
         *,
         num_episodes_limit: int,
         expand_context: int,
-        score_threshold: float,
+        score_threshold: float | None,
         property_filter: FilterExpr | None,
     ) -> list[tuple[float, Episode]]:
-        assert self._event_memory is not None
+        event_memory = self._require_event_backend_live()
         assert self._episode_storage is not None
+        self._validate_event_backend_filter(property_filter)
         # Over-fetch from EventMemory: the per-segment results can have many
         # segments per episode under non-passthrough segmenters, and we dedup
         # them by `_episode_uid` below. Without headroom, the dedup loop can
@@ -276,7 +321,7 @@ class LongTermMemory:
             num_episodes_limit * _EVENT_BACKEND_DEDUP_OVERFETCH,
             num_episodes_limit,
         )
-        result = await self._event_memory.query(
+        result = await event_memory.query(
             query,
             vector_search_limit=vector_search_limit,
             expand_context=expand_context,
@@ -286,10 +331,14 @@ class LongTermMemory:
         # Map seed segment -> _episode_uid (system field already lives on
         # event/segment.properties under the underscore-prefixed key). Keep
         # first-seen score per episode_uid; preserve query result ordering.
+        # The threshold comparison direction depends on the scoring metric:
+        # higher-is-better (cosine + any reranker) → drop scores BELOW threshold;
+        # lower-is-better (raw euclidean without a reranker) → drop scores
+        # ABOVE threshold.
         ordered_uids: list[str] = []
         scores_by_uid: dict[str, float] = {}
         for scored_context in result.scored_segment_contexts:
-            if scored_context.score < score_threshold:
+            if not self._score_passes_threshold(scored_context.score, score_threshold):
                 continue
             episode_uid = LongTermMemory._scored_context_episode_uid(scored_context)
             if episode_uid is None or episode_uid in scores_by_uid:
@@ -321,12 +370,22 @@ class LongTermMemory:
             await self._declarative_memory.delete_episodes(uids)
             return
 
-        assert self._event_memory is not None
+        event_memory = self._require_event_backend_live()
         event_uuids = {uuid5(_EVENT_UUID_NAMESPACE, uid) for uid in uids}
-        await self._event_memory.forget_events(event_uuids)
+        await event_memory.forget_events(event_uuids)
 
     async def drop_session_partition(self) -> None:
-        """Delete all data for this session/partition."""
+        """Delete all data for this session/partition.
+
+        On the event backend, this drops the underlying VectorStore collection
+        and SegmentStore partition. After this returns the instance is no
+        longer usable — `EventMemory` still holds handles to the deleted
+        collection and partition, and any reuse would talk to deleted
+        resources. We null those handles so subsequent calls fail loudly
+        rather than silently corrupt state. If the caller needs the same
+        session_id again, build a fresh LongTermMemory (which will open or
+        create a new collection/partition).
+        """
         if self._backend == "declarative":
             assert self._declarative_memory is not None
             episodes = await self._declarative_memory.get_matching_episodes()
@@ -344,11 +403,43 @@ class LongTermMemory:
             name=self._partition_key,
         )
         await self._segment_store.delete_partition(self._partition_key)
+        # Drop references to the now-deleted resources so any further
+        # add_episodes / search_scored / delete_episodes calls raise
+        # rather than silently operating on stale handles.
+        self._event_memory = None
+        self._vector_store = None
+        self._segment_store = None
 
     async def close(self) -> None:
         # Backends do not own resources we can close at this layer; the
         # ResourceManager handles SegmentStore/VectorStore lifecycle.
         return
+
+    def _score_passes_threshold(
+        self, score: float, score_threshold: float | None
+    ) -> bool:
+        """Apply `score_threshold` in the correct direction for the metric.
+
+        higher-is-better → drop scores BELOW threshold;
+        lower-is-better  → drop scores ABOVE threshold;
+        None             → never drop.
+        """
+        if score_threshold is None:
+            return True
+        if self._score_higher_is_better:
+            return score >= score_threshold
+        return score <= score_threshold
+
+    def _require_event_backend_live(self) -> EventMemory:
+        """Return the EventMemory or raise if the instance was dropped."""
+        if self._event_memory is None:
+            raise RuntimeError(
+                "LongTermMemory event backend is no longer usable: "
+                "drop_session_partition() deleted the underlying collection "
+                "and partition. Construct a new LongTermMemory to operate "
+                "on this session again."
+            )
+        return self._event_memory
 
     # --- Episode <-> declarative-memory translation (declarative backend) ---
 
@@ -466,6 +557,50 @@ class LongTermMemory:
         )
 
     # --- Episode <-> Event translation (event backend) ---
+
+    def _validate_event_backend_filter(
+        self,
+        property_filter: FilterExpr | None,
+    ) -> None:
+        """Reject filter fields not known to the event-backend schema.
+
+        Bare names are matched against system-defined fields
+        (`_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES`); `m.<key>` / `metadata.<key>`
+        names are matched against `user_property_keys`, if non-empty.
+
+        Validation lives here rather than in the segment store / vector store
+        because this is the only layer that knows both the system field set
+        and the configured user `properties_schema`. The stores themselves
+        treat unknown property keys as empty matches (correct generic JSON
+        semantics) — without this check a typo'd filter field would silently
+        return zero results.
+        """
+        if property_filter is None:
+            return
+
+        def _check(field: str) -> str:
+            internal_name, is_user_metadata = normalize_filter_field(field)
+            if is_user_metadata:
+                key = demangle_user_metadata_key(internal_name)
+                if self._user_property_keys and key not in self._user_property_keys:
+                    raise ValueError(
+                        f"Unknown user-metadata filter field {field!r}. "
+                        "Configured user properties: "
+                        f"{sorted(self._user_property_keys)}"
+                    )
+                return field
+            if field not in _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES:
+                raise ValueError(
+                    f"Unknown filter field {field!r}. Valid system fields: "
+                    f"{sorted(_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES)}; "
+                    "use 'm.<name>' for user metadata."
+                )
+            return field
+
+        # `map_filter_fields` walks the whole tree; we use it for its side
+        # effect of invoking `_check` on every leaf field. The returned tree
+        # is discarded.
+        map_filter_fields(property_filter, _check)
 
     @staticmethod
     def _scored_context_episode_uid(scored_context: object) -> str | None:
