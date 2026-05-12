@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from uuid import uuid5
 
+import pytest
+
 from memmachine_server.common.episode_store import (
     ContentType,
     Episode,
@@ -131,14 +133,33 @@ def test_user_filterable_metadata_keys_are_bare():
     assert p["count"] == 7
 
 
-def test_user_filterable_metadata_does_not_clobber_system_fields():
-    """Property layout is order-dependent; system keys are written first."""
+def test_episode_to_event_rejects_underscore_prefixed_user_keys():
+    """Reserved `_`-prefixed user keys must be rejected at the event-backend
+    translation layer. Without this check a client could send
+    {"_producer_id": "victim", "_session_key": "other-session"} via
+    filterable_metadata, get its content indexed under those spoofed
+    identities, and impersonate the victim through search_scored's
+    property_filter API. We raise loudly so callers see the misuse instead
+    of silently dropping. (Event-backend only — the declarative backend
+    mangles user keys with a `metadata.` prefix and is unaffected.)
+    """
     episode = _episode(
-        filterable_metadata={"_producer_id": "shouldnt-overwrite"},
+        filterable_metadata={
+            "safe_key": "ok",
+            "_producer_id": "victim",
+            "_session_key": "other-session",
+            "_episode_uid": "spoofed-uid",
+        }
     )
+    with pytest.raises(ValueError, match=r"reserved.*`_`-prefixed"):
+        LongTermMemory._episode_to_event(episode)
+
+
+def test_episode_to_event_allows_metadata_dot_prefixed_keys():
+    """The declarative backend mangles user keys with a `metadata.` prefix.
+    On the event backend, a literal `metadata.foo` key is just a regular
+    user property and must not be rejected.
+    """
+    episode = _episode(filterable_metadata={"metadata.foo": "bar"})
     event = LongTermMemory._episode_to_event(episode)
-    # filterable_metadata is currently merged AFTER system fields; this test
-    # documents the resulting precedence (last write wins). If we ever want to
-    # protect system fields from user-defined collisions we'll need an explicit
-    # validator — for now, document the behavior.
-    assert event.properties["_producer_id"] == "shouldnt-overwrite"
+    assert event.properties["metadata.foo"] == "bar"

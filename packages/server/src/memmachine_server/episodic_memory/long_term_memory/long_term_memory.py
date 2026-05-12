@@ -491,6 +491,15 @@ class LongTermMemory:
           metadata stored bare. Matches EventMemory's `_to_vector_record_property`
           translation so the client-facing filter API (`producer_id`,
           `m.my_field`) Just Works.
+
+        Reject `_`-prefixed user metadata keys (event-backend only — the
+        declarative backend mangles user keys with a `metadata.` prefix and
+        is unaffected). Without this check a client could send
+        `{"_producer_id": "victim", "_session_key": "other-session"}` and
+        have its content indexed under those spoofed identities, enabling
+        cross-producer / cross-session impersonation through
+        `search_scored(property_filter=...)`. We raise loudly instead of
+        silently dropping so the client sees the misuse.
         """
         properties: dict[str, PropertyValue] = {
             _EPISODE_UID_FIELD: episode.uid,
@@ -505,6 +514,18 @@ class LongTermMemory:
         if episode.produced_for_id is not None:
             properties[_PRODUCED_FOR_ID_FIELD] = episode.produced_for_id
         if episode.filterable_metadata is not None:
+            reserved = sorted(
+                k for k in episode.filterable_metadata if k.startswith("_")
+            )
+            if reserved:
+                raise ValueError(
+                    "Episode filterable_metadata contains reserved "
+                    f"`_`-prefixed keys (event backend only): {reserved}. "
+                    "These collide with system-defined properties "
+                    "(`_producer_id`, `_session_key`, `_episode_uid`, ...) "
+                    "and are rejected to prevent cross-producer / "
+                    "cross-session impersonation."
+                )
             properties.update(episode.filterable_metadata)
 
         if episode.episode_type == EpisodeType.MESSAGE:
