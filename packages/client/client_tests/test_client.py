@@ -206,6 +206,43 @@ class TestMemMachineClient:
                 project_id="test_project",
             )
 
+    def test_create_project_event_backend_fields_reach_wire(self):
+        """Event-backend fields must reach the wire — without this the SDK
+        has no supported path to event-backed projects."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "org_id": "test_org",
+            "project_id": "test_project",
+            "description": "",
+            "config": {
+                "backend": "event",
+                "embedder": "default",
+                "reranker": "default",
+                "vector_store": "qdrant_vs",
+                "segment_store": "sqlite_db",
+                "properties_schema": {"customer_tier": "str"},
+            },
+        }
+        with patch.object(
+            client._session, "post", return_value=mock_response
+        ) as mock_post:
+            client.create_project(
+                org_id="test_org",
+                project_id="test_project",
+                backend="event",
+                vector_store="qdrant_vs",
+                segment_store="sqlite_db",
+                properties_schema={"customer_tier": "str"},
+            )
+            cfg = mock_post.call_args[1]["json"]["config"]
+            assert cfg["backend"] == "event"
+            assert cfg["vector_store"] == "qdrant_vs"
+            assert cfg["segment_store"] == "sqlite_db"
+            assert cfg["properties_schema"] == {"customer_tier": "str"}
+
     @patch("requests.Session.get")
     def test_health_check_success(self, mock_get):
         """Test successful health check."""

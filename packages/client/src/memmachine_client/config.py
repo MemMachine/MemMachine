@@ -314,16 +314,33 @@ class Config:
         embedder: str | None = None,
         reranker: str | None = None,
         vector_graph_store: str | None = None,
+        backend: Literal["declarative", "event"] | None = None,
+        vector_store: str | None = None,
+        segment_store: str | None = None,
+        properties_schema: dict[str, str] | None = None,
         enabled: bool | None = None,
         timeout: int | None = None,
     ) -> UpdateMemoryConfigResponse:
         """
         Update long-term memory configuration.
 
+        All fields are partial-update: pass ``None`` (the default) to leave a
+        field unchanged. Pass an empty string ``""`` for resource-id fields to
+        clear them and fall back to server defaults.
+
         Args:
             embedder: Name of the embedder to use for long-term memory
             reranker: Name of the reranker to use for long-term memory
             vector_graph_store: Name of the vector graph store to use
+                (declarative backend only)
+            backend: Switch the long-term-memory backend. ``None`` keeps the
+                existing backend; ``"declarative"`` or ``"event"`` switches.
+            vector_store: VectorStore resource id (event backend only)
+            segment_store: SQL engine resource id backing the segment store
+                (event backend only)
+            properties_schema: User-defined filterable property names mapped
+                to type strings ("bool", "int", "float", "str", "datetime").
+                Event backend only.
             enabled: Whether long-term memory is enabled
             timeout: Request timeout in seconds (uses client default if not provided)
 
@@ -337,13 +354,13 @@ class Config:
         """
         self._check_closed()
         spec = UpdateLongTermMemorySpec(
-            backend=None,
+            backend=backend,
             embedder=embedder,
             reranker=reranker,
             vector_graph_store=vector_graph_store,
-            vector_store=None,
-            segment_store=None,
-            properties_schema=None,
+            vector_store=vector_store,
+            segment_store=segment_store,
+            properties_schema=properties_schema,
         )
         payload = spec.model_dump(exclude_none=True)
         if enabled is not None:

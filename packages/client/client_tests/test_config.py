@@ -368,6 +368,30 @@ class TestConfig:
         with pytest.raises(RuntimeError, match="client has been closed"):
             config.update_long_term_memory_config(embedder="x")
 
+    def test_update_long_term_memory_config_event_backend(self, config, mock_client):
+        """Event-backend fields (backend / vector_store / segment_store /
+        properties_schema) must reach the wire — without these the SDK has no
+        supported path to event-backed projects."""
+        mock_client.request.return_value = _mock_response(
+            {"success": True, "message": "Long-term memory configuration updated"}
+        )
+        result = config.update_long_term_memory_config(
+            backend="event",
+            embedder="new-embedder",
+            vector_store="qdrant_vs",
+            segment_store="sqlite_db",
+            properties_schema={"customer_tier": "str"},
+        )
+        assert isinstance(result, UpdateMemoryConfigResponse)
+        body = mock_client.request.call_args[1]["json"]
+        assert body["backend"] == "event"
+        assert body["vector_store"] == "qdrant_vs"
+        assert body["segment_store"] == "sqlite_db"
+        assert body["properties_schema"] == {"customer_tier": "str"}
+        assert body["embedder"] == "new-embedder"
+        # Untouched declarative-only field must NOT leak into the payload.
+        assert "vector_graph_store" not in body
+
     def test_update_short_term_memory_config(self, config, mock_client):
         mock_client.request.return_value = _mock_response(
             {"success": True, "message": "Short-term memory configuration updated"}
