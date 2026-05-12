@@ -29,7 +29,7 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "ruff==0.15.12",
     "testcontainers[neo4j,postgres,qdrant]>=4.14.2",
-    "ty~=0.0.32",
+    "ty~=0.0.35",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
 ]
