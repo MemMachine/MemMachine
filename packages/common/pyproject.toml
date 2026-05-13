@@ -15,6 +15,7 @@ authors = [
   {name="MemMachine", email="noreply@memmachine.ai"},
 ]
 description = "MemMachine Common - Shared API models for MemMachine client and server"
+readme = "README.md"
 keywords = ["memmachine", "common", "api", "models"]
 classifiers = [
     "Programming Language :: Python :: 3",
