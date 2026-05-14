@@ -233,6 +233,11 @@ class ConfigurationWizard:
                 "(requires host SQLite with loadable-extension support)"
             )
 
+        # default_choice is always one of `valid` (constructed above). In
+        # silent mode (`self.prompt == False`), `ask_for` returns this default
+        # unchanged, so the first iteration always satisfies `raw in valid`
+        # and breaks — no second iteration, no need for a silent-mode fallback.
+        assert default_choice in valid
         choice = default_choice
         while True:
             raw = (
@@ -245,9 +250,6 @@ class ConfigurationWizard:
             )
             if raw in valid:
                 choice = raw
-                break
-            if not self.prompt:
-                # Silent mode: ask_for always returns the default, which is valid.
                 break
             logger.info(
                 "Invalid choice %r. Pick one of: %s (or press Enter for the default).",

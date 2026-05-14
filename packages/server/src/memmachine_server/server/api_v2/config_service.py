@@ -181,7 +181,6 @@ def _handle_backend_change(
     """
     if new_backend == ltm.backend:
         # Idempotent re-assertion of the same backend; no change to emit.
-        ltm.backend = new_backend
         return []
 
     changes: list[str] = []

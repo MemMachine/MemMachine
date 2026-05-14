@@ -77,8 +77,6 @@ def test_non_message_episode_uses_null_context():
         # Only MESSAGE exists today; this branch will start exercising once
         # additional Episode types are introduced. Skip rather than assert
         # invariant we can't yet exercise.
-        import pytest
-
         pytest.skip("Only MESSAGE EpisodeType exists; nothing else to verify yet")
     episode = _episode(episode_type=non_message)
     event = LongTermMemory._episode_to_event(episode)

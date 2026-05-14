@@ -226,6 +226,41 @@ async def test_search_dedupes_by_episode_uid(
     assert len(uids) == len(set(uids))
 
 
+async def test_search_warns_on_index_storage_drift(
+    long_term_memory,
+    fake_episode_storage,
+    episodes,
+    caplog,
+):
+    """If the event index references an episode UID that EpisodeStorage no
+    longer has (index/storage drift), the dropped UID is logged as a warning
+    and the remaining episodes are still returned."""
+    import logging
+
+    await long_term_memory.add_episodes(episodes)
+    # Simulate drift: index keeps ep-2's segment, but EpisodeStorage forgets it.
+    await fake_episode_storage.delete_episodes(["ep-2"])
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="memmachine_server.episodic_memory.long_term_memory.long_term_memory",
+    ):
+        scored = await long_term_memory.search_scored(
+            "george washington",
+            num_episodes_limit=3,
+        )
+
+    returned_uids = {ep.uid for _, ep in scored}
+    assert "ep-2" not in returned_uids
+    assert returned_uids <= {"ep-1", "ep-3"}
+
+    drift_records = [
+        r for r in caplog.records if "index/storage drift" in r.getMessage()
+    ]
+    assert drift_records, "expected a drift warning"
+    assert "ep-2" in drift_records[0].getMessage()
+
+
 async def test_delete_episodes_removes_from_event_memory(
     long_term_memory,
     segment_store_partition,

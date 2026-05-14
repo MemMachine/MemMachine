@@ -2,7 +2,10 @@
 
 import re
 
+import pytest
+
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    _resolve_user_properties_schema,
     partition_key_for_session,
 )
 
@@ -61,3 +64,25 @@ def test_partition_key_empty_string_passthrough():
     key = partition_key_for_session("")
     assert _is_valid_partition_key(key)
     assert len(key) == _PARTITION_KEY_MAX_LEN
+
+
+def test_resolve_user_properties_schema_accepts_normal_keys():
+    resolved = _resolve_user_properties_schema({"customer_tier": "str", "score": "int"})
+    assert resolved == {"customer_tier": str, "score": int}
+
+
+def test_resolve_user_properties_schema_rejects_underscore_prefixed_keys():
+    """`_`-prefixed keys collide with system-defined event fields
+    (`_episode_uid`, `_session_key`, ...). The merged collection schema is
+    a dict-spread with user_schema last, so allowing them would silently
+    overwrite the system slot and may change its declared type."""
+    with pytest.raises(ValueError, match="reserved"):
+        _resolve_user_properties_schema({"_episode_uid": "str"})
+
+    with pytest.raises(ValueError, match="reserved"):
+        _resolve_user_properties_schema({"_my_field": "int"})
+
+
+def test_resolve_user_properties_schema_rejects_unknown_type_name():
+    with pytest.raises(ValueError, match="unknown type name"):
+        _resolve_user_properties_schema({"customer_tier": "date"})

@@ -186,15 +186,24 @@ class MemMachine:
             if ltm.reranker is None:
                 try:
                     ltm.reranker = self._conf.default_long_term_memory_reranker
-                except ConfigurationError:
+                except Exception:
                     ltm.reranker = None
 
             # vector_store + segment_store are required to materialize an
             # event-backed long-term memory. If either is missing, disable.
-            if ltm.vector_store is None or ltm.segment_store is None:
+            missing = [
+                name
+                for name, value in (
+                    ("vector_store", ltm.vector_store),
+                    ("segment_store", ltm.segment_store),
+                )
+                if value is None
+            ]
+            if missing:
                 self._disable_long_term_memory(
                     "Event-backed long-term memory requires both vector_store "
-                    "and segment_store; disabling long-term episodic memory."
+                    f"and segment_store; missing: {', '.join(missing)}. "
+                    "Disabling long-term episodic memory."
                 )
 
     def _disable_long_term_memory(self, warning_message: str) -> None:
@@ -214,7 +223,7 @@ class MemMachine:
             return current_value
         try:
             return default_getter()
-        except ConfigurationError:
+        except Exception:
             self._disable_long_term_memory(missing_warning)
             return None
 

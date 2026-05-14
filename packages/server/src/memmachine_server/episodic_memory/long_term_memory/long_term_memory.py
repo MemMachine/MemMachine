@@ -1,6 +1,7 @@
 """Long-term memory facade with declarative + event backends."""
 
 import datetime
+import logging
 from collections.abc import Iterable
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4, uuid5
@@ -53,6 +54,8 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartition,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
+
+logger = logging.getLogger(__name__)
 
 # Stable namespace for deterministic Episode.uid -> Event.uuid mapping. Do not
 # change without a data migration.
@@ -353,6 +356,20 @@ class LongTermMemory:
 
         episodes = await self._episode_storage.get_episodes(ordered_uids)
         episodes_by_uid: dict[str, Episode] = {ep.uid: ep for ep in episodes}
+
+        missing = [uid for uid in ordered_uids if uid not in episodes_by_uid]
+        if missing:
+            # Index/storage drift: the event index referenced these episode
+            # UIDs, but they're absent from EpisodeStorage. The two stores
+            # are not transactionally linked, so this can happen on partial
+            # failures during add/delete. Surface it so operators notice;
+            # continue with whatever did hydrate.
+            logger.warning(
+                "search_scored dropped %d episode(s) found in the event index "
+                "but missing from EpisodeStorage (likely index/storage drift): %s",
+                len(missing),
+                missing,
+            )
 
         return [
             (scores_by_uid[uid], episodes_by_uid[uid])

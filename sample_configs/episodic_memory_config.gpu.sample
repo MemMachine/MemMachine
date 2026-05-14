@@ -100,8 +100,11 @@ resources:
     #   config:
     #     path: event_vectors.db
     #     vector_search_engine: usearch    # or: hnswlib
+    #     # Persist ANN indexes to disk. If `index_directory` is omitted,
+    #     # indexes are kept in-memory only and rebuilt from the SQLite payload
+    #     # table on every restart — fine for tests, not for production.
     #     index_directory: event_vector_indexes
-    #     save_threshold: 1000
+    #     save_threshold: 1000             # ops before auto-saving
   embedders:
     openai_embedder:
       provider: openai

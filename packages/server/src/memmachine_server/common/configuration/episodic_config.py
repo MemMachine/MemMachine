@@ -18,12 +18,31 @@ def _long_term_memory_backend_discriminator(value: object) -> str:
     discriminator, so deserialize as `"declarative"` (the legacy backend).
     Code that *creates* new configs is responsible for explicitly setting
     `backend="event"` if it wants the new default.
+
+    Raises TypeError for inputs that cannot legitimately carry a `backend`
+    discriminator (e.g. an int) or for non-string `backend` values, instead
+    of silently coercing them into a declarative parse attempt that would
+    then fail downstream with a less actionable error.
     """
     if isinstance(value, dict):
         backend = cast(dict[str, Any], value).get("backend")
-    else:
+    elif isinstance(value, BaseModel):
         backend = getattr(value, "backend", None)
-    return backend if isinstance(backend, str) else "declarative"
+    else:
+        raise TypeError(
+            "Cannot determine long-term-memory backend: expected a dict or a "
+            f"LongTermMemoryConf instance, got {type(value).__name__}: "
+            f"{value!r}."
+        )
+
+    if backend is None:
+        return "declarative"
+    if isinstance(backend, str):
+        return backend
+    raise TypeError(
+        "Long-term-memory `backend` discriminator must be a string or omitted "
+        f"(legacy default); got {type(backend).__name__}: {backend!r}."
+    )
 
 
 def merge_partial_configs[TFull: BaseModel, TPartial: BaseModel](
@@ -317,19 +336,19 @@ class LongTermMemoryConfPartial(BaseModel):
         # Event backend: synthesize defaults for sub-configs that the flat partial
         # leaves None.
         merged = merge_partial_configs(
-            _force_backend(self, "event"),
-            _force_backend(other, "event"),
+            LongTermMemoryConfPartial._force_backend(self, "event"),
+            LongTermMemoryConfPartial._force_backend(other, "event"),
             EventLongTermMemoryConf,
         )
         return merged
 
-
-def _force_backend(
-    partial: LongTermMemoryConfPartial,
-    backend: Literal["declarative", "event"],
-) -> LongTermMemoryConfPartial:
-    """Return a copy of the partial with `backend` explicitly set."""
-    return partial.model_copy(update={"backend": backend})
+    @staticmethod
+    def _force_backend(
+        partial: "LongTermMemoryConfPartial",
+        backend: Literal["declarative", "event"],
+    ) -> "LongTermMemoryConfPartial":
+        """Return a copy of the partial with `backend` explicitly set."""
+        return partial.model_copy(update={"backend": backend})
 
 
 class EpisodicMemoryConf(MetricsFactoryIdMixin, YamlSerializableMixin):
