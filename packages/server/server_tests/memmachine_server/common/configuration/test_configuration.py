@@ -10,8 +10,13 @@ from memmachine_server.common.configuration import (
     EpisodicMemoryConfPartial,
 )
 from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
+    EpisodicMemoryConf,
+    EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
+    PassthroughSegmenterConf,
     ShortTermMemoryConfPartial,
+    WholeTextDeriverConf,
 )
 from memmachine_server.common.configuration.log_conf import LogLevel
 
@@ -34,6 +39,7 @@ def test_update_long_term_memory_conf(long_term_memory_conf: LongTermMemoryConfP
     )
 
     updated = specific.merge(long_term_memory_conf)
+    assert isinstance(updated, DeclarativeLongTermMemoryConf)
     assert updated.session_id == "session_123"
     assert updated.embedder == "embedder_v2"
     assert updated.reranker == "reranker_v1"
@@ -219,3 +225,168 @@ def test_save_raises_error_when_no_path():
 
     with pytest.raises(ValueError, match="No path provided"):
         conf_no_path.save()
+
+
+# --- Backwards-compat: long-term-memory backend discriminator ---
+
+
+def _ltm_minimal_short_term_block() -> dict:
+    return {
+        "session_key": "s",
+        "llm_model": "m",
+        "summary_prompt_system": "x",
+        "summary_prompt_user": "y",
+    }
+
+
+def test_old_param_data_without_backend_loads_as_declarative():
+    """Old persisted session param_data (no `backend`) round-trips as declarative.
+
+    Reproduces the historical session_data_manager_sql_impl.py:306 path:
+    `EpisodicMemoryConf(**session.param_data)` for a row written before the
+    backend discriminator existed.
+    """
+    old_param_data = {
+        "session_key": "old_session",
+        "long_term_memory": {
+            "session_id": "old_session",
+            "embedder": "openai_embedder",
+            "reranker": "my_reranker_id",
+            "vector_graph_store": "my_storage_id",
+        },
+        "short_term_memory": _ltm_minimal_short_term_block(),
+        "long_term_memory_enabled": True,
+        "short_term_memory_enabled": True,
+        "enabled": True,
+    }
+
+    conf = EpisodicMemoryConf.model_validate(old_param_data)
+    assert isinstance(conf.long_term_memory, DeclarativeLongTermMemoryConf)
+    assert conf.long_term_memory.backend == "declarative"
+    assert conf.long_term_memory.embedder == "openai_embedder"
+    assert conf.long_term_memory.vector_graph_store == "my_storage_id"
+
+
+def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
+    data = {
+        "session_key": "s",
+        "long_term_memory": {
+            "backend": "event",
+            "session_id": "s",
+            "vector_store": "vstore",
+            "segment_store": "pg_engine",
+            "embedder": "openai_embedder",
+        },
+        "short_term_memory": _ltm_minimal_short_term_block(),
+    }
+
+    conf = EpisodicMemoryConf.model_validate(data)
+    assert isinstance(conf.long_term_memory, EventLongTermMemoryConf)
+    assert conf.long_term_memory.vector_store == "vstore"
+    assert conf.long_term_memory.segment_store == "pg_engine"
+    # Default sub-configs.
+    assert isinstance(conf.long_term_memory.segmenter, PassthroughSegmenterConf)
+    assert isinstance(conf.long_term_memory.deriver, WholeTextDeriverConf)
+    # Reranker is optional on the event backend.
+    assert conf.long_term_memory.reranker is None
+
+
+def test_episodic_memory_conf_with_explicit_declarative_backend_loads_as_declarative():
+    data = {
+        "session_key": "s",
+        "long_term_memory": {
+            "backend": "declarative",
+            "session_id": "s",
+            "vector_graph_store": "g",
+            "embedder": "e",
+            "reranker": "r",
+        },
+        "short_term_memory": _ltm_minimal_short_term_block(),
+    }
+
+    conf = EpisodicMemoryConf.model_validate(data)
+    assert isinstance(conf.long_term_memory, DeclarativeLongTermMemoryConf)
+    assert conf.long_term_memory.vector_graph_store == "g"
+
+
+def test_partial_merge_with_no_backend_resolves_to_declarative():
+    """LongTermMemoryConfPartial.merge() defaults missing backend to declarative."""
+    base = LongTermMemoryConfPartial(
+        session_id="s",
+        embedder="e",
+        reranker="r",
+        vector_graph_store="g",
+    )
+    override = LongTermMemoryConfPartial(embedder="e2")
+
+    merged = override.merge(base)
+    assert isinstance(merged, DeclarativeLongTermMemoryConf)
+    assert merged.embedder == "e2"
+    assert merged.reranker == "r"
+    assert merged.vector_graph_store == "g"
+
+
+def test_partial_merge_with_event_backend_resolves_to_event():
+    base = LongTermMemoryConfPartial(
+        backend="event",
+        session_id="s",
+        embedder="e",
+        vector_store="v",
+        segment_store="seg",
+    )
+    override = LongTermMemoryConfPartial()
+
+    merged = override.merge(base)
+    assert isinstance(merged, EventLongTermMemoryConf)
+    assert merged.vector_store == "v"
+    assert merged.segment_store == "seg"
+    assert merged.embedder == "e"
+    assert merged.reranker is None
+
+
+def test_partial_merge_explicit_declarative_backend():
+    base = LongTermMemoryConfPartial(
+        backend="declarative",
+        session_id="s",
+        embedder="e",
+        reranker="r",
+        vector_graph_store="g",
+    )
+    merged = LongTermMemoryConfPartial().merge(base)
+    assert isinstance(merged, DeclarativeLongTermMemoryConf)
+
+
+def test_partial_merge_primary_backend_wins_over_fallback():
+    """Primary backend takes precedence over fallback."""
+    primary = LongTermMemoryConfPartial(
+        backend="event",
+        session_id="s",
+        embedder="e",
+        vector_store="v",
+        segment_store="seg",
+    )
+    fallback = LongTermMemoryConfPartial(
+        backend="declarative",
+        session_id="s",
+        embedder="e",
+        reranker="r",
+        vector_graph_store="g",
+    )
+    merged = primary.merge(fallback)
+    assert isinstance(merged, EventLongTermMemoryConf)
+
+
+def test_existing_sample_yaml_loads_as_declarative_via_full_configuration():
+    """Existing sample YAMLs (no `backend` field) load through Configuration."""
+    config_path = find_config_file("episodic_memory_config.cpu.sample")
+    conf = Configuration.load_yml_file(str(config_path))
+    assert conf.episodic_memory.long_term_memory is not None
+    # Configuration.episodic_memory is the partial; backend stays None on load.
+    assert conf.episodic_memory.long_term_memory.backend is None
+    # ...and merging the LTM partial alone resolves to declarative.
+    ltm_merged = LongTermMemoryConfPartial(session_id="test_session").merge(
+        conf.episodic_memory.long_term_memory
+    )
+    assert isinstance(ltm_merged, DeclarativeLongTermMemoryConf)
+    assert ltm_merged.embedder == "openai_embedder"
+    assert ltm_merged.vector_graph_store == "my_storage_id"
