@@ -11,6 +11,7 @@ Verifies that add_episodes / search_scored / delete_episodes /
 drop_session_partition all dispatch correctly through the event backend.
 """
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import override
 from unittest.mock import create_autospec
@@ -79,6 +80,10 @@ class FakeEpisodeStorage(EpisodeStorage):
     @override
     async def get_episode(self, episode_id: EpisodeIdT) -> Episode | None:
         return self._episodes.get(episode_id)
+
+    @override
+    async def get_episodes(self, episode_ids: Iterable[EpisodeIdT]) -> list[Episode]:
+        return [self._episodes[uid] for uid in episode_ids if uid in self._episodes]
 
     @override
     async def get_episode_messages(self, **kwargs) -> list[Episode]:

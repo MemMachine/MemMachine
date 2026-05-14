@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import cast
 
@@ -77,6 +78,12 @@ class CountCachingEpisodeStorage(EpisodeStorage):
         episode_id: EpisodeIdT,
     ) -> Episode | None:
         return await self._wrapped.get_episode(episode_id)
+
+    async def get_episodes(
+        self,
+        episode_ids: Iterable[EpisodeIdT],
+    ) -> list[Episode]:
+        return await self._wrapped.get_episodes(episode_ids)
 
     async def get_episode_messages(
         self,

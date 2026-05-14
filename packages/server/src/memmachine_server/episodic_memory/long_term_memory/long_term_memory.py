@@ -351,11 +351,8 @@ class LongTermMemory:
         if not ordered_uids:
             return []
 
-        episodes_by_uid: dict[str, Episode] = {}
-        for uid in ordered_uids:
-            episode = await self._episode_storage.get_episode(uid)
-            if episode is not None:
-                episodes_by_uid[uid] = episode
+        episodes = await self._episode_storage.get_episodes(ordered_uids)
+        episodes_by_uid: dict[str, Episode] = {ep.uid: ep for ep in episodes}
 
         return [
             (scores_by_uid[uid], episodes_by_uid[uid])
