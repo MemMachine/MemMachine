@@ -13,11 +13,15 @@ A Python client library for the MemMachine memory system.
 ## Installation
 
 ```bash
-# Install from source (for development)
-pip install -e .
+pip install memmachine-client
+```
 
-# Or install dependencies
-pip install requests urllib3
+### Development installation
+
+If you are working on the package locally inside the MemMachine monorepo, install it from source instead:
+
+```bash
+pip install -e packages/client
 ```
 
 ## Quick Start
@@ -104,14 +108,14 @@ memory = client.memory(
 memory.add("I like pizza", metadata={"type": "preference", "category": "food"})
 memory.add("I work as a software engineer", metadata={"type": "fact", "category": "work"})
 
-# Search memories
+# Search memories — Memory.search() returns a SearchResult Pydantic model
 results = memory.search("What do I like to eat?")
-print(f"Episodic memory: {results.get('episodic_memory', [])}")
-print(f"Profile memory: {results.get('profile_memory', [])}")
+print(f"Episodic memory: {results.content.episodic_memory}")
+print(f"Semantic memory: {results.content.semantic_memory}")
 
-# Search with filters
-work_results = memory.search("Tell me about work", filter_dict={"category": "work"})
-print(f"Work results: {work_results}")
+# Search with filters (user metadata fields require the `m.` / `metadata.` prefix)
+work_results = memory.search("Tell me about work", filter_dict={"m.category": "work"})
+print(f"Work results: {work_results.model_dump()}")
 ```
 
 ### Multiple Users
