@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MemMachine API",
-    "version": "0.3.7",
+    "version": "0.3.9",
     "description": "Architectural Memory Systems for AI Agents. Specialized in episodic and semantic memory management with strict namespace isolation."
   },
   "servers": [
@@ -4240,6 +4240,22 @@
       },
       "LongTermMemoryConfigResponse": {
         "properties": {
+          "backend": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "declarative",
+                  "event"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend",
+            "description": "Long-term memory backend. None means the writer predates the discriminator and is treated as 'declarative'."
+          },
           "embedder": {
             "anyOf": [
               {
@@ -4275,6 +4291,45 @@
             ],
             "title": "Vector Graph Store",
             "description": "\n    ID of the vector graph store (database) for storing long-term memories."
+          },
+          "vector_store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Store",
+            "description": "VectorStore resource id (event backend only)"
+          },
+          "segment_store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Store",
+            "description": "SQL engine resource id backing the segment store (event backend only)"
+          },
+          "properties_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties Schema",
+            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
           },
           "enabled": {
             "type": "boolean",
@@ -4403,6 +4458,22 @@
       },
       "ProjectConfig": {
         "properties": {
+          "backend": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "declarative",
+                  "event"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend",
+            "description": "Long-term memory backend. New projects should set 'event'."
+          },
           "reranker": {
             "type": "string",
             "title": "Reranker",
@@ -4422,11 +4493,37 @@
               "bge-base-en",
               "my-embedder"
             ]
+          },
+          "vector_graph_store": {
+            "type": "string",
+            "title": "Vector Graph Store",
+            "description": "VectorGraphStore resource id (declarative backend only)",
+            "default": ""
+          },
+          "vector_store": {
+            "type": "string",
+            "title": "Vector Store",
+            "description": "VectorStore resource id (event backend only)",
+            "default": ""
+          },
+          "segment_store": {
+            "type": "string",
+            "title": "Segment Store",
+            "description": "SQL engine resource id backing the segment store (event backend only)",
+            "default": ""
+          },
+          "properties_schema": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Properties Schema",
+            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
           }
         },
         "type": "object",
         "title": "ProjectConfig",
-        "description": "Project configuration model.\n\nThis section defines which reranker and embedder models should be used for\nthe project.  If any field is left empty (\"\"), the system automatically falls\nback to the globally configured defaults in the server configuration file."
+        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses VectorStore +\n  SegmentStore. Requires `vector_store` and `segment_store`.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: server falls back to its parse-time default\n  (declarative, for backwards compatibility with pre-discriminator clients)."
       },
       "ProjectResponse": {
         "properties": {
@@ -5261,6 +5358,22 @@
       },
       "UpdateLongTermMemoryConfigSpec": {
         "properties": {
+          "backend": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "declarative",
+                  "event"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend",
+            "description": "Long-term memory backend. Omit/null to keep the existing backend; set 'declarative' or 'event' to switch."
+          },
           "embedder": {
             "anyOf": [
               {
@@ -5296,6 +5409,45 @@
             ],
             "title": "Vector Graph Store",
             "description": "\n    The ID of the vector graph store (database) for storing long-term memories.\n    Must reference a database configured in the resources section."
+          },
+          "vector_store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Store",
+            "description": "VectorStore resource id (event backend only)"
+          },
+          "segment_store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Store",
+            "description": "SQL engine resource id backing the segment store (event backend only)"
+          },
+          "properties_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties Schema",
+            "description": "User-defined filterable properties (event backend only)"
           },
           "enabled": {
             "anyOf": [
@@ -5315,6 +5467,22 @@
       },
       "UpdateLongTermMemorySpec": {
         "properties": {
+          "backend": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "declarative",
+                  "event"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backend",
+            "description": "Long-term memory backend. Omit/null to keep the existing backend; set 'declarative' or 'event' to switch."
+          },
           "embedder": {
             "anyOf": [
               {
@@ -5350,6 +5518,45 @@
             ],
             "title": "Vector Graph Store",
             "description": "\n    The ID of the vector graph store (database) for storing long-term memories.\n    Must reference a database configured in the resources section."
+          },
+          "vector_store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Store",
+            "description": "VectorStore resource id (event backend only)"
+          },
+          "segment_store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Store",
+            "description": "SQL engine resource id backing the segment store (event backend only)"
+          },
+          "properties_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Properties Schema",
+            "description": "User-defined filterable properties (event backend only)"
           }
         },
         "type": "object",
