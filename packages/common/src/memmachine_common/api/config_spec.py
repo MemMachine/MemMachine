@@ -177,6 +177,18 @@ class SemanticMemoryConfigResponse(BaseModel):
         str | None,
         Field(default=None, description=SpecDoc.SEMANTIC_DATABASE),
     ]
+    storage_backend: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_STORAGE_BACKEND),
+    ]
+    feature_store: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_FEATURE_STORE),
+    ]
+    vector_collection: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_VECTOR_COLLECTION),
+    ]
     llm_model: Annotated[
         str | None,
         Field(default=None, description=SpecDoc.SEMANTIC_LLM_MODEL),
@@ -522,6 +534,22 @@ class UpdateSemanticMemorySpec(BaseModel):
     database: Annotated[
         str | None,
         Field(default=None, description=SpecDoc.SEMANTIC_DATABASE),
+    ]
+    storage_backend: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_STORAGE_BACKEND),
+    ]
+    feature_store: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_FEATURE_STORE),
+    ]
+    vector_collection: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.SEMANTIC_VECTOR_COLLECTION),
+    ]
+    vector_dimensions: Annotated[
+        int | None,
+        Field(default=None, gt=0, description=SpecDoc.SEMANTIC_VECTOR_DIMENSIONS),
     ]
     llm_model: Annotated[
         str | None,

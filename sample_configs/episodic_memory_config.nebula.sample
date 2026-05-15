@@ -34,6 +34,17 @@ semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
   database: profile_storage
+  config_database: profile_storage
+  #
+  # Alternative backend: vector-backed semantic storage (Relational DB + VectorStore).
+  # This avoids relying on database-provider-specific vector support for semantic
+  # embeddings. `feature_store` keeps semantic feature metadata and
+  # `vector_collection` stores/searches feature embeddings.
+  # storage_backend: vector_store
+  # feature_store: profile_storage
+  # vector_collection: semantic_vector_store
+  # vector_dimensions: 1536
+  # vector_similarity_metric: cosine
 
 session_manager:
   database: profile_storage
@@ -111,6 +122,17 @@ resources:
     # access, scaling). Run a local instance with:
     #   docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
     event_vector_store:
+      provider: qdrant
+      config:
+        host: localhost
+        port: 6333
+        grpc_port: 6334
+        prefer_grpc: false
+        https: false
+        # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
+    # VectorStore for vector-backed semantic memory.
+    # Wire it via `semantic_memory.vector_collection`.
+    semantic_vector_store:
       provider: qdrant
       config:
         host: localhost
