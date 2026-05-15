@@ -729,7 +729,10 @@ class RouterDoc:
     System returns the top K relevant memories matching the natural language query.
     The result is sorted by timestamp to help with context.
 
-    The filter field allows for filtering based on metadata key-value pairs.
+    The filter field accepts the structured filter expression language.
+    User-defined metadata keys must be referenced with the `m.` or `metadata.` prefix
+    (for example, `m.source = "chat_v3"`). Unknown or unsupported fields are rejected
+    instead of being ignored.
     The set_metadata field scopes semantic memories to matching semantic sets.
     The types field allows specifying which memory types to include in the search.
     """
@@ -740,7 +743,10 @@ class RouterDoc:
     System returns a paginated list of memories stored in the project.
     The page_size and page_num fields control pagination.
 
-    The filter field allows for filtering based on metadata key-value pairs.
+    The filter field accepts the structured filter expression language.
+    User-defined metadata keys must be referenced with the `m.` or `metadata.` prefix
+    (for example, `m.source = "chat_v3"`). Unknown or unsupported fields are rejected
+    instead of being ignored.
     The set_metadata field scopes semantic memories to matching semantic sets.
     The type field allows specifying which memory type to list.
     """
