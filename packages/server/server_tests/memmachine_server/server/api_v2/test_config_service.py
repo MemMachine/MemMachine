@@ -211,6 +211,8 @@ def memory_resource_manager():
 
     semantic_memory = MagicMock()
     semantic_memory.database = "old-db"
+    semantic_memory.feature_store = "old-feature-db"
+    semantic_memory.vector_collection = "old-vector-store"
     semantic_memory.llm_model = "old-llm"
     semantic_memory.embedding_model = "old-embedder"
     semantic_memory.ingestion_trigger_messages = 5
@@ -298,6 +300,8 @@ def test_update_semantic_memory_fields(memory_resource_manager):
     spec = UpdateSemanticMemorySpec.model_validate(
         {
             "database": "new-db",
+            "feature_store": "new-feature-db",
+            "vector_collection": "new-vector-store",
             "llm_model": "new-llm",
             "embedding_model": "new-embedder",
         }
@@ -307,9 +311,13 @@ def test_update_semantic_memory_fields(memory_resource_manager):
 
     sm = memory_resource_manager.config.semantic_memory
     assert sm.database == "new-db"
+    assert sm.feature_store == "new-feature-db"
+    assert sm.vector_collection == "new-vector-store"
     assert sm.llm_model == "new-llm"
     assert sm.embedding_model == "new-embedder"
     assert "database=new-db" in message
+    assert "feature_store=new-feature-db" in message
+    assert "vector_collection=new-vector-store" in message
     memory_resource_manager.save_config.assert_called_once()
 
 

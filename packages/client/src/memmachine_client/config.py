@@ -457,6 +457,10 @@ class Config:
         self,
         enabled: bool | None = None,
         database: str | None = None,
+        storage_backend: str | None = None,
+        feature_store: str | None = None,
+        vector_collection: str | None = None,
+        vector_dimensions: int | None = None,
         llm_model: str | None = None,
         embedding_model: str | None = None,
         ingestion_trigger_messages: int | None = None,
@@ -469,6 +473,10 @@ class Config:
         Args:
             enabled: Whether semantic memory is enabled
             database: Name of the database to use for semantic memory
+            storage_backend: Semantic memory storage backend
+            feature_store: Relational database resource id for vector-backed semantic storage
+            vector_collection: VectorStore resource id for semantic memory embeddings
+            vector_dimensions: Vector dimensions for semantic memory embeddings
             llm_model: Name of the language model to use for feature extraction
             embedding_model: Name of the embedder to use for semantic similarity
             ingestion_trigger_messages: Number of messages before triggering ingestion
@@ -487,6 +495,10 @@ class Config:
         spec = UpdateSemanticMemorySpec(
             enabled=enabled,
             database=database,
+            storage_backend=storage_backend,
+            feature_store=feature_store,
+            vector_collection=vector_collection,
+            vector_dimensions=vector_dimensions,
             llm_model=llm_model,
             embedding_model=embedding_model,
             ingestion_trigger_messages=ingestion_trigger_messages,

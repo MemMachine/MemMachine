@@ -24,7 +24,10 @@ from memmachine_common.api.config_spec import (
 )
 from pydantic import SecretStr
 
-from memmachine_server.common.configuration import SemanticMemoryConf
+from memmachine_server.common.configuration import (
+    SemanticMemoryConf,
+    SemanticMemoryStorageBackend,
+)
 from memmachine_server.common.configuration.embedder_conf import (
     AmazonBedrockEmbedderConf,
     EmbeddersConf,
@@ -331,6 +334,7 @@ def _apply_semantic_memory_updates(
     if spec.database is not None:
         sm.database = spec.database
         changes.append(f"semantic_memory.database={spec.database}")
+    changes.extend(_apply_semantic_vector_updates(sm, spec))
     if spec.llm_model is not None:
         sm.llm_model = spec.llm_model
         changes.append(f"semantic_memory.llm_model={spec.llm_model}")
@@ -348,6 +352,27 @@ def _apply_semantic_memory_updates(
             f"semantic_memory.ingestion_trigger_age={spec.ingestion_trigger_age_seconds}s"
         )
 
+    return changes
+
+
+def _apply_semantic_vector_updates(
+    sm: SemanticMemoryConf,
+    spec: UpdateSemanticMemorySpec,
+) -> list[str]:
+    """Apply vector-backed semantic memory updates."""
+    changes: list[str] = []
+    if spec.storage_backend is not None:
+        sm.storage_backend = SemanticMemoryStorageBackend(spec.storage_backend)
+        changes.append(f"semantic_memory.storage_backend={spec.storage_backend}")
+    if spec.feature_store is not None:
+        sm.feature_store = spec.feature_store
+        changes.append(f"semantic_memory.feature_store={spec.feature_store}")
+    if spec.vector_collection is not None:
+        sm.vector_collection = spec.vector_collection
+        changes.append(f"semantic_memory.vector_collection={spec.vector_collection}")
+    if spec.vector_dimensions is not None:
+        sm.vector_dimensions = spec.vector_dimensions
+        changes.append(f"semantic_memory.vector_dimensions={spec.vector_dimensions}")
     return changes
 
 
@@ -650,6 +675,9 @@ class ConfigService:
         return SemanticMemoryConfigResponse(
             enabled=sm.enabled if sm.enabled is not None else False,
             database=sm.database,
+            storage_backend=sm.storage_backend,
+            feature_store=sm.feature_store,
+            vector_collection=sm.vector_collection,
             llm_model=sm.llm_model,
             embedding_model=sm.embedding_model,
         )
