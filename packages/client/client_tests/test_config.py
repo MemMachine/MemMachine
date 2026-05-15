@@ -434,6 +434,8 @@ class TestConfig:
             {
                 "enabled": True,
                 "database": "postgres-db",
+                "feature_store": "semantic-feature-db",
+                "vector_collection": "semantic-vector-store",
                 "llm_model": "gpt-4",
                 "embedding_model": "openai-embedder",
             }
@@ -442,6 +444,8 @@ class TestConfig:
         assert isinstance(result, SemanticMemoryConfigResponse)
         assert result.enabled is True
         assert result.database == "postgres-db"
+        assert result.feature_store == "semantic-feature-db"
+        assert result.vector_collection == "semantic-vector-store"
         assert result.llm_model == "gpt-4"
         assert result.embedding_model == "openai-embedder"
         mock_client.request.assert_called_once_with(
@@ -462,6 +466,8 @@ class TestConfig:
         result = config.update_semantic_memory_config(
             enabled=True,
             database="postgres-db",
+            feature_store="semantic-feature-db",
+            vector_collection="semantic-vector-store",
             llm_model="gpt-4",
             embedding_model="openai-embedder",
             ingestion_trigger_messages=10,
@@ -477,6 +483,8 @@ class TestConfig:
         body = call_args[1]["json"]
         assert body["enabled"] is True
         assert body["database"] == "postgres-db"
+        assert body["feature_store"] == "semantic-feature-db"
+        assert body["vector_collection"] == "semantic-vector-store"
         assert body["llm_model"] == "gpt-4"
         assert body["embedding_model"] == "openai-embedder"
         assert body["ingestion_trigger_messages"] == 10

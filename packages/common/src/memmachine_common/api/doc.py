@@ -445,7 +445,23 @@ class SpecDoc:
 
     SEMANTIC_DATABASE = """
     The ID of the database to use for semantic memory storage.
-    Must reference a database configured in the resources section."""
+    Must reference a database configured in the resources section. Used by
+    legacy semantic storage backends."""
+
+    SEMANTIC_STORAGE_BACKEND = """
+    The storage backend used for semantic memory."""
+
+    SEMANTIC_FEATURE_STORE = """
+    The ID of the relational database resource used to store semantic feature
+    data when the semantic storage backend is `vector_store`."""
+
+    SEMANTIC_VECTOR_COLLECTION = """
+    The ID of the vector store resource used to store semantic feature
+    embeddings when the semantic storage backend is `vector_store`."""
+
+    SEMANTIC_VECTOR_DIMENSIONS = """
+    The vector dimensions used for semantic memory embeddings. If omitted for
+    vector store storage, the configured embedder dimensions are used."""
 
     SEMANTIC_LLM_MODEL = """
     The ID of the language model to use for semantic memory extraction.

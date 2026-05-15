@@ -3,6 +3,11 @@ from typing import cast
 
 import pytest
 from dateutil.tz import tzoffset
+from memmachine_common.api.config_spec import (
+    SemanticMemoryConfigResponse,
+    UpdateSemanticMemorySpec,
+)
+from memmachine_common.api.doc import SpecDoc
 from memmachine_common.api.spec import (
     DEFAULT_ORG_AND_PROJECT_ID,
     AddMemoriesResponse,
@@ -84,6 +89,25 @@ def test_project_config_defaults():
     config = ProjectConfig.model_validate({})
     assert config.reranker == ""
     assert config.embedder == ""
+
+
+def test_semantic_storage_config_descriptions_come_from_specdoc():
+    expected = {
+        "storage_backend": SpecDoc.SEMANTIC_STORAGE_BACKEND,
+        "feature_store": SpecDoc.SEMANTIC_FEATURE_STORE,
+        "vector_collection": SpecDoc.SEMANTIC_VECTOR_COLLECTION,
+    }
+    response_schema = SemanticMemoryConfigResponse.model_json_schema()
+    update_schema = UpdateSemanticMemorySpec.model_json_schema()
+
+    for field_name, description in expected.items():
+        assert response_schema["properties"][field_name]["description"] == description
+        assert update_schema["properties"][field_name]["description"] == description
+
+    assert (
+        update_schema["properties"]["vector_dimensions"]["description"]
+        == SpecDoc.SEMANTIC_VECTOR_DIMENSIONS
+    )
 
 
 def test_create_project_spec_with_defaults():
