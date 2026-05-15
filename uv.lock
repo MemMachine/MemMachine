@@ -36,8 +36,8 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = "==0.15.12" },
     { name = "testcontainers", extras = ["neo4j", "postgres", "qdrant"], specifier = ">=4.14.2" },
-    { name = "ty", specifier = "~=0.0.35" },
     { name = "tomli", specifier = ">=2.0.0" },
+    { name = "ty", specifier = "~=0.0.35" },
 ]
 
 [[package]]
@@ -1900,7 +1900,7 @@ requires-dist = [
     { name = "sqlite-vec", specifier = ">=0.1.9" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "usearch", specifier = ">=2.25.1" },
-    { name = "uvicorn", specifier = ">=0.46.0" },
+    { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 provides-extras = ["gpu", "hnswlib", "nebula", "qdrant"]
 
