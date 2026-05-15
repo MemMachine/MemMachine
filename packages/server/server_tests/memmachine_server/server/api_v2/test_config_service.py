@@ -382,3 +382,139 @@ def test_update_stm_creates_partial_when_none(memory_resource_manager):
     stm = memory_resource_manager.config.episodic_memory.short_term_memory
     assert stm is not None
     assert stm.llm_model == "brand-new-model"
+
+
+def test_backend_flip_declarative_to_event_clears_declarative_fields(
+    memory_resource_manager,
+):
+    """Flipping backend declarative → event must wipe `vector_graph_store`
+    so the new event-backed wire-up doesn't carry stale declarative state."""
+    memory_resource_manager.config.episodic_memory.long_term_memory = (
+        LongTermMemoryConfPartial(
+            backend="declarative",
+            embedder="emb",
+            reranker="rrk",
+            vector_graph_store="legacy-neo4j",
+        )
+    )
+
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {
+            "long_term_memory": {
+                "backend": "event",
+                "vector_store": "qdrant_vs",
+                "segment_store": "sqlite_db",
+            }
+        }
+    )
+    service = ConfigService(memory_resource_manager)
+    message = service.update_memory_config(spec, None)
+
+    ltm = memory_resource_manager.config.episodic_memory.long_term_memory
+    assert ltm.backend == "event"
+    assert ltm.vector_graph_store is None, "stale declarative field not cleared"
+    assert ltm.vector_store == "qdrant_vs"
+    assert ltm.segment_store == "sqlite_db"
+    assert "vector_graph_store=null" in message
+    assert "backend=event" in message
+
+
+def test_backend_flip_event_to_declarative_clears_event_fields(
+    memory_resource_manager,
+):
+    """Flipping backend event → declarative must wipe event-only state."""
+    memory_resource_manager.config.episodic_memory.long_term_memory = (
+        LongTermMemoryConfPartial(
+            backend="event",
+            embedder="emb",
+            vector_store="qdrant_vs",
+            segment_store="sqlite_db",
+            properties_schema={"customer_tier": "str"},
+        )
+    )
+
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {
+            "long_term_memory": {
+                "backend": "declarative",
+                "vector_graph_store": "neo4j",
+                "reranker": "rrk",
+            }
+        }
+    )
+    service = ConfigService(memory_resource_manager)
+    message = service.update_memory_config(spec, None)
+
+    ltm = memory_resource_manager.config.episodic_memory.long_term_memory
+    assert ltm.backend == "declarative"
+    assert ltm.vector_store is None, "stale event field not cleared"
+    assert ltm.segment_store is None, "stale event field not cleared"
+    assert ltm.properties_schema == {}, "stale event field not cleared"
+    assert ltm.vector_graph_store == "neo4j"
+    assert "vector_store=null" in message
+    assert "segment_store=null" in message
+    assert "properties_schema={}" in message
+
+
+def test_backend_no_flip_preserves_cross_backend_fields(memory_resource_manager):
+    """Re-asserting the same backend must NOT wipe anything."""
+    memory_resource_manager.config.episodic_memory.long_term_memory = (
+        LongTermMemoryConfPartial(
+            backend="event",
+            vector_store="qdrant_vs",
+            segment_store="sqlite_db",
+        )
+    )
+
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {"long_term_memory": {"backend": "event", "embedder": "new-emb"}}
+    )
+    service = ConfigService(memory_resource_manager)
+    service.update_memory_config(spec, None)
+
+    ltm = memory_resource_manager.config.episodic_memory.long_term_memory
+    assert ltm.backend == "event"
+    assert ltm.vector_store == "qdrant_vs"
+    assert ltm.segment_store == "sqlite_db"
+    assert ltm.embedder == "new-emb"
+
+
+def test_properties_schema_unknown_type_name_rejected_at_api():
+    """An unknown type name in properties_schema must be rejected at the
+    spec layer with a 422-style ValidationError, not deferred to service-
+    locator wire-up (which would surface as a 500)."""
+    from memmachine_common.api.config_spec import UpdateLongTermMemorySpec
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="unknown type names"):
+        UpdateLongTermMemorySpec.model_validate(
+            {"properties_schema": {"foo": "date"}}  # "date" not in allowed set
+        )
+
+    with pytest.raises(ValidationError, match="unknown type names"):
+        UpdateLongTermMemorySpec.model_validate(
+            {"properties_schema": {"foo": "integer"}}  # should be "int"
+        )
+
+    # Valid types pass.
+    spec = UpdateLongTermMemorySpec.model_validate(
+        {
+            "properties_schema": {
+                "a": "bool",
+                "b": "int",
+                "c": "float",
+                "d": "str",
+                "e": "datetime",
+            }
+        }
+    )
+    assert spec.properties_schema is not None
+
+
+def test_project_config_rejects_unknown_property_type_name():
+    """Same validation must apply to CreateProjectSpec / ProjectConfig."""
+    from memmachine_common.api.spec import ProjectConfig
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="unknown type names"):
+        ProjectConfig.model_validate({"properties_schema": {"foo": "bytes"}})

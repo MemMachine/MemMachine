@@ -284,7 +284,7 @@ class EpisodicMemory:
         if self._short_term_memory:
             tasks.append(self._short_term_memory.clear_memory())
         if self._long_term_memory:
-            tasks.append(self._long_term_memory.delete_matching_episodes())
+            tasks.append(self._long_term_memory.drop_session_partition())
         await asyncio.gather(*tasks)
 
     class QueryResponse(BaseModel):

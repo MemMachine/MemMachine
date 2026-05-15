@@ -205,7 +205,7 @@ class MemMachineTools:
             group_id: Group ID (overrides default, stored in metadata)
             session_id: Session ID (overrides default, stored in metadata)
             limit: Maximum number of results to return (default: 5)
-            filter_dict: Additional filters for the search
+            filter_dict: Additional metadata filters for the search. User metadata keys must be prefixed with `m.` / `metadata.`. Unknown or misspelled fields return a 400 error.
 
         Returns:
             Dictionary containing search results and relevant memories

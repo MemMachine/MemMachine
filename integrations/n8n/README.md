@@ -106,7 +106,7 @@ The Main Node provides two actions: Store a message and Enrich with context.
   | types           | multiOptions | ['episodic', 'semantic'] | **Required.** Memory types to use.                                         |
   | query           | string       | -                        | **Required.** Natural language query used to search for relevant memories. |
   | limit           | number       | 50                       | Maximum number of results to return.                                       |
-  | filter          | string       | -                        | Filter expression to refine memory search results.                         |
+  | filter          | string       | -                        | Filter expression to refine memory search results. Prefix user metadata fields with `m.` / `metadata.` (for example `m.user_id = '123'`). String literals must be single-quoted. Unknown or misspelled user metadata fields now return a 400 error. |
   | expandContext   | number       | 0                        | Number of extra episodes to include for context.                           |
   | scoreThreshold  | number       | -                        | Minimum relevance score required to include a memory.                      |
   | sessionId       | string       | -                        | **Required.** Unique session identifier.                                   |

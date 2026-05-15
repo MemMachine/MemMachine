@@ -1,6 +1,7 @@
 """Abstract storage interface for episodic history."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 
 from pydantic import AwareDatetime
 
@@ -36,6 +37,18 @@ class EpisodeStorage(ABC):
         self,
         episode_id: EpisodeIdT,
     ) -> Episode | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_episodes(
+        self,
+        episode_ids: Iterable[EpisodeIdT],
+    ) -> list[Episode]:
+        """Batch fetch episodes by UID.
+
+        Order of results is not guaranteed; missing UIDs are simply absent
+        from the returned list.
+        """
         raise NotImplementedError
 
     @abstractmethod
