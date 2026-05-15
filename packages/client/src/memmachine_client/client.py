@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict
+from typing import IO, TYPE_CHECKING, Any, Literal, NoReturn, TypedDict
 
 import requests
 from memmachine_common.api.spec import (
@@ -17,6 +17,7 @@ from memmachine_common.api.spec import (
 from requests.adapters import HTTPAdapter
 from requests.auth import AuthBase
 from requests.cookies import RequestsCookieJar
+from requests.models import PreparedRequest, Response
 from typing_extensions import Self, Unpack
 from urllib3.util.retry import Retry
 
@@ -140,15 +141,25 @@ class MemMachineClient:
         """Extra options for the HTTP request."""
 
         params: Mapping[str, str] | Sequence[tuple[str, str]] | None
-        data: object
-        json: object
-        headers: Mapping[str, str]
-        cookies: RequestsCookieJar | Mapping[str, str]
-        files: object
-        auth: tuple[str, str] | AuthBase
+        data: Iterable[bytes] | str | bytes | IO[Any] | Mapping[Any, Any] | None
+        json: Any
+        headers: Mapping[str, str | bytes | None] | None
+        cookies: RequestsCookieJar | MutableMapping[str, str] | None
+        files: Mapping[str, Any] | Iterable[tuple[str, Any]] | None
+        auth: (
+            tuple[str, str]
+            | AuthBase
+            | Callable[[PreparedRequest], PreparedRequest]
+            | None
+        )
         allow_redirects: bool
-        proxies: Mapping[str, str]
-        hooks: Mapping[str, object]
+        proxies: MutableMapping[str, str] | None
+        hooks: (
+            Mapping[
+                str, Iterable[Callable[[Response], Any]] | Callable[[Response], Any]
+            ]
+            | None
+        )
         stream: bool | None
         verify: bool | str | None
         cert: str | tuple[str, str] | None
