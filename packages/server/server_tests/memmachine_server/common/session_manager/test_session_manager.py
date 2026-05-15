@@ -6,8 +6,8 @@ from pydantic import JsonValue
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
     EpisodicMemoryConf,
-    LongTermMemoryConf,
     ShortTermMemoryConf,
 )
 from memmachine_server.common.errors import (
@@ -61,7 +61,7 @@ def episodic_memory_conf():
     """Fixture for a dummy EpisodicMemoryConf object."""
     return EpisodicMemoryConf(
         session_key="test_session",
-        long_term_memory=LongTermMemoryConf(
+        long_term_memory=DeclarativeLongTermMemoryConf(
             session_id="test_session",
             vector_graph_store="test_store",
             embedder="test_embedder",

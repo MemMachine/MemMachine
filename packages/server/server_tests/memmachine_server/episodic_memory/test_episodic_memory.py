@@ -186,7 +186,7 @@ async def test_delete_session_episodes(
     """Test deleting all episodes in a session."""
     await episodic_memory.delete_session_episodes()
     mock_short_term_memory.clear_memory.assert_awaited_once()
-    mock_long_term_memory.delete_matching_episodes.assert_awaited_once()
+    mock_long_term_memory.drop_session_partition.assert_awaited_once()
 
 
 @pytest.mark.asyncio

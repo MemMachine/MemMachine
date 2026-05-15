@@ -7,9 +7,26 @@ episode_store:
 
 episodic_memory:
   long_term_memory:
+    # Default backend: a VectorGraphStore-backed declarative memory.
+    # backend: declarative                  # explicit; same as omitting the field
     embedder: openai_embedder
     reranker: my_reranker_id
     vector_graph_store: my_storage_id
+    #
+    # Alternative backend: event memory (VectorStore + SegmentStore).
+    # See `event_vector_store` and `profile_storage` under resources.databases below.
+    # backend: event
+    # embedder: openai_embedder
+    # reranker: my_reranker_id              # optional; omit to use embedding scores
+    # vector_store: event_vector_store      # references resources.databases (a sqlite_vector_store, qdrant, etc.)
+    # segment_store: profile_storage        # references a relational DB; segment store is created from it
+    # properties_schema:                    # optional — user-defined filterable properties
+    #   source_role: str
+    #   target_id: str
+    # segmenter:                            # optional — defaults to passthrough
+    #   type: passthrough                   # or: text (with max_chunk_length)
+    # deriver:                              # optional — defaults to whole-text deriver
+    #   type: whole_text                    # or: sentence_text
   short_term_memory:
     llm_model: openai_model
     message_capacity: 500
@@ -62,6 +79,33 @@ resources:
       provider: sqlite
       config:
         path: sqlite_test.db
+    # VectorStore for the event-backed long-term memory.
+    # Wire it via `episodic_memory.long_term_memory.vector_store`.
+    # Qdrant is the recommended default for server deployments (concurrent
+    # access, scaling). Run a local instance with:
+    #   docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
+    event_vector_store:
+      provider: qdrant
+      config:
+        host: localhost
+        port: 6333
+        grpc_port: 6334
+        prefer_grpc: false
+        https: false
+        # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
+    #
+    # Alternative: a local file-backed SQLite vector store. Single-writer; OK
+    # for embedded/dev use, not recommended for multi-process server deploys.
+    # event_vector_store:
+    #   provider: sqlite_vector_store
+    #   config:
+    #     path: event_vectors.db
+    #     vector_search_engine: usearch    # or: hnswlib
+    #     # Persist ANN indexes to disk. If `index_directory` is omitted,
+    #     # indexes are kept in-memory only and rebuilt from the SQLite payload
+    #     # table on every restart — fine for tests, not for production.
+    #     index_directory: event_vector_indexes
+    #     save_threshold: 1000             # ops before auto-saving
   embedders:
     openai_embedder:
       provider: openai

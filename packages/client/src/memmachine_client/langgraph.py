@@ -8,6 +8,8 @@ to enable AI agents with persistent memory capabilities.
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from memmachine_common.api import EpisodeType
+
 from .client import MemMachineClient
 
 if TYPE_CHECKING:
@@ -141,6 +143,7 @@ class MemMachineTools:
         group_id: str | None = None,
         session_id: str | None = None,
         metadata: dict[str, str] | None = None,
+        episode_type: EpisodeType | str | None = None,
     ) -> dict[str, Any]:
         """
         Add a memory to MemMachine.
@@ -159,6 +162,7 @@ class MemMachineTools:
             group_id: Group ID (overrides default, stored in metadata)
             session_id: Session ID (overrides default, stored in metadata)
             metadata: Additional metadata for the episode
+            episode_type: Optional episode type enum or string value
 
         Returns:
             Dictionary with success status and message
@@ -168,10 +172,16 @@ class MemMachineTools:
             memory = self.get_memory(
                 org_id, project_id, user_id, agent_id, group_id, session_id
             )
+            normalized_episode_type = (
+                EpisodeType(episode_type)
+                if isinstance(episode_type, str)
+                else episode_type
+            )
             results = memory.add(
                 content=content,
                 role=role,
                 metadata=metadata or {},
+                episode_type=normalized_episode_type,
             )
             if results:
                 return {
@@ -203,6 +213,7 @@ class MemMachineTools:
         limit: int = 20,
         score_threshold: float | None = None,
         filter_dict: dict[str, str] | None = None,
+        filter: str | None = None,  # noqa: A002 — matches API field name in `SearchMemoriesSpec.filter`
     ) -> dict[str, Any]:
         """
         Search for memories in MemMachine.
@@ -223,7 +234,8 @@ class MemMachineTools:
             session_id: Session ID (overrides default, stored in metadata)
             limit: Maximum number of results to return (default: 20)
             score_threshold: Minimum score to include in results
-            filter_dict: Additional filters for the search
+            filter_dict: Additional metadata filters for the search. User metadata keys must be prefixed with `m.` / `metadata.`. Unknown or misspelled fields return a 400 error.
+            filter: Optional raw filter string passed through to the Python client
 
         Returns:
             Dictionary containing search results and relevant memories
@@ -238,6 +250,7 @@ class MemMachineTools:
                 limit=limit,
                 score_threshold=score_threshold,
                 filter_dict=filter_dict,
+                filter=filter,
             )
 
             # Format results for easier consumption
@@ -356,7 +369,10 @@ class MemMachineTools:
 # Convenience functions for LangGraph tool creation
 def create_add_memory_tool(
     tools: MemMachineTools,
-) -> Callable[[str, str | None, dict[str, Any] | None], dict[str, Any]]:
+) -> Callable[
+    [str, str | None, dict[str, Any] | None, EpisodeType | str | None],
+    dict[str, Any],
+]:
     """
     Create an add_memory tool function for LangGraph.
 
@@ -372,6 +388,7 @@ def create_add_memory_tool(
         content: str,
         user_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        episode_type: EpisodeType | str | None = None,
     ) -> dict[str, Any]:
         """
         Tool to add a memory to MemMachine.
@@ -380,6 +397,7 @@ def create_add_memory_tool(
             content: The content to store in memory
             user_id: Optional user ID override
             metadata: Optional metadata for the memory
+            episode_type: Optional episode type enum or string value
 
         Returns:
             Result dictionary with status and message
@@ -389,6 +407,7 @@ def create_add_memory_tool(
             content=content,
             user_id=user_id,
             metadata=metadata,
+            episode_type=episode_type,
         )
 
     return add_memory_tool
