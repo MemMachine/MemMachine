@@ -36,8 +36,8 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = "==0.15.12" },
     { name = "testcontainers", extras = ["neo4j", "postgres", "qdrant"], specifier = ">=4.14.2" },
-    { name = "ty", specifier = "~=0.0.35" },
     { name = "tomli", specifier = ">=2.0.0" },
+    { name = "ty", specifier = "~=0.0.35" },
 ]
 
 [[package]]
@@ -1893,7 +1893,7 @@ requires-dist = [
     { name = "hnswlib", marker = "extra == 'hnswlib'", specifier = ">=0.8.0" },
     { name = "instructor", extras = ["bedrock"], specifier = ">=1.12.0" },
     { name = "json-repair", specifier = ">=0.54" },
-    { name = "langchain-aws", specifier = ">=1.4.6" },
+    { name = "langchain-aws", specifier = ">=0.2.33" },
     { name = "langchain-text-splitters", specifier = ">=1.1.1" },
     { name = "memmachine-common", editable = "packages/common" },
     { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1" },
