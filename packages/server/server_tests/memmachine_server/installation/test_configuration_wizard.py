@@ -34,10 +34,14 @@ def test_configuration_wizard_all_default(mock_input, conf_args):
         assert lm_conf.api_key.get_secret_value() == "api_key_value"
 
 
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
 @patch("builtins.input")
-def test_configuration_with_prompt(mock_input, conf_args):
+def test_configuration_with_prompt(mock_input, mock_qdrant, conf_args):
     conf_args.prompt = True
     inputs = {
+        # vector store prompt fires first; "" → accept default
+        # (sqlite_vector_store when qdrant unavailable).
+        "vector store": "",
         "language model provider": "openai",
         "openai llm model": "gpt-40-mini",
         "openai api key": "api_key_value",
@@ -85,10 +89,12 @@ def test_configuration_neo4j(mock_input, conf_args):
         assert neo4j_conf.password.get_secret_value() == "neo4j_password"
 
 
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
 @patch("builtins.input")
-def test_configuration_wizard_aws_provider(mock_input, conf_args):
+def test_configuration_wizard_aws_provider(mock_input, mock_qdrant, conf_args):
     conf_args.prompt = True
     inputs = {
+        "vector store": "",
         "language model provider": "bedrock",
         "aws region": "us-west-2",
         "aws access key id": "key",
@@ -126,10 +132,12 @@ def test_configuration_wizard_aws_provider(mock_input, conf_args):
         assert model.model_id == "openai.gpt-oss-30b-1:0"
 
 
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
 @patch("builtins.input")
-def test_configuration_wizard_ollama_provider(mock_input, conf_args):
+def test_configuration_wizard_ollama_provider(mock_input, mock_qdrant, conf_args):
     conf_args.prompt = True
     inputs = {
+        "vector store": "",
         "language model provider": "ollama",
         "ollama llm model": "llama4",
         "model api key": "key",
@@ -167,6 +175,82 @@ def test_get_provided_database_config(conf_args):
     assert isinstance(db_conf, DatabasesConf)
     assert len(db_conf.neo4j_confs) == 1
     assert len(db_conf.relational_db_confs) == 1
+
+
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
+def test_vector_store_default_without_qdrant_is_sqlite_compat(mock_qdrant, conf_args):
+    """Without Qdrant the compatibility default is the USearch-backed SQLite
+    vector store, NOT sqlite-vec — sqlite-vec depends on host SQLite having
+    loadable-extension support, so it's never silently selected."""
+    wizard = ConfigurationWizard(conf_args)
+    assert wizard.vector_store_id == ConfigurationWizard.SQLITE_VECTOR_STORE_ID
+    db_conf = wizard.database_conf
+    assert len(db_conf.sqlite_vector_store_confs) == 1
+    assert len(db_conf.sqlite_vec_vector_store_confs) == 0
+    assert len(db_conf.qdrant_confs) == 0
+
+
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+def test_vector_store_defaults_to_qdrant_when_available_silent(mock_qdrant, conf_args):
+    # prompt=False (silent mode) -> Qdrant is the default when available.
+    wizard = ConfigurationWizard(conf_args)
+    assert wizard.vector_store_id == ConfigurationWizard.QDRANT_VECTOR_STORE_ID
+    db_conf = wizard.database_conf
+    assert len(db_conf.qdrant_confs) == 1
+    assert len(db_conf.sqlite_vector_store_confs) == 0
+    assert len(db_conf.sqlite_vec_vector_store_confs) == 0
+
+
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch("builtins.input")
+def test_vector_store_prompt_accepts_qdrant_default(mock_input, mock_qdrant, conf_args):
+    conf_args.prompt = True
+    # Empty input → keep the default (qdrant).
+    mock_input.side_effect = ["", "api_key_value"]
+    wizard = ConfigurationWizard(conf_args)
+    assert wizard.vector_store_id == ConfigurationWizard.QDRANT_VECTOR_STORE_ID
+
+
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch("builtins.input")
+def test_vector_store_prompt_accepts_sqlite_vector_store_override(
+    mock_input, mock_qdrant, conf_args
+):
+    conf_args.prompt = True
+    mock_input.side_effect = ["sqlite_vector_store", "api_key_value"]
+    wizard = ConfigurationWizard(conf_args)
+    assert wizard.vector_store_id == ConfigurationWizard.SQLITE_VECTOR_STORE_ID
+    db_conf = wizard.database_conf
+    assert len(db_conf.sqlite_vector_store_confs) == 1
+    assert len(db_conf.qdrant_confs) == 0
+    assert len(db_conf.sqlite_vec_vector_store_confs) == 0
+
+
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch("builtins.input")
+def test_vector_store_prompt_accepts_sqlite_vec_override(
+    mock_input, mock_qdrant, conf_args
+):
+    conf_args.prompt = True
+    mock_input.side_effect = ["sqlite_vec", "api_key_value"]
+    wizard = ConfigurationWizard(conf_args)
+    assert wizard.vector_store_id == ConfigurationWizard.SQLITE_VEC_VECTOR_STORE_ID
+    db_conf = wizard.database_conf
+    assert len(db_conf.sqlite_vec_vector_store_confs) == 1
+    assert len(db_conf.qdrant_confs) == 0
+    assert len(db_conf.sqlite_vector_store_confs) == 0
+
+
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch("builtins.input")
+def test_vector_store_prompt_reasks_on_invalid_then_accepts(
+    mock_input, mock_qdrant, conf_args
+):
+    """Garbage input doesn't silently fall through; the user has to retype."""
+    conf_args.prompt = True
+    mock_input.side_effect = ["garbage", "qdrant", "api_key_value"]
+    wizard = ConfigurationWizard(conf_args)
+    assert wizard.vector_store_id == ConfigurationWizard.QDRANT_VECTOR_STORE_ID
 
 
 @patch("builtins.input")
