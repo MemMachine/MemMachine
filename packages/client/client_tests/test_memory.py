@@ -463,6 +463,54 @@ class TestMemory:
         assert "category='work'" in json_data["filter"]
         assert call_args[1]["timeout"] == 15
 
+    def test_search_with_filter_string(self, mock_client):
+        """Test search with raw filter string."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
+        )
+
+        memory.search("query", filter='metadata.category = "work"')
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        filter_str = json_data["filter"]
+        assert "metadata.user_id='user1'" in filter_str
+        assert "metadata.agent_id='agent1'" in filter_str
+        assert '(metadata.category = "work")' in filter_str
+
+    def test_list_with_filter_string(self, mock_client):
+        """Test list with raw filter string."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
+        )
+
+        memory.list(filter='metadata.category = "work"')
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        filter_str = json_data["filter"]
+        assert "metadata.user_id='user1'" in filter_str
+        assert "metadata.agent_id='agent1'" in filter_str
+        assert '(metadata.category = "work")' in filter_str
+
     def test_search_with_filters(self, mock_client):
         """Test search with filter dictionary."""
         mock_response = Mock()

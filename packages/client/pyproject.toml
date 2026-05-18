@@ -34,6 +34,10 @@ license = "Apache-2.0"
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
 
+[project.scripts]
+mem-cli = "memmachine_client.cli:main"
+memmachine = "memmachine_client.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

@@ -206,6 +206,97 @@ class TestMemMachineClient:
                 project_id="test_project",
             )
 
+    def test_create_project_event_backend_fields_reach_wire(self):
+        """Event-backend fields must reach the wire — without this the SDK
+        has no supported path to event-backed projects."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "org_id": "test_org",
+            "project_id": "test_project",
+            "description": "",
+            "config": {
+                "backend": "event",
+                "embedder": "default",
+                "reranker": "default",
+                "vector_store": "qdrant_vs",
+                "segment_store": "sqlite_db",
+                "properties_schema": {"customer_tier": "str"},
+            },
+        }
+        with patch.object(
+            client._session, "post", return_value=mock_response
+        ) as mock_post:
+            client.create_project(
+                org_id="test_org",
+                project_id="test_project",
+                backend="event",
+                vector_store="qdrant_vs",
+                segment_store="sqlite_db",
+                properties_schema={"customer_tier": "str"},
+            )
+            cfg = mock_post.call_args[1]["json"]["config"]
+            assert cfg["backend"] == "event"
+            assert cfg["vector_store"] == "qdrant_vs"
+            assert cfg["segment_store"] == "sqlite_db"
+            assert cfg["properties_schema"] == {"customer_tier": "str"}
+
+    def test_get_project_404_raises_http_error(self):
+        """Test missing project preserves HTTPError semantics."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        mock_response = Mock()
+        mock_response.status_code = 404
+        http_error = requests.HTTPError(response=mock_response)
+        mock_response.raise_for_status.side_effect = http_error
+
+        with (
+            patch.object(client, "request", return_value=mock_response),
+            pytest.raises(requests.HTTPError) as exc_info,
+        ):
+            client.get_project(org_id="test_org", project_id="missing_project")
+
+        assert exc_info.value is http_error
+        assert exc_info.value.response.status_code == 404
+
+    def test_get_or_create_project_creates_after_get_404(self):
+        """Test missing project is created by get_or_create_project."""
+        client = MemMachineClient(base_url="http://localhost:8080")
+        get_response = Mock()
+        get_response.status_code = 404
+        get_response.raise_for_status.side_effect = requests.HTTPError(
+            response=get_response
+        )
+
+        create_response = Mock()
+        create_response.status_code = 200
+        create_response.raise_for_status = Mock()
+        create_response.json.return_value = {
+            "org_id": "test_org",
+            "project_id": "new_project",
+            "description": "Created project",
+            "config": {"embedder": "", "reranker": ""},
+        }
+
+        with (
+            patch.object(client, "request", return_value=get_response) as mock_request,
+            patch.object(
+                client._session, "post", return_value=create_response
+            ) as mock_post,
+        ):
+            project = client.get_or_create_project(
+                org_id="test_org",
+                project_id="new_project",
+                description="Created project",
+            )
+
+        assert project.org_id == "test_org"
+        assert project.project_id == "new_project"
+        assert project.description == "Created project"
+        mock_request.assert_called_once()
+        mock_post.assert_called_once()
+
     @patch("requests.Session.get")
     def test_health_check_success(self, mock_get):
         """Test successful health check."""

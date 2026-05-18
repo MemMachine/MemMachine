@@ -67,7 +67,9 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from memmachine_server import MemMachine
 from memmachine_server.common.api.version import get_version
 from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
     EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
 )
 from memmachine_server.common.errors import (
@@ -94,6 +96,62 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _ltm_partial_from_project_config(
+    config: ProjectConfig,
+) -> LongTermMemoryConfPartial:
+    """Translate a v2 ProjectConfig into a LongTermMemoryConfPartial.
+
+    Backend selection follows the parse-time default: if the client sets
+    `backend` explicitly, honor it; otherwise leave it None and let the
+    server-side config determine the resolution (declarative for legacy
+    configs, event for wizard-generated ones).
+    """
+    return LongTermMemoryConfPartial(
+        backend=config.backend,
+        embedder=config.embedder or None,
+        reranker=config.reranker or None,
+        vector_graph_store=config.vector_graph_store or None,
+        vector_store=config.vector_store or None,
+        segment_store=config.segment_store or None,
+        properties_schema=config.properties_schema or None,
+    )
+
+
+def _project_config_from_ltm(
+    ltm: DeclarativeLongTermMemoryConf | EventLongTermMemoryConf | None,
+) -> ProjectConfig:
+    """Surface a long-term-memory full conf as a v2 ProjectConfig."""
+    if ltm is None:
+        return ProjectConfig(
+            backend=None,
+            embedder="",
+            reranker="",
+            vector_graph_store="",
+            vector_store="",
+            segment_store="",
+            properties_schema={},
+        )
+    if isinstance(ltm, EventLongTermMemoryConf):
+        return ProjectConfig(
+            backend="event",
+            embedder=ltm.embedder,
+            reranker=ltm.reranker or "",
+            vector_graph_store="",
+            vector_store=ltm.vector_store,
+            segment_store=ltm.segment_store,
+            properties_schema=dict(ltm.properties_schema),
+        )
+    return ProjectConfig(
+        backend="declarative",
+        embedder=ltm.embedder,
+        reranker=ltm.reranker,
+        vector_graph_store=ltm.vector_graph_store,
+        vector_store="",
+        segment_store="",
+        properties_schema={},
+    )
+
+
 @router.post(
     "/projects",
     status_code=201,
@@ -110,12 +168,8 @@ async def create_project(
         project_id=spec.project_id,
     )
     try:
-        user_conf = EpisodicMemoryConfPartial(
-            long_term_memory=LongTermMemoryConfPartial(
-                embedder=spec.config.embedder or None,
-                reranker=spec.config.reranker or None,
-            )
-        )
+        ltm_partial = _ltm_partial_from_project_config(spec.config)
+        user_conf = EpisodicMemoryConfPartial(long_term_memory=ltm_partial)
         session = await memmachine.create_session(
             session_key=session_data.session_key,
             description=spec.description,
@@ -136,10 +190,7 @@ async def create_project(
         org_id=spec.org_id,
         project_id=spec.project_id,
         description=spec.description,
-        config=ProjectConfig(
-            embedder=long_term.embedder if long_term else "",
-            reranker=long_term.reranker if long_term else "",
-        ),
+        config=_project_config_from_ltm(long_term),
     )
 
 
@@ -166,10 +217,7 @@ async def get_project(
         org_id=spec.org_id,
         project_id=spec.project_id,
         description=session_info.description,
-        config=ProjectConfig(
-            embedder=long_term.embedder if long_term else "",
-            reranker=long_term.reranker if long_term else "",
-        ),
+        config=_project_config_from_ltm(long_term),
     )
 
 

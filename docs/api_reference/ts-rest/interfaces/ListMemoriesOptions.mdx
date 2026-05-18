@@ -14,7 +14,7 @@ The `ListMemoriesOptions` interface provides control over the retrieval of multi
 | Property | Type | Description |
 | :--- | :--- | :--- |
 | `type` | [`MemoryType`](../types/MemoryType) | **Optional.** Restricts the list to specific memory classifications (e.g., `episodic`). |
-| `filter` | `string` | **Optional.** Criteria to narrow down the retrieved list based on metadata. |
+| `filter` | `string` | **Optional.** Structured filter criteria. User metadata fields must be prefixed with `m.` / `metadata.` (for example `m.source = "chat_v3"`). Unsupported fields are rejected. |
 | `page_num` | `number` | **Optional.** The specific page index to retrieve (defaults to 1). |
 | `page_size` | `number` | **Optional.** The number of records to return per page. |
 
@@ -27,6 +27,7 @@ import { ListMemoriesOptions } from '@memmachine/client';
 
 const options: ListMemoriesOptions = {
   type: 'episodic',
+  filter: 'm.source = "chat_v3"',
   page_num: 2,
   page_size: 20
 };

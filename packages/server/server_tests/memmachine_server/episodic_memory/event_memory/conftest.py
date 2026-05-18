@@ -116,11 +116,17 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
 
     @staticmethod
     def _normalize_segment_field(field: str) -> str:
-        """Translate canonical filter field names to raw segment property keys."""
+        """Translate canonical filter field names to raw segment property keys.
+
+        Mirrors SQLAlchemySegmentStorePartition._resolve_segment_field:
+        - `m.<key>` / `metadata.<key>` → user metadata, bare key.
+        - any other bare name → system field, `_<field>` (matches the
+          LongTermMemory event-backend property layout).
+        """
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             return demangle_user_metadata_key(internal_name)
-        return field
+        return f"_{field}"
 
     @override
     async def get_segment_uuids_by_event_uuids(

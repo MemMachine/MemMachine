@@ -399,7 +399,13 @@ async def test_contexts_property_filter(
 async def test_contexts_filter_by_context_producer(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """Filter using ``context.producer`` is not supported."""
+    """`context.producer` is not a stored property; the filter just matches nothing.
+
+    Bare names that aren't `timestamp` are looked up as `_<name>` in the JSON
+    properties (matching EventMemory's `_to_vector_record_property` convention
+    for system fields). `context.producer` becomes `_context.producer`, which
+    isn't a stored key on any segment, so the filter returns no contexts.
+    """
     ep = uuid4()
     s0 = _seg(
         event_uuid=ep,
@@ -422,20 +428,20 @@ async def test_contexts_filter_by_context_producer(
     await partition.add_segments(_links(s0, s1, s2))
 
     filt = Comparison(field="context.producer", op="=", value="Alice")
-    with pytest.raises(ValueError, match="Unknown filter field"):
-        await partition.get_segment_contexts(
-            [s0.uuid],
-            max_backward_segments=5,
-            max_forward_segments=5,
-            property_filter=filt,
-        )
+    contexts = await partition.get_segment_contexts(
+        [s0.uuid],
+        max_backward_segments=5,
+        max_forward_segments=5,
+        property_filter=filt,
+    )
+    assert contexts == {}
 
 
 @pytest.mark.asyncio
 async def test_contexts_filter_by_context_type(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """Filter using ``context.context_type`` is not supported."""
+    """`context.context_type` is not a stored property; filter matches nothing."""
     ep = uuid4()
     s0 = _seg(
         event_uuid=ep,
@@ -458,13 +464,13 @@ async def test_contexts_filter_by_context_type(
     await partition.add_segments(_links(s0, s1, s2))
 
     filt = Comparison(field="context.context_type", op="=", value="producer")
-    with pytest.raises(ValueError, match="Unknown filter field"):
-        await partition.get_segment_contexts(
-            [s0.uuid],
-            max_backward_segments=5,
-            max_forward_segments=5,
-            property_filter=filt,
-        )
+    contexts = await partition.get_segment_contexts(
+        [s0.uuid],
+        max_backward_segments=5,
+        max_forward_segments=5,
+        property_filter=filt,
+    )
+    assert contexts == {}
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 import logging
 import socket
+from collections.abc import Iterable
 from datetime import UTC
 from typing import Any, TypeVar, overload
 
@@ -239,6 +240,28 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             episode = result.scalar_one_or_none()
 
         return episode.to_typed_model() if episode else None
+
+    async def get_episodes(
+        self,
+        episode_ids: Iterable[EpisodeIdT],
+    ) -> list[EpisodeE]:
+        int_ids: set[int] = set()
+        for episode_id in episode_ids:
+            try:
+                int_ids.add(int(episode_id))
+            except (TypeError, ValueError) as e:
+                raise ResourceNotFoundError("Invalid episode ID") from e
+
+        if not int_ids:
+            return []
+
+        stmt = select(Episode).where(Episode.id.in_(int_ids))
+
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+
+        return [row.to_typed_model() for row in rows]
 
     @overload
     def _apply_episode_filter(

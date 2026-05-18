@@ -698,7 +698,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if is_user_metadata:
             key = demangle_user_metadata_key(internal_name)
             return SegmentRow.properties[key], "properties_json"
-        raise ValueError(f"Unknown filter field: {field!r}")
+        return SegmentRow.properties[f"_{field}"], "properties_json"
 
     def _segment_from_segment_row(self, row: SegmentRow) -> Segment:
         """Convert a SegmentRow into a Segment."""

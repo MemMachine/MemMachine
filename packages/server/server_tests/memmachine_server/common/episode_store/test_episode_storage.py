@@ -106,6 +106,26 @@ async def test_add_and_get_history(episode_storage: EpisodeStorage):
 
 
 @pytest.mark.asyncio
+async def test_get_episodes_batch(episode_storage: EpisodeStorage):
+    first = await create_history_entry(episode_storage, content="first")
+    second = await create_history_entry(episode_storage, content="second")
+    third = await create_history_entry(episode_storage, content="third")
+
+    try:
+        # All present; duplicates are deduped; missing IDs are absent.
+        fetched = await episode_storage.get_episodes([first, third, first, "999999999"])
+        by_uid = {ep.uid: ep for ep in fetched}
+        assert set(by_uid.keys()) == {first, third}
+        assert by_uid[first].content == "first"
+        assert by_uid[third].content == "third"
+
+        # Empty input returns empty list without hitting the DB.
+        assert await episode_storage.get_episodes([]) == []
+    finally:
+        await episode_storage.delete_episodes([first, second, third])
+
+
+@pytest.mark.asyncio
 async def test_add_multiple_episodes_returns_models(
     episode_storage: EpisodeStorage,
 ):

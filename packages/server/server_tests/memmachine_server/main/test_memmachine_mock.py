@@ -15,6 +15,7 @@ from memmachine_server.common.configuration import (
     Configuration,
 )
 from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
     EpisodicMemoryConfPartial,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
@@ -183,6 +184,7 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     assert conf.session_key == "session-1"
     assert conf.long_term_memory is not None
     assert conf.short_term_memory is not None
+    assert isinstance(conf.long_term_memory, DeclarativeLongTermMemoryConf)
     assert conf.long_term_memory.embedder == "default-embedder"
     assert conf.long_term_memory.reranker == "default-reranker"
     assert conf.long_term_memory.vector_graph_store == "default_store"
