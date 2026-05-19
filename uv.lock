@@ -1869,7 +1869,7 @@ dependencies = [
 requires-dist = [
     { name = "memmachine-common", editable = "packages/common" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "requests", specifier = ">=2.34.2" },
+    { name = "requests", specifier = ">=2.33.0" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
