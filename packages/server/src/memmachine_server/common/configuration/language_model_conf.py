@@ -326,7 +326,12 @@ class LanguageModelsConf(BaseModel):
         if isinstance(lm, cls):
             return lm
 
-        openai_dict, aws_bedrock_dict, openai_chat_completions_dict, litellm_dict = {}, {}, {}, {}
+        openai_dict, aws_bedrock_dict, openai_chat_completions_dict, litellm_dict = (
+            {},
+            {},
+            {},
+            {},
+        )
 
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
