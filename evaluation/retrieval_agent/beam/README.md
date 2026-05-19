@@ -37,8 +37,8 @@ Run BEAM benchmark from the `evaluation/retrieval_agent/` directory:
 ```bash
 cd evaluation/retrieval_agent
 
-# Ingest chat data
-./run_test.sh beam exp1 ingest retrieval_agent /path/to/chat.json /path/to/probing_questions.json
+# Ingest chat data (QUESTIONS_PATH not needed for ingest)
+./run_test.sh beam exp1 ingest retrieval_agent /path/to/chat.json
 
 # Search and evaluate
 ./run_test.sh beam exp1 search retrieval_agent /path/to/chat.json /path/to/probing_questions.json

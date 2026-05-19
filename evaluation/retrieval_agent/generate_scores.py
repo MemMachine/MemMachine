@@ -82,8 +82,6 @@ for item in all_items:
         longmemeval_matrix = item.get("longmemeval_final_matrix", None)
     if general_matrix is None:
         general_matrix = item.get("general_final_matrix", None)
-    if beam_rubric is None:
-        beam_rubric = item.get("rubric", None)
 
     # Check for tool selection info (from other benchmarks)
     if "selected_tool" in item:

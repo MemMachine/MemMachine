@@ -300,7 +300,15 @@ validate_args() {
                 if [ "$#" -ne 4 ]; then
                     show_help beam
                 fi
-            elif [ "$#" -ne 6 ]; then
+            elif [ "${3:-}" = "ingest" ]; then
+                if [ "$#" -ne 5 ]; then
+                    show_help beam
+                fi
+            elif [ "${3:-}" = "search" ]; then
+                if [ "$#" -ne 6 ]; then
+                    show_help beam
+                fi
+            else
                 show_help beam
             fi
             if [ -n "${SEARCH_CONCURRENCY:-}" ] && [ "$3" != "search" ]; then
@@ -411,6 +419,10 @@ run_test() {
             if [ "$INGEST" = "delete" ]; then
                 TEST_TARGET=$4
                 CHAT_PATH=""
+                QUESTIONS_PATH=""
+            elif [ "$INGEST" = "ingest" ]; then
+                TEST_TARGET=$4
+                CHAT_PATH=$5
                 QUESTIONS_PATH=""
             else
                 TEST_TARGET=$4

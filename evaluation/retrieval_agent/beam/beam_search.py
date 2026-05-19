@@ -110,23 +110,29 @@ def load_beam_chat_data(chat_path: str) -> list[dict]:
 
     # Detect format: 100K/500K/1M has nested "plan-X" keys
     # 10M has flat batch structure
+    if not isinstance(raw_data, list):
+        raise TypeError(
+            f"Unsupported BEAM chat format: expected list, got {type(raw_data).__name__}"
+        )
+    if len(raw_data) == 0:
+        raise TypeError("Unsupported BEAM chat format: empty dataset")
+    if not isinstance(raw_data[0], dict):
+        raise TypeError(
+            f"Unsupported BEAM chat format: expected list of dicts, got {type(raw_data[0]).__name__}"
+        )
+
     chat_data = []
-    if raw_data and isinstance(raw_data, list) and len(raw_data) > 0:
-        first_item = raw_data[0]
-        if isinstance(first_item, dict):
-            # Check if first item has "plan-X" key (100K/500K/1M format)
-            has_plan_key = any(key.startswith("plan-") for key in first_item)
-            if has_plan_key:
-                # 100K/500K/1M format: flatten nested structure
-                print("Detected 100K/500K/1M format (nested plan-X keys)")
-                for item in raw_data:
-                    for plan_key, batches in item.items():
-                        if plan_key.startswith("plan-"):
-                            chat_data.extend(batches)
-            else:
-                # 10M format: use as-is
-                print("Detected 10M format (flat batch structure)")
-                chat_data = raw_data
+    has_plan_key = any(key.startswith("plan-") for key in raw_data[0])
+    if has_plan_key:
+        # 100K/500K/1M format: flatten nested structure
+        print("Detected 100K/500K/1M format (nested plan-X keys)")
+        for item in raw_data:
+            for plan_key, batches in item.items():
+                if plan_key.startswith("plan-"):
+                    chat_data.extend(batches)
+    else:
+        # 10M format: use as-is
+        chat_data = raw_data
 
     print(f"Loaded {len(chat_data)} batches from BEAM chat")
     return chat_data

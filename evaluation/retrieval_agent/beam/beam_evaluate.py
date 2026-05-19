@@ -3,15 +3,31 @@
 import argparse
 import concurrent.futures
 import json
+import logging
 import sys
 import threading
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
-import json_repair
-from scipy.stats import kendalltau
 from tqdm import tqdm
+
+OPTIONAL_DEPENDENCIES_ERROR = (
+    "Missing optional dependencies for BEAM evaluation. "
+    "Please install them with: pip install scipy json_repair"
+)
+
+try:
+    import json_repair
+except ImportError:
+    json_repair = None
+
+try:
+    from scipy.stats import kendalltau
+except ImportError:
+    kendalltau = None
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -118,6 +134,9 @@ def evaluate_rubric_criterion(
         response=response,
     )
 
+    if json_repair is None:
+        raise ImportError(OPTIONAL_DEPENDENCIES_ERROR)
+
     raw = call_fn(prompt)
     try:
         result = json_repair.loads(raw)
@@ -125,9 +144,14 @@ def evaluate_rubric_criterion(
         # Clamp score to valid range
         score = max(0.0, min(1.0, score))
         reasoning = result.get("reason", result.get("reasoning", ""))
-    except Exception:
+    except Exception as e:
+        logger.warning(
+            "Failed to parse LLM judge response: %s\nRaw response: %s...",
+            e,
+            raw[:200],
+        )
         score = 0.0
-        reasoning = "Failed to parse LLM response"
+        reasoning = f"Failed to parse LLM response: {e}"
 
     return score, reasoning
 
@@ -142,8 +166,18 @@ def extract_facts_from_response(response: str, question: str) -> list[str]:
     Returns:
         List of extracted facts/statements.
     """
-    # Split by newlines and filter empty lines
-    lines = [line.strip() for line in response.strip().split("\n") if line.strip()]
+    # Split by newlines and filter empty lines.
+    # Use the question as lightweight context so that prompt/question echoes
+    # are not treated as extracted facts.
+    normalized_question = question.strip().casefold()
+    lines = []
+    for line in response.strip().split("\n"):
+        stripped_line = line.strip()
+        if not stripped_line:
+            continue
+        if normalized_question and stripped_line.casefold() == normalized_question:
+            continue
+        lines.append(stripped_line)
     return lines
 
 
@@ -260,6 +294,9 @@ def compute_kendall_tau_normalized(
     )
 
     # Compute Kendall tau-b normalized
+    if kendalltau is None:
+        raise ImportError(OPTIONAL_DEPENDENCIES_ERROR)
+
     ref_ranks = to_rank(reference_list)
     sys_ranks = to_rank(system_list)
 
