@@ -248,6 +248,10 @@
   "navbar": {
     "links": [
       {
+        "label": "Playground",
+        "href": "https://huggingface.co/spaces/Memverge/MemMachine-Playground"
+      },
+      {
         "label": "Support",
         "href": "https://discord.gg/usydANvKqD"
       },
