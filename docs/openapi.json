@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MemMachine API",
-    "version": "0.3.9",
+    "version": "0.3.10",
     "description": "Architectural Memory Systems for AI Agents. Specialized in episodic and semantic memory management with strict namespace isolation."
   },
   "servers": [
@@ -4995,7 +4995,43 @@
               }
             ],
             "title": "Database",
-            "description": "\n    The ID of the database to use for semantic memory storage.\n    Must reference a database configured in the resources section."
+            "description": "\n    The ID of the database to use for semantic memory storage.\n    Must reference a database configured in the resources section. Used by\n    legacy semantic storage backends."
+          },
+          "storage_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Backend",
+            "description": "\n    The storage backend used for semantic memory."
+          },
+          "feature_store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Store",
+            "description": "\n    The ID of the relational database resource used to store semantic feature\n    data when the semantic storage backend is `vector_store`."
+          },
+          "vector_collection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Collection",
+            "description": "\n    The ID of the vector store resource used to store semantic feature\n    embeddings when the semantic storage backend is `vector_store`."
           },
           "llm_model": {
             "anyOf": [
@@ -5669,7 +5705,56 @@
               }
             ],
             "title": "Database",
-            "description": "\n    The ID of the database to use for semantic memory storage.\n    Must reference a database configured in the resources section."
+            "description": "\n    The ID of the database to use for semantic memory storage.\n    Must reference a database configured in the resources section. Used by\n    legacy semantic storage backends."
+          },
+          "storage_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Backend",
+            "description": "\n    The storage backend used for semantic memory."
+          },
+          "feature_store": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Store",
+            "description": "\n    The ID of the relational database resource used to store semantic feature\n    data when the semantic storage backend is `vector_store`."
+          },
+          "vector_collection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Collection",
+            "description": "\n    The ID of the vector store resource used to store semantic feature\n    embeddings when the semantic storage backend is `vector_store`."
+          },
+          "vector_dimensions": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vector Dimensions",
+            "description": "\n    The vector dimensions used for semantic memory embeddings. If omitted for\n    vector store storage, the configured embedder dimensions are used."
           },
           "llm_model": {
             "anyOf": [
