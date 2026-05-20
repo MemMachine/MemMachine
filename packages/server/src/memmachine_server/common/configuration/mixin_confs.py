@@ -7,13 +7,12 @@ from enum import Enum
 from typing import ClassVar, Self, cast
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
-
-from memmachine_server.common.errors import InvalidPasswordError
-from memmachine_server.common.metrics_factory import MetricsFactory
-from memmachine_server.common.metrics_factory.prometheus_metrics_factory import (
+from memmachine_core.common.errors import InvalidPasswordError
+from memmachine_core.common.metrics_factory import MetricsFactory
+from memmachine_core.common.metrics_factory.prometheus_metrics_factory import (
     PrometheusMetricsFactory,
 )
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 
 class UnknownMetricsFactoryError(ValueError):

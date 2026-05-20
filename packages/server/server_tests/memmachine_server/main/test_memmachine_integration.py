@@ -8,11 +8,11 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from memmachine_core.common.episode_store import EpisodeEntry
 
 from memmachine_server.common.configuration import (
     Configuration,
 )
-from memmachine_server.common.episode_store import EpisodeEntry
 from memmachine_server.main.memmachine import MemMachine, MemoryType
 
 

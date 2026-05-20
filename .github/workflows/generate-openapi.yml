@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'packages/server/src/memmachine_server/server/**'
+      - 'packages/core/src/memmachine_core/**'
       - 'packages/common/src/memmachine_common/**'
       - 'docs/tools/generate_openapi.py'
   workflow_dispatch:

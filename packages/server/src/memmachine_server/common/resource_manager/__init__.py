@@ -2,21 +2,21 @@
 
 from typing import Protocol, runtime_checkable
 
+from memmachine_core.common.embedder import Embedder
+from memmachine_core.common.episode_store import EpisodeStorage
+from memmachine_core.common.language_model import LanguageModel
+from memmachine_core.common.metrics_factory import MetricsFactory
+from memmachine_core.common.reranker import Reranker
+from memmachine_core.common.vector_graph_store import VectorGraphStore
+from memmachine_core.common.vector_store import VectorStore
+from memmachine_core.episodic_memory.event_memory.segment_store import (
+    SegmentStore,
+)
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import EpisodeStorage
-from memmachine_server.common.language_model import LanguageModel
-from memmachine_server.common.metrics_factory import MetricsFactory
-from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
-)
-from memmachine_server.common.vector_graph_store import VectorGraphStore
-from memmachine_server.common.vector_store import VectorStore
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStore,
 )
 
 

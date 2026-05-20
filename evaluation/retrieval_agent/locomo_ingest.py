@@ -41,8 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def main():
-    from memmachine_server.common.episode_store import Episode
-    from memmachine_server.common.utils import async_with
+    from memmachine_core.common.episode_store import Episode
+    from memmachine_core.common.utils import async_with
 
     from evaluation.utils import agent_utils
 

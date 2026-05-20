@@ -88,7 +88,7 @@ async def run_locomo(  # noqa: C901
     dpath: str | None = None,
     epath: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    from memmachine_server.common.utils import async_with
+    from memmachine_core.common.utils import async_with
 
     from evaluation.utils import agent_utils
 

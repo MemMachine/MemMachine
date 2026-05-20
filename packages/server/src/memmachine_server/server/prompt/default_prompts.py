@@ -1,6 +1,7 @@
 """Default prompt templates for included sample domains."""
 
-from memmachine_server.semantic_memory.semantic_model import SemanticCategory
+from memmachine_core.semantic_memory.semantic_model import SemanticCategory
+
 from memmachine_server.server.prompt.coding_style_prompt import (
     CodingStyleSemanticCategory,
 )

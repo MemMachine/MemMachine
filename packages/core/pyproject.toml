@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memmachine-core"
+dynamic = ["version"]
+dependencies = [
+    "memmachine-common",
+    "alembic>=1.17.1",
+    "asyncpg>=0.31.0",
+    "aiosqlite>=0.20.0",
+    "babel>=2.18.0",
+    "boto3>=1.40.40",
+    "boto3-stubs==1.40.64",
+    "cohere>=5.20.0",
+    "dotenv>=0.9.9",
+    "greenlet>=3.2.4",
+    "instructor[bedrock]>=1.12.0",
+    "json-repair>=0.54",
+    "langchain-aws>=0.2.33",
+    "langchain-text-splitters>=1.1.1",
+    "neo4j>=5.28.2",
+    "nltk>=3.9.4",
+    "openai>=2.21.0",
+    "pgvector>=0.4.2",
+    "prometheus-client>=0.22.1",
+    "pydantic>=2.11.7",
+    "rank-bm25>=0.2.2",
+    "regex>=2023.0.0",
+    "sqlite-vec>=0.1.9",
+    "sqlalchemy>=2.0.43",
+    "usearch>=2.25.1",
+    "tzdata>=2024.1 ; sys_platform == 'win32'",
+]
+requires-python = ">= 3.12"
+authors = [
+  {name="MemMachine", email="noreply@memmachine.ai"},
+]
+description = "MemMachine Core - Memory systems, abstractions, and provider/storage implementations"
+readme = "README.md"
+keywords = ["memmachine", "core", "memory", "ai", "agent"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Operating System :: OS Independent",
+]
+license = "Apache-2.0"
+
+[project.optional-dependencies]
+gpu = [
+    "sentence-transformers>=5.1.0",
+]
+hnswlib = [
+    "hnswlib>=0.8.0",
+]
+nebula = [
+    "nebula5-python>=5.2.1",
+]
+qdrant = [
+    "qdrant-client>=1.17.0",
+]
+litellm = [
+    "litellm>=1.63.0,<1.85",
+]
+
+[project.urls]
+Homepage = "https://github.com/MemMachine/MemMachine"
+Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.txt", "*.yml", "*.yaml", "*.sql", "*.mako"]
+
+[tool.setuptools_scm]
+root = "../.."
+
+[tool.uv]
+package = true
+
+[tool.ty.environment]
+python-version = "3.12"
+# "." keeps `core_tests.*` qualified test-helper imports resolvable.
+extra-paths = ["../common/src", "."]
+
+[tool.ty.src]
+exclude = ["build/**"]
+
+[tool.ruff]
+extend = "../../pyproject.toml"
+target-version = "py312"

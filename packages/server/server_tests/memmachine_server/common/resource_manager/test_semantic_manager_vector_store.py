@@ -3,6 +3,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from memmachine_core.semantic_memory.storage.vector_store_semantic_storage import (
+    VectorStoreSemanticStorage,
+)
 
 from memmachine_server.common.configuration import (
     PromptConf,
@@ -11,9 +14,6 @@ from memmachine_server.common.configuration import (
 )
 from memmachine_server.common.resource_manager.semantic_manager import (
     SemanticResourceManager,
-)
-from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
-    VectorStoreSemanticStorage,
 )
 
 

@@ -135,7 +135,7 @@ tools = MemMachineTools(
 )
 
 # Add memory
-from memmachine_server.common.api import EpisodeType
+from memmachine_common.api import EpisodeType
 
 result = tools.add_memory(
     content="User prefers Python over JavaScript",

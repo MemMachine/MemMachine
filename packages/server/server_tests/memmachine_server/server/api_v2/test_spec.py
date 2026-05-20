@@ -26,9 +26,9 @@ from memmachine_common.api.spec import (
     SearchResult,
     _is_valid_name,
 )
+from memmachine_core.common.episode_store.episode_model import EpisodeType
 from pydantic import ValidationError
 
-from memmachine_server.common.episode_store.episode_model import EpisodeType
 from memmachine_server.server.api_v2.router import RestError
 
 

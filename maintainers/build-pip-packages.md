@@ -1,16 +1,20 @@
 # Building Pip Packages for MemMachine
 
-**This document is specifically for building pip packages** (`memmachine-client` and `memmachine-server`) for distribution via PyPI or local installation.
+**This document is specifically for building pip packages** for distribution via PyPI or local installation.
 
-This project supports creating three pip packages:
+This project builds the following pip packages:
+- `memmachine-common` - Shared API models used by the other packages ([PyPI](https://pypi.org/project/memmachine-common/))
+- `memmachine-core` - The core memory engine: memory systems, abstractions, and provider/storage implementations ([PyPI](https://pypi.org/project/memmachine-core/))
 - `memmachine-client` - Contains only the REST client ([PyPI](https://pypi.org/project/memmachine-client/))
-- `memmachine-server` - Contains the complete server functionality ([PyPI](https://pypi.org/project/memmachine-server/))
+- `memmachine-server` - The deployable server (HTTP/MCP, resource manager, configuration); depends on `memmachine-core` ([PyPI](https://pypi.org/project/memmachine-server/))
 - `memmachine` - A meta-package that installs both the client and server ([PyPI](https://pypi.org/project/memmachine/))
 
 ## Directory Hierarchy
 
 The project uses a monorepo-like structure under the `/packages` directory:
 
+- `/packages/common`: Source code and configuration for `memmachine-common`.
+- `/packages/core`: Source code and configuration for `memmachine-core`.
 - `/packages/client`: Source code and configuration for `memmachine-client`.
 - `/packages/server`: Source code and configuration for `memmachine-server`.
 - `/packages/meta`: Configuration for the `memmachine` meta-package.
@@ -52,7 +56,7 @@ uv build --project packages/meta
 You can run all commands sequentially:
 
 ```bash
-uv build --project packages/client && uv build --project packages/server && uv build --project packages/meta
+uv build --project packages/common && uv build --project packages/client && uv build --project packages/core && uv build --project packages/server && uv build --project packages/meta
 ```
 
 ## Installation
@@ -103,7 +107,7 @@ pip install memmachine
 After installing `memmachine-client`:
 
 ```python
-from memmachine_server.rest_client import MemMachineClient, Memory
+from memmachine_client import MemMachineClient
 
 client = MemMachineClient(base_url="http://localhost:8080")
 memory = client.memory(
@@ -137,12 +141,16 @@ memmachine-mcp-http
 - Dependencies: `requests`, `urllib3`
 - Lightweight, suitable for scenarios that only need to call the MemMachine ServerAPI
 
+### memmachine-core
+- Contains the `memmachine_core` module: episodic and semantic memory systems,
+  abstractions, data models, and provider/storage implementations.
+- Carries the heavy provider dependencies (OpenAI, Neo4j, SQLAlchemy, etc.).
+
 ### memmachine-server
-- Contains all server-related modules:
-  - `memmachine_common` - Common components
-  - `memmachine_server` - Server application
-- Contains all server dependencies (database, FastAPI, etc.)
-- Includes command-line tools
+- Contains the `memmachine_server` module: the HTTP/MCP server, resource manager,
+  configuration, and installation tooling.
+- Depends on `memmachine-core` (and `memmachine-common`).
+- Includes command-line tools.
 
 ### memmachine (Meta-Package)
 - Empty package with no source code.

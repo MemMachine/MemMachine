@@ -1,10 +1,10 @@
 import pytest
-
-from memmachine_server.semantic_memory.semantic_llm import (
+from memmachine_core.semantic_memory.semantic_llm import (
     llm_consolidate_features,
     llm_feature_update,
 )
-from memmachine_server.semantic_memory.semantic_model import SemanticFeature
+from memmachine_core.semantic_memory.semantic_model import SemanticFeature
+
 from memmachine_server.server.prompt.profile_prompt import UserProfileSemanticCategory
 
 pytestmark = pytest.mark.integration

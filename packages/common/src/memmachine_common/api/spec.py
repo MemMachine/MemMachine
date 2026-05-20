@@ -27,7 +27,7 @@ PropertyValue = bool | int | float | str | datetime
 """Type for stored property values (duplicated here to avoid server dependency)."""
 
 # Canonical type-name set accepted in `properties_schema`. Mirrors
-# `memmachine_server.common.data_types.PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE` but
+# `memmachine_core.common.data_types.PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE` but
 # lives here so the API contract validates types at request time rather than
 # deferring failures to service-locator wire-up.
 VALID_PROPERTY_TYPE_NAMES: frozenset[str] = frozenset(

@@ -4,10 +4,11 @@ Financial Analyst-specific prompts for Intelligent Memory System.
 Handles financial profiles with direct feature/value pairs (no tags).
 """
 
-from memmachine_server.semantic_memory.semantic_model import (
+from memmachine_core.semantic_memory.semantic_model import (
     RawSemanticPrompt,
     SemanticCategory,
 )
+
 from memmachine_server.server.prompt.prompt_utilities import current_date_dow, enum_list
 
 # --- Canonical enumerations ---

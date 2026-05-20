@@ -26,14 +26,14 @@ MODULES_TO_DOC = [
         "brain",
     ),
     (
-        "packages/server/src/memmachine_server/episodic_memory/episodic_memory.py",
+        "packages/core/src/memmachine_core/episodic_memory/episodic_memory.py",
         "docs/api_reference/python/episodic_memory.mdx",
         "Episodic Memory",
-        "Server-side Episodic Memory API",
+        "Episodic Memory API",
         "server",
     ),
     (
-        "packages/server/src/memmachine_server/episodic_memory/episodic_memory_manager.py",
+        "packages/server/src/memmachine_server/wiring/episodic_memory_manager.py",
         "docs/api_reference/python/episodic_memory_manager.mdx",
         "Episodic Memory Manager",
         "Manager for Episodic Memory instances",

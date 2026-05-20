@@ -5,18 +5,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from memmachine_common.api.spec import ContentType, Episode, SearchResult
-
-from memmachine_server.common.configuration.episodic_config import (
-    DeclarativeLongTermMemoryConf,
-    EventLongTermMemoryConf,
-)
-from memmachine_server.common.episode_store.episode_model import EpisodeType
-from memmachine_server.common.errors import (
+from memmachine_core.common.episode_store.episode_model import EpisodeType
+from memmachine_core.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
     SessionNotFoundError,
+)
+
+from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
+    EventLongTermMemoryConf,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine_server.server.api_v2.router import RestError, get_memmachine

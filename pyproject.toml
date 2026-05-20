@@ -1,8 +1,9 @@
 [tool.uv.workspace]
-members = ["packages/client", "packages/common", "packages/server"]
+members = ["packages/client", "packages/common", "packages/core", "packages/server"]
 
 [tool.uv.sources]
 memmachine-common = { workspace = true }
+memmachine-core = { workspace = true }
 memmachine-server = { workspace = true }
 memmachine-client = { workspace = true }
 
@@ -101,6 +102,7 @@ convention = "google"
 [tool.ruff.lint.per-file-ignores]
 "packages/client/client_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "packages/server/server_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
+"packages/core/core_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "packages/common/common_tests/**/*.py" = ["ANN", "D", "SLF", "ARG"]
 "tools/**/*.py" = ["SIM", "DTZ", "C9", "ANN", "T201", "PT", "INP", "PTH", "D"]
 "examples/**" = [
@@ -145,7 +147,16 @@ convention = "google"
 ]
 
 [tool.ty.environment]
-extra-paths = ["packages/common/src", "packages/server/src", "packages/client/src"]
+extra-paths = [
+    "packages/common/src",
+    "packages/core/src",
+    "packages/server/src",
+    "packages/client/src",
+    # Test-package roots, so qualified test-helper imports
+    # (core_tests.*, server_tests.*) resolve — mirrors pytest's `pythonpath`.
+    "packages/core",
+    "packages/server",
+]
 
 [tool.ty.src]
 exclude = ["packages/**/build/**"]
@@ -154,6 +165,9 @@ exclude = ["packages/**/build/**"]
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 addopts = ["-m", "not integration"]
+# Keep both test packages importable regardless of which subset pytest runs,
+# so shared test infrastructure resolves by qualified path.
+pythonpath = ["packages/core", "packages/server"]
 
 markers = [
     "integration: mark the test as an integration test",
@@ -161,7 +175,7 @@ markers = [
 ]
 
 [tool.complexipy]
-paths = ["packages/server/src", "packages/client/src", "packages/common/src"]
+paths = ["packages/server/src", "packages/core/src", "packages/client/src", "packages/common/src"]
 max-complexity-allowed = 10
 quiet = false
 ignore-complexity = false
@@ -172,7 +186,8 @@ exclude = []
 
 [tool.coverage.run]
 source = [
-    "packages/server/src/memmachine",
+    "packages/server/src/memmachine_server",
+    "packages/core/src/memmachine_core",
     "packages/client/src/memmachine_client",
     "packages/common/src/memmachine_common",
 ]

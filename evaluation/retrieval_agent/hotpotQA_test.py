@@ -60,7 +60,7 @@ DEFAULT_CONCURRENCY = 30
 
 
 async def hotpotqa_ingest(dataset: list[dict[str, any]], config_path: str):
-    from memmachine_server.common.episode_store import Episode
+    from memmachine_core.common.episode_store import Episode
 
     from evaluation.utils import agent_utils
 

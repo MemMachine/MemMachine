@@ -6,7 +6,10 @@ Python and the TypeScript REST client packages.
 
 ## Repository Orientation
 
-- `packages/server/`: server Python package (server, SDK, memory layers).
+- `packages/core/`: core Python package (memory systems, ABCs, data models, and
+  provider/storage implementations).
+- `packages/server/`: server Python package (HTTP/MCP server, resource manager,
+  configuration; depends on `packages/core`).
 - `packages/common/`: common Python package (shared REST API).
 - `packages/client/`: client Python package.
 - `packages/ts-client/`: client TypeScript package.
@@ -30,9 +33,9 @@ Python and the TypeScript REST client packages.
 - Type check: `uv run ty check packages` (or `ty check packages`).
 - Run all tests: `uv run pytest` (or `pytest`).
 - Run a single test file:
-  `uv run pytest packages/server/server_tests/memmachine_server/common/test_utils.py`.
+  `uv run pytest packages/core/core_tests/memmachine_core/common/test_utils.py`.
 - Run a single test function:
-  `uv run pytest packages/server/server_tests/memmachine_server/common/test_utils.py::test_chunk_text`.
+  `uv run pytest packages/core/core_tests/memmachine_core/common/test_utils.py::test_chunk_text`.
 - Run tests by keyword:
   `uv run pytest -k "create_memory"`.
 - Run marked tests only:

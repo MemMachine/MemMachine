@@ -4,22 +4,35 @@ import asyncio
 import logging
 from asyncio import Lock
 
+from memmachine_core.common.embedder import Embedder
+from memmachine_core.common.episode_store import (
+    CountCachingEpisodeStorage,
+    EpisodeStorage,
+)
+from memmachine_core.common.episode_store.episode_sqlalchemy_store import (
+    SqlAlchemyEpisodeStore,
+)
+from memmachine_core.common.language_model import LanguageModel
+from memmachine_core.common.metrics_factory import MetricsFactory
+from memmachine_core.common.reranker import Reranker
+from memmachine_core.common.vector_graph_store import VectorGraphStore
+from memmachine_core.common.vector_store import VectorStore
+from memmachine_core.episodic_memory.event_memory.segment_store import (
+    SegmentStore,
+)
+from memmachine_core.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
+    SQLAlchemySegmentStore,
+    SQLAlchemySegmentStoreParams,
+)
+from memmachine_core.semantic_memory.semantic_memory import SemanticService
+from memmachine_core.semantic_memory.semantic_session_manager import (
+    SemanticSessionManager,
+)
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.mixin_confs import MetricsFactoryIdMixin
-from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import (
-    CountCachingEpisodeStorage,
-    EpisodeStorage,
-)
-from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
-    SqlAlchemyEpisodeStore,
-)
-from memmachine_server.common.language_model import LanguageModel
-from memmachine_server.common.metrics_factory import MetricsFactory
-from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.resource_manager.embedder_manager import EmbedderManager
 from memmachine_server.common.resource_manager.language_model_manager import (
@@ -35,22 +48,9 @@ from memmachine_server.common.session_manager.session_data_manager import (
 from memmachine_server.common.session_manager.session_data_manager_sql_impl import (
     SessionDataManagerSQL,
 )
-from memmachine_server.common.vector_graph_store import VectorGraphStore
-from memmachine_server.common.vector_store import VectorStore
-from memmachine_server.episodic_memory.episodic_memory_manager import (
+from memmachine_server.wiring.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,
-)
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStore,
-)
-from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
-    SQLAlchemySegmentStore,
-    SQLAlchemySegmentStoreParams,
-)
-from memmachine_server.semantic_memory.semantic_memory import SemanticService
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
 )
 
 logger = logging.getLogger(__name__)

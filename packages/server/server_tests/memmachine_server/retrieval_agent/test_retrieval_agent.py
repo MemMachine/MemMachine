@@ -4,11 +4,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from memmachine_core.common.episode_store import Episode, EpisodeResponse
+from memmachine_core.common.language_model.language_model import LanguageModel
+from memmachine_core.common.reranker.reranker import Reranker
+from memmachine_core.episodic_memory import EpisodicMemory
 
-from memmachine_server.common.episode_store import Episode, EpisodeResponse
-from memmachine_server.common.language_model.language_model import LanguageModel
-from memmachine_server.common.reranker.reranker import Reranker
-from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.retrieval_agent.agents import (
     ChainOfQueryAgent,
     MemMachineAgent,

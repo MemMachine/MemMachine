@@ -7,42 +7,21 @@ name = "memmachine-server"
 dynamic = ["version"]
 dependencies = [
     "memmachine-common",
-    "alembic>=1.17.1",
-    "asyncpg>=0.31.0",
-    "aiosqlite>=0.20.0",
-    "boto3>=1.40.40",
-    "boto3-stubs==1.40.64",
-    "cohere>=5.20.0",
-    "dotenv>=0.9.9",
+    "memmachine-core",
     "fastapi>=0.116.1",
     "fastmcp>=3.2.0",
-    "instructor[bedrock]>=1.12.0",
-    "json-repair>=0.54",
-    "langchain-aws>=0.2.33",
-    "neo4j>=5.28.2",
-    "nltk>=3.9.4",
-    "openai>=2.21.0",
-    "pgvector>=0.4.2",
-    "prometheus-client>=0.22.1",
+    "uvicorn>=0.35.0",
     "pydantic>=2.11.7",
     "pyyaml>=6.0.2",
-    "rank-bm25>=0.2.2",
-    "regex>=2023.0.0",
-    "sqlite-vec>=0.1.9",
-    "sqlalchemy>=2.0.43",
-    "usearch>=2.25.1",
-    "uvicorn>=0.35.0",
-    "greenlet>=3.2.4",
-    "tzdata>=2024.1 ; sys_platform == 'win32'",
+    "dotenv>=0.9.9",
     "psutil>=7.1.0",
-    "langchain-text-splitters>=1.1.1",
-    "babel>=2.18.0",
+    "tzdata>=2024.1 ; sys_platform == 'win32'",
 ]
 requires-python = ">= 3.12"
 authors = [
   {name="MemMachine", email="noreply@memmachine.ai"},
 ]
-description = "MemMachine Server - The complete MemMachine memory system server with episodic and profile memory"
+description = "MemMachine Server - HTTP/MCP server, resource manager, and configuration for the MemMachine memory engine"
 readme = "README.md"
 keywords = ["memmachine", "server", "memory", "ai", "agent"]
 classifiers = [
@@ -56,19 +35,19 @@ license = "Apache-2.0"
 
 [project.optional-dependencies]
 gpu = [
-    "sentence-transformers>=5.1.0",
+    "memmachine-core[gpu]",
 ]
 hnswlib = [
-    "hnswlib>=0.8.0",
+    "memmachine-core[hnswlib]",
 ]
 nebula = [
-    "nebula5-python>=5.2.1",
+    "memmachine-core[nebula]",
 ]
 qdrant = [
-    "qdrant-client>=1.17.0",
+    "memmachine-core[qdrant]",
 ]
 litellm = [
-    "litellm>=1.63.0,<1.85",
+    "memmachine-core[litellm]",
 ]
 
 [project.scripts]
@@ -96,7 +75,9 @@ package = true
 
 [tool.ty.environment]
 python-version = "3.12"
-extra-paths = ["../common/src", "../client/src"]
+# "." and "../core" keep `server_tests.*` / `core_tests.*` qualified
+# test-helper imports resolvable (the server test suite re-uses core fixtures).
+extra-paths = ["../common/src", "../core/src", "../client/src", ".", "../core"]
 
 [tool.ty.src]
 exclude = ["build/**"]

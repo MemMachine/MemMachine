@@ -4,6 +4,7 @@ from typing import ClassVar, Self
 from urllib.parse import urlparse
 
 import yaml
+from memmachine_core.common.data_types import SimilarityMetric
 from pydantic import BaseModel, Field, field_validator
 
 from memmachine_server.common.configuration.mixin_confs import (
@@ -12,7 +13,6 @@ from memmachine_server.common.configuration.mixin_confs import (
     MetricsFactoryIdMixin,
     YamlSerializableMixin,
 )
-from memmachine_server.common.data_types import SimilarityMetric
 
 
 def _clean_empty_embedder_config(conf: dict) -> dict:

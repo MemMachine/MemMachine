@@ -3,10 +3,10 @@
 from abc import ABC, abstractmethod
 from enum import StrEnum
 
+from memmachine_core.common.data_types import PropertyValue
 from pydantic import BaseModel, JsonValue
 
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
-from memmachine_server.common.data_types import PropertyValue
 
 
 class SessionDataManager(ABC):

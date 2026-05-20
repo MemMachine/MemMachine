@@ -35,7 +35,9 @@ jobs:
 
       - name: Test with python ${{ matrix.python-version }}
         run: |
+          # Run core tests (require Python 3.12+)
+          uv run --frozen --all-extras pytest packages/core/core_tests --cov=memmachine_core
           # Run server tests (require Python 3.12+)
-          uv run --frozen --all-extras pytest packages/server/server_tests --cov=memmachine_server
+          uv run --frozen --all-extras pytest packages/server/server_tests --cov=memmachine_server --cov-append
           # Run client tests
           uv run --frozen --all-extras pytest packages/client/client_tests --cov=memmachine_client --cov-append

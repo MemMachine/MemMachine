@@ -4,7 +4,7 @@ Writing Assistant prompt for MemMachine.
 Handles writing style analysis and content generation using persona-based approach.
 """
 
-from memmachine_server.semantic_memory.semantic_model import (
+from memmachine_core.semantic_memory.semantic_model import (
     RawSemanticPrompt,
     SemanticCategory,
 )

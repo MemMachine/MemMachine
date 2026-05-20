@@ -76,8 +76,7 @@ All agents in this directory use MemMachine’s REST or SDK layers, and each sub
 
 1. Ensure MemMachine backend is running. Example:
    ```bash
-   cd packages/server
-   uv run python -m memmachine_server.app
+   uv run memmachine-server
    ```
 2. Select an example:
    - `cd examples/openai_agent && ./run.sh` (or follow `README.md`)

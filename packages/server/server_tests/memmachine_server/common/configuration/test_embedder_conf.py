@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 import yaml
+from memmachine_core.common.data_types import SimilarityMetric
 from pydantic import SecretStr
 
 from memmachine_server.common.configuration import EmbeddersConf
@@ -9,7 +10,6 @@ from memmachine_server.common.configuration.embedder_conf import (
     AmazonBedrockEmbedderConf,
     OpenAIEmbedderConf,
 )
-from memmachine_server.common.data_types import SimilarityMetric
 
 
 @pytest.fixture

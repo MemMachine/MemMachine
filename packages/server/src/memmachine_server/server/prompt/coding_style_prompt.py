@@ -1,6 +1,6 @@
 """Prompt templates for coding-style-focused semantic categories."""
 
-from memmachine_server.semantic_memory.semantic_model import (
+from memmachine_core.semantic_memory.semantic_model import (
     SemanticCategory,
     StructuredSemanticPrompt,
 )

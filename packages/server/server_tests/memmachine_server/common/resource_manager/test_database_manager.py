@@ -2,6 +2,11 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from memmachine_core.common.errors import (
+    QdrantConfigurationError,
+    VectorStoreConfigurationError,
+)
+from memmachine_core.common.vector_graph_store import VectorGraphStore
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -14,12 +19,7 @@ from memmachine_server.common.configuration.database_conf import (
     SQLiteVectorStoreEngine,
     SQLiteVecVectorStoreConf,
 )
-from memmachine_server.common.errors import (
-    QdrantConfigurationError,
-    VectorStoreConfigurationError,
-)
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
-from memmachine_server.common.vector_graph_store import VectorGraphStore
 
 
 def _empty_vector_store_confs(conf: MagicMock) -> None:
@@ -313,10 +313,10 @@ async def test_qdrant_client_kwargs_forwarded():
 
     with (
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
             "qdrant_client.AsyncQdrantClient",
@@ -347,10 +347,10 @@ async def test_qdrant_api_key_omitted_when_empty():
 
     with (
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
             "qdrant_client.AsyncQdrantClient",
@@ -378,10 +378,10 @@ async def test_qdrant_creates_vector_store():
 
     with (
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
         ) as mock_params_cls,
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
             "qdrant_client.AsyncQdrantClient",
@@ -413,10 +413,10 @@ async def test_get_vector_store_qdrant():
 
     with (
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
             "qdrant_client.AsyncQdrantClient",
@@ -463,10 +463,10 @@ async def test_qdrant_close():
 
     with (
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+            "memmachine_core.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
             "qdrant_client.AsyncQdrantClient",
@@ -528,10 +528,10 @@ async def test_sqlite_vector_store_creates_store_and_engine():
             return_value=mock_engine,
         ) as mock_create,
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
         ) as mock_params_cls,
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
@@ -575,13 +575,13 @@ async def test_sqlite_vector_store_default_engine_is_usearch():
             return_value=mock_engine,
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
         ) as mock_params_cls,
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
         patch(
-            "memmachine_server.common.vector_store.vector_search_engine.usearch_engine.USearchVectorSearchEngine",
+            "memmachine_core.common.vector_store.vector_search_engine.usearch_engine.USearchVectorSearchEngine",
         ) as mock_usearch_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
@@ -591,7 +591,7 @@ async def test_sqlite_vector_store_default_engine_is_usearch():
 
         # Invoke the factory the manager passed into params and confirm it
         # routes to the USearch engine.
-        from memmachine_server.common.data_types import SimilarityMetric
+        from memmachine_core.common.data_types import SimilarityMetric
 
         factory = mock_params_cls.call_args.kwargs["vector_search_engine_factory"]
         factory(8, SimilarityMetric.COSINE)
@@ -615,10 +615,10 @@ async def test_sqlite_vector_store_caches_after_first_call():
             return_value=mock_engine,
         ) as mock_create,
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
@@ -648,10 +648,10 @@ async def test_sqlite_vector_store_startup_failure_disposes_engine():
             return_value=mock_engine,
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock(
@@ -692,10 +692,10 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
             return_value=mock_engine,
         ) as mock_create,
         patch(
-            "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStoreParams",
+            "memmachine_core.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStoreParams",
         ) as mock_params_cls,
         patch(
-            "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
+            "memmachine_core.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
         ) as mock_store_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
@@ -742,16 +742,16 @@ async def test_get_vector_store_dispatches_to_sqlite_backends():
             return_value=mock_engine,
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_vs_cls,
         patch(
-            "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStoreParams",
+            "memmachine_core.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
+            "memmachine_core.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
         ) as mock_vec_cls,
     ):
         mock_vs_cls.return_value.startup = AsyncMock()
@@ -790,10 +790,10 @@ async def test_close_disposes_vector_store_engines_and_shuts_down_stores():
             return_value=mock_engine,
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
         ),
         patch(
-            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+            "memmachine_core.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()

@@ -21,10 +21,10 @@ from memmachine_common.api.spec import (
     SearchResultContent,
     SemanticFeature,
 )
+from memmachine_core.common.episode_store.episode_model import EpisodeEntry
 from pydantic import JsonValue
 
 from memmachine_server import MemMachine
-from memmachine_server.common.episode_store.episode_model import EpisodeEntry
 
 logger = logging.getLogger(__name__)
 

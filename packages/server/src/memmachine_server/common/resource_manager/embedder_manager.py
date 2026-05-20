@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.errors import InvalidEmbedderError
+from memmachine_core.common.embedder import Embedder
+from memmachine_core.common.errors import InvalidEmbedderError
+
 from memmachine_server.common.resource_manager.base_manager import BaseResourceManager
 
 if TYPE_CHECKING:
@@ -162,8 +163,7 @@ class EmbedderManager(BaseResourceManager[Embedder]):
 
         from botocore.config import Config
         from langchain_aws import BedrockEmbeddings
-
-        from memmachine_server.common.embedder.amazon_bedrock_embedder import (
+        from memmachine_core.common.embedder.amazon_bedrock_embedder import (
             AmazonBedrockEmbedder,
             AmazonBedrockEmbedderParams,
         )
@@ -195,8 +195,7 @@ class EmbedderManager(BaseResourceManager[Embedder]):
         conf = self.conf.openai[name]
 
         import openai
-
-        from memmachine_server.common.embedder.openai_embedder import (
+        from memmachine_core.common.embedder.openai_embedder import (
             OpenAIEmbedder,
             OpenAIEmbedderParams,
         )
@@ -225,12 +224,11 @@ class EmbedderManager(BaseResourceManager[Embedder]):
     def _build_sentence_transformer_embedders(self, name: str) -> Embedder:
         conf = self.conf.sentence_transformer[name]
 
-        from sentence_transformers import SentenceTransformer
-
-        from memmachine_server.common.embedder.sentence_transformer_embedder import (
+        from memmachine_core.common.embedder.sentence_transformer_embedder import (
             SentenceTransformerEmbedder,
             SentenceTransformerEmbedderParams,
         )
+        from sentence_transformers import SentenceTransformer
 
         model_name = conf.model
         sentence_transformer = SentenceTransformer(model_name)

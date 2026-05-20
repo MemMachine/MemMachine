@@ -44,8 +44,10 @@ jobs:
       - name: Build server package
         run: |
           uv build --project packages/common -o dist/
+          uv build --project packages/core -o dist/
           uv build --project packages/server -o dist/
           ls -lh dist/memmachine_common-*
+          ls -lh dist/memmachine_core-*
           ls -lh dist/memmachine_server-*
 
       - name: Install server package

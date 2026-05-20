@@ -11,6 +11,7 @@ resolution-markers = [
 members = [
     "memmachine-client",
     "memmachine-common",
+    "memmachine-core",
     "memmachine-server",
 ]
 constraints = [
@@ -1891,8 +1892,8 @@ requires-dist = [
 ]
 
 [[package]]
-name = "memmachine-server"
-source = { editable = "packages/server" }
+name = "memmachine-core"
+source = { editable = "packages/core" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "alembic" },
@@ -1902,8 +1903,6 @@ dependencies = [
     { name = "boto3-stubs" },
     { name = "cohere" },
     { name = "dotenv" },
-    { name = "fastapi" },
-    { name = "fastmcp" },
     { name = "greenlet" },
     { name = "instructor", extra = ["bedrock"] },
     { name = "json-repair" },
@@ -1915,16 +1914,13 @@ dependencies = [
     { name = "openai" },
     { name = "pgvector" },
     { name = "prometheus-client" },
-    { name = "psutil" },
     { name = "pydantic" },
-    { name = "pyyaml" },
     { name = "rank-bm25" },
     { name = "regex" },
     { name = "sqlalchemy" },
     { name = "sqlite-vec" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "usearch" },
-    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -1954,8 +1950,6 @@ requires-dist = [
     { name = "boto3-stubs", specifier = "==1.40.64" },
     { name = "cohere", specifier = ">=5.20.0" },
     { name = "dotenv", specifier = ">=0.9.9" },
-    { name = "fastapi", specifier = ">=0.116.1" },
-    { name = "fastmcp", specifier = ">=3.2.0" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "hnswlib", marker = "extra == 'hnswlib'", specifier = ">=0.8.0" },
     { name = "instructor", extras = ["bedrock"], specifier = ">=1.12.0" },
@@ -1970,9 +1964,7 @@ requires-dist = [
     { name = "openai", specifier = ">=2.21.0" },
     { name = "pgvector", specifier = ">=0.4.2" },
     { name = "prometheus-client", specifier = ">=0.22.1" },
-    { name = "psutil", specifier = ">=7.1.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.17.0" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "regex", specifier = ">=2023.0.0" },
@@ -1981,6 +1973,58 @@ requires-dist = [
     { name = "sqlite-vec", specifier = ">=0.1.9" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "usearch", specifier = ">=2.25.1" },
+]
+provides-extras = ["gpu", "hnswlib", "nebula", "qdrant", "litellm"]
+
+[[package]]
+name = "memmachine-server"
+source = { editable = "packages/server" }
+dependencies = [
+    { name = "dotenv" },
+    { name = "fastapi" },
+    { name = "fastmcp" },
+    { name = "memmachine-common" },
+    { name = "memmachine-core" },
+    { name = "psutil" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+    { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+gpu = [
+    { name = "memmachine-core", extra = ["gpu"] },
+]
+hnswlib = [
+    { name = "memmachine-core", extra = ["hnswlib"] },
+]
+litellm = [
+    { name = "memmachine-core", extra = ["litellm"] },
+]
+nebula = [
+    { name = "memmachine-core", extra = ["nebula"] },
+]
+qdrant = [
+    { name = "memmachine-core", extra = ["qdrant"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "dotenv", specifier = ">=0.9.9" },
+    { name = "fastapi", specifier = ">=0.116.1" },
+    { name = "fastmcp", specifier = ">=3.2.0" },
+    { name = "memmachine-common", editable = "packages/common" },
+    { name = "memmachine-core", editable = "packages/core" },
+    { name = "memmachine-core", extras = ["gpu"], marker = "extra == 'gpu'", editable = "packages/core" },
+    { name = "memmachine-core", extras = ["hnswlib"], marker = "extra == 'hnswlib'", editable = "packages/core" },
+    { name = "memmachine-core", extras = ["litellm"], marker = "extra == 'litellm'", editable = "packages/core" },
+    { name = "memmachine-core", extras = ["nebula"], marker = "extra == 'nebula'", editable = "packages/core" },
+    { name = "memmachine-core", extras = ["qdrant"], marker = "extra == 'qdrant'", editable = "packages/core" },
+    { name = "psutil", specifier = ">=7.1.0" },
+    { name = "pydantic", specifier = ">=2.11.7" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 provides-extras = ["gpu", "hnswlib", "nebula", "qdrant", "litellm"]

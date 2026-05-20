@@ -14,6 +14,7 @@ pip install memmachine-common
 
 Typical users do not need to install it directly unless they are building against MemMachine package internals. It is primarily consumed by:
 - `memmachine-client`
+- `memmachine-core`
 - `memmachine-server`
 
 ## Development

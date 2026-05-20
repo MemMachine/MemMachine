@@ -7,16 +7,15 @@ import logging
 from abc import abstractmethod
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, InstanceOf
-
-from memmachine_server.common.episode_store import Episode
-from memmachine_server.common.episode_store.episode_model import episodes_to_string
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_core.common.episode_store import Episode
+from memmachine_core.common.episode_store.episode_model import episodes_to_string
+from memmachine_core.common.filter.filter_parser import (
     FilterExpr,
 )
-from memmachine_server.common.language_model.language_model import LanguageModel
-from memmachine_server.common.reranker.reranker import Reranker
-from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_core.common.language_model.language_model import LanguageModel
+from memmachine_core.common.reranker.reranker import Reranker
+from memmachine_core.episodic_memory import EpisodicMemory
+from pydantic import BaseModel, ConfigDict, InstanceOf
 
 logger = logging.getLogger(__name__)
 

@@ -97,7 +97,7 @@ class BaseResourceManager[ResourceT](ABC):
         4. Double-check cache and errors
         5. Build resource
         """
-        from memmachine_server.common.errors import ResourceNotReadyError
+        from memmachine_core.common.errors import ResourceNotReadyError
 
         # Return cached if already built
         if name in self._resources:

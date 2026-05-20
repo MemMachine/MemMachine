@@ -8,13 +8,13 @@ from collections.abc import Callable
 from typing import Protocol
 
 import boto3
+from memmachine_core.common.embedder import Embedder
+from memmachine_core.common.errors import InvalidRerankerError
+from memmachine_core.common.reranker import Reranker
 from pydantic import InstanceOf, SecretStr
 from typing_extensions import runtime_checkable
 
 from memmachine_server.common.configuration.reranker_conf import RerankersConf
-from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.errors import InvalidRerankerError
-from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager.base_manager import BaseResourceManager
 
 logger = logging.getLogger(__name__)
@@ -131,7 +131,7 @@ class RerankerManager(BaseResourceManager[Reranker]):
         return ret
 
     async def _build_bm25_reranker(self, name: str) -> Reranker:
-        from memmachine_server.common.reranker.bm25_reranker import (
+        from memmachine_core.common.reranker.bm25_reranker import (
             BM25Reranker,
             BM25RerankerParams,
         )
@@ -169,8 +169,7 @@ class RerankerManager(BaseResourceManager[Reranker]):
 
     async def _build_cohere_reranker(self, name: str) -> Reranker:
         from cohere import ClientV2
-
-        from memmachine_server.common.reranker.cohere_reranker import (
+        from memmachine_core.common.reranker.cohere_reranker import (
             CohereReranker,
             CohereRerankerParams,
         )
@@ -190,12 +189,11 @@ class RerankerManager(BaseResourceManager[Reranker]):
         return self._rerankers[name]
 
     async def _build_cross_encoder_reranker(self, name: str) -> Reranker:
-        from sentence_transformers import CrossEncoder
-
-        from memmachine_server.common.reranker.cross_encoder_reranker import (
+        from memmachine_core.common.reranker.cross_encoder_reranker import (
             CrossEncoderReranker,
             CrossEncoderRerankerParams,
         )
+        from sentence_transformers import CrossEncoder
 
         conf = self.conf.cross_encoder[name]
 
@@ -208,7 +206,7 @@ class RerankerManager(BaseResourceManager[Reranker]):
         return self._rerankers[name]
 
     async def _build_amazon_bedrock_reranker(self, name: str) -> Reranker:
-        from memmachine_server.common.reranker.amazon_bedrock_reranker import (
+        from memmachine_core.common.reranker.amazon_bedrock_reranker import (
             AmazonBedrockReranker,
             AmazonBedrockRerankerParams,
         )
@@ -238,7 +236,7 @@ class RerankerManager(BaseResourceManager[Reranker]):
         return self._rerankers[name]
 
     async def _build_embedder_reranker(self, name: str) -> Reranker:
-        from memmachine_server.common.reranker.embedder_reranker import (
+        from memmachine_core.common.reranker.embedder_reranker import (
             EmbedderReranker,
             EmbedderRerankerParams,
         )
@@ -250,14 +248,14 @@ class RerankerManager(BaseResourceManager[Reranker]):
         return self._rerankers[name]
 
     async def _build_identity_reranker(self, name: str) -> Reranker:
-        from memmachine_server.common.reranker.identity_reranker import IdentityReranker
+        from memmachine_core.common.reranker.identity_reranker import IdentityReranker
 
         self._rerankers[name] = IdentityReranker()
         return self._rerankers[name]
 
     async def _build_rrf_hybrid_reranker(self, name: str) -> Reranker:
         """Build an RRF hybrid reranker by combining existing rerankers."""
-        from memmachine_server.common.reranker.rrf_hybrid_reranker import (
+        from memmachine_core.common.reranker.rrf_hybrid_reranker import (
             RRFHybridReranker,
             RRFHybridRerankerParams,
         )

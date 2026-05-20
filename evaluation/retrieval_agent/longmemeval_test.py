@@ -121,7 +121,7 @@ async def longmemeval_ingest(
     config_path: str,
     session_id: str,
 ):
-    from memmachine_server.common.episode_store import Episode
+    from memmachine_core.common.episode_store import Episode
 
     from evaluation.utils import agent_utils
 

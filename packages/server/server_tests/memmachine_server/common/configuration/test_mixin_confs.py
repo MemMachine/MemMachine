@@ -1,5 +1,6 @@
 import pytest
 import yaml
+from memmachine_core.common.metrics_factory import PrometheusMetricsFactory
 from pydantic import SecretStr, ValidationError
 
 from memmachine_server.common.configuration.mixin_confs import (
@@ -9,7 +10,6 @@ from memmachine_server.common.configuration.mixin_confs import (
     UnknownMetricsFactoryError,
     YamlSerializableMixin,
 )
-from memmachine_server.common.metrics_factory import PrometheusMetricsFactory
 
 
 @pytest.fixture(autouse=True)

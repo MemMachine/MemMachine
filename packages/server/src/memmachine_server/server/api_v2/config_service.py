@@ -545,7 +545,7 @@ class ConfigService:
             InvalidEmbedderError: If the embedder is not configured.
 
         """
-        from memmachine_server.common.errors import InvalidEmbedderError
+        from memmachine_core.common.errors import InvalidEmbedderError
 
         try:
             await self._resource_manager.embedder_manager.retry_build(name)
@@ -565,7 +565,7 @@ class ConfigService:
             InvalidLanguageModelError: If the language model is not configured.
 
         """
-        from memmachine_server.common.errors import InvalidLanguageModelError
+        from memmachine_core.common.errors import InvalidLanguageModelError
 
         try:
             await self._resource_manager.language_model_manager.retry_build(name)
@@ -585,7 +585,7 @@ class ConfigService:
             InvalidRerankerError: If the reranker is not configured.
 
         """
-        from memmachine_server.common.errors import InvalidRerankerError
+        from memmachine_core.common.errors import InvalidRerankerError
 
         try:
             await self._resource_manager.reranker_manager.retry_build(name)

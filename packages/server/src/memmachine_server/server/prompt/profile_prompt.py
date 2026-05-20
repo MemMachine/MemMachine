@@ -1,6 +1,6 @@
 """Prompt templates for profile-focused semantic categories."""
 
-from memmachine_server.semantic_memory.semantic_model import (
+from memmachine_core.semantic_memory.semantic_model import (
     SemanticCategory,
     StructuredSemanticPrompt,
 )

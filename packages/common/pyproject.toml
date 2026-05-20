@@ -14,7 +14,7 @@ requires-python = ">= 3.10"
 authors = [
   {name="MemMachine", email="noreply@memmachine.ai"},
 ]
-description = "MemMachine Common - Shared API models for MemMachine client and server"
+description = "MemMachine Common - Shared API models for the MemMachine packages"
 readme = "README.md"
 keywords = ["memmachine", "common", "api", "models"]
 classifiers = [

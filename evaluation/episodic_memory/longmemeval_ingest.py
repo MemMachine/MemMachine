@@ -12,20 +12,20 @@ from longmemeval_models import (
     LongMemEvalItem,
     load_longmemeval_dataset,
 )
-from memmachine_server.common.embedder.openai_embedder import (
+from memmachine_core.common.embedder.openai_embedder import (
     OpenAIEmbedder,
     OpenAIEmbedderParams,
 )
-from memmachine_server.common.reranker.amazon_bedrock_reranker import (
+from memmachine_core.common.reranker.amazon_bedrock_reranker import (
     AmazonBedrockReranker,
     AmazonBedrockRerankerParams,
 )
-from memmachine_server.common.utils import async_with
-from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
+from memmachine_core.common.utils import async_with
+from memmachine_core.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
 )
-from memmachine_server.episodic_memory.declarative_memory import (
+from memmachine_core.episodic_memory.declarative_memory import (
     ContentType,
     DeclarativeMemory,
     DeclarativeMemoryParams,

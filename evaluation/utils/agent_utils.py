@@ -3,21 +3,21 @@ import time
 from pathlib import Path
 from typing import Any
 
-from memmachine_server.common.configuration import Configuration
-from memmachine_server.common.episode_store.episode_model import episodes_to_string
-from memmachine_server.common.language_model.language_model import LanguageModel
-from memmachine_server.common.metrics_factory import PrometheusMetricsFactory
-from memmachine_server.common.reranker.reranker import Reranker
-from memmachine_server.common.resource_manager.resource_manager import (
-    ResourceManagerImpl,
-)
-from memmachine_server.episodic_memory import EpisodicMemory
-from memmachine_server.episodic_memory.episodic_memory import (
+from memmachine_core.common.episode_store.episode_model import episodes_to_string
+from memmachine_core.common.language_model.language_model import LanguageModel
+from memmachine_core.common.metrics_factory import PrometheusMetricsFactory
+from memmachine_core.common.reranker.reranker import Reranker
+from memmachine_core.episodic_memory import EpisodicMemory
+from memmachine_core.episodic_memory.episodic_memory import (
     EpisodicMemoryParams,
 )
-from memmachine_server.episodic_memory.long_term_memory import (
+from memmachine_core.episodic_memory.long_term_memory import (
     LongTermMemory,
     LongTermMemoryParams,
+)
+from memmachine_server.common.configuration import Configuration
+from memmachine_server.common.resource_manager.resource_manager import (
+    ResourceManagerImpl,
 )
 from memmachine_server.retrieval_agent.agents import (
     ChainOfQueryAgent,

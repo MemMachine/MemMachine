@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from dotenv import load_dotenv
-from memmachine_server.common.episode_store.episode_model import Episode
+from memmachine_core.common.episode_store.episode_model import Episode
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:

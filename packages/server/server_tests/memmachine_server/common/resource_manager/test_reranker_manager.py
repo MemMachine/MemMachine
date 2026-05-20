@@ -1,6 +1,10 @@
 from typing import cast
 
 import pytest
+from core_tests.memmachine_core.conftest import requires_sentence_transformers
+from memmachine_core.common.data_types import SimilarityMetric
+from memmachine_core.common.embedder import Embedder
+from memmachine_core.common.errors import InvalidRerankerError
 from pydantic import SecretStr
 
 from memmachine_server.common.configuration.reranker_conf import (
@@ -12,14 +16,10 @@ from memmachine_server.common.configuration.reranker_conf import (
     RerankersConf,
     RRFHybridRerankerConf,
 )
-from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.errors import InvalidRerankerError
 from memmachine_server.common.resource_manager.reranker_manager import (
     EmbedderFactory,
     RerankerManager,
 )
-from server_tests.memmachine_server.conftest import requires_sentence_transformers
 
 
 @pytest.fixture

@@ -5,6 +5,9 @@ from urllib.parse import urlparse
 
 import pytest
 import pytest_asyncio
+from memmachine_core.semantic_memory.semantic_session_manager import (
+    SemanticSessionManager,
+)
 
 from memmachine_server import MemMachine, setup_nltk
 from memmachine_server.common.configuration import (
@@ -26,9 +29,6 @@ from memmachine_server.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine_server.common.configuration.reranker_conf import RerankersConf
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
-)
 
 
 @pytest.fixture(scope="session")

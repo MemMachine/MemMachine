@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from typing import Any, cast
 
-from memmachine_server.common.episode_store import Episode
-from memmachine_server.common.language_model.language_model import LanguageModel
+from memmachine_core.common.episode_store import Episode
+from memmachine_core.common.language_model.language_model import LanguageModel
+
 from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
     AgentToolBaseParam,

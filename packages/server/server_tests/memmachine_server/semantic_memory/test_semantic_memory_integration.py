@@ -6,27 +6,27 @@ from typing import cast
 
 import pytest
 import pytest_asyncio
-
-from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import EpisodeEntry, EpisodeStorage
-from memmachine_server.common.language_model import LanguageModel
-from memmachine_server.common.language_model.openai_responses_language_model import (
+from memmachine_core.common.embedder import Embedder
+from memmachine_core.common.episode_store import EpisodeEntry, EpisodeStorage
+from memmachine_core.common.language_model import LanguageModel
+from memmachine_core.common.language_model.openai_responses_language_model import (
     OpenAIResponsesLanguageModel,
 )
-from memmachine_server.semantic_memory.config_store.config_store import (
+from memmachine_core.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )
-from memmachine_server.semantic_memory.semantic_memory import (
+from memmachine_core.semantic_memory.semantic_memory import (
     ResourceManager,
     SemanticService,
 )
-from memmachine_server.semantic_memory.semantic_model import (
+from memmachine_core.semantic_memory.semantic_model import (
     SetIdT,
 )
-from memmachine_server.semantic_memory.semantic_session_manager import (
+from memmachine_core.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
-from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+from memmachine_core.semantic_memory.storage.storage_base import SemanticStorage
+
 from memmachine_server.server.prompt.coding_style_prompt import (
     CodingStyleSemanticCategory,
 )

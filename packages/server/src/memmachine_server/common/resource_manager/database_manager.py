@@ -6,6 +6,22 @@ from asyncio import Lock
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
+from memmachine_core.common.data_types import SimilarityMetric
+from memmachine_core.common.errors import (
+    Neo4JConfigurationError,
+    QdrantConfigurationError,
+    SQLConfigurationError,
+    VectorStoreConfigurationError,
+)
+from memmachine_core.common.vector_graph_store import VectorGraphStore
+from memmachine_core.common.vector_graph_store.neo4j_vector_graph_store import (
+    Neo4jVectorGraphStore,
+    Neo4jVectorGraphStoreParams,
+)
+from memmachine_core.common.vector_store import VectorStore
+from memmachine_core.common.vector_store.vector_search_engine import (
+    VectorSearchEngine,
+)
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -15,22 +31,6 @@ from memmachine_server.common.configuration.database_conf import (
     Neo4jConf,
     SQLiteVectorStoreConf,
     SQLiteVectorStoreEngine,
-)
-from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.errors import (
-    Neo4JConfigurationError,
-    QdrantConfigurationError,
-    SQLConfigurationError,
-    VectorStoreConfigurationError,
-)
-from memmachine_server.common.vector_graph_store import VectorGraphStore
-from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
-    Neo4jVectorGraphStore,
-    Neo4jVectorGraphStoreParams,
-)
-from memmachine_server.common.vector_store import VectorStore
-from memmachine_server.common.vector_store.vector_search_engine import (
-    VectorSearchEngine,
 )
 
 # TYPE_CHECKING is True only when type checkers (mypy, pyright) run, False at runtime.
@@ -450,7 +450,7 @@ class DatabaseManager:
 
             # Create and store VectorGraphStore
             # Import here to avoid circular dependency
-            from memmachine_server.common.vector_graph_store.nebula_graph_vector_graph_store import (
+            from memmachine_core.common.vector_graph_store.nebula_graph_vector_graph_store import (
                 NebulaGraphVectorGraphStore,
                 NebulaGraphVectorGraphStoreParams,
             )
@@ -565,7 +565,7 @@ class DatabaseManager:
             if validate:
                 await self.validate_qdrant_client(name, client)
 
-            from memmachine_server.common.vector_store.qdrant_vector_store import (
+            from memmachine_core.common.vector_store.qdrant_vector_store import (
                 QdrantVectorStore,
                 QdrantVectorStoreParams,
             )
@@ -625,7 +625,7 @@ class DatabaseManager:
         """
         match conf.vector_search_engine:
             case SQLiteVectorStoreEngine.USEARCH:
-                from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
+                from memmachine_core.common.vector_store.vector_search_engine.usearch_engine import (
                     USearchVectorSearchEngine,
                 )
 
@@ -639,7 +639,7 @@ class DatabaseManager:
 
                 return usearch_factory
             case SQLiteVectorStoreEngine.HNSWLIB:
-                from memmachine_server.common.vector_store.vector_search_engine.hnswlib_engine import (
+                from memmachine_core.common.vector_store.vector_search_engine.hnswlib_engine import (
                     HnswlibVectorSearchEngine,
                 )
 
@@ -667,7 +667,7 @@ class DatabaseManager:
             if not conf:
                 raise ValueError(f"SQLiteVectorStore config '{name}' not found.")
 
-            from memmachine_server.common.vector_store.sqlite_vector_store import (
+            from memmachine_core.common.vector_store.sqlite_vector_store import (
                 SQLiteVectorStore,
                 SQLiteVectorStoreParams,
             )
@@ -711,7 +711,7 @@ class DatabaseManager:
             if not conf:
                 raise ValueError(f"SQLiteVecVectorStore config '{name}' not found.")
 
-            from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
+            from memmachine_core.common.vector_store.sqlite_vec_vector_store import (
                 SQLiteVecVectorStore,
                 SQLiteVecVectorStoreParams,
             )

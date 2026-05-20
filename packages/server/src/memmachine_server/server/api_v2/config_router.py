@@ -24,12 +24,12 @@ from memmachine_common.api.config_spec import (
     UpdateShortTermMemorySpec,
 )
 from memmachine_common.api.doc import RouterDoc
-
-from memmachine_server.common.errors import (
+from memmachine_core.common.errors import (
     InvalidEmbedderError,
     InvalidLanguageModelError,
     InvalidRerankerError,
 )
+
 from memmachine_server.server.api_v2.config_service import ConfigService
 from memmachine_server.server.api_v2.exceptions import RestError
 

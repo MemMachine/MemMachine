@@ -1,4 +1,6 @@
 import pytest
+from core_tests.memmachine_core.conftest import requires_sentence_transformers
+from memmachine_core.common.embedder import Embedder
 from pydantic import SecretStr
 
 from memmachine_server.common.configuration import EmbeddersConf
@@ -7,9 +9,7 @@ from memmachine_server.common.configuration.embedder_conf import (
     OpenAIEmbedderConf,
     SentenceTransformerEmbedderConf,
 )
-from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.resource_manager.embedder_manager import EmbedderManager
-from server_tests.memmachine_server.conftest import requires_sentence_transformers
 
 
 @pytest.fixture

@@ -5,8 +5,7 @@ import traceback
 
 from fastapi.exceptions import HTTPException, RequestValidationError
 from memmachine_common.api.spec import InvalidNameError, RestErrorModel
-
-from memmachine_server.common.errors import (
+from memmachine_core.common.errors import (
     InvalidArgumentError,
     ResourceNotReadyError,
     SessionAlreadyExistsError,

@@ -4,6 +4,9 @@ from typing import Any, ClassVar, Self
 from urllib.parse import urlparse
 
 import yaml
+from memmachine_core.common.language_model.amazon_bedrock_language_model import (
+    AmazonBedrockConverseInferenceConfig,
+)
 from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from memmachine_server.common.configuration.mixin_confs import (
@@ -11,9 +14,6 @@ from memmachine_server.common.configuration.mixin_confs import (
     AWSCredentialsMixin,
     MetricsFactoryIdMixin,
     YamlSerializableMixin,
-)
-from memmachine_server.common.language_model.amazon_bedrock_language_model import (
-    AmazonBedrockConverseInferenceConfig,
 )
 
 DEFAULT_OLLAMA_BASE_URL = "http://host.docker.internal:11434/v1"

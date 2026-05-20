@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from memmachine_core.common.errors import InvalidLanguageModelError
+from memmachine_core.common.language_model.language_model import LanguageModel
 from pydantic import SecretStr
 
 from memmachine_server.common.configuration.language_model_conf import (
@@ -13,8 +15,6 @@ from memmachine_server.common.configuration.language_model_conf import (
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
 )
-from memmachine_server.common.errors import InvalidLanguageModelError
-from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.resource_manager.base_manager import BaseResourceManager
 
 logger = logging.getLogger(__name__)
@@ -196,8 +196,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
 
     def _build_openai_responses_language_model(self, name: str) -> LanguageModel:
         import openai
-
-        from memmachine_server.common.language_model.openai_responses_language_model import (
+        from memmachine_core.common.language_model.openai_responses_language_model import (
             OpenAIResponsesLanguageModel,
             OpenAIResponsesLanguageModelParams,
         )
@@ -223,8 +222,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
 
     def _build_openai_chat_completions_language_model(self, name: str) -> LanguageModel:
         import openai
-
-        from memmachine_server.common.language_model.openai_chat_completions_language_model import (
+        from memmachine_core.common.language_model.openai_chat_completions_language_model import (
             OpenAIChatCompletionsLanguageModel,
             OpenAIChatCompletionsLanguageModelParams,
         )
@@ -251,8 +249,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
     def _build_amazon_bedrock_language_model(self, name: str) -> LanguageModel:
         import boto3
         from botocore.config import Config
-
-        from memmachine_server.common.language_model.amazon_bedrock_language_model import (
+        from memmachine_core.common.language_model.amazon_bedrock_language_model import (
             AmazonBedrockLanguageModel,
             AmazonBedrockLanguageModelParams,
         )
@@ -290,7 +287,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         )
 
     def _build_litellm_language_model(self, name: str) -> LanguageModel:
-        from memmachine_server.common.language_model.litellm_language_model import (
+        from memmachine_core.common.language_model.litellm_language_model import (
             LiteLLMLanguageModel,
             LiteLLMLanguageModelParams,
         )

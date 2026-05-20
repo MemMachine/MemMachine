@@ -1,7 +1,8 @@
-from memmachine_server.common.configuration import PromptConf
-from memmachine_server.semantic_memory.semantic_session_manager import (
+from memmachine_core.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
+
+from memmachine_server.common.configuration import PromptConf
 
 
 def test_prompt_conf_custom_user_categories() -> None:
