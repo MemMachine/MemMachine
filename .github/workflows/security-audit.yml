@@ -7,11 +7,6 @@ permissions:
 on:
   schedule:
     - cron: '0 6 * * 1,4'
-  pull_request:
-    paths:
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - 'packages/**/pyproject.toml'
   workflow_dispatch:
 
 jobs:
