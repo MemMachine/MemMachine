@@ -77,7 +77,7 @@ Here is a sample `openclaw.json` entry:
         "enabled": true,
         "config": {
           "apiKey": "mm-...",
-          "baseUrl": "https://api.memmachine.ai",
+          "baseUrl": "https://api.memmachine.ai/v2",
           "autoCapture": true,
           "autoRecall": true,
           "orgId": "openclaw",
@@ -94,10 +94,16 @@ Here is a sample `openclaw.json` entry:
 
 ### Configuration entries
 
-Here are the required configuration entries:
+All fields are optional in the JSON schema, but in practice you must set
+`apiKey` for MemMachine Cloud, and you should set `baseUrl` when targeting a
+self-hosted deployment.
 
 - `apiKey`: MemMachine API key.
-- `baseUrl`: MemMachine API base URL.
+- `baseUrl`: MemMachine API base URL, including the API version path. For
+  MemMachine Cloud use `https://api.memmachine.ai/v2`. For a self-hosted
+  MemMachine server (this repo) routes are mounted under `/api/v2`, so use
+  `http://<host>:<port>/api/v2` (e.g. `http://localhost:8080/api/v2`). Omit
+  to use the client default (`https://api.memmachine.ai/v2`).
 - `autoCapture`: Enable automatic memory capture.
 - `autoRecall`: Enable automatic memory recall.
 - `orgId`: Organization identifier.
