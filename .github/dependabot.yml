@@ -5,7 +5,18 @@
 
 version: 2
 updates:
-  - package-ecosystem: "uv" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  - package-ecosystem: "uv"
+    # The uv.lock lives at the repo root and locks every workspace member.
+    # Listing each workspace pyproject.toml lets Dependabot edit the right
+    # [project.dependencies] block in addition to bumping uv.lock.
+    directories:
+      - "/"
+      - "/packages/client"
+      - "/packages/common"
+      - "/packages/server"
     schedule:
       interval: "weekly"
+    groups:
+      uv-workspace:
+        patterns:
+          - "*"
