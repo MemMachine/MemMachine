@@ -87,7 +87,9 @@ jobs:
           import json
           with open('$RUNNER_TEMP/audit-results.json') as f:
               data = json.load(f)
-          packages = sorted({v['package']['name'] for v in data.get('vulnerabilities', [])})
+          # uv audit JSON schema: each vulnerability has a 'dependency' object
+          # with 'name' and 'version' fields (not 'package.name')
+          packages = sorted({v['dependency']['name'] for v in data.get('vulnerabilities', [])})
           with open('$RUNNER_TEMP/vulnerable-packages.txt', 'w') as f:
               for package in packages:
                   f.write(f'{package}\n')
