@@ -23,13 +23,13 @@ constraint-dependencies = [
 
 [dependency-groups]
 dev = [
-    "complexipy>=5.4.1",
-    "complexipy>=5.4.1",
+    "complexipy>=5.5.0",
+    "complexipy>=5.5.0",
     "pytest>=9.0.3",
-    "pytest-asyncio>=1.2.0",
-    "ruff==0.15.14",
+    "pytest-asyncio>=1.4.0",
+    "ruff==0.15.15",
     "testcontainers[neo4j,postgres,qdrant]>=4.14.2",
-    "ty~=0.0.38",
+    "ty~=0.0.40",
     "tomli>=2.4.1",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
