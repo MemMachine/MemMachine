@@ -368,6 +368,30 @@ class TestConfig:
         with pytest.raises(RuntimeError, match="client has been closed"):
             config.update_long_term_memory_config(embedder="x")
 
+    def test_update_long_term_memory_config_event_backend(self, config, mock_client):
+        """Event-backend fields (backend / vector_store / segment_store /
+        properties_schema) must reach the wire — without these the SDK has no
+        supported path to event-backed projects."""
+        mock_client.request.return_value = _mock_response(
+            {"success": True, "message": "Long-term memory configuration updated"}
+        )
+        result = config.update_long_term_memory_config(
+            backend="event",
+            embedder="new-embedder",
+            vector_store="qdrant_vs",
+            segment_store="sqlite_db",
+            properties_schema={"customer_tier": "str"},
+        )
+        assert isinstance(result, UpdateMemoryConfigResponse)
+        body = mock_client.request.call_args[1]["json"]
+        assert body["backend"] == "event"
+        assert body["vector_store"] == "qdrant_vs"
+        assert body["segment_store"] == "sqlite_db"
+        assert body["properties_schema"] == {"customer_tier": "str"}
+        assert body["embedder"] == "new-embedder"
+        # Untouched declarative-only field must NOT leak into the payload.
+        assert "vector_graph_store" not in body
+
     def test_update_short_term_memory_config(self, config, mock_client):
         mock_client.request.return_value = _mock_response(
             {"success": True, "message": "Short-term memory configuration updated"}
@@ -410,6 +434,8 @@ class TestConfig:
             {
                 "enabled": True,
                 "database": "postgres-db",
+                "feature_store": "semantic-feature-db",
+                "vector_collection": "semantic-vector-store",
                 "llm_model": "gpt-4",
                 "embedding_model": "openai-embedder",
             }
@@ -418,6 +444,8 @@ class TestConfig:
         assert isinstance(result, SemanticMemoryConfigResponse)
         assert result.enabled is True
         assert result.database == "postgres-db"
+        assert result.feature_store == "semantic-feature-db"
+        assert result.vector_collection == "semantic-vector-store"
         assert result.llm_model == "gpt-4"
         assert result.embedding_model == "openai-embedder"
         mock_client.request.assert_called_once_with(
@@ -438,6 +466,8 @@ class TestConfig:
         result = config.update_semantic_memory_config(
             enabled=True,
             database="postgres-db",
+            feature_store="semantic-feature-db",
+            vector_collection="semantic-vector-store",
             llm_model="gpt-4",
             embedding_model="openai-embedder",
             ingestion_trigger_messages=10,
@@ -453,6 +483,8 @@ class TestConfig:
         body = call_args[1]["json"]
         assert body["enabled"] is True
         assert body["database"] == "postgres-db"
+        assert body["feature_store"] == "semantic-feature-db"
+        assert body["vector_collection"] == "semantic-vector-store"
         assert body["llm_model"] == "gpt-4"
         assert body["embedding_model"] == "openai-embedder"
         assert body["ingestion_trigger_messages"] == 10
@@ -533,9 +565,13 @@ class TestConfig:
             {"success": True, "message": "Episodic memory configuration updated"}
         )
         ltm_spec = UpdateLongTermMemorySpec(
+            backend=None,
             embedder="new-embedder",
             reranker="new-reranker",
             vector_graph_store="new-store",
+            vector_store=None,
+            segment_store=None,
+            properties_schema=None,
         )
         stm_spec = UpdateShortTermMemorySpec(
             llm_model="new-llm",

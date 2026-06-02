@@ -1,0 +1,282 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "palm",
+  "name": "MemMachine Documentation",
+  "colors": {
+    "primary": "#005eb9",
+    "light": "#429cf1",
+    "dark": "#a8bacb"
+  },
+  "integrations": {
+    "gtm": {
+      "tagId": "GTM-WDX7ZBC7"
+    }
+  },
+  
+  "favicon": "favicon.ico",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "rocket",
+            "pages": [
+              "getting_started/introduction",
+              "getting_started/quickstart",
+              "getting_started/benchmarks",
+              "getting_started/faqs"
+            ]
+          },
+          {
+            "group": "Install Guides",
+            "icon": "map",
+            "pages": [
+              "install_guide/introduction",
+              "install_guide/install_guide", 
+              {
+                "group": "Cloud Deployments",
+                "pages": [
+                  "install_guide/cloud_deploy/aws_cloudformation",
+                  "install_guide/cloud_deploy/Helm_Chart"
+                ]
+              },  
+              {
+                "group": "Configurations",
+                "pages": [
+                  "install_guide/config/ollama",
+                  "install_guide/config/aws_bedrock"
+                ]
+              }  
+            ]
+          },
+          {
+            "group": "Integrations",
+            "icon": "puzzle-piece",
+            "pages": [
+              "install_guide/integrate/openclaw",
+              "install_guide/integrate/GPTStore",
+              "install_guide/integrate/claude_code_mcp",
+              "install_guide/integrate/LangGraph",
+              "install_guide/integrate/LangChain",
+              "install_guide/integrate/crewai",
+              "install_guide/integrate/n8n",
+              "install_guide/integrate/dify",
+              "install_guide/integrate/LlamaIndex",
+              "install_guide/integrate/nebula_graph_integration_guide"
+            ]
+          },
+          {
+            "group": "Tools",
+            "icon": "screwdriver-wrench",
+            "pages": [
+              "tools/ChatGPT2MemMachine"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "icon": "brain",
+            "pages": [
+              "core_concepts/agentic_workflow",
+              "core_concepts/agentic_memory"
+            ]
+          },
+          {
+            "group": "Open Source",
+            "icon": "globe",
+            "pages": [
+              "open_source/introduction",
+              "open_source/configuration",
+              "open_source/memory_types",
+              "open_source/databases",
+              "open_source/retrieval_agent_architecture",
+              "open_source/community"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "OpenSource API",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": [
+              "api_reference/intro"
+            ]
+          },
+          {
+            "group": "MCP Tools",
+            "pages": [
+              "api_reference/mcp"
+            ]
+          },
+          {
+            "group": "REST API",
+            "openapi": "openapi.json"
+            },
+          {
+          "group": "Typescript REST SDK",
+          "pages": [
+            "api_reference/ts-rest/typescript", 
+            {
+              "group": "Classes",
+              "pages": [
+                "api_reference/ts-rest/classes/MemMachineClient",
+                "api_reference/ts-rest/classes/MemMachineAPIError",
+                "api_reference/ts-rest/classes/MemMachineMemory",
+                "api_reference/ts-rest/classes/MemMachineProject"
+              ]
+            },
+            {
+              "group": "Interfaces",
+              "pages": [
+                "api_reference/ts-rest/interfaces/ClientOptions",
+                "api_reference/ts-rest/interfaces/ProjectContext",
+                "api_reference/ts-rest/interfaces/MemoryContext",
+                "api_reference/ts-rest/interfaces/CreateProjectOptions",
+                "api_reference/ts-rest/interfaces/AddMemoryOptions",
+                "api_reference/ts-rest/interfaces/SearchMemoriesOptions",
+                "api_reference/ts-rest/interfaces/ListMemoriesOptions",
+                "api_reference/ts-rest/interfaces/Project",
+                "api_reference/ts-rest/interfaces/AddMemoryResult",
+                "api_reference/ts-rest/interfaces/SearchMemoriesResult",
+                "api_reference/ts-rest/interfaces/EpisodicMemory",
+                "api_reference/ts-rest/interfaces/SemanticMemory",
+                "api_reference/ts-rest/interfaces/HealthStatus"
+              ]
+            },
+            {
+              "group": "Types",
+              "pages": [
+                "api_reference/ts-rest/types/MemoryProducerRole",
+                "api_reference/ts-rest/types/MemoryType"
+              ]
+            }
+          ]
+        },
+          {
+            "group": "PythonSDK Client",
+            "pages": [
+              "api_reference/python/client",      
+              "api_reference/python/client_api",  
+              "api_reference/python/project_api", 
+              "api_reference/python/memory_api",  
+              "api_reference/python/semantic_api",
+              "api_reference/python/config_api",  
+              "api_reference/python/system_api"
+            ]
+          },
+         {
+            "group": "Python SDK Server",
+            "pages": [
+              "api_reference/python/server",
+              "api_reference/python/memory_types",
+              "api_reference/python/episodic_memory",
+              "api_reference/python/semantic_memory",
+              "api_reference/python/episodic_memory_manager"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Examples",
+        "groups": [
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/introduction",
+              "examples/agents",
+              "examples/python",
+              "examples/rest",
+              "examples/mcp"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Platform",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": ["platform/introduction"]
+          },
+          {
+            "group": "User Guide",
+            "pages": [
+              "platform/dashboard",
+              "platform/api_key",
+              "platform/login_register"
+            ]
+          },
+          {
+            "group": "Platform API",
+            "openapi": "platform.openapi.json"
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Documentation",
+          "href": "https://docs.memmachine.ai/",
+          "icon": "book-open-cover"
+        },
+        {
+          "anchor": "Community",
+          "href": "https://memmachine.ai/community",
+          "icon": "slack"
+        },
+        {
+          "anchor": "Blog",
+          "href": "https://memmachine.ai/blog",
+          "icon": "newspaper"
+        },
+        {
+          "anchor": "Platform",
+          "href": "https://console.memmachine.ai/",
+          "icon": "box-open"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/memmachine-blue-logo-banner.png",
+    "dark": "/logo/memmachine-white-logo-banner.png"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Playground",
+        "href": "https://huggingface.co/spaces/Memverge/MemMachine-Playground"
+      },
+      {
+        "label": "Support",
+        "href": "https://discord.gg/usydANvKqD"
+      },
+      {
+        "label": "Platform Console",
+        "href": "https://console.memmachine.ai"
+      }
+    ]
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "perplexity",
+      "mcp",
+      "cursor",
+      "vscode"
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/MemMachine/MemMachine",
+      "discord": "https://discord.gg/usydANvKqD"
+    }
+  }
+}

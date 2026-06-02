@@ -37,6 +37,10 @@ class SentenceTransformerEmbedderParams(BaseModel):
         description="Maximum input length for the model (in Unicode code points).",
         gt=0,
     )
+    batch_size: int | None = Field(
+        None,
+        description="Batch size for embedding requests.",
+    )
 
 
 class SentenceTransformerEmbedder(Embedder):
@@ -44,14 +48,13 @@ class SentenceTransformerEmbedder(Embedder):
 
     def __init__(self, params: SentenceTransformerEmbedderParams) -> None:
         """Initialize the sentence transformer embedder."""
-        super().__init__()
+        super().__init__(batch_size=params.batch_size)
 
         self._model_name = params.model_name
         self._sentence_transformer = params.sentence_transformer
 
-        self._dimensions = (
-            self._sentence_transformer.get_sentence_embedding_dimension()
-            or len(self._sentence_transformer.encode(""))
+        self._dimensions = self._sentence_transformer.get_embedding_dimension() or len(
+            self._sentence_transformer.encode("")
         )
         match self._sentence_transformer.similarity_fn_name:
             case "cosine":
@@ -71,7 +74,7 @@ class SentenceTransformerEmbedder(Embedder):
 
         self._max_input_length = params.max_input_length
 
-    async def ingest_embed(
+    async def _ingest_embed(
         self,
         inputs: list[Any],
         max_attempts: int = 1,
@@ -79,7 +82,7 @@ class SentenceTransformerEmbedder(Embedder):
         """Embed input documents using the sentence transformer."""
         return await self._embed(inputs, max_attempts)
 
-    async def search_embed(
+    async def _search_embed(
         self,
         queries: list[Any],
         max_attempts: int = 1,
@@ -106,7 +109,9 @@ class SentenceTransformerEmbedder(Embedder):
             for input_text in inputs
         ]
 
-        chunks = [chunk for input_chunks in inputs_chunks for chunk in input_chunks]
+        chunks: list[str] = [
+            chunk for input_chunks in inputs_chunks for chunk in input_chunks
+        ]
 
         embed_call_uuid = uuid4()
 

@@ -102,7 +102,7 @@ async def _cleanup(engine: AsyncEngine) -> None:
 @pytest.mark.asyncio
 async def test_startup_wraps_operational_error():
     engine = _FakeAsyncEngine(OperationalError("select 1", {}, Exception("db down")))
-    store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]
+    store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     with pytest.raises(ConfigurationError) as exc_info:
         await store.startup()
@@ -113,7 +113,7 @@ async def test_startup_wraps_operational_error():
 @pytest.mark.asyncio
 async def test_startup_wraps_socket_gaierror():
     engine = _FakeAsyncEngine(socket.gaierror(8, "dns lookup failed"))
-    store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]
+    store = SqlAlchemyEpisodeStore(engine)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     with pytest.raises(ConfigurationError) as exc_info:
         await store.startup()

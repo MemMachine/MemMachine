@@ -1,12 +1,14 @@
 """Storage configuration models."""
 
+from collections.abc import Mapping
 from enum import StrEnum
-from typing import ClassVar, Self
+from typing import Any, ClassVar, Self
 
 import yaml
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from memmachine_server.common.configuration.mixin_confs import (
+    ApiKeyMixin,
     PasswordMixin,
     YamlSerializableMixin,
 )
@@ -225,6 +227,100 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
         return self.hosts
 
 
+class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
+    """Configuration options for a Qdrant instance."""
+
+    host: str = Field(
+        default="localhost",
+        description="Qdrant server host",
+    )
+    port: int = Field(
+        default=6333,
+        description="Qdrant REST port",
+    )
+    grpc_port: int = Field(
+        default=6334,
+        description="Qdrant gRPC port",
+    )
+    prefer_grpc: bool = Field(
+        default=False,
+        description="Whether to use gRPC for Qdrant communication",
+    )
+    https: bool = Field(
+        default=False,
+        description="Whether to use HTTPS/TLS for Qdrant communication",
+    )
+    is_distributed: bool = Field(
+        default=False,
+        description=(
+            "Whether the Qdrant cluster is running in distributed mode. "
+            "If True, native collections use custom sharding."
+        ),
+    )
+    registry_replication_factor: int = Field(
+        default=1,
+        description=(
+            "Replication factor for registry collections. Write consistency factor "
+            "is set to match so all replicas confirm writes."
+        ),
+    )
+
+
+class SQLiteVectorStoreEngine(StrEnum):
+    """Supported vector search engine providers for SQLiteVectorStore."""
+
+    USEARCH = "usearch"
+    HNSWLIB = "hnswlib"
+
+
+class SQLiteVectorStoreConf(YamlSerializableMixin):
+    """Configuration options for the SQLite-backed VectorStore."""
+
+    path: str = Field(
+        ...,
+        description="SQLite database file path (used as sqlite+aiosqlite:///<path>)",
+    )
+    vector_search_engine: SQLiteVectorStoreEngine = Field(
+        default=SQLiteVectorStoreEngine.USEARCH,
+        description="Backing vector search engine provider",
+    )
+    index_directory: str | None = Field(
+        default=None,
+        description=(
+            "Directory used to persist per-collection ANN index files. "
+            "If None, indexes are kept in-memory only and are lost on restart."
+        ),
+    )
+    save_threshold: int = Field(
+        default=1000,
+        description=(
+            "Number of search-engine operations before the index is auto-saved "
+            "to `index_directory`. Only relevant when `index_directory` is set."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_path(self) -> Self:
+        if not self.path:
+            raise ValueError("SQLiteVectorStoreConf requires a non-empty 'path'")
+        return self
+
+
+class SQLiteVecVectorStoreConf(YamlSerializableMixin):
+    """Configuration options for the SQLite + sqlite-vec VectorStore."""
+
+    path: str = Field(
+        ...,
+        description="SQLite database file path (used as sqlite+aiosqlite:///<path>)",
+    )
+
+    @model_validator(mode="after")
+    def _validate_path(self) -> Self:
+        if not self.path:
+            raise ValueError("SQLiteVecVectorStoreConf requires a non-empty 'path'")
+        return self
+
+
 class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
     """Configuration for SQLAlchemy-backed relational databases."""
 
@@ -333,7 +429,14 @@ class SupportedDB(StrEnum):
     """Supported database providers."""
 
     # <-- Add these annotations so mypy knows these attributes exist
-    conf_cls: type[Neo4jConf] | type[SqlAlchemyConf] | type[NebulaGraphConf]
+    conf_cls: (
+        type[Neo4jConf]
+        | type[SqlAlchemyConf]
+        | type[NebulaGraphConf]
+        | type[QdrantConf]
+        | type[SQLiteVectorStoreConf]
+        | type[SQLiteVecVectorStoreConf]
+    )
     dialect: str | None
     driver: str | None
 
@@ -341,11 +444,24 @@ class SupportedDB(StrEnum):
     POSTGRES = ("postgres", SqlAlchemyConf, "postgresql", "asyncpg")
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
     NEBULA_GRAPH = ("nebula_graph", NebulaGraphConf, None, None)
+    QDRANT = ("qdrant", QdrantConf, None, None)
+    SQLITE_VECTOR_STORE = ("sqlite_vector_store", SQLiteVectorStoreConf, None, None)
+    SQLITE_VEC_VECTOR_STORE = (
+        "sqlite_vec_vector_store",
+        SQLiteVecVectorStoreConf,
+        None,
+        None,
+    )
 
     def __new__(
         cls,
         value: str,
-        conf_cls: type[Neo4jConf] | type[SqlAlchemyConf] | type[NebulaGraphConf],
+        conf_cls: type[Neo4jConf]
+        | type[SqlAlchemyConf]
+        | type[NebulaGraphConf]
+        | type[QdrantConf]
+        | type[SQLiteVectorStoreConf]
+        | type[SQLiteVecVectorStoreConf],
         dialect: str | None,
         driver: str | None,
     ) -> Self:
@@ -366,27 +482,22 @@ class SupportedDB(StrEnum):
             f"Unsupported provider '{provider}'. Supported providers are: {valid}"
         )
 
-    def build_config(self, conf: dict) -> Neo4jConf | SqlAlchemyConf | NebulaGraphConf:
-        if self is SupportedDB.NEO4J:
-            return self.conf_cls(**conf)
-        if self is SupportedDB.NEBULA_GRAPH:
-            return self.conf_cls(**conf)
-        # Relational DBs (PostgreSQL, SQLite)
-        if self.dialect is None or self.driver is None:
-            raise ValueError(
-                f"Provider '{self.value}' must define both 'dialect' and 'driver' "
-                "to build a SQLAlchemy configuration."
-            )
-        conf_copy = {**conf, "dialect": self.dialect, "driver": self.driver}
-        return SqlAlchemyConf(**conf_copy)  # type: ignore[arg-type]
-
-    @property
-    def is_neo4j(self) -> bool:
-        return self is SupportedDB.NEO4J
-
-    @property
-    def is_nebula_graph(self) -> bool:
-        return self is SupportedDB.NEBULA_GRAPH
+    def build_config(
+        self, conf: dict[str, Any]
+    ) -> (
+        Neo4jConf
+        | SqlAlchemyConf
+        | NebulaGraphConf
+        | QdrantConf
+        | SQLiteVectorStoreConf
+        | SQLiteVecVectorStoreConf
+    ):
+        extra: dict[str, Any] = {}
+        if self.dialect is not None:
+            extra["dialect"] = self.dialect
+        if self.driver is not None:
+            extra["driver"] = self.driver
+        return self.conf_cls(**{**conf, **extra})
 
 
 class DatabasesConf(BaseModel):
@@ -395,6 +506,9 @@ class DatabasesConf(BaseModel):
     neo4j_confs: dict[str, Neo4jConf] = {}
     relational_db_confs: dict[str, SqlAlchemyConf] = {}
     nebula_graph_confs: dict[str, NebulaGraphConf] = {}
+    qdrant_confs: dict[str, QdrantConf] = {}
+    sqlite_vector_store_confs: dict[str, SQLiteVectorStoreConf] = {}
+    sqlite_vec_vector_store_confs: dict[str, SQLiteVecVectorStoreConf] = {}
 
     PROVIDER_KEY: ClassVar[str] = "provider"
     CONFIG_KEY: ClassVar[str] = "config"
@@ -404,6 +518,9 @@ class DatabasesConf(BaseModel):
     POSTGRESQL: ClassVar[str] = "postgresql"
     SQLITE: ClassVar[str] = "sqlite"
     NEBULA_GRAPH: ClassVar[str] = "nebula_graph"
+    QDRANT: ClassVar[str] = "qdrant"
+    SQLITE_VECTOR_STORE: ClassVar[str] = "sqlite_vector_store"
+    SQLITE_VEC_VECTOR_STORE: ClassVar[str] = "sqlite_vec_vector_store"
     DIALECT: ClassVar[str] = "dialect"
 
     def to_yaml_dict(self) -> dict:
@@ -431,11 +548,18 @@ class DatabasesConf(BaseModel):
         for database_id, conf in self.relational_db_confs.items():
             add_database(database_id, self.RELATIONAL_DB, conf.to_yaml_dict())
 
-        for database_id, conf in self.nebula_graph_confs.items():
-            databases[database_id] = {
-                self.PROVIDER_KEY: self.NEBULA_GRAPH,
-                self.CONFIG_KEY: conf.to_yaml_dict(),
-            }
+        single_provider_confs: list[tuple[str, Mapping[str, YamlSerializableMixin]]] = [
+            (self.NEBULA_GRAPH, self.nebula_graph_confs),
+            (self.QDRANT, self.qdrant_confs),
+            (self.SQLITE_VECTOR_STORE, self.sqlite_vector_store_confs),
+            (self.SQLITE_VEC_VECTOR_STORE, self.sqlite_vec_vector_store_confs),
+        ]
+        for provider, confs in single_provider_confs:
+            for database_id, conf in confs.items():
+                databases[database_id] = {
+                    self.PROVIDER_KEY: provider,
+                    self.CONFIG_KEY: conf.to_yaml_dict(),
+                }
 
         return databases
 
@@ -450,9 +574,21 @@ class DatabasesConf(BaseModel):
         if isinstance(databases, cls):
             return databases
 
-        neo4j_dict = {}
-        relational_db_dict = {}
-        nebula_graph_dict = {}
+        neo4j_dict: dict[str, Neo4jConf] = {}
+        relational_db_dict: dict[str, SqlAlchemyConf] = {}
+        nebula_graph_dict: dict[str, NebulaGraphConf] = {}
+        qdrant_dict: dict[str, QdrantConf] = {}
+        sqlite_vector_store_dict: dict[str, SQLiteVectorStoreConf] = {}
+        sqlite_vec_vector_store_dict: dict[str, SQLiteVecVectorStoreConf] = {}
+
+        conf_cls_to_dict: dict[type, dict] = {
+            Neo4jConf: neo4j_dict,
+            SqlAlchemyConf: relational_db_dict,
+            NebulaGraphConf: nebula_graph_dict,
+            QdrantConf: qdrant_dict,
+            SQLiteVectorStoreConf: sqlite_vector_store_dict,
+            SQLiteVecVectorStoreConf: sqlite_vec_vector_store_dict,
+        }
 
         for database_id, resource_definition in databases.items():
             provider_str = resource_definition.get(cls.PROVIDER_KEY)
@@ -460,16 +596,13 @@ class DatabasesConf(BaseModel):
 
             provider = SupportedDB.from_provider(provider_str)
             config_obj = provider.build_config(conf)
-
-            if provider.is_neo4j:
-                neo4j_dict[database_id] = config_obj
-            elif provider.is_nebula_graph:
-                nebula_graph_dict[database_id] = config_obj
-            else:
-                relational_db_dict[database_id] = config_obj
+            conf_cls_to_dict[provider.conf_cls][database_id] = config_obj
 
         return cls(
             neo4j_confs=neo4j_dict,
             relational_db_confs=relational_db_dict,
             nebula_graph_confs=nebula_graph_dict,
+            qdrant_confs=qdrant_dict,
+            sqlite_vector_store_confs=sqlite_vector_store_dict,
+            sqlite_vec_vector_store_confs=sqlite_vec_vector_store_dict,
         )

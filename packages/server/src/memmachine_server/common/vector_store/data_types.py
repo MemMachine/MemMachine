@@ -16,13 +16,25 @@ from .utils import validate_identifier
 
 
 class VectorStoreCollectionConfig(BaseModel):
-    """Configuration for a logical collection in a vector store."""
+    """
+    Configuration for a logical collection in a vector store.
+
+    Attributes:
+        vector_dimensions (int):
+            Dimensionality of vectors stored in the collection.
+        similarity_metric (SimilarityMetric):
+            Metric used to compare vectors.
+        indexed_properties_schema (dict[str, type[PropertyValue]]):
+            Schema suggesting which properties should be indexed for filtering.
+    """
 
     vector_dimensions: int
     similarity_metric: SimilarityMetric = SimilarityMetric.COSINE
-    properties_schema: dict[str, type[PropertyValue]] = Field(default_factory=dict)
+    indexed_properties_schema: dict[str, type[PropertyValue]] = Field(
+        default_factory=dict
+    )
 
-    @field_validator("properties_schema", mode="after")
+    @field_validator("indexed_properties_schema", mode="after")
     @classmethod
     def _validate_property_keys(
         cls, v: dict[str, type[PropertyValue]]
@@ -34,9 +46,9 @@ class VectorStoreCollectionConfig(BaseModel):
                 )
         return v
 
-    @field_validator("properties_schema", mode="before")
+    @field_validator("indexed_properties_schema", mode="before")
     @classmethod
-    def _coerce_properties_schema(cls, v: object) -> object:
+    def _coerce_indexed_properties_schema(cls, v: object) -> object:
         if v is None:
             return {}
         if isinstance(v, Mapping):
@@ -54,8 +66,8 @@ class VectorStoreCollectionConfig(BaseModel):
 
         return v
 
-    @field_serializer("properties_schema")
-    def _serialize_properties_schema(
+    @field_serializer("indexed_properties_schema")
+    def _serialize_indexed_properties_schema(
         self, v: dict[str, type[PropertyValue]]
     ) -> dict[str, str]:
         return {

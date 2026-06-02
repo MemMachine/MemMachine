@@ -675,6 +675,29 @@ def test_update_long_term_memory_config_all_fields(client, mock_resource_manager
     assert "long_term_memory_enabled=False" in data["message"]
 
 
+def test_update_long_term_memory_config_event_backend_fields(
+    client, mock_resource_manager
+):
+    """PUT can switch backend to event and set vector_store / segment_store / properties_schema."""
+    payload = {
+        "backend": "event",
+        "embedder": "new-embedder",
+        "vector_store": "vstore",
+        "segment_store": "pgengine",
+        "properties_schema": {"my_field": "str"},
+    }
+
+    response = client.put("/api/v2/config/memory/episodic/long_term", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["success"] is True
+    assert "backend=event" in data["message"]
+    assert "vector_store=vstore" in data["message"]
+    assert "segment_store=pgengine" in data["message"]
+    assert "properties_schema=" in data["message"]
+
+
 # --- Short-Term Memory Configuration Tests ---
 
 
@@ -748,6 +771,8 @@ def test_get_semantic_memory_config(client, mock_resource_manager):
     data = response.json()
     assert "enabled" in data
     assert "database" in data
+    assert "feature_store" in data
+    assert "vector_collection" in data
     assert "llm_model" in data
     assert "embedding_model" in data
 
@@ -776,6 +801,8 @@ def test_update_semantic_memory_config_all_fields(client, mock_resource_manager)
     payload = {
         "enabled": True,
         "database": "postgres-db",
+        "feature_store": "semantic-feature-db",
+        "vector_collection": "semantic-vector-store",
         "llm_model": "gpt-4",
         "embedding_model": "openai-embedder",
         "ingestion_trigger_messages": 10,
@@ -789,6 +816,8 @@ def test_update_semantic_memory_config_all_fields(client, mock_resource_manager)
     assert data["success"] is True
     assert "enabled=True" in data["message"]
     assert "database=postgres-db" in data["message"]
+    assert "feature_store=semantic-feature-db" in data["message"]
+    assert "vector_collection=semantic-vector-store" in data["message"]
     assert "llm_model=gpt-4" in data["message"]
     assert "embedding_model=openai-embedder" in data["message"]
     assert "ingestion_trigger_messages=10" in data["message"]

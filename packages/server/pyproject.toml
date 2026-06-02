@@ -11,28 +11,32 @@ dependencies = [
     "asyncpg>=0.31.0",
     "aiosqlite>=0.20.0",
     "boto3>=1.40.40",
-    "boto3-stubs==1.40.64",
+    "boto3-stubs==1.43.13",
     "cohere>=5.20.0",
     "dotenv>=0.9.9",
     "fastapi>=0.116.1",
-    "fastmcp>=3.0.2",
+    "fastmcp>=3.2.0",
     "instructor[bedrock]>=1.12.0",
     "json-repair>=0.54",
     "langchain-aws>=0.2.33",
     "neo4j>=5.28.2",
-    "nltk>=3.9.3",
+    "nltk>=3.9.4",
     "openai>=2.21.0",
-    "pgvector>=0.4.1",
+    "pgvector>=0.4.2",
     "prometheus-client>=0.22.1",
     "pydantic>=2.11.7",
     "pyyaml>=6.0.2",
     "rank-bm25>=0.2.2",
     "regex>=2023.0.0",
+    "sqlite-vec>=0.1.9",
     "sqlalchemy>=2.0.43",
+    "usearch>=2.25.1",
     "uvicorn>=0.35.0",
     "greenlet>=3.2.4",
     "tzdata>=2024.1 ; sys_platform == 'win32'",
     "psutil>=7.1.0",
+    "langchain-text-splitters>=1.1.1",
+    "babel>=2.18.0",
 ]
 requires-python = ">= 3.12"
 authors = [
@@ -54,8 +58,17 @@ license = "Apache-2.0"
 gpu = [
     "sentence-transformers>=5.1.0",
 ]
+hnswlib = [
+    "hnswlib>=0.8.0",
+]
 nebula = [
     "nebula5-python>=5.2.1",
+]
+qdrant = [
+    "qdrant-client>=1.17.0",
+]
+litellm = [
+    "litellm>=1.63.0,<1.86",
 ]
 
 [project.scripts]

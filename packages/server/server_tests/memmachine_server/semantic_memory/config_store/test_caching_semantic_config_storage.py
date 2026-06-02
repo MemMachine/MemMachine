@@ -51,7 +51,7 @@ class DummySemanticConfigStorage:
 @pytest.mark.asyncio
 async def test_get_setid_config_cached_and_invalidated() -> None:
     wrapped = DummySemanticConfigStorage()
-    storage = CachingSemanticConfigStorage(wrapped)  # type: ignore[arg-type]
+    storage = CachingSemanticConfigStorage(wrapped)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     await storage.set_setid_config(set_id="set-a", embedder_name="e1", llm_name="l1")
 
@@ -72,7 +72,7 @@ async def test_get_setid_config_cached_and_invalidated() -> None:
 @pytest.mark.asyncio
 async def test_get_category_negative_cached() -> None:
     wrapped = DummySemanticConfigStorage()
-    storage = CachingSemanticConfigStorage(wrapped)  # type: ignore[arg-type]
+    storage = CachingSemanticConfigStorage(wrapped)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     assert await storage.get_category(category_id="missing") is None
     assert await storage.get_category(category_id="missing") is None
@@ -83,7 +83,7 @@ async def test_get_category_negative_cached() -> None:
 @pytest.mark.asyncio
 async def test_register_set_id_set_type_short_circuits() -> None:
     wrapped = DummySemanticConfigStorage()
-    storage = CachingSemanticConfigStorage(wrapped)  # type: ignore[arg-type]
+    storage = CachingSemanticConfigStorage(wrapped)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
     await storage.register_set_id_set_type(set_id="set-a", set_type_id="1")
     await storage.register_set_id_set_type(set_id="set-a", set_type_id="2")

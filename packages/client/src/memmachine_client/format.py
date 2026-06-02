@@ -43,9 +43,9 @@ def format_episodes(episodes: Iterable[EpisodeResponse | Episode]) -> str:
         if episode.created_at is not None:
             date_str = episode.created_at.strftime("%A, %B %d, %Y")
             time_str = episode.created_at.strftime("%I:%M %p")
-            result += f"[{date_str} at {time_str}] {episode.producer_id}: {json.dumps(episode.content)}\n"
+            result += f"[{date_str} at {time_str}] {episode.producer_id}: {json.dumps(episode.content, ensure_ascii=False)}\n"
         else:
-            result += f"{episode.producer_id}: {json.dumps(episode.content)}\n"
+            result += f"{episode.producer_id}: {json.dumps(episode.content, ensure_ascii=False)}\n"
     return result
 
 
@@ -66,7 +66,7 @@ def format_semantic_memories(features: Iterable[SemanticFeature]) -> str:
     structured: dict[str, dict[str, str]] = {}
     for feature in features:
         structured.setdefault(feature.tag, {})[feature.feature_name] = feature.value
-    return json.dumps(structured)
+    return json.dumps(structured, ensure_ascii=False)
 
 
 def format_search_result(result: SearchResult) -> str:

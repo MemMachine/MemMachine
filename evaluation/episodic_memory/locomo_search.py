@@ -1,16 +1,18 @@
 import argparse
 import asyncio
 import json
-import os
+import sys
 import time
-from typing import Any, cast
+from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
-from memmachine_server.episodic_memory.episodic_memory import EpisodicMemory
-from memmachine_server.episodic_memory.episodic_memory_manager import (
-    EpisodicMemoryManager,
-)
-from openai import AsyncOpenAI
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.append(str(REPO_ROOT))
+
+from evaluation.utils import agent_utils  # noqa: E402
 
 # This is adapted from Mem0 (https://github.com/mem0ai/mem0/blob/main/evaluation/prompts.py).
 # It is modified to work with MemMachine.
@@ -62,7 +64,7 @@ def format_memory(episodes, summary) -> str:
         "<LONG TERM MEMORY EPISODES>\n"
         + "\n".join(
             [
-                f"[{episode.user_metadata['source_timestamp']}] {episode.user_metadata['source_speaker']}: {episode.content}{f' [ATTACHED: {episode.user_metadata["blip_caption"]}]' if episode.user_metadata.get('blip_caption') else ''}"
+                f"[{episode.metadata['source_timestamp']}] {episode.metadata['source_speaker']}: {episode.content}{f' [ATTACHED: {episode.metadata["blip_caption"]}]' if episode.metadata.get('blip_caption') else ''}"
                 for episode in episodes
             ],
         )
@@ -77,10 +79,8 @@ def format_memory(episodes, summary) -> str:
 
 
 async def process_question(
-    memory_manager: EpisodicMemoryManager,
-    model: AsyncOpenAI,
-    group_id,
-    user,
+    memory,
+    answer_model,
     question,
     answer,
     category,
@@ -88,20 +88,19 @@ async def process_question(
     adversarial_answer,
 ):
     memory_start = time.time()
-    memory = cast(
-        "EpisodicMemory",
-        await memory_manager.get_episodic_memory_instance(
-            group_id=group_id,
-            session_id=group_id,
-            user_id=[user],
-        ),
+    query_response = await memory.query_memory(
+        query=question, limit=30, expand_context=3
     )
 
-    (
-        short_term_episodes,
-        long_term_episodes,
-        summaries,
-    ) = await memory.query_memory(query=question, limit=30, expand_context=3)
+    if query_response is None:
+        long_term_episodes = []
+        short_term_episodes = []
+        summaries = []
+    else:
+        long_term_episodes = query_response.long_term_memory.episodes
+        short_term_episodes = query_response.short_term_memory.episodes
+        summaries = query_response.short_term_memory.episode_summary
+
     episodes = long_term_episodes + short_term_episodes
     summary = summaries[0] if summaries else ""
     memory_end = time.time()
@@ -113,16 +112,8 @@ async def process_question(
     )
 
     llm_start = time.time()
-    rsp = await model.responses.create(
-        model="gpt-4o-mini",
-        max_output_tokens=4096,
-        temperature=0.0,
-        top_p=1,
-        input=[{"role": "user", "content": prompt}],
-    )
+    rsp_text, _ = await answer_model.generate_response(user_prompt=prompt)
     llm_end = time.time()
-
-    rsp_text = rsp.output_text
 
     print(
         f"Question: {question}\n"
@@ -152,6 +143,11 @@ async def main() -> None:
         help="Path to the source data file",
     )
     parser.add_argument(
+        "--config-path",
+        default="locomo_config.yaml",
+        help="Path to configuration.yml",
+    )
+    parser.add_argument(
         "--target-path",
         required=True,
         help="Path to the target data file",
@@ -165,27 +161,23 @@ async def main() -> None:
     with open(data_path, "r") as f:
         locomo_data = json.load(f)
 
-    memory_manager = EpisodicMemoryManager.create_episodic_memory_manager(
-        "locomo_config.yaml",
-    )
-
-    model = AsyncOpenAI(
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    resource_manager = agent_utils.load_eval_config(args.config_path)
 
     results: dict[str, Any] = {}
     for idx, item in enumerate(locomo_data):
         if "conversation" not in item:
             continue
 
-        conversation = item["conversation"]
-        user = conversation["speaker_a"]
-
         qa_list = item["qa"]
 
         print(f"Processing questions for group {idx}...")
 
         group_id = f"group_{idx}"
+
+        memory, answer_model, _ = await agent_utils.init_memmachine_params(
+            resource_manager=resource_manager,
+            session_id=group_id,
+        )
 
         async def respond_question(qa):
             question = qa["question"]
@@ -196,10 +188,8 @@ async def main() -> None:
             adversarial_answer = qa.get("adversarial_answer", "")
 
             question_response = await process_question(
-                memory_manager,
-                model,
-                group_id,
-                user,
+                memory,
+                answer_model,
                 question,
                 answer,
                 category,
@@ -211,9 +201,12 @@ async def main() -> None:
                 question_response,
             )
 
-        responses = []
-        for qa in qa_list:
-            responses.append(await respond_question(qa))
+        try:
+            responses = []
+            for qa in qa_list:
+                responses.append(await respond_question(qa))
+        finally:
+            await memory.close()
 
         for category, response in responses:
             category_result = results.get(category, [])

@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import regex
 from pydantic import (
@@ -25,6 +25,35 @@ UTC = timezone.utc
 
 PropertyValue = bool | int | float | str | datetime
 """Type for stored property values (duplicated here to avoid server dependency)."""
+
+# Canonical type-name set accepted in `properties_schema`. Mirrors
+# `memmachine_server.common.data_types.PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE` but
+# lives here so the API contract validates types at request time rather than
+# deferring failures to service-locator wire-up.
+VALID_PROPERTY_TYPE_NAMES: frozenset[str] = frozenset(
+    {"bool", "int", "float", "str", "datetime"}
+)
+
+
+def validate_properties_schema_types(value: dict[str, str]) -> dict[str, str]:
+    """Reject unknown type names in `properties_schema`.
+
+    Without this check, an unknown type name like `"date"` or `"integer"` is
+    only caught later when service-locator builds the VectorStore collection
+    schema — surfacing as a 500 instead of a 400 at API time.
+    """
+    bad = sorted(
+        f"{name}={type_name!r}"
+        for name, type_name in value.items()
+        if type_name not in VALID_PROPERTY_TYPE_NAMES
+    )
+    if bad:
+        raise ValueError(
+            "properties_schema contains unknown type names "
+            f"(allowed: {sorted(VALID_PROPERTY_TYPE_NAMES)}): {bad}"
+        )
+    return value
+
 
 DEFAULT_ORG_AND_PROJECT_ID = "universal"
 
@@ -182,10 +211,26 @@ class ProjectConfig(BaseModel):
     """
     Project configuration model.
 
-    This section defines which reranker and embedder models should be used for
-    the project.  If any field is left empty (""), the system automatically falls
-    back to the globally configured defaults in the server configuration file.
+    Identifies the long-term-memory backend and the resource ids it should
+    bind to. If any string field is left empty (""), the server falls back to
+    its globally-configured defaults.
+
+    Backend selection:
+    - `backend="event"` (default for new projects): uses VectorStore +
+      SegmentStore. Requires `vector_store` and `segment_store`.
+    - `backend="declarative"`: uses VectorGraphStore. Requires
+      `vector_graph_store`.
+    - Empty/null `backend`: server falls back to its parse-time default
+      (declarative, for backwards compatibility with pre-discriminator clients).
     """
+
+    backend: Annotated[
+        Literal["declarative", "event"] | None,
+        Field(
+            default=None,
+            description=("Long-term memory backend. New projects should set 'event'."),
+        ),
+    ]
 
     reranker: Annotated[
         str,
@@ -204,6 +249,48 @@ class ProjectConfig(BaseModel):
             examples=Examples.EMBEDDER,
         ),
     ]
+
+    # Declarative-backend resource id.
+    vector_graph_store: Annotated[
+        str,
+        Field(
+            default="",
+            description="VectorGraphStore resource id (declarative backend only)",
+        ),
+    ]
+
+    # Event-backend resource ids.
+    vector_store: Annotated[
+        str,
+        Field(
+            default="",
+            description="VectorStore resource id (event backend only)",
+        ),
+    ]
+    segment_store: Annotated[
+        str,
+        Field(
+            default="",
+            description=(
+                "SQL engine resource id backing the segment store (event backend only)"
+            ),
+        ),
+    ]
+    properties_schema: Annotated[
+        dict[str, str],
+        Field(
+            default_factory=dict,
+            description=(
+                "User-defined filterable properties (event backend only). Maps "
+                'name to type ("bool", "int", "float", "str", "datetime").'
+            ),
+        ),
+    ]
+
+    @field_validator("properties_schema")
+    @classmethod
+    def _validate_properties_schema_types(cls, value: dict[str, str]) -> dict[str, str]:
+        return validate_properties_schema_types(value)
 
 
 class CreateProjectSpec(BaseModel):

@@ -3,11 +3,16 @@
 
 import argparse
 import json
+import logging
 from collections import defaultdict
 from collections.abc import Callable
 
 import json_repair
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+_MAX_JUDGE_ATTEMPTS = 2
 
 ACCURACY_PROMPT = """
 Your task is to label an answer to a question as 'CORRECT' or 'WRONG'. You will be given the following data:
@@ -52,9 +57,14 @@ def create_judge_fn(config_path: str) -> Callable[[str], str]:
 
     config = Configuration.load_yml_file(config_path)
     lms = config.resources.language_models
-    llm_id = config.retrieval_agent.llm_model
+
+    # Use judge_llm_model if set, otherwise fall back to llm_model
+    llm_id = config.retrieval_agent.judge_llm_model or config.retrieval_agent.llm_model
     if not llm_id:
-        raise ValueError("retrieval_agent.llm_model is not set in configuration.yml")
+        raise ValueError(
+            "Neither retrieval_agent.judge_llm_model nor"
+            "retrieval_agent.llm_model is set in configuration.yml"
+        )
 
     if llm_id in lms.openai_responses_language_model_confs:
         from openai import OpenAI
@@ -153,9 +163,31 @@ def evaluate_llm_judge(
         gold_answer=gold_answer,
         generated_answer=generated_answer,
     )
-    raw = call_fn(prompt)
-    label = json_repair.loads(raw)["label"]
-    return 1 if label == "CORRECT" else 0
+    for attempt in range(1, _MAX_JUDGE_ATTEMPTS + 1):
+        raw = call_fn(prompt)
+        label: str | None = None
+        try:
+            result = json_repair.loads(raw)
+            raw_label = result.get("label") if isinstance(result, dict) else None
+            if isinstance(raw_label, str):
+                normalized = raw_label.strip().upper()
+                if normalized in {"CORRECT", "WRONG"}:
+                    label = normalized
+        except Exception:
+            label = None
+        if label is not None:
+            return 1 if label == "CORRECT" else 0
+        if attempt < _MAX_JUDGE_ATTEMPTS:
+            logger.warning(
+                "LLM judge missing or invalid 'label' on attempt %d/%d, retrying",
+                attempt,
+                _MAX_JUDGE_ATTEMPTS,
+            )
+    logger.error(
+        "LLM judge failed to return a valid 'label' after %d attempts; defaulting to WRONG",
+        _MAX_JUDGE_ATTEMPTS,
+    )
+    return 0
 
 
 def main():

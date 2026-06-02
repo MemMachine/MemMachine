@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import cast
 
 from pydantic import AwareDatetime
 
@@ -78,6 +78,12 @@ class CountCachingEpisodeStorage(EpisodeStorage):
     ) -> Episode | None:
         return await self._wrapped.get_episode(episode_id)
 
+    async def get_episodes(
+        self,
+        episode_ids: Iterable[EpisodeIdT],
+    ) -> list[Episode]:
+        return await self._wrapped.get_episodes(episode_ids)
+
     async def get_episode_messages(
         self,
         *,
@@ -120,8 +126,6 @@ class CountCachingEpisodeStorage(EpisodeStorage):
         )
 
         if searching_only_session_key:
-            session_key = cast(str, session_key)
-
             async with self._lock:
                 entry = self._count_cache.get(session_key)
                 if entry is not None:
@@ -134,8 +138,6 @@ class CountCachingEpisodeStorage(EpisodeStorage):
         )
 
         if searching_only_session_key:
-            session_key = cast(str, session_key)
-
             async with self._lock:
                 self._count_cache[session_key] = _CacheEntry(
                     count=count,

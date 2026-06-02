@@ -1,6 +1,7 @@
 name: Check uv.lock file
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 # Ensures uv.lock is in sync with pyproject.toml and related files.
 # If the lockfile is in sync, the workflow passes.
@@ -21,9 +22,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.actor == 'dependabot[bot]' && github.head_ref || github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
+      - name: Regenerate lockfile
+        if: github.actor == 'dependabot[bot]'
+        run: uv lock
+
+      - name: Commit regenerated lockfile
+        if: github.actor == 'dependabot[bot]'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- uv.lock; then
+            echo "No lockfile changes to commit"
+            exit 0
+          fi
+
+          git add uv.lock
+          git commit -m "chore: regenerate uv.lock after Dependabot update"
+          git push
+
       - name: Check lockfile
+        if: github.actor != 'dependabot[bot]'
         run: uv lock --check

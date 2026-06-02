@@ -269,7 +269,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                     f"[call uuid: {generate_response_call_uuid}] "
                     "Giving up generating response "
                     f"after failed attempt {attempt} "
-                    f"due to non-retryable {type(e).__name__}"
+                    f"due to non-retryable {type(e).__name__}: {e}"
                 )
                 logger.exception(error_message)
                 raise ExternalServiceAPIError(error_message) from e

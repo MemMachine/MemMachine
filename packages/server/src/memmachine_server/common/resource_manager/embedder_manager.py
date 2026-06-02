@@ -187,6 +187,7 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             similarity_metric=conf.similarity_metric,
             max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
+            batch_size=conf.batch_size,
         )
         return AmazonBedrockEmbedder(params)
 
@@ -202,9 +203,14 @@ class EmbedderManager(BaseResourceManager[Embedder]):
 
         dimensions = conf.dimensions or 1536
 
+        # The OpenAI SDK rejects an empty api_key, but local OpenAI-compatible
+        # endpoints (Ollama, vLLM, etc.) don't require one — supply a
+        # placeholder so the client can be constructed.
+        api_key = conf.api_key.get_secret_value() or "EMPTY"
+
         params = OpenAIEmbedderParams(
             client=openai.AsyncOpenAI(
-                api_key=conf.api_key.get_secret_value(),
+                api_key=api_key,
                 base_url=conf.base_url,
             ),
             model=conf.model,
@@ -212,6 +218,7 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
             metrics_factory=conf.get_metrics_factory(),
+            batch_size=conf.batch_size,
         )
         return OpenAIEmbedder(params)
 
@@ -232,5 +239,6 @@ class EmbedderManager(BaseResourceManager[Embedder]):
             model_name=model_name,
             sentence_transformer=sentence_transformer,
             max_input_length=conf.max_input_length,
+            batch_size=conf.batch_size,
         )
         return SentenceTransformerEmbedder(params)

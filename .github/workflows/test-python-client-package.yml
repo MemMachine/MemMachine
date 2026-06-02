@@ -59,12 +59,16 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          whl_name=$(python -c "import pathlib; d=sorted(pathlib.Path('dist').glob('memmachine_client-*.whl')); print(d[0] if d else '')")
-          if [ -z "$whl_name" ]; then
-            echo "No client wheel found" >&2
+          # Install every locally built memmachine_* wheel by direct path so
+          # pip never falls back to older stable releases on PyPI for our
+          # internal packages (dev versions are excluded by default).
+          shopt -s nullglob
+          local_whls=(dist/memmachine_*.whl)
+          if [ ${#local_whls[@]} -eq 0 ]; then
+            echo "No local memmachine_* wheels found in dist/" >&2
             exit 1
           fi
-          python -m pip install --find-links dist/ "$whl_name"
+          python -m pip install --find-links dist/ "${local_whls[@]}"
 
       - name: Test Python client package imports
         shell: bash

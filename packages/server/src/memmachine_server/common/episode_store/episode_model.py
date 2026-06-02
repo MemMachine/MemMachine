@@ -88,9 +88,11 @@ def episodes_to_string(
                     if episode_response.created_at
                     else "Unknown Time"
                 )
-                context_string += f"[{context_date} at {context_time}] {episode_response.producer_id}: {json.dumps(episode_response.content)}\n"
+                context_string += f"[{context_date} at {context_time}] {episode_response.producer_id}: {json.dumps(episode_response.content, ensure_ascii=False)}\n"
             case _:
-                context_string += json.dumps(episode_response.content) + "\n"
+                context_string += (
+                    json.dumps(episode_response.content, ensure_ascii=False) + "\n"
+                )
 
     return context_string
 

@@ -1,0 +1,7 @@
+interface:
+  display_name: "MemMachine Memory"
+  short_description: "Use MemMachine memory context"
+  default_prompt: >
+    Use $memmachine-memory to save or retrieve durable context. For retrieval,
+    call mem-cli through memmachine before using grep, rg, find, or other local
+    search as a substitute for memory.
