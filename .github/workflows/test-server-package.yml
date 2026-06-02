@@ -52,8 +52,16 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          whl_name=$(ls dist/memmachine_server-*.whl | head -1)
-          pip install --find-links dist/ "$whl_name"
+          # Install every locally built memmachine_* wheel by direct path so
+          # pip never falls back to older stable releases on PyPI for our
+          # internal packages (dev versions are excluded by default).
+          shopt -s nullglob
+          local_whls=(dist/memmachine_*.whl)
+          if [ ${#local_whls[@]} -eq 0 ]; then
+            echo "No local memmachine_* wheels found in dist/" >&2
+            exit 1
+          fi
+          pip install --find-links dist/ "${local_whls[@]}"
 
       - name: Test server package imports
         shell: bash

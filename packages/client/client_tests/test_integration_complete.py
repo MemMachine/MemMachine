@@ -45,6 +45,7 @@ def check_server_available():
 
 
 TEST_BASE_URL = os.environ.get("MEMORY_BACKEND_URL", "http://localhost:8080")
+CLIENT_TIMEOUT_SECONDS = 180
 
 
 @pytest.mark.integration
@@ -58,7 +59,7 @@ class TestMemMachineIntegration:
     @pytest.fixture
     def client(self):
         """Create a MemMachine client instance."""
-        return MemMachineClient(base_url=TEST_BASE_URL, timeout=60)
+        return MemMachineClient(base_url=TEST_BASE_URL, timeout=CLIENT_TIMEOUT_SECONDS)
 
     @pytest.fixture
     def unique_test_ids(self):
@@ -352,7 +353,7 @@ class TestMemMachineIntegration:
         try:
             results = memory.search(
                 "What do I like to drink?",
-                filter_dict={"time": "morning"},
+                filter_dict={"m.time": "morning"},
                 limit=10,
             )
             assert isinstance(results, SearchResult)
@@ -487,7 +488,7 @@ class TestMemMachineIntegration:
         )
 
         # Search with custom filters only - built-in filters are automatically merged
-        custom_filters = {"category": "profession"}
+        custom_filters = {"m.category": "profession"}
         try:
             results = memory.search(
                 "What is my profession?",
@@ -1585,8 +1586,11 @@ class TestMemMachineToolsIntegration:
     @pytest.fixture
     def tools(self, unique_test_ids):
         """Create a MemMachineTools instance."""
+        client = MemMachineClient(
+            base_url=TEST_BASE_URL, timeout=CLIENT_TIMEOUT_SECONDS
+        )
         t = MemMachineTools(
-            base_url=TEST_BASE_URL,
+            client=client,
             org_id=unique_test_ids["org_id"],
             project_id=unique_test_ids["project_id"],
             user_id=unique_test_ids["user_id"],
@@ -1644,7 +1648,7 @@ class TestConfigIntegration:
     @pytest.fixture
     def client(self):
         """Create a MemMachine client instance."""
-        return MemMachineClient(base_url=TEST_BASE_URL, timeout=60)
+        return MemMachineClient(base_url=TEST_BASE_URL, timeout=CLIENT_TIMEOUT_SECONDS)
 
     @pytest.fixture
     def config(self, client):

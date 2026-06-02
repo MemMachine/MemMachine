@@ -9,12 +9,12 @@ import pytest
 import pytest_asyncio
 from neo4j import AsyncGraphDatabase
 from neo4j.exceptions import ServiceUnavailable
-from sqlalchemy import StaticPool
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from testcontainers.core.waiting_utils import wait_container_is_ready
 from testcontainers.neo4j import Neo4jContainer
 from testcontainers.postgres import PostgresContainer
+from testcontainers.qdrant import QdrantContainer
 
 from memmachine_server.common.embedder.openai_embedder import (
     OpenAIEmbedder,
@@ -317,11 +317,9 @@ async def sqlalchemy_pg_engine(pg_server):
 
 
 @pytest_asyncio.fixture
-async def sqlalchemy_sqlite_engine():
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        poolclass=StaticPool,
-    )
+async def sqlalchemy_sqlite_engine(tmp_path):
+    db_path = tmp_path / "test.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
 
     yield engine
     await engine.dispose()
@@ -397,6 +395,46 @@ async def neo4j_semantic_storage(neo4j_driver):
     yield storage
     await storage.delete_all()
     await storage.cleanup()
+
+
+@pytest.fixture(scope="session")
+def qdrant_container():
+    if not is_docker_available():
+        pytest.skip("Docker is not available")
+    with QdrantContainer(image="qdrant/qdrant:v1.17.0") as container:
+        yield container
+
+
+@pytest_asyncio.fixture(scope="session")
+async def qdrant_client(qdrant_container):
+    client = qdrant_container.get_async_client()
+    yield client
+    await client.close()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def qdrant_grpc_client(qdrant_container):
+    client = qdrant_container.get_async_client(prefer_grpc=True)
+    yield client
+    await client.close()
+
+
+@pytest.fixture(scope="session")
+def distributed_qdrant_container():
+    if not is_docker_available():
+        pytest.skip("Docker is not available")
+    container = QdrantContainer(image="qdrant/qdrant:v1.17.0")
+    container.with_env("QDRANT__CLUSTER__ENABLED", "true")
+    container.with_command("./qdrant --uri http://localhost:6335")
+    with container:
+        yield container
+
+
+@pytest_asyncio.fixture(scope="session")
+async def distributed_qdrant_client(distributed_qdrant_container):
+    client = distributed_qdrant_container.get_async_client()
+    yield client
+    await client.close()
 
 
 @pytest.fixture(

@@ -71,7 +71,7 @@ async def hotpotqa_ingest(dataset: list[dict[str, any]], config_path: str):
     resource_manager = agent_utils.load_eval_config(config_path)
 
     # Notice that the index of items must align between ingestion and search
-    memory, _, _ = await agent_utils.init_memmachine_params(
+    memory, _, _, _, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id="hotpotqa_group",
     )
@@ -132,7 +132,13 @@ async def hotpotqa_search(
     num_searched = 0
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, model, query_agent = await agent_utils.init_memmachine_params(
+    (
+        memory,
+        answer_model,
+        query_agent,
+        agent_model_id,
+        answer_model_id,
+    ) = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id="hotpotqa_group",
         agent_name=agent_name,
@@ -160,14 +166,18 @@ async def hotpotqa_search(
                 answer_prompt=ANSWER_PROMPT,
                 query_agent=query_agent,
                 memory=memory,
-                answer_model=model,
+                answer_model=answer_model,
                 question=data["question"],
                 answer=data["answer"],
                 category=(data["type"]),
                 supporting_facts=supporting_facts,
                 search_limit=20,
                 full_content=full_content_str if pure_llm else None,
-                extra_attributes={"level": data["level"]},
+                extra_attributes={
+                    "level": data["level"],
+                    "agent_model_id": agent_model_id,
+                    "answer_model_id": answer_model_id,
+                },
             )
         )
 
@@ -192,6 +202,20 @@ async def hotpotqa_search(
             json.dump(results, f, indent=4)
 
 
+async def hotpotqa_delete(config_path: str):
+    from evaluation.utils import agent_utils
+
+    resource_manager = agent_utils.load_eval_config(config_path)
+    memory, _, _, _, _ = await agent_utils.init_memmachine_params(
+        resource_manager=resource_manager,
+        session_id="hotpotqa_group",
+    )
+
+    print("Deleting episodes for session_id='hotpotqa_group'...")
+    await memory.delete_session_episodes()
+    print("Completed HotpotQA delete.")
+
+
 def load_hotpotqa_dataset(length: int, split: str) -> list[dict[str, any]]:
     from datasets import load_dataset
 
@@ -213,7 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--run-type",
         required=False,
-        help="Type of run: ingest or search",
+        help="Type of run: ingest, search, or delete",
         default="search",
     )
     parser.add_argument(
@@ -252,6 +276,10 @@ def build_parser() -> argparse.ArgumentParser:
 async def main():
     args = build_parser().parse_args()
 
+    if args.run_type == "delete":
+        await hotpotqa_delete(args.config_path)
+        return
+
     dataset = load_hotpotqa_dataset(args.length, args.split_name)
 
     if args.run_type == "ingest":
@@ -277,7 +305,7 @@ async def main():
         )
     else:
         raise ValueError(
-            f"Unknown run type: {args.run_type}, please use 'ingest' or 'search'."
+            f"Unknown run type: {args.run_type}, please use 'ingest', 'search', or 'delete'."
         )
 
 

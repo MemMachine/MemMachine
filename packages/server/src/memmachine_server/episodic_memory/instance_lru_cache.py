@@ -174,7 +174,7 @@ class MemoryInstanceCache:
             lru_node = self.tail.prev
             while len(self.cache) >= self.capacity and lru_node != self.head:
                 if lru_node.ref_count > 0:
-                    lru_node = cast("Node", lru_node.prev)
+                    lru_node = lru_node.prev
                     continue
                 tmp = lru_node.prev
                 await self._remove_and_close_node(lru_node)
@@ -210,7 +210,7 @@ class MemoryInstanceCache:
             lru_node = self.tail.prev
             while lru_node != self.head:
                 if lru_node.ref_count > 0:
-                    lru_node = cast("Node", lru_node.prev)
+                    lru_node = lru_node.prev
                     continue
                 tmp = lru_node.prev
                 if (now - lru_node.last_access).total_seconds() > self.max_lifetime:

@@ -50,5 +50,10 @@
       "./dist/index.mjs"
     ]
   },
+  "overrides": {
+    "axios": ">=1.15.0",
+    "fast-xml-parser": ">=5.7.0",
+    "uuid": ">=14.0.0"
+  },
   "license": "Apache-2.0"
 }

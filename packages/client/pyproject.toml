@@ -8,7 +8,7 @@ dynamic = ["version"]
 dependencies = [
     "memmachine-common",
     "pydantic>=2.0.0",
-    "requests>=2.31.0",
+    "requests>=2.33.0",
     "typing-extensions>=4.0.0",
     "urllib3>=2.6.3",
 ]
@@ -33,6 +33,10 @@ license = "Apache-2.0"
 [project.urls]
 Homepage = "https://github.com/MemMachine/MemMachine"
 Issues = "https://github.com/MemMachine/MemMachine/issues"
+
+[project.scripts]
+mem-cli = "memmachine_client.cli:main"
+memmachine = "memmachine_client.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

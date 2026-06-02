@@ -91,7 +91,17 @@ class Project:
         self.project_id = project_id
         self.description = description
         self.config = (
-            config if config is not None else ProjectConfig(embedder="", reranker="")
+            config
+            if config is not None
+            else ProjectConfig(
+                backend=None,
+                embedder="",
+                reranker="",
+                vector_graph_store="",
+                vector_store="",
+                segment_store="",
+                properties_schema={},
+            )
         )
 
     def memory(

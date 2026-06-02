@@ -62,12 +62,12 @@ class TestMemory:
     def test_init_missing_org_id_raises_error(self, mock_client):
         """Test that missing org_id raises TypeError."""
         with pytest.raises(TypeError, match=r"missing.*required.*argument.*org_id"):
-            Memory(client=mock_client, project_id="test_project")  # type: ignore[call-arg]
+            Memory(client=mock_client, project_id="test_project")  # type: ignore[call-arg]  # ty: ignore[missing-argument]
 
     def test_init_missing_project_id_raises_error(self, mock_client):
         """Test that missing project_id raises TypeError."""
         with pytest.raises(TypeError, match=r"missing.*required.*argument.*project_id"):
-            Memory(client=mock_client, org_id="test_org")  # type: ignore[call-arg]
+            Memory(client=mock_client, org_id="test_org")  # type: ignore[call-arg]  # ty: ignore[missing-argument]
 
     def test_init_with_string_ids(self, mock_client):
         """Test Memory initialization with string IDs."""
@@ -462,6 +462,54 @@ class TestMemory:
         assert json_data["agent_mode"] is False
         assert "category='work'" in json_data["filter"]
         assert call_args[1]["timeout"] == 15
+
+    def test_search_with_filter_string(self, mock_client):
+        """Test search with raw filter string."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
+        )
+
+        memory.search("query", filter='metadata.category = "work"')
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        filter_str = json_data["filter"]
+        assert "metadata.user_id='user1'" in filter_str
+        assert "metadata.agent_id='agent1'" in filter_str
+        assert '(metadata.category = "work")' in filter_str
+
+    def test_list_with_filter_string(self, mock_client):
+        """Test list with raw filter string."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"status": 0, "content": {}}
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+            metadata={"agent_id": "agent1", "user_id": "user1"},
+        )
+
+        memory.list(filter='metadata.category = "work"')
+
+        call_args = mock_client.request.call_args
+        json_data = call_args[1]["json"]
+        filter_str = json_data["filter"]
+        assert "metadata.user_id='user1'" in filter_str
+        assert "metadata.agent_id='agent1'" in filter_str
+        assert '(metadata.category = "work")' in filter_str
 
     def test_search_with_filters(self, mock_client):
         """Test search with filter dictionary."""

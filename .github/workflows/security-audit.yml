@@ -1,0 +1,152 @@
+name: Security Audit
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  schedule:
+    - cron: '0 6 * * 1,4'
+  workflow_dispatch:
+
+jobs:
+  audit-and-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.11.15"
+
+      - name: Run security audit
+        id: audit
+        run: |
+          audit_results="$RUNNER_TEMP/audit-results.json"
+          audit_stderr="$RUNNER_TEMP/audit-stderr.txt"
+
+          set +e
+          uv audit --output-format json > "$audit_results" 2> "$audit_stderr"
+          audit_exit_code=$?
+          set -e
+
+          # Surface uv's own diagnostics (experimental warnings, network errors,
+          # parse failures) in the workflow log before we make decisions on them.
+          cat "$audit_stderr" >&2
+          cat "$audit_results"
+
+          # uv audit exits 0 when clean, 1 when vulnerabilities are found, and
+          # >1 on internal/audit errors. Surface those before attempting to
+          # parse the (likely empty) JSON output, so the failure message is
+          # the actual uv error rather than a downstream JSONDecodeError.
+          if [ "$audit_exit_code" -gt 1 ]; then
+            # TEMPORARY: tolerate the upstream uv/OSV bug where uv audit's
+            # strict deserializer rejects malformed OSV records (empty `{}` in
+            # `affected.ranges.events`), aborting the entire audit. Tracked in
+            # this repo (see issue linked from PR description) and upstream at
+            # https://github.com/astral-sh/uv/issues/19492 (fix PR #19496).
+            # Remove this branch once the `version:` input above is bumped to
+            # a uv release containing the upstream fix.
+            if grep -qF 'error decoding response body' "$audit_stderr"; then
+              echo "::warning title=uv audit skipped::uv audit could not decode the OSV response (known upstream bug astral-sh/uv#19492). Exiting successfully without scanning; see the in-repo tracking issue for details."
+              {
+                echo "### Security Audit skipped"
+                echo
+                echo "\`uv audit\` exited with code \`$audit_exit_code\` because it could not parse the OSV vulnerability database response."
+                echo
+                echo "This is the known upstream bug [astral-sh/uv#19492](https://github.com/astral-sh/uv/issues/19492): an OSV record contains an empty \`{}\` in \`affected.ranges.events\`, which uv's deserializer rejects."
+                echo
+                echo "**No vulnerability scanning ran in this workflow execution.** When the upstream fix ([astral-sh/uv#19496](https://github.com/astral-sh/uv/pull/19496) or equivalent) is released, bump the \`setup-uv\` \`version:\` input in \`.github/workflows/security-audit.yml\` and remove this skip branch."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "has_vulnerabilities=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "uv audit exited with unexpected status: $audit_exit_code"
+            exit "$audit_exit_code"
+          fi
+
+          python3 -c "
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('$RUNNER_TEMP/audit-results.json').read_text())
+          vulnerabilities = data.get('vulnerabilities', [])
+          with open('$GITHUB_OUTPUT', 'a') as f:
+              f.write(f'has_vulnerabilities={str(bool(vulnerabilities)).lower()}\n')
+          "
+
+      - name: Upgrade vulnerable packages
+        if: steps.audit.outputs.has_vulnerabilities == 'true'
+        id: upgrade
+        run: |
+          vulnerable_packages="$RUNNER_TEMP/vulnerable-packages.txt"
+
+          python3 -c "
+          import json
+          with open('$RUNNER_TEMP/audit-results.json') as f:
+              data = json.load(f)
+          # uv audit JSON schema: each vulnerability has a 'dependency' object
+          # with 'name' and 'version' fields (not 'package.name')
+          packages = sorted({v['dependency']['name'] for v in data.get('vulnerabilities', [])})
+          with open('$RUNNER_TEMP/vulnerable-packages.txt', 'w') as f:
+              for package in packages:
+                  f.write(f'{package}\n')
+          "
+
+          if [ ! -s "$vulnerable_packages" ]; then
+            echo "No vulnerable packages found in audit output."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Vulnerable packages:"
+          cat "$vulnerable_packages"
+
+          while IFS= read -r package; do
+            [ -n "$package" ] || continue
+            uv lock --upgrade-package "$package"
+          done < "$vulnerable_packages"
+
+          if git diff --quiet -- uv.lock; then
+            echo "No lockfile changes were produced."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create security fix pull request
+        if: steps.audit.outputs.has_vulnerabilities == 'true' && steps.upgrade.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: main
+          branch: security/auto-fix-vulnerabilities
+          add-paths: uv.lock
+          commit-message: "fix(security): upgrade vulnerable Python dependencies"
+          title: "fix(security): upgrade vulnerable Python dependencies"
+          body: |
+            ## Security vulnerability audit
+
+            This PR was automatically generated by the `Security Audit`
+            workflow after `uv audit --output-format json` reported known
+            vulnerabilities in the current Python dependency lockfile.
+
+            ### What changed
+
+            - Parsed vulnerable package names from the audit JSON output
+            - Ran `uv lock --upgrade-package <package>` for each affected package
+            - Updated `uv.lock` with the resulting non-vulnerable resolutions
+
+            ### Why this should not conflict with Dependabot
+
+            - This automation only touches packages with active CVEs
+            - It uses the dedicated `security` label
+            - It always updates the fixed branch
+              `security/auto-fix-vulnerabilities` instead of opening duplicate PRs
+
+            Please review the dependency updates and merge if they look safe.
+          labels: security
+          delete-branch: true

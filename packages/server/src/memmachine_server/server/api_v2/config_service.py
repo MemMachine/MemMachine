@@ -2,7 +2,12 @@
 
 import logging
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from memmachine_server.common.configuration.episodic_config import (
+        LongTermMemoryConfPartial,
+    )
 
 from memmachine_common.api.config_spec import (
     EpisodicMemoryConfigResponse,
@@ -19,7 +24,10 @@ from memmachine_common.api.config_spec import (
 )
 from pydantic import SecretStr
 
-from memmachine_server.common.configuration import SemanticMemoryConf
+from memmachine_server.common.configuration import (
+    SemanticMemoryConf,
+    SemanticMemoryStorageBackend,
+)
 from memmachine_server.common.configuration.embedder_conf import (
     AmazonBedrockEmbedderConf,
     EmbeddersConf,
@@ -28,6 +36,7 @@ from memmachine_server.common.configuration.embedder_conf import (
 )
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
+    LongTermMemoryConfPartial,
 )
 from memmachine_server.common.configuration.language_model_conf import (
     AmazonBedrockLanguageModelConf,
@@ -41,6 +50,38 @@ from memmachine_server.common.resource_manager.resource_manager import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _ltm_config_response_from_partial(
+    ltm: LongTermMemoryConfPartial | None,
+    enabled: bool | None,
+) -> LongTermMemoryConfigResponse:
+    """Build a LongTermMemoryConfigResponse from a partial.
+
+    Surfaces both backends' fields. Fields irrelevant to the active backend are
+    left None.
+    """
+    if ltm is None:
+        return LongTermMemoryConfigResponse(
+            backend=None,
+            embedder=None,
+            reranker=None,
+            vector_graph_store=None,
+            vector_store=None,
+            segment_store=None,
+            properties_schema=None,
+            enabled=enabled if enabled is not None else True,
+        )
+    return LongTermMemoryConfigResponse(
+        backend=ltm.backend,
+        embedder=ltm.embedder,
+        reranker=ltm.reranker,
+        vector_graph_store=ltm.vector_graph_store,
+        vector_store=ltm.vector_store,
+        segment_store=ltm.segment_store,
+        properties_schema=ltm.properties_schema,
+        enabled=enabled if enabled is not None else True,
+    )
 
 
 def _get_embedder_provider(manager_conf: EmbeddersConf, name: str) -> str:
@@ -131,11 +172,55 @@ def _create_language_model_config(
     raise ValueError(f"Unknown language model provider: {provider}")
 
 
+def _handle_backend_change(
+    ltm: "LongTermMemoryConfPartial",
+    new_backend: Literal["declarative", "event"],
+) -> list[str]:
+    """Apply a backend assignment, clearing stale cross-backend state on flip.
+
+    On a flip away from event (or from unset/declarative-by-default toward
+    event), wipe the OTHER backend's resource-id fields so they don't surface
+    as half-baked state through merge() into the runtime config.
+    """
+    if new_backend == ltm.backend:
+        # Idempotent re-assertion of the same backend; no change to emit.
+        return []
+
+    changes: list[str] = []
+    coming_from_event = ltm.backend == "event"
+    if coming_from_event:
+        # Wipe event-only state when leaving the event backend.
+        if ltm.vector_store is not None:
+            ltm.vector_store = None
+            changes.append("episodic_memory.long_term_memory.vector_store=null")
+        if ltm.segment_store is not None:
+            ltm.segment_store = None
+            changes.append("episodic_memory.long_term_memory.segment_store=null")
+        if ltm.properties_schema:
+            ltm.properties_schema = {}
+            changes.append("episodic_memory.long_term_memory.properties_schema={}")
+    if new_backend == "event" and ltm.vector_graph_store is not None:
+        # Wipe declarative-only state when arriving at the event backend.
+        ltm.vector_graph_store = None
+        changes.append("episodic_memory.long_term_memory.vector_graph_store=null")
+
+    ltm.backend = new_backend
+    changes.append(f"episodic_memory.long_term_memory.backend={new_backend}")
+    return changes
+
+
 def _apply_ltm_updates(
     em: EpisodicMemoryConfPartial,
     spec_ltm: UpdateLongTermMemorySpec,
 ) -> list[str]:
-    """Apply long-term memory updates and return change descriptions."""
+    """Apply long-term memory updates and return change descriptions.
+
+    Backend flips clear cross-backend fields. Without this, switching from
+    `declarative` to `event` would leave a stale `vector_graph_store` on the
+    partial (and vice versa), which then surfaces through merge() as a
+    half-baked config that may fail at wire-up or silently still reference a
+    resource the new backend ignores.
+    """
     from memmachine_server.common.configuration.episodic_config import (
         LongTermMemoryConfPartial,
     )
@@ -146,6 +231,10 @@ def _apply_ltm_updates(
         em.long_term_memory = ltm
 
     changes: list[str] = []
+
+    if spec_ltm.backend is not None:
+        changes.extend(_handle_backend_change(ltm, spec_ltm.backend))
+
     if spec_ltm.embedder is not None:
         ltm.embedder = spec_ltm.embedder
         changes.append(f"episodic_memory.long_term_memory.embedder={spec_ltm.embedder}")
@@ -156,6 +245,21 @@ def _apply_ltm_updates(
         ltm.vector_graph_store = spec_ltm.vector_graph_store
         changes.append(
             f"episodic_memory.long_term_memory.vector_graph_store={spec_ltm.vector_graph_store}"
+        )
+    if spec_ltm.vector_store is not None:
+        ltm.vector_store = spec_ltm.vector_store
+        changes.append(
+            f"episodic_memory.long_term_memory.vector_store={spec_ltm.vector_store}"
+        )
+    if spec_ltm.segment_store is not None:
+        ltm.segment_store = spec_ltm.segment_store
+        changes.append(
+            f"episodic_memory.long_term_memory.segment_store={spec_ltm.segment_store}"
+        )
+    if spec_ltm.properties_schema is not None:
+        ltm.properties_schema = spec_ltm.properties_schema
+        changes.append(
+            f"episodic_memory.long_term_memory.properties_schema={spec_ltm.properties_schema}"
         )
     return changes
 
@@ -230,6 +334,7 @@ def _apply_semantic_memory_updates(
     if spec.database is not None:
         sm.database = spec.database
         changes.append(f"semantic_memory.database={spec.database}")
+    changes.extend(_apply_semantic_vector_updates(sm, spec))
     if spec.llm_model is not None:
         sm.llm_model = spec.llm_model
         changes.append(f"semantic_memory.llm_model={spec.llm_model}")
@@ -247,6 +352,27 @@ def _apply_semantic_memory_updates(
             f"semantic_memory.ingestion_trigger_age={spec.ingestion_trigger_age_seconds}s"
         )
 
+    return changes
+
+
+def _apply_semantic_vector_updates(
+    sm: SemanticMemoryConf,
+    spec: UpdateSemanticMemorySpec,
+) -> list[str]:
+    """Apply vector-backed semantic memory updates."""
+    changes: list[str] = []
+    if spec.storage_backend is not None:
+        sm.storage_backend = SemanticMemoryStorageBackend(spec.storage_backend)
+        changes.append(f"semantic_memory.storage_backend={spec.storage_backend}")
+    if spec.feature_store is not None:
+        sm.feature_store = spec.feature_store
+        changes.append(f"semantic_memory.feature_store={spec.feature_store}")
+    if spec.vector_collection is not None:
+        sm.vector_collection = spec.vector_collection
+        changes.append(f"semantic_memory.vector_collection={spec.vector_collection}")
+    if spec.vector_dimensions is not None:
+        sm.vector_dimensions = spec.vector_dimensions
+        changes.append(f"semantic_memory.vector_dimensions={spec.vector_dimensions}")
     return changes
 
 
@@ -520,15 +646,9 @@ class ConfigService:
         config = self._resource_manager.config
         em = config.episodic_memory
 
-        ltm_config = LongTermMemoryConfigResponse(
-            embedder=em.long_term_memory.embedder if em.long_term_memory else None,
-            reranker=em.long_term_memory.reranker if em.long_term_memory else None,
-            vector_graph_store=em.long_term_memory.vector_graph_store
-            if em.long_term_memory
-            else None,
-            enabled=em.long_term_memory_enabled
-            if em.long_term_memory_enabled is not None
-            else True,
+        ltm_config = _ltm_config_response_from_partial(
+            em.long_term_memory,
+            em.long_term_memory_enabled,
         )
 
         stm_config = ShortTermMemoryConfigResponse(
@@ -555,6 +675,9 @@ class ConfigService:
         return SemanticMemoryConfigResponse(
             enabled=sm.enabled if sm.enabled is not None else False,
             database=sm.database,
+            storage_backend=sm.storage_backend,
+            feature_store=sm.feature_store,
+            vector_collection=sm.vector_collection,
             llm_model=sm.llm_model,
             embedding_model=sm.embedding_model,
         )
@@ -564,15 +687,9 @@ class ConfigService:
         config = self._resource_manager.config
         em = config.episodic_memory
 
-        return LongTermMemoryConfigResponse(
-            embedder=em.long_term_memory.embedder if em.long_term_memory else None,
-            reranker=em.long_term_memory.reranker if em.long_term_memory else None,
-            vector_graph_store=em.long_term_memory.vector_graph_store
-            if em.long_term_memory
-            else None,
-            enabled=em.long_term_memory_enabled
-            if em.long_term_memory_enabled is not None
-            else True,
+        return _ltm_config_response_from_partial(
+            em.long_term_memory,
+            em.long_term_memory_enabled,
         )
 
     def get_short_term_memory_config(self) -> ShortTermMemoryConfigResponse:

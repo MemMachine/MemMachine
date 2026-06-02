@@ -97,7 +97,7 @@ Retrieves all semantic features (sets, categories, and tags) associated with a p
 | ------------- | -------- | ------------ | -------------------------------------- |
 | `org_id`      | `str`    | **Required** | Organization identifier.               |
 | `project_id`  | `str`    | **Required** | Project identifier.                    |
-| `filter_dict` | `dict`   | `None`       | Filter by specific tags or categories. |
+| `filter_dict` | `dict`   | `None`       | Filter by specific tags or categories. User metadata keys must be prefixed with `m.` / `metadata.`. Unknown or misspelled fields return a 400 error. |
 
 ------
 

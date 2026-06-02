@@ -130,7 +130,7 @@ async def longmemeval_ingest(
     per_batch = 1000
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, _, _ = await agent_utils.init_memmachine_params(
+    memory, _, _, _, _ = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id=session_id,
     )
@@ -188,7 +188,13 @@ async def longmemeval_search(
     num_searched = 0
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, answer_model, query_agent = await agent_utils.init_memmachine_params(
+    (
+        memory,
+        answer_model,
+        query_agent,
+        agent_model_id,
+        answer_model_id,
+    ) = await agent_utils.init_memmachine_params(
         resource_manager=resource_manager,
         session_id=session_id,
         agent_name=agent_name,
@@ -220,6 +226,8 @@ async def longmemeval_search(
                 extra_attributes={
                     "question_id": sample.get("question_id", ""),
                     "split": sample.get("split", ""),
+                    "agent_model_id": agent_model_id,
+                    "answer_model_id": answer_model_id,
                 },
             )
         )
@@ -243,6 +251,21 @@ async def longmemeval_search(
     if eval_result_path is not None:
         with open(eval_result_path, "w", encoding="utf-8") as file:
             json.dump(results, file, indent=4)
+
+
+async def longmemeval_delete(config_path: str, session_id: str):
+    from evaluation.utils import agent_utils
+
+    resource_manager = agent_utils.load_eval_config(config_path)
+    memory, _, _ = await agent_utils.init_memmachine_params(
+        resource_manager=resource_manager,
+        session_id=session_id,
+    )
+    _set_safe_embedder_request_limits(memory)
+
+    print(f"Deleting episodes for session_id='{session_id}'...")
+    await memory.delete_session_episodes()
+    print("Completed LongMemEval delete.")
 
 
 def load_longmemeval_dataset(length: int, split: str) -> list[dict[str, Any]]:
@@ -303,7 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--run-type",
         required=False,
-        help="Type of run: ingest or search",
+        help="Type of run: ingest, search, or delete",
         default="search",
     )
     parser.add_argument(
@@ -348,6 +371,10 @@ def build_parser() -> argparse.ArgumentParser:
 async def main():
     args = build_parser().parse_args()
 
+    if args.run_type == "delete":
+        await longmemeval_delete(args.config_path, args.session_id)
+        return
+
     dataset = load_longmemeval_dataset(args.length, args.split_name)
 
     if args.run_type == "ingest":
@@ -374,7 +401,7 @@ async def main():
         )
     else:
         raise ValueError(
-            f"Unknown run type: {args.run_type}, please use 'ingest' or 'search'."
+            f"Unknown run type: {args.run_type}, please use 'ingest', 'search', or 'delete'."
         )
 
 

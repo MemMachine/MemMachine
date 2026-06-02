@@ -12,6 +12,7 @@ from memmachine_server.common.configuration.episodic_config import EpisodicMemor
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.errors import (
     EpisodicMemoryManagerClosedError,
+    SessionDeletedError,
     SessionInUseError,
     SessionNotFoundError,
 )
@@ -148,6 +149,11 @@ class EpisodicMemoryManager:
                         session_info = await self.get_session_info(session_key)
                         if session_info is None:
                             raise SessionNotFoundError(session_key)
+                        if (
+                            session_info.status
+                            != SessionDataManager.SessionStatus.Active
+                        ):
+                            raise SessionDeletedError(session_key)
 
                         instance = await self._create_episodic_memory(
                             session_key,
@@ -251,6 +257,11 @@ class EpisodicMemoryManager:
                         # try to load from the database
                         session_info = await self.get_session_info(session_key)
                         if session_info is not None:
+                            if (
+                                session_info.status
+                                != SessionDataManager.SessionStatus.Active
+                            ):
+                                raise SessionDeletedError(session_key)
                             instance = await self._create_episodic_memory(
                                 session_key, session_info.episode_memory_conf
                             )
@@ -305,7 +316,6 @@ class EpisodicMemoryManager:
                     instance = EpisodicMemory(params)
                 await instance.delete_session_episodes()
                 await instance.close()
-                await self._session_data_manager.delete_session(session_key)
 
     async def get_episodic_memory_keys(
         self,

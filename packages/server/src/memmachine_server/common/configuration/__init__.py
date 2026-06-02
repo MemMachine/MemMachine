@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypeGuard, cast
 
@@ -26,6 +27,7 @@ from memmachine_server.common.configuration.mixin_confs import (
 )
 from memmachine_server.common.configuration.reranker_conf import RerankersConf
 from memmachine_server.common.configuration.retrieval_config import RetrievalAgentConf
+from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.errors import (
     DefaultEmbedderNotConfiguredError,
     DefaultLLMModelNotConfiguredError,
@@ -85,17 +87,59 @@ class EpisodeStoreConf(YamlSerializableMixin):
     )
 
 
+class SemanticMemoryStorageBackend(StrEnum):
+    """Supported semantic memory storage backends."""
+
+    AUTO = "auto"
+    PGVECTOR = "pgvector"
+    NEO4J = "neo4j"
+    VECTOR_STORE = "vector_store"
+
+
 class SemanticMemoryConf(YamlSerializableMixin):
     """Configuration for semantic memory defaults."""
 
     enabled: bool = Field(
         default=True,
         description="Whether semantic memory is enabled. "
-        "Auto-disabled when required fields (database, llm_model, embedding_model) are empty.",
+        "Auto-disabled when required backend, llm_model, or embedding_model fields are empty.",
     )
     database: str | None = Field(
         default=None,
         description="The database to use for semantic memory",
+    )
+    storage_backend: SemanticMemoryStorageBackend = Field(
+        default=SemanticMemoryStorageBackend.AUTO,
+        description=(
+            "Semantic storage backend. 'auto' preserves legacy database provider "
+            "detection; 'vector_store' uses a relational database plus VectorStore."
+        ),
+    )
+    feature_store: str | None = Field(
+        default=None,
+        description=(
+            "The relational database resource id used to store semantic feature data "
+            "when storage_backend is 'vector_store'."
+        ),
+    )
+    vector_collection: str | None = Field(
+        default=None,
+        description=(
+            "The VectorStore resource id used to store semantic feature embeddings "
+            "when storage_backend is 'vector_store'."
+        ),
+    )
+    vector_dimensions: int | None = Field(
+        default=None,
+        description=(
+            "Vector dimensions for semantic memory embeddings. If omitted for "
+            "vector_store storage, the configured embedder dimensions are used."
+        ),
+        gt=0,
+    )
+    vector_similarity_metric: SimilarityMetric = Field(
+        default=SimilarityMetric.COSINE,
+        description="Similarity metric for vector_store semantic memory search.",
     )
     config_database: str = Field(
         ...,
@@ -135,13 +179,22 @@ class SemanticMemoryConf(YamlSerializableMixin):
     @model_validator(mode="after")
     def _auto_disable_when_incomplete(self) -> SemanticMemoryConf:
         """Auto-disable semantic memory when required fields are missing."""
+        if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+            has_required_storage = bool(self.feature_store) and bool(
+                self.vector_collection
+            )
+        else:
+            has_required_storage = bool(self.database)
         if self.enabled and not (
-            self.database and self.llm_model and self.embedding_model
+            has_required_storage and self.llm_model and self.embedding_model
         ):
             logger.warning(
                 "Semantic memory auto-disabled: missing required fields "
-                "(database=%r, llm_model=%r, embedding_model=%r).",
+                "(database=%r, feature_store=%r, vector_collection=%r, "
+                "llm_model=%r, embedding_model=%r).",
                 self.database,
+                self.feature_store,
+                self.vector_collection,
                 self.llm_model,
                 self.embedding_model,
             )
