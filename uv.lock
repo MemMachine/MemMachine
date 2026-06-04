@@ -724,6 +724,21 @@ wheels = [
 ]
 
 [[package]]
+name = "dateparser"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+    { name = "pytz" },
+    { name = "regex" },
+    { name = "tzlocal" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/2d/a0ccdb78788064fa0dc901b8524e50615c42be1d78b78d646d0b28d09180/dateparser-1.4.0.tar.gz", hash = "sha256:97a21840d5ecdf7630c584f673338a5afac5dfe84f647baf4d7e8df98f9354a4", size = 321512, upload-time = "2026-03-26T09:56:10.292Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/0b/3c3bb7cbe757279e693a0be6049048012f794d01f81099609ecd53b899f0/dateparser-1.4.0-py3-none-any.whl", hash = "sha256:7902b8e85d603494bf70a5a0b1decdddb2270b9c6e6b2bc8a57b93476c0df378", size = 300379, upload-time = "2026-03-26T09:56:08.409Z" },
+]
+
+[[package]]
 name = "distro"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1941,6 +1956,12 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+dateparser = [
+    { name = "dateparser" },
+]
+duckling = [
+    { name = "httpx" },
+]
 gpu = [
     { name = "sentence-transformers" },
 ]
@@ -1966,11 +1987,13 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.40.40" },
     { name = "boto3-stubs", specifier = "==1.43.13" },
     { name = "cohere", specifier = ">=5.20.0" },
+    { name = "dateparser", marker = "extra == 'dateparser'", specifier = ">=1.4.0" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "fastmcp", specifier = ">=3.2.0" },
     { name = "greenlet", specifier = ">=3.2.4" },
     { name = "hnswlib", marker = "extra == 'hnswlib'", specifier = ">=0.8.0" },
+    { name = "httpx", marker = "extra == 'duckling'", specifier = ">=0.27.0" },
     { name = "instructor", extras = ["bedrock"], specifier = ">=1.12.0" },
     { name = "json-repair", specifier = ">=0.54" },
     { name = "langchain-aws", specifier = ">=0.2.33" },
@@ -1996,7 +2019,7 @@ requires-dist = [
     { name = "usearch", specifier = ">=2.25.1" },
     { name = "uvicorn", specifier = ">=0.35.0" },
 ]
-provides-extras = ["gpu", "hnswlib", "nebula", "qdrant", "litellm"]
+provides-extras = ["gpu", "hnswlib", "nebula", "qdrant", "litellm", "dateparser", "duckling"]
 
 [[package]]
 name = "minijinja"
@@ -4031,6 +4054,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ba/19/1b9b0e29f30c6d35cb345486df41110984ea67ae69dddbc0e8a100999493/tzdata-2026.2.tar.gz", hash = "sha256:9173fde7d80d9018e02a662e168e5a2d04f87c41ea174b139fbef642eda62d10", size = 198254, upload-time = "2026-04-24T15:22:08.651Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ce/e4/dccd7f47c4b64213ac01ef921a1337ee6e30e8c6466046018326977efd95/tzdata-2026.2-py2.py3-none-any.whl", hash = "sha256:bbe9af844f658da81a5f95019480da3a89415801f6cc966806612cc7169bffe7", size = 349321, upload-time = "2026-04-24T15:22:05.876Z" },
+]
+
+[[package]]
+name = "tzlocal"
+version = "5.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/2e/c14812d3d4d9cd1773c6be938f89e5735a1f11a9f184ac3639b93cef35d5/tzlocal-5.3.1.tar.gz", hash = "sha256:cceffc7edecefea1f595541dbd6e990cb1ea3d19bf01b2809f362a03dd7921fd", size = 30761, upload-time = "2025-03-05T21:17:41.549Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/14/e2a54fabd4f08cd7af1c07030603c3356b74da07f7cc056e600436edfa17/tzlocal-5.3.1-py3-none-any.whl", hash = "sha256:eb1a66c3ef5847adf7a834f1be0800581b683b5608e74f86ecbcef8ab91bb85d", size = 18026, upload-time = "2025-03-05T21:17:39.857Z" },
 ]
 
 [[package]]
