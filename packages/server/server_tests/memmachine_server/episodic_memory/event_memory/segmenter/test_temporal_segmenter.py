@@ -1,6 +1,7 @@
 """Tests for TemporalSegmenter (base-segmenter injection + composition)."""
 
 from datetime import UTC, datetime
+from typing import override
 from uuid import uuid4
 
 import pytest
@@ -42,6 +43,7 @@ class RecordingExtractor(TemporalExtractor):
         self._ranges = ranges
         self.calls = calls
 
+    @override
     async def extract(self, text, *, ref_time=None):
         self.calls.append((text, ref_time))
         return list(self._ranges)
