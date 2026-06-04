@@ -542,16 +542,12 @@ async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
     Without this fix, `score < threshold` keeps far matches and drops close
     ones — leaking unrelated content past a "max-distance" gate.
     """
-    # WholeTextDeriver prepends "alice: " to each segment, so the embedded
-    # text length is len(producer + ": " + content):
-    #   - producer "alice": prefix "alice: " (length 7)
-    #   - "near"  → embedded "alice: abc"        → vector [10, -10]
-    #   - "far"   → embedded "alice: abcdefghij" → vector [17, -17]
-    # Query "abc" → vector [3, -3].
-    # Euclidean distances from query:
-    #   - near: sqrt(7^2 + 7^2)   = ~9.9
-    #   - far:  sqrt(14^2 + 14^2) = ~19.8
-    # A threshold of 15.0 cleanly separates them.
+    # FakeEmbedder maps text -> [len, -len], so a shorter embedded anchor lands
+    # closer to the short query "abc". "near" (content "abc") is therefore a
+    # closer euclidean match than "far" (content "abcdefghij"). The exact
+    # distances depend on the embedding format (producer prefix, JSON quoting,
+    # date stamp), so we read the actual scores and pick a threshold strictly
+    # between them rather than hard-coding the arithmetic.
     episodes = [
         _episode("near", "abc"),
         _episode("far", "abcdefghij"),
@@ -559,15 +555,25 @@ async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
     ltm = _make_ltm_with_metric(SimilarityMetric.EUCLIDEAN, episodes)
     await ltm.add_episodes(episodes)
 
-    kept = await ltm.search_scored("abc", num_episodes_limit=10, score_threshold=15.0)
+    scores_by_uid = {
+        ep.uid: score
+        for score, ep in await ltm.search_scored("abc", num_episodes_limit=10)
+    }
+    assert scores_by_uid["near"] < scores_by_uid["far"], (
+        "FakeEmbedder should make the shorter 'near' anchor a closer "
+        "euclidean match than 'far'."
+    )
+    midpoint_threshold = (scores_by_uid["near"] + scores_by_uid["far"]) / 2
+
+    kept = await ltm.search_scored(
+        "abc", num_episodes_limit=10, score_threshold=midpoint_threshold
+    )
     uids = {ep.uid for _, ep in kept}
     assert "near" in uids, (
-        "Close match (distance ~9.9) was dropped — threshold filter is "
-        "inverted for euclidean."
+        "Close match was dropped — threshold filter is inverted for euclidean."
     )
     assert "far" not in uids, (
-        "Far match (distance ~19.8) was kept — threshold filter is inverted "
-        "for euclidean."
+        "Far match was kept — threshold filter is inverted for euclidean."
     )
 
 
