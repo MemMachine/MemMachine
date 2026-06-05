@@ -9,7 +9,6 @@ from collections.abc import Iterable, Sequence
 from typing import ClassVar, cast
 from uuid import UUID
 
-from babel.dates import format_date, format_time, get_datetime_format
 from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.data_types import PropertyValue
@@ -32,7 +31,6 @@ from memmachine_server.common.vector_store import (
 
 from .data_types import (
     Block,
-    DateTimeStyle,
     Derivative,
     Event,
     FormatOptions,
@@ -44,13 +42,11 @@ from .data_types import (
     TextBlock,
 )
 from .deriver import Deriver
+from .formatting import format_timestamp
 from .segment_store import SegmentStorePartition
 from .segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
-
-# CLDR datetime style levels, ordered from compact to verbose.
-_DATETIME_STYLE_LEVELS: tuple[DateTimeStyle, ...] = ("short", "medium", "long", "full")
 
 
 class EventMemoryParams(BaseModel):
@@ -204,12 +200,17 @@ class EventMemory:
     async def encode_events(
         self,
         events: Iterable[Event],
+        *,
+        format_options: FormatOptions | None = None,
     ) -> None:
         """
         Encode events.
 
         Args:
             events (Iterable[Event]): The events to encode.
+            format_options (FormatOptions | None):
+                Options for formatting.
+                (default: None).
 
         Raises:
             ValueError:
@@ -217,11 +218,13 @@ class EventMemory:
                 or if the collection schema is missing fields required by any event's Context type.
         """
         async with self._tracker("encode_events"):
-            await self._encode_events(events)
+            await self._encode_events(events, format_options=format_options)
 
     async def _encode_events(
         self,
         events: Iterable[Event],
+        *,
+        format_options: FormatOptions | None,
     ) -> None:
         t_start = time.monotonic()
 
@@ -229,7 +232,10 @@ class EventMemory:
         self._validate_events(events)
 
         segment_lists = await asyncio.gather(
-            *(self._segmenter.segment(event) for event in events)
+            *(
+                self._segmenter.segment(event, format_options=format_options)
+                for event in events
+            )
         )
         segments = [
             segment for segment_list in segment_lists for segment in segment_list
@@ -237,7 +243,10 @@ class EventMemory:
         t_segmentation = time.monotonic()
 
         derivative_lists = await asyncio.gather(
-            *(self._deriver.derive(segment) for segment in segments)
+            *(
+                self._deriver.derive(segment, format_options=format_options)
+                for segment in segments
+            )
         )
         segments_to_derivatives: dict[Segment, list[Derivative]] = dict(
             zip(segments, derivative_lists, strict=True)
@@ -395,9 +404,6 @@ class EventMemory:
         property_filter: FilterExpr | None,
         format_options: FormatOptions | None,
     ) -> QueryResult:
-        if format_options is None:
-            format_options = FormatOptions()
-
         t_start = time.monotonic()
         query_embedding = (
             await self._embedder.search_embed(
@@ -472,8 +478,11 @@ class EventMemory:
                 for seed_uuid in kept_seed_segment_uuids
             ]
         else:
+            reranker_format_options = format_options or FormatOptions(
+                time_style="short"
+            )
             scores = await self._score_segment_contexts(
-                query, segment_contexts, format_options
+                query, segment_contexts, reranker_format_options
             )
         t_scoring = time.monotonic()
 
@@ -547,7 +556,7 @@ class EventMemory:
     ) -> str:
         """Format segment context as a string."""
         if format_options is None:
-            format_options = FormatOptions()
+            format_options = FormatOptions(time_style="short")
 
         context_string = ""
         last_segment: Segment | None = None
@@ -646,13 +655,7 @@ class EventMemory:
     @staticmethod
     def _segment_header(segment: Segment, format_options: FormatOptions) -> str:
         """Build the header emitted before a segment."""
-        formatted_timestamp = EventMemory._format_timestamp(
-            segment.timestamp,
-            date_style=format_options.date_style,
-            time_style=format_options.time_style,
-            locale=format_options.locale,
-            timezone=format_options.timezone,
-        )
+        formatted_timestamp = format_timestamp(segment.timestamp, format_options)
         timestamp_prefix = f"[{formatted_timestamp}] " if formatted_timestamp else ""
 
         match segment.context:
@@ -664,50 +667,6 @@ class EventMemory:
                 raise NotImplementedError(
                     f"Unsupported context type: {type(segment.context).__name__}"
                 )
-
-    @staticmethod
-    def _format_timestamp(
-        timestamp: datetime.datetime,
-        *,
-        date_style: DateTimeStyle | None,
-        time_style: DateTimeStyle | None,
-        locale: str,
-        timezone: datetime.tzinfo | None,
-    ) -> str:
-        """Format a timestamp."""
-        if date_style is None and time_style is None:
-            return ""
-
-        normalized_timestamp = (
-            timestamp.astimezone(timezone) if timezone is not None else timestamp
-        )
-
-        date_string = ""
-        time_string = ""
-
-        if date_style is not None:
-            date_string = format_date(
-                normalized_timestamp, format=date_style, locale=locale
-            )
-        if time_style is not None:
-            time_string = format_time(
-                normalized_timestamp, format=time_style, locale=locale
-            )
-
-        if not time_string:
-            return date_string
-        if not date_string:
-            return time_string
-
-        connector_style = _DATETIME_STYLE_LEVELS[
-            max(
-                _DATETIME_STYLE_LEVELS.index(date_style),
-                _DATETIME_STYLE_LEVELS.index(time_style),
-            )
-        ]
-
-        template = str(get_datetime_format(connector_style, locale=locale))
-        return template.replace("{1}", date_string).replace("{0}", time_string)
 
     @staticmethod
     def _extract_text(block: Block) -> str | None:

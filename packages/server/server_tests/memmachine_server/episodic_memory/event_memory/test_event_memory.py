@@ -22,6 +22,7 @@ from memmachine_server.common.vector_store.data_types import (
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
+    FormatOptions,
     NullContext,
     ProducerContext,
     QueryResult,
@@ -38,6 +39,9 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
+)
+from server_tests.memmachine_server.common.reranker.fake_embedder import (
+    FakeEmbedder,
 )
 
 from .conftest import (
@@ -948,3 +952,89 @@ class TestQueryDeduplication:
         # is that we get exactly one context with a valid score.
         assert len(result.scored_segment_contexts) == 1
         assert result.scored_segment_contexts[0].score == pytest.approx(1.0, abs=0.01)
+
+
+# ===================================================================
+# Ingest-side format options (timestamp baked into the embedding)
+# ===================================================================
+
+
+class _RecordingEmbedder(FakeEmbedder):
+    """FakeEmbedder that records the texts passed to ingest_embed."""
+
+    def __init__(self):
+        super().__init__()
+        self.ingested: list[str] = []
+
+    async def _ingest_embed(self, inputs, max_attempts=1):
+        self.ingested.extend(inputs)
+        return await super()._ingest_embed(inputs, max_attempts=max_attempts)
+
+
+@_async
+class TestIngestFormatOptions:
+    @staticmethod
+    def _build(embedder: FakeEmbedder) -> EventMemory:
+        config = VectorStoreCollectionConfig(
+            vector_dimensions=embedder.dimensions,
+            similarity_metric=embedder.similarity_metric,
+            indexed_properties_schema=(
+                EventMemory.expected_vector_store_collection_schema()
+            ),
+        )
+        return EventMemory(
+            EventMemoryParams(
+                segment_store_partition=InMemorySegmentStorePartition(),
+                vector_store_collection=InMemoryVectorStoreCollection(config),
+                segmenter=TextSegmenter(),
+                deriver=WholeTextDeriver(),
+                embedder=embedder,
+            )
+        )
+
+    async def test_default_bakes_full_date_into_embedding(self):
+        embedder = _RecordingEmbedder()
+        event_memory = self._build(embedder)
+
+        await event_memory.encode_events([_make_event("hello world")])
+
+        # _T0 is 2025-06-01; the ingest default is a full date with no time,
+        # and the message text is JSON-dumped (ensure_ascii=False).
+        assert embedder.ingested == ['[Sunday, June 1, 2025] "hello world"']
+
+    async def test_format_options_can_disable_timestamp(self):
+        embedder = _RecordingEmbedder()
+        event_memory = self._build(embedder)
+
+        await event_memory.encode_events(
+            [_make_event("hello world")],
+            format_options=FormatOptions(date_style=None, time_style=None),
+        )
+
+        assert embedder.ingested == ['"hello world"']
+
+    async def test_segment_text_stays_structured(self):
+        """The baked timestamp lives only in the embedding, not the segment."""
+        embedder = _RecordingEmbedder()
+        partition = InMemorySegmentStorePartition()
+        config = VectorStoreCollectionConfig(
+            vector_dimensions=embedder.dimensions,
+            similarity_metric=embedder.similarity_metric,
+            indexed_properties_schema=(
+                EventMemory.expected_vector_store_collection_schema()
+            ),
+        )
+        event_memory = EventMemory(
+            EventMemoryParams(
+                segment_store_partition=partition,
+                vector_store_collection=InMemoryVectorStoreCollection(config),
+                segmenter=TextSegmenter(),
+                deriver=WholeTextDeriver(),
+                embedder=embedder,
+            )
+        )
+
+        await event_memory.encode_events([_make_event("hello world")])
+
+        (segment,) = partition.segments.values()
+        assert segment.block == TextBlock(text="hello world")
