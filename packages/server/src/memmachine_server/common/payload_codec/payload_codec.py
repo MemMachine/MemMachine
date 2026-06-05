@@ -1,6 +1,7 @@
 """Shared payload codec abstractions."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 
 class PayloadCodec(ABC):
@@ -39,3 +40,6 @@ class PayloadCodec(ABC):
             bytes:
                 Payload bytes.
         """
+
+
+PayloadCodecFactory = Callable[[bytes, bytes | None], PayloadCodec]
