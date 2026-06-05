@@ -20,7 +20,7 @@ from memmachine_server.episodic_memory.event_memory.temporal_ranking import (
     temporal_rerank_query_results,
 )
 from memmachine_server.temporal.query_planner import TemporalQueryPlan
-from memmachine_server.temporal.scoring import TemporalScorer
+from memmachine_server.temporal.scoring import TemporalScorer, TemporalScorerParams
 from memmachine_server.temporal.time_range import TimeInterval, TimeRange
 
 BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
@@ -92,7 +92,7 @@ class TestRerankQueryResult:
         query_result = QueryResult(scored_segment_contexts=[b, a, c])
 
         out = temporal_rerank_query_results(
-            TemporalScorer(),
+            TemporalScorer(TemporalScorerParams()),
             TemporalQueryPlan(targets=[year_target(2024)]),
             query_result,
         )
@@ -113,7 +113,7 @@ class TestRerankQueryResult:
     def test_does_not_mutate_caller_input(self):
         a = scored(0.50, [anchor(dt(2024, 3), dt(2024, 4))])
         temporal_rerank_query_results(
-            TemporalScorer(),
+            TemporalScorer(TemporalScorerParams()),
             TemporalQueryPlan(targets=[year_target(2024)]),
             QueryResult(scored_segment_contexts=[a]),
         )
@@ -123,7 +123,7 @@ class TestRerankQueryResult:
         a = scored(0.30, [anchor(dt(2024, 3), dt(2024, 4))])
         b = scored(0.90, [anchor(dt(2020, 1), dt(2020, 2))])
         out = temporal_rerank_query_results(
-            TemporalScorer(),
+            TemporalScorer(TemporalScorerParams()),
             TemporalQueryPlan(targets=[]),
             QueryResult(scored_segment_contexts=[a, b]),
         )
@@ -164,7 +164,7 @@ class TestRerankQueryResult:
         lower = scored(0.40, [anchor(dt(2019, 1), dt(2019, 2))])
 
         out = temporal_rerank_query_results(
-            TemporalScorer(),
+            TemporalScorer(TemporalScorerParams()),
             TemporalQueryPlan(targets=[year_target(2024)]),
             QueryResult(scored_segment_contexts=[higher, unit, lower]),
         )

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from memmachine_server.temporal.query_planner import TemporalQueryPlan
 from memmachine_server.temporal.scoring import (
     TemporalScorer,
+    TemporalScorerParams,
     TemporalScoringCandidate,
     TemporalScoringResult,
     document_temporal_match_score,
@@ -135,7 +136,7 @@ def test_temporal_match_lifts_lower_base_candidate():
     c = candidate(0.40, [anchor(dt(2019, 1), dt(2019, 2))])
 
     plan = TemporalQueryPlan(targets=[year(2024)])
-    scores = TemporalScorer().score(plan, [a, b, c])
+    scores = TemporalScorer(TemporalScorerParams()).score(plan, [a, b, c])
 
     # The 2024 match takes the top final_score despite its lower base.
     assert ranked_indices(scores)[0] == 0
@@ -147,7 +148,7 @@ def test_scores_are_returned_in_candidate_order():
     b = candidate(0.60, [anchor(dt(2020, 1), dt(2020, 2))])  # does not
 
     plan = TemporalQueryPlan(targets=[year(2024)])
-    scores = TemporalScorer().score(plan, [a, b])
+    scores = TemporalScorer(TemporalScorerParams()).score(plan, [a, b])
 
     assert scores[0].temporal_match_score == 1.0
     assert scores[1].temporal_match_score == 0.0
@@ -159,7 +160,7 @@ def test_empty_plan_ranks_by_base():
     c = candidate(0.60, [])
 
     plan = TemporalQueryPlan(targets=[])
-    scores = TemporalScorer().score(plan, [a, b, c])
+    scores = TemporalScorer(TemporalScorerParams()).score(plan, [a, b, c])
 
     # No targets -> no temporal lift -> ordered by base: b, c, a.
     assert ranked_indices(scores) == [1, 2, 0]
@@ -168,4 +169,4 @@ def test_empty_plan_ranks_by_base():
 
 def test_empty_candidates():
     plan = TemporalQueryPlan(targets=[year(2024)])
-    assert TemporalScorer().score(plan, []) == []
+    assert TemporalScorer(TemporalScorerParams()).score(plan, []) == []

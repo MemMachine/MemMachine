@@ -2,7 +2,7 @@
 
 import math
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .query_planner import TemporalQueryPlan
 from .time_range import TimeRange
@@ -77,8 +77,27 @@ class TemporalScoringResult(BaseModel):
     temporal_match_score: float
 
 
+class TemporalScorerParams(BaseModel):
+    """
+    Parameters for TemporalScorer.
+
+    Attributes:
+        match_weight (float):
+            Weight on the temporal match term in the additive fusion.
+    """
+
+    match_weight: float = Field(
+        default=1.0,
+        description=("Weight on the temporal match term in the additive fusion"),
+    )
+
+
 class TemporalScorer:
     """Temporal scorer."""
+
+    def __init__(self, params: TemporalScorerParams) -> None:
+        """Initialize from parameters."""
+        self._match_weight = params.match_weight
 
     def score(
         self,
@@ -111,7 +130,8 @@ class TemporalScorer:
 
         return [
             TemporalScoringResult(
-                final_score=base_scores[i] + match_scores[i] * pool_spread,
+                final_score=base_scores[i]
+                + self._match_weight * match_scores[i] * pool_spread,
                 temporal_match_score=match_scores[i],
             )
             for i in range(len(candidates))
