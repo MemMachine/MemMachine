@@ -66,8 +66,8 @@ const PluginConfigUiHints = {
   },
   baseUrl: {
     label: "MemMachine Base URL",
-    placeholder: "https://api.memmachine.ai",
-    help: "Base URL for the MemMachine service.",
+    placeholder: "https://api.memmachine.ai/v2",
+    help: "Base URL for the MemMachine service, including the API version path. MemMachine Cloud: https://api.memmachine.ai/v2. Self-hosted: http://<host>:<port>/api/v2 (e.g. http://localhost:8080/api/v2). Leave blank to use the client default.",
   },
   userId: {
     label: "Default User ID",
@@ -162,11 +162,25 @@ const MemoryForgetSchema = Type.Object({
   minScore: Type.Optional(Type.Number({ description: "Auto-delete threshold" })),
 });
 
+/**
+ * Normalizes a user-supplied `baseUrl` to either a trimmed non-empty string
+ * or `undefined`. Exported so tests can pin the contract: empty or
+ * whitespace-only values must collapse to `undefined`, so the underlying TS
+ * client falls back to its own default (`https://api.memmachine.ai/v2`)
+ * instead of receiving an empty `base_url` that would short-circuit the
+ * default in axios.
+ */
+export function resolveBaseUrl(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function resolvePluginConfig(api: OpenClawPluginApi): PluginConfig {
   const raw = (api.pluginConfig ?? {}) as Record<string, unknown>;
   return {
     apiKey: typeof raw.apiKey === "string" ? raw.apiKey.trim() : undefined,
-    baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : undefined,
+    baseUrl: resolveBaseUrl(raw.baseUrl),
     userId:
       typeof raw.userId === "string" && raw.userId.trim()
         ? raw.userId.trim()
