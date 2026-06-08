@@ -18,7 +18,12 @@ import pytest
 pytest.importorskip("httpx")
 
 import httpx
+from babel import Locale
 
+from memmachine_server.common.request_context import (
+    reset_request_locale,
+    set_request_locale,
+)
 from memmachine_server.temporal.extractor.duckling_temporal_extractor import (
     DucklingTemporalExtractor,
     DucklingTemporalExtractorParams,
@@ -205,18 +210,36 @@ class TestDucklingExtractor:
             return httpx.Response(200, json=[])
 
         ref = datetime(2024, 6, 15, 12, tzinfo=UTC)
-        async with mock_extractor(handler, locale="en_GB") as extractor:
+        async with mock_extractor(handler) as extractor:
             await extractor.extract("when did x happen", ref_time=ref)
 
         assert captured["method"] == "POST"
         assert captured["url"] == URL
         form = captured["form"]
         assert form["text"] == ["when did x happen"]
-        assert form["locale"] == ["en_GB"]
+        # Default request locale (en-US) maps to Duckling's lang_REGION form.
+        assert form["locale"] == ["en_US"]
         assert form["tz"] == ["UTC"]
         assert json.loads(form["dims"][0]) == ["time"]
         # reftime is epoch-milliseconds of ref_time (our deterministic contract).
         assert form["reftime"] == [str(int(ref.timestamp() * 1000))]
+
+    async def test_locale_comes_from_request_context(self):
+        captured = {}
+
+        def handler(request):
+            captured["form"] = urllib.parse.parse_qs(request.content.decode())
+            return httpx.Response(200, json=[])
+
+        token = set_request_locale(Locale("en", "GB"))
+        try:
+            async with mock_extractor(handler) as extractor:
+                await extractor.extract("x", ref_time=datetime(2024, 1, 1, tzinfo=UTC))
+        finally:
+            reset_request_locale(token)
+
+        # The request locale (en-GB) maps to Duckling's lang_REGION form.
+        assert captured["form"]["locale"] == ["en_GB"]
 
     async def test_tz_is_derived_from_ref_time(self):
         captured = {}

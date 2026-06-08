@@ -38,7 +38,7 @@ class RecordingExtractor(TemporalExtractor):
         self.calls = []
 
     @override
-    async def extract(self, text, ref_time=None):
+    async def extract(self, text, *, ref_time=None):
         self.calls.append((text, ref_time))
         return list(self._ranges)
 

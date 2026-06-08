@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import cast
+from typing import Annotated, cast
 
-from fastapi import Request
+from babel import Locale, UnknownLocaleError
+from fastapi import Query, Request
 from memmachine_common.api import MemoryType as MemoryTypeE
 from memmachine_common.api.spec import (
     AddMemoriesSpec,
@@ -25,6 +27,11 @@ from pydantic import JsonValue
 
 from memmachine_server import MemMachine
 from memmachine_server.common.episode_store.episode_model import EpisodeEntry
+from memmachine_server.common.request_context import (
+    DEFAULT_LOCALE,
+    reset_request_locale,
+    set_request_locale,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +40,37 @@ logger = logging.getLogger(__name__)
 async def get_memmachine(request: Request) -> MemMachine:
     """Get session data manager instance."""
     return request.app.state.mem_machine
+
+
+def _parse_locale(value: str | None) -> Locale:
+    """Resolve a BCP-47 locale string to a ``Locale``.
+
+    An absent or unrecognized value falls back to ``DEFAULT_LOCALE`` so a bad
+    locale hint never fails the request it annotates.
+    """
+    if not value:
+        return DEFAULT_LOCALE
+    try:
+        return Locale.parse(value, sep="-")
+    except (UnknownLocaleError, ValueError):
+        return DEFAULT_LOCALE
+
+
+async def provide_request_locale(
+    locale: Annotated[
+        str | None,
+        Query(
+            description="Client locale as a BCP-47 tag (e.g. en-US) for "
+            "locale-sensitive date parsing; defaults to en-US.",
+        ),
+    ] = None,
+) -> AsyncIterator[None]:
+    """Bind the request's locale (from the ``locale`` query param) for its lifetime."""
+    token = set_request_locale(_parse_locale(locale))
+    try:
+        yield
+    finally:
+        reset_request_locale(token)
 
 
 @dataclass(frozen=True)

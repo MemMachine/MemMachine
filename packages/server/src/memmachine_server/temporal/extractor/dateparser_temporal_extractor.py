@@ -7,6 +7,7 @@ from typing import override
 from dateparser.date import DateDataParser
 from dateparser.search import search_dates
 
+from memmachine_server.common.request_context import get_request_locale
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.temporal.time_range import TimeInterval, TimeRange
 
@@ -60,13 +61,15 @@ class DateparserTemporalExtractor(TemporalExtractor):
             "PREFER_DATES_FROM": "past",
         }
 
-    def _extract_time_ranges(self, text: str, ref_time: datetime) -> list[TimeRange]:
+    def _extract_time_ranges(
+        self, text: str, ref_time: datetime, languages: list[str]
+    ) -> list[TimeRange]:
         settings = self._settings(ref_time)
         # DateDataParser takes settings only at construction time, so we
         # build a fresh parser per call (its construction cost is small;
         # ``RELATIVE_BASE`` is the per-call signal).
-        parser = DateDataParser(languages=["en"], settings=settings)
-        candidates = search_dates(text, languages=["en"], settings=settings)
+        parser = DateDataParser(languages=languages, settings=settings)
+        candidates = search_dates(text, languages=languages, settings=settings)
         if not candidates:
             return []
         intervals: list[TimeInterval] = []
@@ -103,4 +106,6 @@ class DateparserTemporalExtractor(TemporalExtractor):
         if ref_time is None:
             ref_time = datetime.now(UTC)
 
-        return self._extract_time_ranges(text, ref_time)
+        # dateparser takes a language code (e.g. `en`); take it from the request locale.
+        language = get_request_locale().language
+        return self._extract_time_ranges(text, ref_time, [language])

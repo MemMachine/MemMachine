@@ -7,6 +7,7 @@ from typing import override
 import httpx
 from pydantic import BaseModel, Field, InstanceOf
 
+from memmachine_server.common.request_context import get_request_locale
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.temporal.time_range import TimeInterval, TimeRange
 
@@ -125,8 +126,6 @@ class DucklingTemporalExtractorParams(BaseModel):
             HTTP client used to call the Duckling server (caller-owned).
         url (str):
             Duckling parse endpoint URL.
-        locale (str):
-            Duckling locale (default: "en_US").
     """
 
     client: InstanceOf[httpx.AsyncClient] = Field(
@@ -137,10 +136,6 @@ class DucklingTemporalExtractorParams(BaseModel):
         ...,
         description="Duckling parse endpoint URL",
     )
-    locale: str = Field(
-        default="en_US",
-        description="Duckling locale",
-    )
 
 
 class DucklingTemporalExtractor(TemporalExtractor):
@@ -150,7 +145,6 @@ class DucklingTemporalExtractor(TemporalExtractor):
         """Initialize from parameters."""
         self._client = params.client
         self._url = params.url
-        self._locale = params.locale
 
     @override
     async def extract(
@@ -168,11 +162,13 @@ class DucklingTemporalExtractor(TemporalExtractor):
             getattr(ref_time.tzinfo, "key", None) or ref_time.tzname() or "UTC"
         )
         reftime_ms = int(ref_time.astimezone(UTC).timestamp() * 1000)
+        # Duckling and babel both render locales as ``lang_REGION`` (``en_US``).
+        duckling_locale = str(get_request_locale())
         try:
             response = await self._client.post(
                 self._url,
                 data={
-                    "locale": self._locale,
+                    "locale": duckling_locale,
                     "tz": timezone_name,
                     "reftime": reftime_ms,
                     "dims": json.dumps(["time"]),

@@ -11,6 +11,12 @@ import pytest
 
 pytest.importorskip("dateparser")
 
+from babel import Locale
+
+from memmachine_server.common.request_context import (
+    reset_request_locale,
+    set_request_locale,
+)
 from memmachine_server.temporal.extractor.dateparser_temporal_extractor import (
     DateparserTemporalExtractor,
     _interval_for,
@@ -62,3 +68,21 @@ class TestDateparserExtractor:
             "no date here at all", ref_time=datetime(2024, 6, 15, tzinfo=UTC)
         )
         assert result == []
+
+    async def test_uses_request_locale_language(self, monkeypatch):
+        # dateparser is fed the language subtag of the request locale.
+        extractor = DateparserTemporalExtractor()
+        captured = {}
+
+        def fake_extract(text, ref_time, languages):
+            captured["languages"] = languages
+            return []
+
+        monkeypatch.setattr(extractor, "_extract_time_ranges", fake_extract)
+        token = set_request_locale(Locale("fr", "FR"))
+        try:
+            await extractor.extract("hier", ref_time=datetime(2024, 6, 15, tzinfo=UTC))
+        finally:
+            reset_request_locale(token)
+
+        assert captured["languages"] == ["fr"]
