@@ -7,13 +7,18 @@ import re
 from pydantic import InstanceOf
 
 from memmachine_server.common.configuration.episodic_config import (
+    DateparserTemporalExtractorConf,
     DeclarativeLongTermMemoryConf,
     DeriverConf,
+    DucklingTemporalExtractorConf,
     EventLongTermMemoryConf,
+    LanguageModelTemporalExtractorConf,
     LongTermMemoryConf,
     PassthroughSegmenterConf,
     SegmenterConf,
     SentenceTextDeriverConf,
+    TemporalExtractorConf,
+    TemporalSegmenterConf,
     TextSegmenterConf,
     WholeTextDeriverConf,
 )
@@ -36,8 +41,24 @@ from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
     PassthroughSegmenter,
 )
+from memmachine_server.episodic_memory.event_memory.segmenter.temporal_segmenter import (
+    TemporalSegmenter,
+    TemporalSegmenterParams,
+)
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
+)
+from memmachine_server.temporal.extractor import TemporalExtractor
+from memmachine_server.temporal.extractor.dateparser_temporal_extractor import (
+    DateparserTemporalExtractor,
+)
+from memmachine_server.temporal.extractor.duckling_temporal_extractor import (
+    DucklingTemporalExtractor,
+    DucklingTemporalExtractorParams,
+)
+from memmachine_server.temporal.extractor.language_model_temporal_extractor import (
+    LanguageModelTemporalExtractor,
+    LanguageModelTemporalExtractorParams,
 )
 
 from .long_term_memory import (
@@ -142,7 +163,7 @@ async def _event_params(
         SegmentStorePartitionConfig(),
     )
 
-    segmenter = _build_segmenter(config.segmenter)
+    segmenter = await _build_segmenter(config.segmenter, resource_manager)
     deriver = _build_deriver(config.deriver)
 
     return EventBackendParams(
@@ -210,15 +231,57 @@ def _resolve_user_properties_schema(
     return resolved
 
 
-def _build_segmenter(conf: SegmenterConf) -> Segmenter:
+async def _build_segmenter(
+    conf: SegmenterConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> Segmenter:
     match conf:
         case PassthroughSegmenterConf():
             return PassthroughSegmenter()
         case TextSegmenterConf(max_chunk_length=max_chunk_length):
             return TextSegmenter(max_chunk_length=max_chunk_length)
+        case TemporalSegmenterConf(extractor=extractor_conf, base_segmenter=base_conf):
+            extractor = await _build_temporal_extractor(
+                extractor_conf, resource_manager
+            )
+            base_segmenter = await _build_segmenter(base_conf, resource_manager)
+            return TemporalSegmenter(
+                TemporalSegmenterParams(
+                    temporal_extractor=extractor,
+                    base_segmenter=base_segmenter,
+                )
+            )
         case _:
             raise NotImplementedError(
                 f"Unsupported segmenter config: {type(conf).__name__}"
+            )
+
+
+async def _build_temporal_extractor(
+    conf: TemporalExtractorConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> TemporalExtractor:
+    match conf:
+        case DateparserTemporalExtractorConf():
+            return DateparserTemporalExtractor()
+        case LanguageModelTemporalExtractorConf(language_model=language_model_id):
+            language_model = await resource_manager.get_language_model(
+                language_model_id, validate=True
+            )
+            return LanguageModelTemporalExtractor(
+                LanguageModelTemporalExtractorParams(language_model=language_model)
+            )
+        case DucklingTemporalExtractorConf(url=url):
+            # Borrow the resource manager's shared HTTP client (bounded to one
+            # per process and closed on shutdown) rather than opening a fresh
+            # unowned client per extractor.
+            client = await resource_manager.get_http_client()
+            return DucklingTemporalExtractor(
+                DucklingTemporalExtractorParams(client=client, url=url)
+            )
+        case _:
+            raise NotImplementedError(
+                f"Unsupported temporal extractor config: {type(conf).__name__}"
             )
 
 

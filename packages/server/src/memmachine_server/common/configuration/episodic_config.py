@@ -148,8 +148,63 @@ class TextSegmenterConf(BaseModel):
     )
 
 
-SegmenterConf = Annotated[
+# Non-temporal segmenters the temporal segmenter can wrap.
+BaseSegmenterConf = Annotated[
     PassthroughSegmenterConf | TextSegmenterConf,
+    Field(discriminator="type"),
+]
+
+
+class DateparserTemporalExtractorConf(BaseModel):
+    """Rule-based dateparser temporal extractor (no external dependencies)."""
+
+    type: Literal["dateparser"] = "dateparser"
+
+
+class LanguageModelTemporalExtractorConf(BaseModel):
+    """LLM-backed temporal extractor."""
+
+    type: Literal["language_model"] = "language_model"
+    language_model: str = Field(
+        ...,
+        description="ID of the LanguageModel instance for temporal extraction",
+    )
+
+
+class DucklingTemporalExtractorConf(BaseModel):
+    """HTTP-backed Duckling temporal extractor."""
+
+    type: Literal["duckling"] = "duckling"
+    url: str = Field(
+        "http://localhost:8000/parse",
+        description="Duckling parse endpoint URL",
+    )
+
+
+TemporalExtractorConf = Annotated[
+    DateparserTemporalExtractorConf
+    | LanguageModelTemporalExtractorConf
+    | DucklingTemporalExtractorConf,
+    Field(discriminator="type"),
+]
+
+
+class TemporalSegmenterConf(BaseModel):
+    """Augments a base segmenter with extracted ``TimeRange`` anchors."""
+
+    type: Literal["temporal"] = "temporal"
+    extractor: TemporalExtractorConf = Field(
+        ...,
+        description="Temporal extractor backend",
+    )
+    base_segmenter: BaseSegmenterConf = Field(
+        default_factory=TextSegmenterConf,
+        description="Base segmenter wrapped by the temporal segmenter (default: text)",
+    )
+
+
+SegmenterConf = Annotated[
+    PassthroughSegmenterConf | TextSegmenterConf | TemporalSegmenterConf,
     Field(discriminator="type"),
 ]
 

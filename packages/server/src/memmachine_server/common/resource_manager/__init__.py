@@ -2,6 +2,7 @@
 
 from typing import Protocol, runtime_checkable
 
+import httpx
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -76,4 +77,8 @@ class CommonResourceManager(Protocol):
 
     async def get_episode_storage(self) -> EpisodeStorage:
         """Return the episode storage instance."""
+        raise NotImplementedError
+
+    async def get_http_client(self) -> httpx.AsyncClient:
+        """Return a shared HTTP client owned (and closed) by the manager."""
         raise NotImplementedError

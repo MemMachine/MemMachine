@@ -4,6 +4,7 @@ import asyncio
 import logging
 from asyncio import Lock
 
+import httpx
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -83,12 +84,14 @@ class ResourceManagerImpl:
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
+        self._http_client: httpx.AsyncClient | None = None
 
         self._session_data_manager_lock = Lock()
         self._episodic_memory_manager_lock = Lock()
         self._episode_storage_lock = Lock()
         self._semantic_manager_lock = Lock()
         self._segment_store_lock = Lock()
+        self._http_client_lock = Lock()
 
     async def build(self) -> None:
         """Build all configured resources in parallel."""
@@ -112,6 +115,9 @@ class ResourceManagerImpl:
         tasks.extend(
             segment_store.shutdown() for segment_store in self._segment_stores.values()
         )
+
+        if self._http_client is not None:
+            tasks.append(self._http_client.aclose())
 
         tasks.append(self._database_manager.close())
 
@@ -149,6 +155,21 @@ class ResourceManagerImpl:
                     await store.startup()
                     self._segment_stores[name] = store
         return self._segment_stores[name]
+
+    async def get_http_client(self) -> httpx.AsyncClient:
+        """
+        Return a process-lifetime shared HTTP client, built on first use.
+
+        A single client is reused across every HTTP-backed resource (e.g. the
+        Duckling temporal extractor), so the number of open clients is bounded
+        to one regardless of how many sessions or extractors are constructed.
+        It is closed in ``close()``.
+        """
+        if self._http_client is None:
+            async with self._http_client_lock:
+                if self._http_client is None:
+                    self._http_client = httpx.AsyncClient()
+        return self._http_client
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""

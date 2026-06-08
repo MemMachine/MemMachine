@@ -179,3 +179,16 @@ def test_resource_manager_config_property(invalid_configure):
     """Test that config property returns the configuration."""
     resource_manager = ResourceManagerImpl(invalid_configure)
     assert resource_manager.config == invalid_configure
+
+
+@pytest.mark.asyncio
+async def test_get_http_client_is_shared_and_closed_on_shutdown(invalid_configure):
+    """The shared HTTP client is bounded to one instance and closed by close()."""
+    resource_manager = ResourceManagerImpl(invalid_configure)
+    client_a = await resource_manager.get_http_client()
+    client_b = await resource_manager.get_http_client()
+    # Bounded to a single shared client (no per-call leak).
+    assert client_a is client_b
+    assert not client_a.is_closed
+    await resource_manager.close()
+    assert client_a.is_closed
