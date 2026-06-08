@@ -2,12 +2,13 @@
 
 import math
 from datetime import UTC, datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from qdrant_client import AsyncQdrantClient
+from pydantic import ValidationError
+from qdrant_client import AsyncQdrantClient, models
 
 from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
@@ -1253,3 +1254,117 @@ class TestDistributedSharding:
         await store.delete_collection(namespace=ns, name=name)
         # Second delete should not raise.
         await store.delete_collection(namespace=ns, name=name)
+
+
+# ── Index / quantization configuration ──
+
+
+class TestIndexAndQuantizationParams:
+    """Native-collection HNSW, quantization, and optimizer configuration."""
+
+    def test_dict_configs_are_coerced_to_qdrant_models(self, in_memory_qdrant_client):
+        """Plain dicts (the YAML form) coerce into qdrant's own model types."""
+        # model_validate mirrors the YAML path (mappings parsed into the typed
+        # fields), which the constructor's typed signature would reject.
+        params = QdrantVectorStoreParams.model_validate(
+            {
+                "client": in_memory_qdrant_client,
+                "hnsw_config": {"ef_construct": 256, "payload_m": 32},
+                "optimizers_config": {"default_segment_number": 4},
+                "quantization_config": {"turbo": {"always_ram": True, "bits": "bits2"}},
+            }
+        )
+        assert isinstance(params.hnsw_config, models.HnswConfigDiff)
+        assert params.hnsw_config.ef_construct == 256
+        assert isinstance(params.optimizers_config, models.OptimizersConfigDiff)
+        assert params.optimizers_config.default_segment_number == 4
+        assert isinstance(params.quantization_config, models.TurboQuantization)
+        assert params.quantization_config.turbo.bits == models.TurboQuantBitSize.BITS2
+
+    @pytest.mark.parametrize("m", [None, 0])
+    def test_hnsw_config_zero_or_unset_m_accepted(self, in_memory_qdrant_client, m):
+        params = QdrantVectorStoreParams(
+            client=in_memory_qdrant_client,
+            hnsw_config=models.HnswConfigDiff(m=m, ef_construct=200),
+        )
+        assert isinstance(params.hnsw_config, models.HnswConfigDiff)
+        assert params.hnsw_config.m == m
+
+    def test_hnsw_config_nonzero_m_rejected(self, in_memory_qdrant_client):
+        """Native collections require m=0; a positive global m is rejected."""
+        with pytest.raises(ValidationError, match="payload_m"):
+            QdrantVectorStoreParams(
+                client=in_memory_qdrant_client,
+                hnsw_config=models.HnswConfigDiff(m=16),
+            )
+
+    def test_native_hnsw_config_defaults_to_tenant_indexing(
+        self, in_memory_qdrant_client
+    ):
+        """With no override, the native graph is disabled with a default payload_m."""
+        store = QdrantVectorStore(
+            QdrantVectorStoreParams(client=in_memory_qdrant_client)
+        )
+        cfg = store._native_hnsw_config()
+        assert cfg.m == 0
+        assert cfg.payload_m == QdrantVectorStore._DEFAULT_NATIVE_PAYLOAD_M
+
+    def test_native_hnsw_config_merges_overrides_but_pins_m(
+        self, in_memory_qdrant_client
+    ):
+        """Caller fields layer on top, but m stays pinned at 0 for tenant isolation."""
+        store = QdrantVectorStore(
+            QdrantVectorStoreParams(
+                client=in_memory_qdrant_client,
+                hnsw_config=models.HnswConfigDiff(ef_construct=222, payload_m=32),
+            )
+        )
+        cfg = store._native_hnsw_config()
+        assert cfg.m == 0
+        assert cfg.payload_m == 32
+        assert cfg.ef_construct == 222
+
+    @pytest.mark.asyncio
+    async def test_native_collection_creation_forwards_configs(
+        self, in_memory_qdrant_client
+    ):
+        """The native (not registry) create_collection call carries the configs."""
+        opt = models.OptimizersConfigDiff(default_segment_number=3)
+        quant = models.TurboQuantization(
+            turbo=models.TurboQuantQuantizationConfig(
+                always_ram=True, bits=models.TurboQuantBitSize.BITS2
+            )
+        )
+        params = QdrantVectorStoreParams(
+            client=in_memory_qdrant_client,
+            hnsw_config=models.HnswConfigDiff(ef_construct=222, payload_m=32),
+            optimizers_config=opt,
+            quantization_config=quant,
+        )
+        store = QdrantVectorStore(params)
+        await store.startup()
+
+        spy = AsyncMock(wraps=in_memory_qdrant_client.create_collection)
+        with patch.object(in_memory_qdrant_client, "create_collection", new=spy):
+            await store.create_collection(
+                namespace=NAMESPACE,
+                name="quant_test",
+                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+            )
+
+        # The registry collection is created without quantization; the native
+        # (data) collection is the one carrying the new settings.
+        native_calls = [
+            c
+            for c in spy.call_args_list
+            if c.kwargs.get("quantization_config") is not None
+        ]
+        assert len(native_calls) == 1
+        kwargs = native_calls[0].kwargs
+        assert kwargs["hnsw_config"].m == 0
+        assert kwargs["hnsw_config"].payload_m == 32
+        assert kwargs["hnsw_config"].ef_construct == 222
+        assert kwargs["optimizers_config"] == opt
+        assert kwargs["quantization_config"] == quant
+
+        await store.delete_collection(namespace=NAMESPACE, name="quant_test")

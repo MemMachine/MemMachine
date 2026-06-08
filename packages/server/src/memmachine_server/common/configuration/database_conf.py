@@ -264,6 +264,38 @@ class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
             "is set to match so all replicas confirm writes."
         ),
     )
+    # The following mirror qdrant_client.models config objects as plain mappings
+    # (their natural serialized form) so qdrant-client stays an optional
+    # dependency here. They are validated against the real qdrant models when
+    # passed to QdrantVectorStoreParams. All apply only to native (data)
+    # collections, never the internal registry collections.
+    hnsw_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "HNSW index tuning for native (data) collections, mirroring "
+            "qdrant_client.models.HnswConfigDiff (e.g. ef_construct, payload_m). "
+            "'m' must be 0 or omitted because native collections are "
+            "multi-tenant and rely on per-tenant payload indexing."
+        ),
+    )
+    optimizers_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optimizer tuning for native (data) collections, mirroring "
+            "qdrant_client.models.OptimizersConfigDiff "
+            "(e.g. indexing_threshold, default_segment_number)."
+        ),
+    )
+    quantization_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Quantization for native (data) collections, mirroring "
+            "qdrant_client.models.QuantizationConfig. Provide a single-key map "
+            "selecting the method, e.g. "
+            "{'turbo': {'always_ram': true, 'bits': 'bits2'}} for TurboQuant, "
+            "or a 'scalar' / 'product' / 'binary' map."
+        ),
+    )
 
 
 class SQLiteVectorStoreEngine(StrEnum):
