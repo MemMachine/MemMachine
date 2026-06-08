@@ -396,10 +396,58 @@ async def test_qdrant_creates_vector_store():
         client=mock_client,
         is_distributed=True,
         registry_replication_factor=3,
+        hnsw_config=None,
+        optimizers_config=None,
+        quantization_config=None,
     )
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
     assert "qdrant1" in builder.vector_stores
+
+
+@pytest.mark.asyncio
+async def test_qdrant_passes_index_and_quantization_config():
+    """QdrantConf's mapping settings are parsed into qdrant models for the params."""
+    from qdrant_client import models
+
+    conf = _qdrant_only_conf()
+    conf.qdrant_confs["qdrant1"] = QdrantConf(
+        hnsw_config={"ef_construct": 256, "payload_m": 32},
+        optimizers_config={"default_segment_number": 4},
+        quantization_config={"turbo": {"always_ram": True, "bits": "bits2"}},
+    )
+
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+        ) as mock_params_cls,
+        patch(
+            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+        ) as mock_store_cls,
+        patch(
+            "qdrant_client.AsyncQdrantClient",
+            return_value=mock_client,
+        ),
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_qdrant_client("qdrant1")
+
+    call_kwargs = mock_params_cls.call_args.kwargs
+    assert call_kwargs["hnsw_config"] == models.HnswConfigDiff(
+        ef_construct=256, payload_m=32
+    )
+    assert call_kwargs["optimizers_config"] == models.OptimizersConfigDiff(
+        default_segment_number=4
+    )
+    assert call_kwargs["quantization_config"] == models.TurboQuantization(
+        turbo=models.TurboQuantQuantizationConfig(
+            always_ram=True, bits=models.TurboQuantBitSize.BITS2
+        )
+    )
 
 
 @pytest.mark.asyncio

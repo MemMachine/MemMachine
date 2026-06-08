@@ -565,15 +565,47 @@ class DatabaseManager:
             if validate:
                 await self.validate_qdrant_client(name, client)
 
+            from pydantic import TypeAdapter
+            from qdrant_client import models as qdrant_models
+
             from memmachine_server.common.vector_store.qdrant_vector_store import (
                 QdrantVectorStore,
                 QdrantVectorStoreParams,
+            )
+
+            # QdrantConf carries the native index/quantization settings as plain
+            # mappings (so qdrant-client stays an optional dependency for config
+            # parsing). Parse them into qdrant's own models here, where the
+            # client is already available.
+            hnsw_config = (
+                TypeAdapter(qdrant_models.HnswConfigDiff).validate_python(
+                    conf.hnsw_config
+                )
+                if conf.hnsw_config is not None
+                else None
+            )
+            optimizers_config = (
+                TypeAdapter(qdrant_models.OptimizersConfigDiff).validate_python(
+                    conf.optimizers_config
+                )
+                if conf.optimizers_config is not None
+                else None
+            )
+            quantization_config = (
+                TypeAdapter(qdrant_models.QuantizationConfig).validate_python(
+                    conf.quantization_config
+                )
+                if conf.quantization_config is not None
+                else None
             )
 
             params = QdrantVectorStoreParams(
                 client=client,
                 is_distributed=conf.is_distributed,
                 registry_replication_factor=conf.registry_replication_factor,
+                hnsw_config=hnsw_config,
+                optimizers_config=optimizers_config,
+                quantization_config=quantization_config,
             )
             try:
                 store = QdrantVectorStore(params)

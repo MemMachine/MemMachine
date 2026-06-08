@@ -5,13 +5,13 @@ import hashlib
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, ClassVar, cast, override
+from typing import Any, ClassVar, Self, cast, override
 from uuid import UUID, uuid5
 from weakref import WeakKeyDictionary
 
 import grpc
 import grpc.aio
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, model_validator
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
@@ -507,11 +507,26 @@ class QdrantVectorStoreParams(BaseModel):
         registry_replication_factor (int):
             Replication factor for registry collections. Write consistency factor is
             set to match so all replicas confirm writes before returning, guaranteeing
-            read-your-writes from any available replica.
+            read-your-writes from any available replica
+            (default: 1).
+        hnsw_config (HnswConfigDiff | None):
+            Optional HNSW index tuning applied to native collections.
+            `m` must be 0 or unset: native collections are multi-tenant
+            and disable the global graph in favor of per-tenant payload indexing,
+            so tune `payload_m` rather than `m`.
+            Does not apply to registry collections
+            (default: None).
+        optimizers_config (OptimizersConfigDiff | None):
+            Optional optimizer tuning applied to native collections.
+            Does not apply to registry collections
+            (default: None).
+        quantization_config (QuantizationConfig | None):
+            Optional quantization applied to native collections.
+            Does not apply to registry collections
+            (default: None).
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
-
     """
 
     client: InstanceOf[AsyncQdrantClient] = Field(
@@ -536,10 +551,45 @@ class QdrantVectorStoreParams(BaseModel):
             "read-your-writes from any available replica"
         ),
     )
+    hnsw_config: models.HnswConfigDiff | None = Field(
+        None,
+        description=(
+            "Optional HNSW index tuning applied to native collections. "
+            "`m` must be 0 or unset: native collections are multi-tenant "
+            "and disable the global graph in favor of per-tenant payload indexing, "
+            "so tune `payload_m` rather than `m`. "
+            "Does not apply to registry collections"
+        ),
+    )
+    optimizers_config: models.OptimizersConfigDiff | None = Field(
+        None,
+        description=(
+            "Optional optimizer tuning applied to native collections. "
+            "Does not apply to registry collections"
+        ),
+    )
+    quantization_config: models.QuantizationConfig | None = Field(
+        None,
+        description=(
+            "Optional quantization applied to native collections. "
+            "Does not apply to registry collections"
+        ),
+    )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
     )
+
+    @model_validator(mode="after")
+    def _validate_hnsw_config(self) -> Self:
+        """Reject HNSW settings that conflict with per-tenant native indexing."""
+        if self.hnsw_config is not None and self.hnsw_config.m not in (None, 0):
+            raise ValueError(
+                "hnsw_config.m must be 0 or unset: native collections are "
+                "multi-tenant and disable the global HNSW graph in favor of "
+                "per-tenant payload indexing. Tune 'payload_m' instead of 'm'."
+            )
+        return self
 
 
 class QdrantVectorStore(VectorStore):
@@ -563,6 +613,8 @@ class QdrantVectorStore(VectorStore):
         str: models.PayloadSchemaType.KEYWORD,
         datetime: models.PayloadSchemaType.DATETIME,
     }
+
+    _DEFAULT_NATIVE_PAYLOAD_M: ClassVar[int] = 16
 
     # Registry collection keys (stored on registry points, one per logical collection)
     _REGISTRY_SUFFIX: ClassVar[str] = "__registry"
@@ -632,7 +684,9 @@ class QdrantVectorStore(VectorStore):
 
         self._registry_replication_factor = params.registry_replication_factor
 
-        self._hnsw_m = 16
+        self._hnsw_config = params.hnsw_config
+        self._optimizers_config = params.optimizers_config
+        self._quantization_config = params.quantization_config
 
         self._tracker = OperationTracker(
             params.metrics_factory,
@@ -732,6 +786,26 @@ class QdrantVectorStore(VectorStore):
             shard_key=name if self._is_distributed else None,
         )
 
+    def _native_hnsw_config(self) -> models.HnswConfigDiff:
+        """
+        Build the HNSW config for a native (data) collection.
+
+        Native collections are multi-tenant: the global graph is disabled
+        (``m=0``) and a per-tenant subgraph is built over the partition key
+        (``payload_m``). Any caller-supplied ``hnsw_config`` layers on top,
+        except ``m`` which is pinned to 0 to preserve tenant isolation
+        (validated in QdrantVectorStoreParams).
+        """
+        hnsw_config = (
+            self._hnsw_config.model_copy(deep=True)
+            if self._hnsw_config is not None
+            else models.HnswConfigDiff()
+        )
+        hnsw_config.m = 0
+        if hnsw_config.payload_m is None:
+            hnsw_config.payload_m = QdrantVectorStore._DEFAULT_NATIVE_PAYLOAD_M
+        return hnsw_config
+
     async def _create_native_collection(
         self, namespace: str, config: VectorStoreCollectionConfig
     ) -> None:
@@ -748,10 +822,9 @@ class QdrantVectorStore(VectorStore):
                 vectors_config=models.VectorParams(
                     size=config.vector_dimensions, distance=distance
                 ),
-                hnsw_config=models.HnswConfigDiff(
-                    m=0,
-                    payload_m=self._hnsw_m,
-                ),
+                hnsw_config=self._native_hnsw_config(),
+                optimizers_config=self._optimizers_config,
+                quantization_config=self._quantization_config,
                 sharding_method=(
                     models.ShardingMethod.CUSTOM if self._is_distributed else None
                 ),
