@@ -9,7 +9,9 @@ import pytest
 from memmachine_server.common.configuration.episodic_config import (
     DateparserTemporalExtractorConf,
     DucklingTemporalExtractorConf,
+    ExtractorTemporalQueryPlannerConf,
     LanguageModelTemporalExtractorConf,
+    LanguageModelTemporalQueryPlannerConf,
     PassthroughSegmenterConf,
     TemporalSegmenterConf,
 )
@@ -21,6 +23,7 @@ from memmachine_server.episodic_memory.event_memory.segmenter.temporal_segmenter
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     _build_segmenter,
     _build_temporal_extractor,
+    _build_temporal_query_planner,
     _resolve_user_properties_schema,
     partition_key_for_session,
 )
@@ -30,8 +33,14 @@ from memmachine_server.temporal.extractor.dateparser_temporal_extractor import (
 from memmachine_server.temporal.extractor.duckling_temporal_extractor import (
     DucklingTemporalExtractor,
 )
+from memmachine_server.temporal.extractor.extractor_temporal_query_planner import (
+    ExtractorTemporalQueryPlanner,
+)
 from memmachine_server.temporal.extractor.language_model_temporal_extractor import (
     LanguageModelTemporalExtractor,
+)
+from memmachine_server.temporal.query_planner.language_model_temporal_query_planner import (
+    LanguageModelTemporalQueryPlanner,
 )
 
 _PARTITION_KEY_RE = re.compile(r"^[a-z0-9_]+$")
@@ -207,3 +216,26 @@ async def test_build_segmenter_temporal_wraps_base():
         _resource_manager(),
     )
     assert isinstance(segmenter, TemporalSegmenter)
+
+
+# --- temporal query planner construction -----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_temporal_query_planner_language_model():
+    manager = _StubResourceManager(_StubLanguageModel())
+    planner = await _build_temporal_query_planner(
+        LanguageModelTemporalQueryPlannerConf(language_model="planner-lm"),
+        cast(CommonResourceManager, manager),
+    )
+    assert isinstance(planner, LanguageModelTemporalQueryPlanner)
+    assert manager.requested == ["planner-lm"]
+
+
+@pytest.mark.asyncio
+async def test_build_temporal_query_planner_extractor_reuses_extractor_builder():
+    planner = await _build_temporal_query_planner(
+        ExtractorTemporalQueryPlannerConf(extractor=DateparserTemporalExtractorConf()),
+        _resource_manager(),
+    )
+    assert isinstance(planner, ExtractorTemporalQueryPlanner)

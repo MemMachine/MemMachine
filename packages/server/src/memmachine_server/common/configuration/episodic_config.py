@@ -227,6 +227,77 @@ DeriverConf = Annotated[
 ]
 
 
+# Query-side temporal retrieval: planner backends + overfetch selection.
+
+
+class LanguageModelTemporalQueryPlannerConf(BaseModel):
+    """LLM-backed temporal query planner."""
+
+    type: Literal["language_model"] = "language_model"
+    language_model: str = Field(
+        ...,
+        description="ID of the LanguageModel instance for temporal query planning",
+    )
+
+
+class ExtractorTemporalQueryPlannerConf(BaseModel):
+    """Temporal query planner backed by a temporal extractor."""
+
+    type: Literal["extractor"] = "extractor"
+    extractor: TemporalExtractorConf = Field(
+        ...,
+        description="Temporal extractor backend used to resolve the query's dates",
+    )
+
+
+TemporalQueryPlannerConf = Annotated[
+    LanguageModelTemporalQueryPlannerConf | ExtractorTemporalQueryPlannerConf,
+    Field(discriminator="type"),
+]
+
+
+class TemporalRetrievalConf(BaseModel):
+    """Query-side temporal-aware overfetch selection.
+
+    Over-fetches the vector pool, plans the query's target time ranges, then
+    fills the final top-k from k1 cosine-only results plus k2 results that ALSO
+    have a temporal match (k1 + k2 = k), backfilling with cosine when fewer than
+    k2 candidates clear the match threshold.
+    """
+
+    planner: TemporalQueryPlannerConf = Field(
+        ...,
+        description="Temporal query planner backend",
+    )
+    overfetch_multiplier: int = Field(
+        8,
+        ge=1,
+        description=(
+            "Vector-search pool size as a multiple of the requested result "
+            "count, so temporally-relevant candidates below the top cosine band "
+            "are available to promote into the result set."
+        ),
+    )
+    temporal_fraction: float = Field(
+        1.0 / 3.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Fraction of the final top-k reserved for temporally-matching "
+            "results (k2 = round(k * temporal_fraction)); the remainder (k1) is "
+            "filled by cosine alone."
+        ),
+    )
+    match_threshold: float = Field(
+        0.0,
+        ge=0.0,
+        description=(
+            "A candidate counts as temporally matching when its document "
+            "temporal match score is strictly greater than this threshold."
+        ),
+    )
+
+
 class DeclarativeLongTermMemoryConf(BaseModel):
     """Declarative-backend long-term memory (VectorGraphStore)."""
 
@@ -298,6 +369,13 @@ class EventLongTermMemoryConf(BaseModel):
         default_factory=WholeTextDeriverConf,
         description="Deriver sub-configuration (default: whole_text)",
     )
+    temporal_retrieval: TemporalRetrievalConf | None = Field(
+        default=None,
+        description=(
+            "Query-side temporal overfetch selection (event backend only). "
+            "None disables it (default)."
+        ),
+    )
 
 
 LongTermMemoryConf = Annotated[
@@ -359,6 +437,10 @@ class LongTermMemoryConfPartial(BaseModel):
     deriver: DeriverConf | None = Field(
         default=None,
         description="Deriver sub-configuration (event backend only)",
+    )
+    temporal_retrieval: TemporalRetrievalConf | None = Field(
+        default=None,
+        description="Query-side temporal overfetch selection (event backend only)",
     )
 
     # Shared fields.

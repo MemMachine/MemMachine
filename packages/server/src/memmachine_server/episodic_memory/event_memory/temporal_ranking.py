@@ -28,7 +28,7 @@ def _temporal_anchors_from_context(context: Context | None) -> list[TimeRange]:
     ]
 
 
-def _temporal_anchors_from_segments(segments: Iterable[Segment]) -> list[TimeRange]:
+def temporal_anchors_from_segments(segments: Iterable[Segment]) -> list[TimeRange]:
     """Merge the time ranges of the segments."""
     return [
         anchor
@@ -60,7 +60,7 @@ def _temporal_scoring_candidates_from_query_result(
     return [
         TemporalScoringCandidate(
             base_score=scored.score,
-            anchors=_temporal_anchors_from_segments(scored.segments),
+            anchors=temporal_anchors_from_segments(scored.segments),
         )
         for scored in query_result.scored_segment_contexts
     ]

@@ -8,13 +8,18 @@ from memmachine_server.common.configuration.episodic_config import (
     DateparserTemporalExtractorConf,
     DucklingTemporalExtractorConf,
     EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
+    ExtractorTemporalQueryPlannerConf,
     LanguageModelTemporalExtractorConf,
+    LanguageModelTemporalQueryPlannerConf,
     SegmenterConf,
+    TemporalRetrievalConf,
     TemporalSegmenterConf,
     TextSegmenterConf,
 )
 
 _SEGMENTER_ADAPTER = TypeAdapter(SegmenterConf)
+_TEMPORAL_RETRIEVAL_ADAPTER = TypeAdapter(TemporalRetrievalConf)
 
 
 @pytest.fixture
@@ -80,3 +85,55 @@ def test_temporal_segmenter_config_round_trips():
         }
     )
     assert _SEGMENTER_ADAPTER.validate_python(conf.model_dump()) == conf
+
+
+def test_temporal_retrieval_defaults_off_on_event_backend():
+    conf = EventLongTermMemoryConf(
+        session_id="s", vector_store="v", segment_store="db", embedder="e"
+    )
+    assert conf.temporal_retrieval is None
+
+
+def test_temporal_retrieval_planner_discriminates_and_defaults():
+    conf = _TEMPORAL_RETRIEVAL_ADAPTER.validate_python(
+        {"planner": {"type": "language_model", "language_model": "gpt"}}
+    )
+    assert isinstance(conf.planner, LanguageModelTemporalQueryPlannerConf)
+    assert conf.planner.language_model == "gpt"
+    # k2 = one-third of k; wide overfetch; gate at >0.
+    assert conf.overfetch_multiplier == 8
+    assert conf.temporal_fraction == pytest.approx(1.0 / 3.0)
+    assert conf.match_threshold == 0.0
+
+
+def test_temporal_retrieval_extractor_planner_nests_extractor_union():
+    conf = _TEMPORAL_RETRIEVAL_ADAPTER.validate_python(
+        {
+            "planner": {"type": "extractor", "extractor": {"type": "dateparser"}},
+            "overfetch_multiplier": 12,
+            "temporal_fraction": 0.5,
+            "match_threshold": 0.1,
+        }
+    )
+    assert isinstance(conf.planner, ExtractorTemporalQueryPlannerConf)
+    assert isinstance(conf.planner.extractor, DateparserTemporalExtractorConf)
+    assert conf.overfetch_multiplier == 12
+    assert conf.temporal_fraction == 0.5
+    assert conf.match_threshold == 0.1
+
+
+def test_temporal_retrieval_rejects_out_of_range_fraction():
+    with pytest.raises(ValueError, match="temporal_fraction"):
+        _TEMPORAL_RETRIEVAL_ADAPTER.validate_python(
+            {
+                "planner": {"type": "language_model", "language_model": "gpt"},
+                "temporal_fraction": 1.5,
+            }
+        )
+
+
+def test_temporal_retrieval_round_trips():
+    conf = _TEMPORAL_RETRIEVAL_ADAPTER.validate_python(
+        {"planner": {"type": "extractor", "extractor": {"type": "duckling"}}}
+    )
+    assert _TEMPORAL_RETRIEVAL_ADAPTER.validate_python(conf.model_dump()) == conf

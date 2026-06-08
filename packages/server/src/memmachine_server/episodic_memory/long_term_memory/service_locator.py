@@ -12,12 +12,15 @@ from memmachine_server.common.configuration.episodic_config import (
     DeriverConf,
     DucklingTemporalExtractorConf,
     EventLongTermMemoryConf,
+    ExtractorTemporalQueryPlannerConf,
     LanguageModelTemporalExtractorConf,
+    LanguageModelTemporalQueryPlannerConf,
     LongTermMemoryConf,
     PassthroughSegmenterConf,
     SegmenterConf,
     SentenceTextDeriverConf,
     TemporalExtractorConf,
+    TemporalQueryPlannerConf,
     TemporalSegmenterConf,
     TextSegmenterConf,
     WholeTextDeriverConf,
@@ -56,9 +59,18 @@ from memmachine_server.temporal.extractor.duckling_temporal_extractor import (
     DucklingTemporalExtractor,
     DucklingTemporalExtractorParams,
 )
+from memmachine_server.temporal.extractor.extractor_temporal_query_planner import (
+    ExtractorTemporalQueryPlanner,
+    ExtractorTemporalQueryPlannerParams,
+)
 from memmachine_server.temporal.extractor.language_model_temporal_extractor import (
     LanguageModelTemporalExtractor,
     LanguageModelTemporalExtractorParams,
+)
+from memmachine_server.temporal.query_planner import TemporalQueryPlanner
+from memmachine_server.temporal.query_planner.language_model_temporal_query_planner import (
+    LanguageModelTemporalQueryPlanner,
+    LanguageModelTemporalQueryPlannerParams,
 )
 
 from .long_term_memory import (
@@ -166,7 +178,7 @@ async def _event_params(
     segmenter = await _build_segmenter(config.segmenter, resource_manager)
     deriver = _build_deriver(config.deriver)
 
-    return EventBackendParams(
+    event_params = EventBackendParams(
         session_id=config.session_id,
         vector_store=vector_store,
         vector_store_collection=collection,
@@ -181,6 +193,24 @@ async def _event_params(
         deriver=deriver,
         user_property_keys=frozenset(config.properties_schema),
     )
+
+    # Temporal retrieval is off unless configured; when configured, overlay the
+    # planner and its overfetch knobs (already validated by TemporalRetrievalConf).
+    temporal_retrieval = config.temporal_retrieval
+    if temporal_retrieval is not None:
+        event_params = event_params.model_copy(
+            update={
+                "temporal_query_planner": await _build_temporal_query_planner(
+                    temporal_retrieval.planner, resource_manager
+                ),
+                "temporal_overfetch_multiplier": (
+                    temporal_retrieval.overfetch_multiplier
+                ),
+                "temporal_fraction": temporal_retrieval.temporal_fraction,
+                "temporal_match_threshold": temporal_retrieval.match_threshold,
+            }
+        )
+    return event_params
 
 
 def partition_key_for_session(session_id: str) -> str:
@@ -282,6 +312,31 @@ async def _build_temporal_extractor(
         case _:
             raise NotImplementedError(
                 f"Unsupported temporal extractor config: {type(conf).__name__}"
+            )
+
+
+async def _build_temporal_query_planner(
+    conf: TemporalQueryPlannerConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> TemporalQueryPlanner:
+    match conf:
+        case LanguageModelTemporalQueryPlannerConf(language_model=language_model_id):
+            language_model = await resource_manager.get_language_model(
+                language_model_id, validate=True
+            )
+            return LanguageModelTemporalQueryPlanner(
+                LanguageModelTemporalQueryPlannerParams(language_model=language_model)
+            )
+        case ExtractorTemporalQueryPlannerConf(extractor=extractor_conf):
+            extractor = await _build_temporal_extractor(
+                extractor_conf, resource_manager
+            )
+            return ExtractorTemporalQueryPlanner(
+                ExtractorTemporalQueryPlannerParams(extractor=extractor)
+            )
+        case _:
+            raise NotImplementedError(
+                f"Unsupported temporal query planner config: {type(conf).__name__}"
             )
 
 
