@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, InstanceOf
 from memmachine_server.episodic_memory.event_memory.data_types import (
     CompositeContext,
     Event,
+    FormatOptions,
     Segment,
     TextBlock,
     TimeRangesContext,
@@ -50,8 +51,15 @@ class TemporalSegmenter(Segmenter):
         self._base_segmenter = params.base_segmenter
 
     @override
-    async def segment(self, event: Event) -> list[Segment]:
-        base_segments = await self._base_segmenter.segment(event)
+    async def segment(
+        self,
+        event: Event,
+        *,
+        format_options: FormatOptions | None = None,
+    ) -> list[Segment]:
+        base_segments = await self._base_segmenter.segment(
+            event, format_options=format_options
+        )
         if not base_segments:
             return []
 

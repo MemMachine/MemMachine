@@ -33,7 +33,6 @@ from .data_types import (
     Block,
     CompositeContext,
     Context,
-    DateTimeStyle,
     Derivative,
     Event,
     FormatOptions,
