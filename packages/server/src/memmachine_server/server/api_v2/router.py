@@ -88,6 +88,7 @@ from memmachine_server.server.api_v2.service import (
     _search_target_memories,
     _SessionData,
     get_memmachine,
+    provide_request_locale,
 )
 
 logger = logging.getLogger(__name__)
@@ -282,7 +283,12 @@ async def delete_project(
         raise RestError(code=500, message="Unable to delete project", ex=e) from e
 
 
-@router.post("/memories", description=RouterDoc.ADD_MEMORIES, tags=["Memories"])
+@router.post(
+    "/memories",
+    description=RouterDoc.ADD_MEMORIES,
+    tags=["Memories"],
+    dependencies=[Depends(provide_request_locale)],
+)
 async def add_memories(
     spec: AddMemoriesSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
@@ -301,6 +307,7 @@ async def add_memories(
     description=RouterDoc.SEARCH_MEMORIES,
     response_model_exclude_none=True,
     tags=["Memories"],
+    dependencies=[Depends(provide_request_locale)],
 )
 async def search_memories(
     spec: SearchMemoriesSpec,

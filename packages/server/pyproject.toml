@@ -70,6 +70,12 @@ qdrant = [
 litellm = [
     "litellm>=1.63.0,<1.86",
 ]
+dateparser = [
+    "dateparser>=1.4.0",
+]
+duckling = [
+    "httpx>=0.27.0",
+]
 
 [project.scripts]
 memmachine-server = "memmachine_server.server.app:main"

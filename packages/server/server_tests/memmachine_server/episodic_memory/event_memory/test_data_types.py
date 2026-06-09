@@ -7,16 +7,21 @@ import pytest
 from pydantic import ValidationError
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    CompositeContext,
     Derivative,
     Event,
+    NullContext,
     ProducerContext,
     Segment,
     TextBlock,
+    TimeRangesContext,
     decode_block,
     decode_context,
     encode_block,
     encode_context,
+    find_contexts,
 )
+from memmachine_server.temporal.time_range import TimeInterval, TimeRange
 
 SAMPLE_PROPERTIES = {
     "dt": datetime(2026, 1, 15, tzinfo=UTC),
@@ -25,6 +30,16 @@ SAMPLE_PROPERTIES = {
     "f": True,
     "s": "hello",
 }
+
+
+def dt(day: int) -> datetime:
+    """A distinct UTC datetime for time-range round-trip fixtures."""
+    return datetime(2024, 1, day, tzinfo=UTC)
+
+
+def tr(start: datetime | None, end: datetime | None) -> TimeRange:
+    """A single-interval ``TimeRange`` for round-trip fixtures."""
+    return TimeRange(intervals=[TimeInterval(start=start, end=end)])
 
 
 class TestSegmentRoundTrip:
@@ -171,6 +186,117 @@ class TestContextAndBlockSerialization:
 
     def test_context_none_round_trip(self):
         assert decode_context(encode_context(None)) is None
+
+    def test_time_range_context_round_trip(self):
+        context = TimeRangesContext(
+            time_ranges=[
+                tr(dt(1), dt(2)),
+                tr(None, dt(3)),
+                tr(dt(4), None),
+            ]
+        )
+
+        deserialized = decode_context(encode_context(context))
+
+        assert isinstance(deserialized, TimeRangesContext)
+        assert deserialized == context
+
+    def test_multi_interval_time_range_context_round_trip(self):
+        # A doc anchor that is one reference with an internal gap survives
+        # the encode/decode round-trip as a single multi-interval TimeRange.
+        context = TimeRangesContext(
+            time_ranges=[
+                TimeRange(
+                    intervals=[
+                        TimeInterval(start=dt(1), end=dt(2)),
+                        TimeInterval(start=dt(4), end=dt(5)),
+                    ]
+                )
+            ]
+        )
+
+        deserialized = decode_context(encode_context(context))
+
+        assert isinstance(deserialized, TimeRangesContext)
+        assert deserialized == context
+        assert len(deserialized.time_ranges[0].intervals) == 2
+
+    def test_empty_time_range_context_round_trip(self):
+        context = TimeRangesContext()
+
+        deserialized = decode_context(encode_context(context))
+
+        assert isinstance(deserialized, TimeRangesContext)
+        assert deserialized == context
+        assert deserialized.time_ranges == []
+
+    def test_composed_context_round_trip(self):
+        context = CompositeContext(
+            contexts=[
+                ProducerContext(producer="Alice"),
+                TimeRangesContext(time_ranges=[tr(dt(1), dt(2))]),
+            ]
+        )
+
+        deserialized = decode_context(encode_context(context))
+
+        assert isinstance(deserialized, CompositeContext)
+        assert deserialized == context
+
+    def test_atomic_context_still_decodes_unchanged(self):
+        # Backward compatibility: data written before CompositeContext
+        # existed still round-trips to its atomic type.
+        for context in (
+            ProducerContext(producer="Bob"),
+            NullContext(),
+            TimeRangesContext(time_ranges=[tr(dt(5), dt(9))]),
+        ):
+            assert decode_context(encode_context(context)) == context
+
+
+class TestContextComposition:
+    def test_find_contexts_resolves_atomic_and_composed(self):
+        producer = ProducerContext(producer="Alice")
+        temporal = TimeRangesContext(time_ranges=[tr(dt(1), dt(2))])
+        composed = CompositeContext(contexts=[producer, temporal])
+
+        # Same access whether the aspect is bare or composed.
+        assert find_contexts(producer, ProducerContext) == [producer]
+        assert find_contexts(composed, ProducerContext) == [producer]
+        assert find_contexts(composed, TimeRangesContext) == [temporal]
+        # Absent aspect → empty.
+        assert find_contexts(producer, TimeRangesContext) == []
+        assert find_contexts(None, ProducerContext) == []
+
+        # Nested composition is searched depth-first.
+        nested = CompositeContext(
+            contexts=[CompositeContext(contexts=[producer]), temporal]
+        )
+        assert find_contexts(nested, ProducerContext) == [producer]
+        assert find_contexts(nested, TimeRangesContext) == [temporal]
+
+    def test_find_contexts_collects_every_match_in_order(self):
+        # Composition imposes no at-most-one limit; all matches are
+        # returned in depth-first, left-to-right order so callers can
+        # aggregate rather than arbitrarily pick one.
+        first = TimeRangesContext(time_ranges=[tr(dt(1), dt(2))])
+        second = TimeRangesContext(time_ranges=[tr(dt(3), dt(4))])
+        nested = CompositeContext(contexts=[CompositeContext(contexts=[first]), second])
+
+        assert find_contexts(nested, TimeRangesContext) == [first, second]
+
+    def test_empty_or_null_only_composition_is_inert(self):
+        # A CompositeContext with no members, or only NullContext members,
+        # carries no aspect — it behaves like NullContext for lookups.
+        for context in (
+            CompositeContext(contexts=[]),
+            CompositeContext(contexts=[NullContext()]),
+            CompositeContext(contexts=[NullContext(), NullContext()]),
+        ):
+            assert find_contexts(context, ProducerContext) == []
+            assert find_contexts(context, TimeRangesContext) == []
+            # Round-trips unchanged.
+            assert decode_context(encode_context(context)) == context
 
     def test_block_round_trip(self):
         block = TextBlock(text="hello")
