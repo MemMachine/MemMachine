@@ -27,9 +27,6 @@ from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     _resolve_user_properties_schema,
     partition_key_for_session,
 )
-from memmachine_server.temporal.extractor.dateparser_temporal_extractor import (
-    DateparserTemporalExtractor,
-)
 from memmachine_server.temporal.extractor.duckling_temporal_extractor import (
     DucklingTemporalExtractor,
 )
@@ -174,6 +171,11 @@ def _resource_manager(
 
 @pytest.mark.asyncio
 async def test_build_temporal_extractor_dateparser():
+    pytest.importorskip("dateparser")
+    from memmachine_server.temporal.extractor.dateparser_temporal_extractor import (
+        DateparserTemporalExtractor,
+    )
+
     extractor = await _build_temporal_extractor(
         DateparserTemporalExtractorConf(), _resource_manager()
     )
@@ -208,6 +210,7 @@ async def test_build_temporal_extractor_duckling():
 
 @pytest.mark.asyncio
 async def test_build_segmenter_temporal_wraps_base():
+    pytest.importorskip("dateparser")
     segmenter = await _build_segmenter(
         TemporalSegmenterConf(
             extractor=DateparserTemporalExtractorConf(),
@@ -234,6 +237,7 @@ async def test_build_temporal_query_planner_language_model():
 
 @pytest.mark.asyncio
 async def test_build_temporal_query_planner_extractor_reuses_extractor_builder():
+    pytest.importorskip("dateparser")
     planner = await _build_temporal_query_planner(
         ExtractorTemporalQueryPlannerConf(extractor=DateparserTemporalExtractorConf()),
         _resource_manager(),

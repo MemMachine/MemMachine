@@ -52,26 +52,7 @@ from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter imp
     TextSegmenter,
 )
 from memmachine_server.temporal.extractor import TemporalExtractor
-from memmachine_server.temporal.extractor.dateparser_temporal_extractor import (
-    DateparserTemporalExtractor,
-)
-from memmachine_server.temporal.extractor.duckling_temporal_extractor import (
-    DucklingTemporalExtractor,
-    DucklingTemporalExtractorParams,
-)
-from memmachine_server.temporal.extractor.extractor_temporal_query_planner import (
-    ExtractorTemporalQueryPlanner,
-    ExtractorTemporalQueryPlannerParams,
-)
-from memmachine_server.temporal.extractor.language_model_temporal_extractor import (
-    LanguageModelTemporalExtractor,
-    LanguageModelTemporalExtractorParams,
-)
 from memmachine_server.temporal.query_planner import TemporalQueryPlanner
-from memmachine_server.temporal.query_planner.language_model_temporal_query_planner import (
-    LanguageModelTemporalQueryPlanner,
-    LanguageModelTemporalQueryPlannerParams,
-)
 
 from .long_term_memory import (
     EVENT_BACKEND_SYSTEM_FIELDS,
@@ -293,8 +274,19 @@ async def _build_temporal_extractor(
 ) -> TemporalExtractor:
     match conf:
         case DateparserTemporalExtractorConf():
+            # Imported lazily: `dateparser` is an optional dependency, so the
+            # server must import without it unless this backend is configured.
+            from memmachine_server.temporal.extractor.dateparser_temporal_extractor import (
+                DateparserTemporalExtractor,
+            )
+
             return DateparserTemporalExtractor()
         case LanguageModelTemporalExtractorConf(language_model=language_model_id):
+            from memmachine_server.temporal.extractor.language_model_temporal_extractor import (
+                LanguageModelTemporalExtractor,
+                LanguageModelTemporalExtractorParams,
+            )
+
             language_model = await resource_manager.get_language_model(
                 language_model_id, validate=True
             )
@@ -302,6 +294,13 @@ async def _build_temporal_extractor(
                 LanguageModelTemporalExtractorParams(language_model=language_model)
             )
         case DucklingTemporalExtractorConf(url=url):
+            # Imported lazily: the Duckling backend's `httpx` is an optional
+            # dependency (the `duckling` extra).
+            from memmachine_server.temporal.extractor.duckling_temporal_extractor import (
+                DucklingTemporalExtractor,
+                DucklingTemporalExtractorParams,
+            )
+
             # Borrow the resource manager's shared HTTP client (bounded to one
             # per process and closed on shutdown) rather than opening a fresh
             # unowned client per extractor.
@@ -321,6 +320,11 @@ async def _build_temporal_query_planner(
 ) -> TemporalQueryPlanner:
     match conf:
         case LanguageModelTemporalQueryPlannerConf(language_model=language_model_id):
+            from memmachine_server.temporal.query_planner.language_model_temporal_query_planner import (
+                LanguageModelTemporalQueryPlanner,
+                LanguageModelTemporalQueryPlannerParams,
+            )
+
             language_model = await resource_manager.get_language_model(
                 language_model_id, validate=True
             )
@@ -328,6 +332,11 @@ async def _build_temporal_query_planner(
                 LanguageModelTemporalQueryPlannerParams(language_model=language_model)
             )
         case ExtractorTemporalQueryPlannerConf(extractor=extractor_conf):
+            from memmachine_server.temporal.extractor.extractor_temporal_query_planner import (
+                ExtractorTemporalQueryPlanner,
+                ExtractorTemporalQueryPlannerParams,
+            )
+
             extractor = await _build_temporal_extractor(
                 extractor_conf, resource_manager
             )
