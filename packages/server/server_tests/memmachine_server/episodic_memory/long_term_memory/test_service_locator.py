@@ -1,10 +1,15 @@
 """Unit tests for service_locator helpers."""
 
-import re
-from typing import cast, override
+from __future__ import annotations
 
-import httpx
+import re
+from typing import TYPE_CHECKING, cast, override
+
 import pytest
+
+if TYPE_CHECKING:
+    # `httpx` is the optional `duckling` extra; only the duckling test needs it.
+    import httpx
 
 from memmachine_server.common.configuration.episodic_config import (
     DateparserTemporalExtractorConf,
@@ -154,6 +159,8 @@ class _StubResourceManager:
         return self._language_model
 
     async def get_http_client(self) -> httpx.AsyncClient:
+        import httpx
+
         if self._http_client is None:
             self._http_client = httpx.AsyncClient()
         return self._http_client
@@ -195,6 +202,7 @@ async def test_build_temporal_extractor_language_model():
 
 @pytest.mark.asyncio
 async def test_build_temporal_extractor_duckling():
+    pytest.importorskip("httpx")
     manager = _StubResourceManager(None)
     extractor = await _build_temporal_extractor(
         DucklingTemporalExtractorConf(url="http://duck.test/parse"),

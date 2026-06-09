@@ -1,12 +1,19 @@
 """Resource manager wiring together storage, embedders, and models."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from asyncio import Lock
+from typing import TYPE_CHECKING
 
-import httpx
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+if TYPE_CHECKING:
+    # `httpx` is an optional dependency (the `duckling` extra); imported lazily
+    # inside `get_http_client` so the resource manager imports without it.
+    import httpx
 
 from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.mixin_confs import MetricsFactoryIdMixin
@@ -164,7 +171,12 @@ class ResourceManagerImpl:
         Duckling temporal extractor), so the number of open clients is bounded
         to one regardless of how many sessions or extractors are constructed.
         It is closed in ``close()``.
+
+        `httpx` is imported lazily here (it is the optional `duckling` extra), so
+        callers that never use an HTTP-backed resource need not install it.
         """
+        import httpx
+
         if self._http_client is None:
             async with self._http_client_lock:
                 if self._http_client is None:

@@ -1,10 +1,17 @@
 """Protocols for accessing shared MemMachine resources."""
 
-from typing import Protocol, runtime_checkable
+from __future__ import annotations
 
-import httpx
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+if TYPE_CHECKING:
+    # `httpx` is an optional dependency (the `duckling` extra); only the
+    # `get_http_client` return annotation references it, so it stays import-time
+    # optional for everyone who merely imports the resource-manager protocol.
+    import httpx
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage

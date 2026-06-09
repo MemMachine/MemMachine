@@ -184,6 +184,7 @@ def test_resource_manager_config_property(invalid_configure):
 @pytest.mark.asyncio
 async def test_get_http_client_is_shared_and_closed_on_shutdown(invalid_configure):
     """The shared HTTP client is bounded to one instance and closed by close()."""
+    pytest.importorskip("httpx")
     resource_manager = ResourceManagerImpl(invalid_configure)
     client_a = await resource_manager.get_http_client()
     client_b = await resource_manager.get_http_client()
