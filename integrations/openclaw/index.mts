@@ -166,7 +166,10 @@ function resolvePluginConfig(api: OpenClawPluginApi): PluginConfig {
   const raw = (api.pluginConfig ?? {}) as Record<string, unknown>;
   return {
     apiKey: typeof raw.apiKey === "string" ? raw.apiKey.trim() : undefined,
-    baseUrl: typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : undefined,
+    baseUrl:
+      typeof raw.baseUrl === "string" && raw.baseUrl.trim()
+        ? raw.baseUrl.trim()
+        : undefined,
     userId:
       typeof raw.userId === "string" && raw.userId.trim()
         ? raw.userId.trim()
