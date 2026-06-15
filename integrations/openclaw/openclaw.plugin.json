@@ -18,8 +18,8 @@
     },
     "baseUrl": {
       "label": "MemMachine Base URL",
-      "placeholder": "https://api.memmachine.ai",
-      "help": "Base URL for the MemMachine service."
+      "placeholder": "https://api.memmachine.ai/v2",
+      "help": "Base URL for the MemMachine service, including the API version path. MemMachine Cloud: https://api.memmachine.ai/v2. Self-hosted: http://<host>:<port>/api/v2 (e.g. http://localhost:8080/api/v2). Leave blank to use the client default."
     },
     "userId": {
       "label": "Default User ID",
