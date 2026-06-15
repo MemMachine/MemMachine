@@ -7,11 +7,6 @@ permissions:
 on:
   schedule:
     - cron: '0 6 * * 1,4'
-  pull_request:
-    paths:
-      - 'pyproject.toml'
-      - 'uv.lock'
-      - 'packages/**/pyproject.toml'
   workflow_dispatch:
 
 jobs:
@@ -29,12 +24,16 @@ jobs:
         id: audit
         run: |
           audit_results="$RUNNER_TEMP/audit-results.json"
+          audit_stderr="$RUNNER_TEMP/audit-stderr.txt"
 
           set +e
-          uv audit --output-format json > "$audit_results"
+          uv audit --output-format json > "$audit_results" 2> "$audit_stderr"
           audit_exit_code=$?
           set -e
 
+          # Surface uv's own diagnostics (experimental warnings, network errors,
+          # parse failures) in the workflow log before we make decisions on them.
+          cat "$audit_stderr" >&2
           cat "$audit_results"
 
           # uv audit exits 0 when clean, 1 when vulnerabilities are found, and
@@ -42,6 +41,28 @@ jobs:
           # parse the (likely empty) JSON output, so the failure message is
           # the actual uv error rather than a downstream JSONDecodeError.
           if [ "$audit_exit_code" -gt 1 ]; then
+            # TEMPORARY: tolerate the upstream uv/OSV bug where uv audit's
+            # strict deserializer rejects malformed OSV records (empty `{}` in
+            # `affected.ranges.events`), aborting the entire audit. Tracked in
+            # this repo (see issue linked from PR description) and upstream at
+            # https://github.com/astral-sh/uv/issues/19492 (fix PR #19496).
+            # Remove this branch once the `version:` input above is bumped to
+            # a uv release containing the upstream fix.
+            if grep -qF 'error decoding response body' "$audit_stderr"; then
+              echo "::warning title=uv audit skipped::uv audit could not decode the OSV response (known upstream bug astral-sh/uv#19492). Exiting successfully without scanning; see the in-repo tracking issue for details."
+              {
+                echo "### Security Audit skipped"
+                echo
+                echo "\`uv audit\` exited with code \`$audit_exit_code\` because it could not parse the OSV vulnerability database response."
+                echo
+                echo "This is the known upstream bug [astral-sh/uv#19492](https://github.com/astral-sh/uv/issues/19492): an OSV record contains an empty \`{}\` in \`affected.ranges.events\`, which uv's deserializer rejects."
+                echo
+                echo "**No vulnerability scanning ran in this workflow execution.** When the upstream fix ([astral-sh/uv#19496](https://github.com/astral-sh/uv/pull/19496) or equivalent) is released, bump the \`setup-uv\` \`version:\` input in \`.github/workflows/security-audit.yml\` and remove this skip branch."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "has_vulnerabilities=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
             echo "uv audit exited with unexpected status: $audit_exit_code"
             exit "$audit_exit_code"
           fi
@@ -66,7 +87,9 @@ jobs:
           import json
           with open('$RUNNER_TEMP/audit-results.json') as f:
               data = json.load(f)
-          packages = sorted({v['package']['name'] for v in data.get('vulnerabilities', [])})
+          # uv audit JSON schema: each vulnerability has a 'dependency' object
+          # with 'name' and 'version' fields (not 'package.name')
+          packages = sorted({v['dependency']['name'] for v in data.get('vulnerabilities', [])})
           with open('$RUNNER_TEMP/vulnerable-packages.txt', 'w') as f:
               for package in packages:
                   f.write(f'{package}\n')

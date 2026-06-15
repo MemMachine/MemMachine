@@ -53,9 +53,8 @@ class SentenceTransformerEmbedder(Embedder):
         self._model_name = params.model_name
         self._sentence_transformer = params.sentence_transformer
 
-        self._dimensions = (
-            self._sentence_transformer.get_sentence_embedding_dimension()
-            or len(self._sentence_transformer.encode(""))
+        self._dimensions = self._sentence_transformer.get_embedding_dimension() or len(
+            self._sentence_transformer.encode("")
         )
         match self._sentence_transformer.similarity_fn_name:
             case "cosine":

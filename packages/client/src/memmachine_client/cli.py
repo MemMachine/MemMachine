@@ -32,7 +32,7 @@ DEFAULT_PROG = "mem-cli"
 
 def _env_int(name: str, default: int) -> int:
     raw_value = os.environ.get(name)
-    if raw_value in {None, ""}:
+    if raw_value is None or raw_value == "":
         return default
     try:
         return int(raw_value)
