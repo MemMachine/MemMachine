@@ -3,7 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -190,6 +190,46 @@ async def test_add_segments_with_no_context(
 
     result = await partition.get_segment_contexts([seg.uuid])
     assert result[seg.uuid][0].context == NullContext()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tz",
+    [
+        UTC,
+        timezone(timedelta(hours=-8)),
+        timezone(timedelta(hours=5, minutes=30)),
+    ],
+)
+async def test_timestamp_roundtrips_with_timezone(
+    partition: SQLAlchemySegmentStorePartition,
+    tz: timezone,
+) -> None:
+    """A timezone-aware timestamp roundtrips with its instant and offset intact.
+
+    SQLite's DateTime(timezone=True) discards tzinfo and stores the wall-clock
+    fields verbatim, so a non-UTC timestamp that is not normalized to UTC before
+    writing comes back shifted by its offset. Regression test for that bug.
+    """
+    ts = datetime(2024, 1, 1, 13, 30, 45, tzinfo=tz)
+    seg = Segment(
+        uuid=uuid4(),
+        event_uuid=uuid4(),
+        index=0,
+        offset=0,
+        timestamp=ts,
+        block=TextBlock(text="tz"),
+        context=_NULL_CONTEXT,
+        properties={},
+    )
+    await partition.add_segments(_links(seg))
+
+    result = await partition.get_segment_contexts([seg.uuid])
+    returned = result[seg.uuid][0].timestamp
+    # Aware-datetime equality compares absolute instants.
+    assert returned == ts
+    # The original UTC offset is reconstructed, not collapsed to UTC.
+    assert returned.utcoffset() == ts.utcoffset()
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import JSON
 
+from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.cluster_manager import (
     ClusterInfo,
     ClusterSplitRecord,
@@ -211,7 +212,7 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
                             cluster_id=cluster_id,
                             centroid=list(info.centroid),
                             count=info.count,
-                            last_ts=info.last_ts,
+                            last_ts=ensure_tz_aware(info.last_ts).astimezone(UTC),
                         )
                         for cluster_id, info in state.clusters.items()
                     ]
@@ -236,7 +237,7 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
                             set_id=set_key,
                             cluster_id=cluster_id,
                             event_id=event_id,
-                            created_at=created_at,
+                            created_at=ensure_tz_aware(created_at).astimezone(UTC),
                         )
                         for cluster_id, events in state.pending_events.items()
                         for event_id, created_at in events.items()
