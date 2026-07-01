@@ -974,6 +974,11 @@ class SQLiteVectorStore(VectorStore):
             Column("uuid", Uuid, nullable=False, unique=True),
             Column("properties", JSON, nullable=False, default=dict),
             extend_existing=True,
+            # AUTOINCREMENT so row_ids are never reused. Writes commit their
+            # SQL transaction before awaiting the search engine apply, so a
+            # reused row_id lets a suspended delete() erase the vector of a
+            # concurrently upserted record.
+            sqlite_autoincrement=True,
         )
 
     def _index_path(self, namespace: str, name: str) -> Path | None:
