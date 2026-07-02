@@ -148,7 +148,7 @@ class Neo4jVectorGraphStoreParams(BaseModel):
         ),
     )
     range_index_creation_threshold: int = Field(
-        10_000,
+        1_000, # [10k→1k] Enable range index creation for small-to-medium datasets (< 10k nodes)
         description=(
             "Threshold number of entities "
             "in a collection or having a relation "
@@ -156,7 +156,7 @@ class Neo4jVectorGraphStoreParams(BaseModel):
         ),
     )
     vector_index_creation_threshold: int = Field(
-        10_000,
+        1_000, # [10k→1k] Enable vector index creation for small-to-medium datasets (< 10k nodes)
         description=(
             "Threshold number of entities "
             "in a collection or having a relation "
