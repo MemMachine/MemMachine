@@ -11,6 +11,7 @@ import pytest_asyncio
 
 pytest.importorskip("milvus_lite")
 pymilvus = pytest.importorskip("pymilvus")
+DataType = pymilvus.DataType
 MilvusClient = pymilvus.MilvusClient
 
 from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
@@ -151,6 +152,29 @@ class TestCollectionLifecycle:
 
         await store.delete_collection(namespace=NAMESPACE, name="coll_a")
         await store.delete_collection(namespace=NAMESPACE, name="coll_b")
+
+    @pytest.mark.asyncio
+    async def test_native_collection_schema(self, store):
+        await store.create_collection(
+            namespace=NAMESPACE,
+            name="schema",
+            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+        )
+        coll = await store.open_collection(namespace=NAMESPACE, name="schema")
+        assert coll is not None
+
+        schema = store._client.describe_collection(coll._collection_name)
+        fields = {field["name"]: field for field in schema["fields"]}
+
+        assert schema["auto_id"] is False
+        assert schema["enable_dynamic_field"] is True
+        assert fields["id"]["is_primary"] is True
+        assert fields["partition_key"]["is_partition_key"] is True
+        assert fields["vector"]["type"] == DataType.FLOAT_VECTOR
+        assert fields["vector"]["params"]["dim"] == VECTOR_DIM
+        assert fields["properties"]["type"] == DataType.JSON
+
+        await store.delete_collection(namespace=NAMESPACE, name="schema")
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):

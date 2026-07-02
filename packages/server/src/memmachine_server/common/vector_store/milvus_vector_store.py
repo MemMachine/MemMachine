@@ -678,6 +678,7 @@ class MilvusVectorStore(VectorStore):
                 field_name=_PARTITION_KEY_FIELD,
                 datatype=DataType.VARCHAR,
                 max_length=_MAX_PARTITION_KEY_LENGTH,
+                is_partition_key=True,
             )
             schema.add_field(
                 field_name=_VECTOR_FIELD,
