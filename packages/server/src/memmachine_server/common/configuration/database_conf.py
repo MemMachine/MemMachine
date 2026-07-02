@@ -5,11 +5,12 @@ from enum import StrEnum
 from typing import Any, ClassVar, Self
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 from memmachine_server.common.configuration.mixin_confs import (
     ApiKeyMixin,
     PasswordMixin,
+    WithValueFromEnv,
     YamlSerializableMixin,
 )
 
@@ -266,6 +267,72 @@ class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
     )
 
 
+class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
+    """Configuration options for a Milvus instance."""
+
+    uri: str = Field(
+        default="./milvus.db",
+        description=(
+            "Milvus URI. Use a local .db path for Milvus Lite, "
+            "or an HTTP(S) URI for Milvus server / Zilliz Cloud."
+        ),
+    )
+    token: SecretStr = Field(
+        default=SecretStr(""),
+        description=(
+            "Milvus auth token. Can reference an environment variable using "
+            "$ENV_NAME syntax."
+        ),
+    )
+    db_name: str = Field(
+        default="",
+        description="Optional Milvus database name.",
+    )
+    consistency_level: str = Field(
+        default="Session",
+        description=(
+            "Milvus consistency level for newly created collections. "
+            "Supported values: Strong, Session, Bounded, Eventually."
+        ),
+    )
+
+    @field_validator("uri", mode="before")
+    @classmethod
+    def resolve_uri(cls, v: str) -> str:
+        """Resolve environment variable references in the URI."""
+        resolved = cls._resolve_env(v)
+        if not isinstance(resolved, str):
+            raise TypeError("Milvus URI must be a string")
+        return resolved
+
+    @field_validator("token", mode="before")
+    @classmethod
+    def resolve_token(cls, v: SecretStr | str) -> SecretStr | str | None:
+        """Resolve environment variable references in the token."""
+        resolved = cls._resolve_env(v)
+        return SecretStr(resolved) if isinstance(resolved, str) else resolved
+
+    @field_validator("db_name", mode="before")
+    @classmethod
+    def resolve_db_name(cls, v: str) -> str:
+        """Resolve environment variable references in the database name."""
+        resolved = cls._resolve_env(v)
+        if not isinstance(resolved, str):
+            raise TypeError("Milvus database name must be a string")
+        return resolved
+
+    @model_validator(mode="after")
+    def validate_milvus_conf(self) -> Self:
+        """Validate Milvus configuration."""
+        if not self.uri:
+            raise ValueError("MilvusConf requires a non-empty 'uri'")
+        valid_consistency_levels = {"Strong", "Session", "Bounded", "Eventually"}
+        if self.consistency_level not in valid_consistency_levels:
+            valid = ", ".join(sorted(valid_consistency_levels))
+            raise ValueError(f"Milvus consistency_level must be one of: {valid}")
+        return self
+
+
 class SQLiteVectorStoreEngine(StrEnum):
     """Supported vector search engine providers for SQLiteVectorStore."""
 
@@ -434,6 +501,7 @@ class SupportedDB(StrEnum):
         | type[SqlAlchemyConf]
         | type[NebulaGraphConf]
         | type[QdrantConf]
+        | type[MilvusConf]
         | type[SQLiteVectorStoreConf]
         | type[SQLiteVecVectorStoreConf]
     )
@@ -445,6 +513,7 @@ class SupportedDB(StrEnum):
     SQLITE = ("sqlite", SqlAlchemyConf, "sqlite", "aiosqlite")
     NEBULA_GRAPH = ("nebula_graph", NebulaGraphConf, None, None)
     QDRANT = ("qdrant", QdrantConf, None, None)
+    MILVUS = ("milvus", MilvusConf, None, None)
     SQLITE_VECTOR_STORE = ("sqlite_vector_store", SQLiteVectorStoreConf, None, None)
     SQLITE_VEC_VECTOR_STORE = (
         "sqlite_vec_vector_store",
@@ -460,6 +529,7 @@ class SupportedDB(StrEnum):
         | type[SqlAlchemyConf]
         | type[NebulaGraphConf]
         | type[QdrantConf]
+        | type[MilvusConf]
         | type[SQLiteVectorStoreConf]
         | type[SQLiteVecVectorStoreConf],
         dialect: str | None,
@@ -489,6 +559,7 @@ class SupportedDB(StrEnum):
         | SqlAlchemyConf
         | NebulaGraphConf
         | QdrantConf
+        | MilvusConf
         | SQLiteVectorStoreConf
         | SQLiteVecVectorStoreConf
     ):
@@ -507,6 +578,7 @@ class DatabasesConf(BaseModel):
     relational_db_confs: dict[str, SqlAlchemyConf] = {}
     nebula_graph_confs: dict[str, NebulaGraphConf] = {}
     qdrant_confs: dict[str, QdrantConf] = {}
+    milvus_confs: dict[str, MilvusConf] = {}
     sqlite_vector_store_confs: dict[str, SQLiteVectorStoreConf] = {}
     sqlite_vec_vector_store_confs: dict[str, SQLiteVecVectorStoreConf] = {}
 
@@ -519,6 +591,7 @@ class DatabasesConf(BaseModel):
     SQLITE: ClassVar[str] = "sqlite"
     NEBULA_GRAPH: ClassVar[str] = "nebula_graph"
     QDRANT: ClassVar[str] = "qdrant"
+    MILVUS: ClassVar[str] = "milvus"
     SQLITE_VECTOR_STORE: ClassVar[str] = "sqlite_vector_store"
     SQLITE_VEC_VECTOR_STORE: ClassVar[str] = "sqlite_vec_vector_store"
     DIALECT: ClassVar[str] = "dialect"
@@ -551,6 +624,7 @@ class DatabasesConf(BaseModel):
         single_provider_confs: list[tuple[str, Mapping[str, YamlSerializableMixin]]] = [
             (self.NEBULA_GRAPH, self.nebula_graph_confs),
             (self.QDRANT, self.qdrant_confs),
+            (self.MILVUS, self.milvus_confs),
             (self.SQLITE_VECTOR_STORE, self.sqlite_vector_store_confs),
             (self.SQLITE_VEC_VECTOR_STORE, self.sqlite_vec_vector_store_confs),
         ]
@@ -578,6 +652,7 @@ class DatabasesConf(BaseModel):
         relational_db_dict: dict[str, SqlAlchemyConf] = {}
         nebula_graph_dict: dict[str, NebulaGraphConf] = {}
         qdrant_dict: dict[str, QdrantConf] = {}
+        milvus_dict: dict[str, MilvusConf] = {}
         sqlite_vector_store_dict: dict[str, SQLiteVectorStoreConf] = {}
         sqlite_vec_vector_store_dict: dict[str, SQLiteVecVectorStoreConf] = {}
 
@@ -586,6 +661,7 @@ class DatabasesConf(BaseModel):
             SqlAlchemyConf: relational_db_dict,
             NebulaGraphConf: nebula_graph_dict,
             QdrantConf: qdrant_dict,
+            MilvusConf: milvus_dict,
             SQLiteVectorStoreConf: sqlite_vector_store_dict,
             SQLiteVecVectorStoreConf: sqlite_vec_vector_store_dict,
         }
@@ -603,6 +679,7 @@ class DatabasesConf(BaseModel):
             relational_db_confs=relational_db_dict,
             nebula_graph_confs=nebula_graph_dict,
             qdrant_confs=qdrant_dict,
+            milvus_confs=milvus_dict,
             sqlite_vector_store_confs=sqlite_vector_store_dict,
             sqlite_vec_vector_store_confs=sqlite_vec_vector_store_dict,
         )

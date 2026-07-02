@@ -1,3 +1,4 @@
+import importlib.util
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
+    MilvusConf,
     Neo4jConf,
     QdrantConf,
     SqlAlchemyConf,
@@ -15,16 +17,23 @@ from memmachine_server.common.configuration.database_conf import (
     SQLiteVecVectorStoreConf,
 )
 from memmachine_server.common.errors import (
+    MilvusConfigurationError,
     QdrantConfigurationError,
     VectorStoreConfigurationError,
 )
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 
+requires_pymilvus = pytest.mark.skipif(
+    importlib.util.find_spec("pymilvus") is None,
+    reason="requires pymilvus optional dependency",
+)
+
 
 def _empty_vector_store_confs(conf: MagicMock) -> None:
     """Set vector-store-related conf dicts to empty on a DatabasesConf mock."""
     conf.qdrant_confs = {}
+    conf.milvus_confs = {}
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
 
@@ -488,6 +497,198 @@ async def test_qdrant_close():
     mock_client.close.assert_awaited()
 
 
+# --- Milvus ---
+
+
+def _milvus_only_conf() -> MagicMock:
+    """Build a DatabasesConf mock with only a Milvus entry."""
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {}
+    conf.relational_db_confs = {}
+    conf.nebula_graph_confs = {}
+    conf.qdrant_confs = {}
+    conf.milvus_confs = {
+        "milvus1": MilvusConf(uri="./milvus.db"),
+    }
+    conf.sqlite_vector_store_confs = {}
+    conf.sqlite_vec_vector_store_confs = {}
+    return conf
+
+
+@pytest.mark.asyncio
+@requires_pymilvus
+async def test_milvus_client_kwargs_forwarded():
+    """uri, token, and db_name are forwarded to MilvusClient."""
+    conf = _milvus_only_conf()
+    conf.milvus_confs["milvus1"] = MilvusConf(
+        uri="https://example.zillizcloud.com",
+        token=SecretStr("secret-token"),
+        db_name="memory",
+        consistency_level="Strong",
+    )
+
+    mock_client = MagicMock()
+    mock_client.list_collections.return_value = []
+    mock_client.close = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
+        ) as mock_store_cls,
+        patch("pymilvus.MilvusClient", return_value=mock_client) as mock_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_milvus_client("milvus1")
+
+    call_kwargs = mock_cls.call_args.kwargs
+    assert call_kwargs["uri"] == "https://example.zillizcloud.com"
+    assert call_kwargs["token"] == "secret-token"
+    assert call_kwargs["db_name"] == "memory"
+
+
+@pytest.mark.asyncio
+@requires_pymilvus
+async def test_milvus_token_and_db_name_omitted_when_empty():
+    """Empty auth and database values are not forwarded."""
+    conf = _milvus_only_conf()
+
+    mock_client = MagicMock()
+    mock_client.close = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
+        ) as mock_store_cls,
+        patch("pymilvus.MilvusClient", return_value=mock_client) as mock_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_milvus_client("milvus1")
+
+    assert mock_cls.call_args.kwargs == {"uri": "./milvus.db"}
+
+
+@pytest.mark.asyncio
+@requires_pymilvus
+async def test_milvus_creates_vector_store():
+    """async_get_milvus_client creates a MilvusVectorStore and stores it."""
+    conf = _milvus_only_conf()
+    conf.milvus_confs["milvus1"] = MilvusConf(consistency_level="Strong")
+
+    mock_client = MagicMock()
+    mock_client.close = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStoreParams",
+        ) as mock_params_cls,
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
+        ) as mock_store_cls,
+        patch("pymilvus.MilvusClient", return_value=mock_client),
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_milvus_client("milvus1")
+
+    mock_params_cls.assert_called_once_with(
+        client=mock_client,
+        consistency_level="Strong",
+    )
+    mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
+    mock_store_cls.return_value.startup.assert_awaited_once()
+    assert "milvus1" in builder.vector_stores
+
+
+@pytest.mark.asyncio
+@requires_pymilvus
+async def test_get_vector_store_milvus():
+    """get_vector_store returns the VectorStore for a Milvus config."""
+    conf = _milvus_only_conf()
+
+    mock_client = MagicMock()
+    mock_client.list_collections.return_value = []
+    mock_client.close = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
+        ) as mock_store_cls,
+        patch("pymilvus.MilvusClient", return_value=mock_client),
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        store = await builder.get_vector_store("milvus1")
+
+    assert store is mock_store_cls.return_value
+
+
+@pytest.mark.asyncio
+async def test_milvus_config_not_found():
+    """async_get_milvus_client raises ValueError for unknown names."""
+    conf = _milvus_only_conf()
+    conf.milvus_confs = {}
+    builder = DatabaseManager(conf)
+    with pytest.raises(ValueError, match="Milvus config 'missing' not found"):
+        await builder.async_get_milvus_client("missing")
+
+
+@pytest.mark.asyncio
+async def test_milvus_validation_failure():
+    """validate_milvus_client raises MilvusConfigurationError on failure."""
+    mock_client = MagicMock()
+    mock_client.list_collections.side_effect = ConnectionError("refused")
+    mock_client.close = MagicMock()
+
+    with pytest.raises(MilvusConfigurationError, match="failed verification"):
+        await DatabaseManager.validate_milvus_client("milvus1", mock_client)
+
+    mock_client.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+@requires_pymilvus
+async def test_milvus_close():
+    """close() cleans up Milvus clients and vector stores."""
+    conf = _milvus_only_conf()
+
+    mock_client = MagicMock()
+    mock_client.close = MagicMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
+        ) as mock_store_cls,
+        patch("pymilvus.MilvusClient", return_value=mock_client),
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.shutdown = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_milvus_client("milvus1")
+
+    assert "milvus1" in builder.milvus_clients
+    assert "milvus1" in builder.vector_stores
+
+    await builder.close()
+
+    assert builder.milvus_clients == {}
+    assert builder.vector_stores == {}
+    mock_client.close.assert_called()
+
+
 # --- SQLite-backed VectorStores ---
 
 
@@ -498,6 +699,7 @@ def _sqlite_vector_store_only_conf(**vs_overrides) -> MagicMock:
     conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {}
+    conf.milvus_confs = {}
     conf.sqlite_vector_store_confs = vs_overrides.get("sqlite_vector_store_confs", {})
     conf.sqlite_vec_vector_store_confs = vs_overrides.get(
         "sqlite_vec_vector_store_confs", {}

@@ -19,6 +19,13 @@ First of all, install the MemMachine package if you haven't already:
 pip install memmachine-server
 ```
 
+To generate a configuration that uses an optional VectorStore backend, install
+the matching extra before running the wizard. For example:
+
+```bash
+pip install "memmachine-server[milvus]"
+```
+
 Next, run the configuration wizard using the following command:
 
 ```bash
@@ -37,9 +44,17 @@ The wizard will prompt you for various configuration options, including:
 - **AWS Bedrock Settings**: If AWS Bedrock is selected, provide AWS credentials and region information.
 - **Server Settings**: Configure server-related settings such as host, port
 
-The wizard only supports Neo4j as the vector database at the moment.  The relational database
-is configured to use SQLite by default.  For users who wish to use other vector or relational databases,
-manual configuration of the `cfg.yml` file will be necessary after running the wizard.
+The wizard can generate an event-memory configuration backed by a VectorStore.
+If the Qdrant extra is installed, Qdrant is selected by default. If Qdrant is
+not installed but the Milvus extra is installed, Milvus is selected and the
+generated `uri` points at a local Milvus Lite file. Without those optional
+extras, the wizard falls back to the local SQLiteVectorStore. You can edit the
+generated `cfg.yml` afterward to point Milvus at a standalone server or Zilliz
+Cloud by changing `uri`, `token`, and `db_name`.
+
+The relational database is configured to use SQLite by default. For users who
+wish to use other relational databases, manual configuration of the `cfg.yml`
+file will be necessary after running the wizard.
 
 By default, the configuration file will be available in `<HOME>/.config/memmachine/cfg.yml`.
 

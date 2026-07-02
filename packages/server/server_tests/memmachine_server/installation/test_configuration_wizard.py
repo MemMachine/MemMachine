@@ -35,8 +35,9 @@ def test_configuration_wizard_all_default(mock_input, conf_args):
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=False)
 @patch("builtins.input")
-def test_configuration_with_prompt(mock_input, mock_qdrant, conf_args):
+def test_configuration_with_prompt(mock_input, mock_milvus, mock_qdrant, conf_args):
     conf_args.prompt = True
     inputs = {
         # vector store prompt fires first; "" → accept default
@@ -90,8 +91,11 @@ def test_configuration_neo4j(mock_input, conf_args):
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=False)
 @patch("builtins.input")
-def test_configuration_wizard_aws_provider(mock_input, mock_qdrant, conf_args):
+def test_configuration_wizard_aws_provider(
+    mock_input, mock_milvus, mock_qdrant, conf_args
+):
     conf_args.prompt = True
     inputs = {
         "vector store": "",
@@ -133,8 +137,11 @@ def test_configuration_wizard_aws_provider(mock_input, mock_qdrant, conf_args):
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=False)
 @patch("builtins.input")
-def test_configuration_wizard_ollama_provider(mock_input, mock_qdrant, conf_args):
+def test_configuration_wizard_ollama_provider(
+    mock_input, mock_milvus, mock_qdrant, conf_args
+):
     conf_args.prompt = True
     inputs = {
         "vector store": "",
@@ -178,7 +185,10 @@ def test_get_provided_database_config(conf_args):
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
-def test_vector_store_default_without_qdrant_is_sqlite_compat(mock_qdrant, conf_args):
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=False)
+def test_vector_store_default_without_optional_backends_is_sqlite_compat(
+    mock_milvus, mock_qdrant, conf_args
+):
     """Without Qdrant the compatibility default is the USearch-backed SQLite
     vector store, NOT sqlite-vec — sqlite-vec depends on host SQLite having
     loadable-extension support, so it's never silently selected."""
@@ -190,6 +200,20 @@ def test_vector_store_default_without_qdrant_is_sqlite_compat(mock_qdrant, conf_
     assert len(db_conf.qdrant_confs) == 0
 
 
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=True)
+def test_vector_store_defaults_to_milvus_when_available_without_qdrant(
+    mock_milvus, mock_qdrant, conf_args
+):
+    wizard = ConfigurationWizard(conf_args)
+    assert wizard.vector_store_id == ConfigurationWizard.MILVUS_VECTOR_STORE_ID
+    db_conf = wizard.database_conf
+    assert len(db_conf.milvus_confs) == 1
+    assert len(db_conf.qdrant_confs) == 0
+    assert len(db_conf.sqlite_vector_store_confs) == 0
+    assert len(db_conf.sqlite_vec_vector_store_confs) == 0
+
+
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
 def test_vector_store_defaults_to_qdrant_when_available_silent(mock_qdrant, conf_args):
     # prompt=False (silent mode) -> Qdrant is the default when available.
@@ -197,13 +221,17 @@ def test_vector_store_defaults_to_qdrant_when_available_silent(mock_qdrant, conf
     assert wizard.vector_store_id == ConfigurationWizard.QDRANT_VECTOR_STORE_ID
     db_conf = wizard.database_conf
     assert len(db_conf.qdrant_confs) == 1
+    assert len(db_conf.milvus_confs) == 0
     assert len(db_conf.sqlite_vector_store_confs) == 0
     assert len(db_conf.sqlite_vec_vector_store_confs) == 0
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=True)
 @patch("builtins.input")
-def test_vector_store_prompt_accepts_qdrant_default(mock_input, mock_qdrant, conf_args):
+def test_vector_store_prompt_accepts_qdrant_default(
+    mock_input, mock_milvus, mock_qdrant, conf_args
+):
     conf_args.prompt = True
     # Empty input → keep the default (qdrant).
     mock_input.side_effect = ["", "api_key_value"]
@@ -212,9 +240,10 @@ def test_vector_store_prompt_accepts_qdrant_default(mock_input, mock_qdrant, con
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=True)
 @patch("builtins.input")
 def test_vector_store_prompt_accepts_sqlite_vector_store_override(
-    mock_input, mock_qdrant, conf_args
+    mock_input, mock_milvus, mock_qdrant, conf_args
 ):
     conf_args.prompt = True
     mock_input.side_effect = ["sqlite_vector_store", "api_key_value"]
@@ -223,13 +252,32 @@ def test_vector_store_prompt_accepts_sqlite_vector_store_override(
     db_conf = wizard.database_conf
     assert len(db_conf.sqlite_vector_store_confs) == 1
     assert len(db_conf.qdrant_confs) == 0
+    assert len(db_conf.milvus_confs) == 0
     assert len(db_conf.sqlite_vec_vector_store_confs) == 0
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=True)
+@patch("builtins.input")
+def test_vector_store_prompt_accepts_milvus_override(
+    mock_input, mock_milvus, mock_qdrant, conf_args
+):
+    conf_args.prompt = True
+    mock_input.side_effect = ["milvus", "api_key_value"]
+    wizard = ConfigurationWizard(conf_args)
+    assert wizard.vector_store_id == ConfigurationWizard.MILVUS_VECTOR_STORE_ID
+    db_conf = wizard.database_conf
+    assert len(db_conf.milvus_confs) == 1
+    assert len(db_conf.qdrant_confs) == 0
+    assert len(db_conf.sqlite_vector_store_confs) == 0
+    assert len(db_conf.sqlite_vec_vector_store_confs) == 0
+
+
+@patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=True)
 @patch("builtins.input")
 def test_vector_store_prompt_accepts_sqlite_vec_override(
-    mock_input, mock_qdrant, conf_args
+    mock_input, mock_milvus, mock_qdrant, conf_args
 ):
     conf_args.prompt = True
     mock_input.side_effect = ["sqlite_vec", "api_key_value"]
@@ -238,13 +286,15 @@ def test_vector_store_prompt_accepts_sqlite_vec_override(
     db_conf = wizard.database_conf
     assert len(db_conf.sqlite_vec_vector_store_confs) == 1
     assert len(db_conf.qdrant_confs) == 0
+    assert len(db_conf.milvus_confs) == 0
     assert len(db_conf.sqlite_vector_store_confs) == 0
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=True)
+@patch.object(ConfigurationWizard, "_milvus_available", return_value=True)
 @patch("builtins.input")
 def test_vector_store_prompt_reasks_on_invalid_then_accepts(
-    mock_input, mock_qdrant, conf_args
+    mock_input, mock_milvus, mock_qdrant, conf_args
 ):
     """Garbage input doesn't silently fall through; the user has to retype."""
     conf_args.prompt = True

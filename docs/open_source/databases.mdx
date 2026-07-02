@@ -16,9 +16,48 @@ Here's how they help:
 
 By providing this durable, organized, and accessible memory, databases empower MemMachine to deliver the ability for agents to **intelligently interact** with users, making every conversation truly personalized and informed.
 
-MemMachine can be configured to use different supported databases.  In choosing which databases you wish to use, it is important to understand how MemMachine utilizes databases.
+MemMachine can be configured to use different supported databases. In choosing
+which databases you wish to use, it is important to understand how MemMachine
+utilizes databases.
 
 By default, it utilizes the following Databases:
+
+## Vector stores
+
+The event-backed long-term memory path stores embeddings in a VectorStore and
+keeps event segments in a relational database. Configure the VectorStore under
+`resources.databases`, then reference it from
+`episodic_memory.long_term_memory.vector_store`.
+
+Supported VectorStore providers include Qdrant, Milvus, SQLiteVectorStore, and
+SQLiteVecVectorStore. Milvus supports three deployment shapes through the same
+configuration fields:
+
+- **Milvus Lite:** set `uri` to a local `.db` path such as
+  `./memmachine_milvus.db`.
+- **Milvus server:** set `uri` to a server endpoint such as
+  `http://localhost:19530`.
+- **Zilliz Cloud:** set `uri` to the cloud endpoint and set `token`.
+
+Example:
+
+```yaml
+resources:
+  databases:
+    milvus_vector_store:
+      provider: milvus
+      config:
+        uri: ./memmachine_milvus.db
+        # token: $MILVUS_TOKEN
+        # db_name: default
+        consistency_level: Session
+
+episodic_memory:
+  long_term_memory:
+    backend: event
+    vector_store: milvus_vector_store
+    segment_store: profile_storage
+```
 
 ## neo4j
 Neo4j is a leading **graph database**, which means it's specially designed to store and manage highly connected data. Instead of rows and columns, Neo4j works with three fundamental building blocks:

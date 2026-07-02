@@ -23,6 +23,7 @@ from memmachine_server.common.configuration import (
 )
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
+    MilvusConf,
     Neo4jConf,
     QdrantConf,
     SqlAlchemyConf,
@@ -76,12 +77,14 @@ class ConfigurationWizard:
     SQLITE_VECTOR_STORE_ID = "sqlite_vector_store"
     SQLITE_VEC_VECTOR_STORE_ID = "sqlite_vec_vector_store"
     QDRANT_VECTOR_STORE_ID = "qdrant_vector_store"
+    MILVUS_VECTOR_STORE_ID = "milvus_vector_store"
     LANGUAGE_MODEL_NAME = "llm_model"
     EMBEDDER_NAME = "my_embedder"
     RERANKER_NAME = "my_reranker"
 
     # Vector-store choice keys exposed to the user at the prompt.
     _VECTOR_STORE_QDRANT = "qdrant"
+    _VECTOR_STORE_MILVUS = "milvus"
     _VECTOR_STORE_SQLITE = "sqlite_vector_store"
     _VECTOR_STORE_SQLITE_VEC = "sqlite_vec"
 
@@ -95,6 +98,11 @@ class ConfigurationWizard:
         fail at runtime if no Qdrant server is reachable, same risk as Neo4j.
         """
         return importlib.util.find_spec("qdrant_client") is not None
+
+    @staticmethod
+    def _milvus_available() -> bool:
+        """Return True if the `pymilvus` extra is installed."""
+        return importlib.util.find_spec("pymilvus") is not None
 
     @dataclass
     class Params:
@@ -174,71 +182,73 @@ class ConfigurationWizard:
             segment_store=self.SQLITE_DB_ID,
         )
 
-    @cached_property
-    def vector_store_id(self) -> str:
-        """Pick the vector store backend.
-
-        Three options, but Qdrant is only listed when the `qdrant-client`
-        extra is installed:
-          - `qdrant`: external Qdrant server, recommended for production.
-            Requires `pip install memmachine-server[qdrant]` and a running
-            Qdrant instance.
-          - `sqlite_vector_store`: in-process USearch index. Broad
-            compatibility — no host SQLite extension support needed.
-          - `sqlite_vec`: sqlite-vec extension. Requires host SQLite built
-            with loadable-extension support.
-
-        The default (empty input) is `qdrant` when its extra is installed,
-        otherwise `sqlite_vector_store` (the compatibility default — we do
-        NOT silently use `sqlite_vec` because it depends on host SQLite
-        being compiled with extension loading).
-
-        The user must type a key (or hit Enter for the default) to switch.
-        The chosen backend is always logged, plus a hint if Qdrant isn't
-        available.
-        """
+    def _available_vector_store_choices(self) -> tuple[set[str], str, bool, bool]:
         qdrant_ok = self._qdrant_available()
+        milvus_ok = self._milvus_available()
+        valid = {
+            self._VECTOR_STORE_SQLITE,
+            self._VECTOR_STORE_SQLITE_VEC,
+        }
+
         if qdrant_ok:
-            valid = {
-                self._VECTOR_STORE_QDRANT,
-                self._VECTOR_STORE_SQLITE,
-                self._VECTOR_STORE_SQLITE_VEC,
-            }
+            valid.add(self._VECTOR_STORE_QDRANT)
             default_choice = self._VECTOR_STORE_QDRANT
+        elif milvus_ok:
+            valid.add(self._VECTOR_STORE_MILVUS)
+            default_choice = self._VECTOR_STORE_MILVUS
         else:
-            valid = {
-                self._VECTOR_STORE_SQLITE,
-                self._VECTOR_STORE_SQLITE_VEC,
-            }
             default_choice = self._VECTOR_STORE_SQLITE
 
-        if self.prompt:
-            logger.info("Available vector stores:")
-            if qdrant_ok:
-                logger.info(
-                    "  qdrant              - external Qdrant server "
-                    "(recommended for production)"
-                )
-            else:
-                logger.info(
-                    "  (qdrant            - install memmachine-server[qdrant] "
-                    "extra to enable)"
-                )
+        if milvus_ok:
+            valid.add(self._VECTOR_STORE_MILVUS)
+
+        return valid, default_choice, qdrant_ok, milvus_ok
+
+    @staticmethod
+    def _log_vector_store_choices(qdrant_ok: bool, milvus_ok: bool) -> None:
+        logger.info("Available vector stores:")
+        if qdrant_ok:
             logger.info(
-                "  sqlite_vector_store - in-process USearch index "
-                "(broad compatibility, no SQLite extension support needed)"
+                "  qdrant              - external Qdrant server "
+                "(recommended for production)"
             )
+        else:
             logger.info(
-                "  sqlite_vec          - sqlite-vec extension "
-                "(requires host SQLite with loadable-extension support)"
+                "  (qdrant            - install memmachine-server[qdrant] "
+                "extra to enable)"
+            )
+        if milvus_ok:
+            logger.info(
+                "  milvus              - Milvus Lite, Milvus server, or Zilliz Cloud"
+            )
+        else:
+            logger.info(
+                "  (milvus            - install memmachine-server[milvus] "
+                "extra to enable)"
+            )
+        logger.info(
+            "  sqlite_vector_store - in-process USearch index "
+            "(broad compatibility, no SQLite extension support needed)"
+        )
+        logger.info(
+            "  sqlite_vec          - sqlite-vec extension "
+            "(requires host SQLite with loadable-extension support)"
+        )
+
+    @staticmethod
+    def _log_vector_store_hints(qdrant_ok: bool, milvus_ok: bool) -> None:
+        if not qdrant_ok:
+            logger.info(
+                "Tip: install the `memmachine-server[qdrant]` extra to use "
+                "Qdrant for production deployments."
+            )
+        if not milvus_ok:
+            logger.info(
+                "Tip: install the `memmachine-server[milvus]` extra to use "
+                "Milvus Lite, Milvus server, or Zilliz Cloud."
             )
 
-        # default_choice is always one of `valid` (constructed above). In
-        # silent mode (`self.prompt == False`), `ask_for` returns this default
-        # unchanged, so the first iteration always satisfies `raw in valid`
-        # and breaks — no second iteration, no need for a silent-mode fallback.
-        assert default_choice in valid
-        choice = default_choice
+    def _ask_vector_store_choice(self, valid: set[str], default_choice: str) -> str:
         while True:
             raw = (
                 self.ask_for(
@@ -249,23 +259,59 @@ class ConfigurationWizard:
                 .lower()
             )
             if raw in valid:
-                choice = raw
-                break
+                return raw
             logger.info(
                 "Invalid choice %r. Pick one of: %s (or press Enter for the default).",
                 raw,
                 ", ".join(sorted(valid)),
             )
 
+    @cached_property
+    def vector_store_id(self) -> str:
+        """Pick the vector store backend.
+
+        Vector stores backed by optional packages are listed only when their
+        extras are installed:
+          - `qdrant`: external Qdrant server, recommended for production.
+            Requires `pip install memmachine-server[qdrant]` and a running
+            Qdrant instance.
+          - `milvus`: Milvus Lite by default, or Milvus server / Zilliz Cloud
+            after editing the generated URI/token config.
+          - `sqlite_vector_store`: in-process USearch index. Broad
+            compatibility — no host SQLite extension support needed.
+          - `sqlite_vec`: sqlite-vec extension. Requires host SQLite built
+            with loadable-extension support.
+
+        The default (empty input) is `qdrant` when its extra is installed,
+        otherwise `milvus` when its extra is installed, otherwise
+        `sqlite_vector_store` (the compatibility default — we do NOT silently
+        use `sqlite_vec` because it depends on host SQLite being compiled with
+        extension loading).
+
+        The user must type a key (or hit Enter for the default) to switch.
+        The chosen backend is always logged, plus a hint if Qdrant isn't
+        available.
+        """
+        valid, default_choice, qdrant_ok, milvus_ok = (
+            self._available_vector_store_choices()
+        )
+
+        if self.prompt:
+            self._log_vector_store_choices(qdrant_ok, milvus_ok)
+
+        # default_choice is always one of `valid` (constructed above). In
+        # silent mode (`self.prompt == False`), `ask_for` returns this default
+        # unchanged, so the first iteration always satisfies `raw in valid`
+        # and breaks — no second iteration, no need for a silent-mode fallback.
+        assert default_choice in valid
+        choice = self._ask_vector_store_choice(valid, default_choice)
+
         logger.info("Vector store selected: %s.", choice)
-        if not qdrant_ok:
-            logger.info(
-                "Tip: install the `memmachine-server[qdrant]` extra to use "
-                "Qdrant for production deployments."
-            )
+        self._log_vector_store_hints(qdrant_ok, milvus_ok)
 
         return {
             self._VECTOR_STORE_QDRANT: self.QDRANT_VECTOR_STORE_ID,
+            self._VECTOR_STORE_MILVUS: self.MILVUS_VECTOR_STORE_ID,
             self._VECTOR_STORE_SQLITE: self.SQLITE_VECTOR_STORE_ID,
             self._VECTOR_STORE_SQLITE_VEC: self.SQLITE_VEC_VECTOR_STORE_ID,
         }[choice]
@@ -449,6 +495,14 @@ class ConfigurationWizard:
                 # Localhost defaults assume `docker run -p 6333:6333 qdrant/qdrant`
                 # or similar; user can edit cfg.yml to point at a remote Qdrant.
                 databases.qdrant_confs = {self.QDRANT_VECTOR_STORE_ID: QdrantConf()}
+            case self.MILVUS_VECTOR_STORE_ID:
+                # Local file defaults use Milvus Lite. Users can edit cfg.yml
+                # to point at a Milvus server or Zilliz Cloud URI/token.
+                databases.milvus_confs = {
+                    self.MILVUS_VECTOR_STORE_ID: MilvusConf(
+                        uri="memmachine_milvus.db",
+                    )
+                }
             case self.SQLITE_VECTOR_STORE_ID:
                 databases.sqlite_vector_store_confs = {
                     self.SQLITE_VECTOR_STORE_ID: SQLiteVectorStoreConf(

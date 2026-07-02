@@ -4,6 +4,7 @@ from pydantic import SecretStr
 
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
+    MilvusConf,
     Neo4jConf,
     QdrantConf,
     SqlAlchemyConf,
@@ -45,6 +46,12 @@ def test_parse_supported_db_enums():
     assert qdrant_db.conf_cls == QdrantConf
     assert qdrant_db.dialect is None
     assert qdrant_db.driver is None
+
+    milvus_db = SupportedDB.MILVUS
+    assert SupportedDB.from_provider("milvus") == milvus_db
+    assert milvus_db.conf_cls == MilvusConf
+    assert milvus_db.dialect is None
+    assert milvus_db.driver is None
 
     sqlite_vs_db = SupportedDB.SQLITE_VECTOR_STORE
     assert sqlite_vs_db.conf_cls == SQLiteVectorStoreConf
@@ -117,6 +124,15 @@ def db_conf_dict() -> dict:
                     "registry_replication_factor": 3,
                 },
             },
+            "my_milvus": {
+                "provider": "milvus",
+                "config": {
+                    "uri": "https://example.zillizcloud.com",
+                    "token": "test-token",
+                    "db_name": "memory",
+                    "consistency_level": "Strong",
+                },
+            },
             "my_sqlite_vs": {
                 "provider": "sqlite_vector_store",
                 "config": {
@@ -138,7 +154,13 @@ def db_conf_dict() -> dict:
 
 @pytest.fixture(autouse=True)
 def clear_env(monkeypatch):
-    for var in ["MY_NEO4J_PASSWORD", "MY_DB_PASSWORD"]:
+    for var in [
+        "MY_NEO4J_PASSWORD",
+        "MY_DB_PASSWORD",
+        "MILVUS_URI",
+        "MILVUS_TOKEN",
+        "MILVUS_DB_NAME",
+    ]:
         monkeypatch.delenv(var, raising=False)
 
 
@@ -185,6 +207,14 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert qdrant_conf.is_distributed is True
     assert qdrant_conf.registry_replication_factor == 3
 
+    # Milvus check
+    milvus_conf = storage_conf.milvus_confs["my_milvus"]
+    assert isinstance(milvus_conf, MilvusConf)
+    assert milvus_conf.uri == "https://example.zillizcloud.com"
+    assert milvus_conf.token == SecretStr("test-token")
+    assert milvus_conf.db_name == "memory"
+    assert milvus_conf.consistency_level == "Strong"
+
     # SQLiteVectorStore (hnswlib engine)
     sqlite_vs_conf = storage_conf.sqlite_vector_store_confs["my_sqlite_vs"]
     assert isinstance(sqlite_vs_conf, SQLiteVectorStoreConf)
@@ -225,7 +255,7 @@ def test_parse_unknown_provider_raises():
     }
     message = (
         "Supported providers are: neo4j, postgres, sqlite, nebula_graph, qdrant, "
-        "sqlite_vector_store, sqlite_vec_vector_store"
+        "milvus, sqlite_vector_store, sqlite_vec_vector_store"
     )
     with pytest.raises(ValueError, match=message):
         DatabasesConf.parse(input_dict)
@@ -238,6 +268,7 @@ def test_parse_empty_storage_returns_empty_conf():
     assert storage_conf.relational_db_confs == {}
     assert storage_conf.nebula_graph_confs == {}
     assert storage_conf.qdrant_confs == {}
+    assert storage_conf.milvus_confs == {}
     assert storage_conf.sqlite_vector_store_confs == {}
     assert storage_conf.sqlite_vec_vector_store_confs == {}
 
@@ -247,6 +278,35 @@ def test_serialize_deserialize_database_conf(db_conf_dict):
     yaml_str = conf.to_yaml()
     conf_cp = DatabasesConf.parse(yaml.safe_load(yaml_str))
     assert conf == conf_cp
+
+
+def test_milvus_conf_defaults():
+    conf = MilvusConf()
+    assert conf.uri == "./milvus.db"
+    assert conf.token == SecretStr("")
+    assert conf.db_name == ""
+    assert conf.consistency_level == "Session"
+
+
+def test_milvus_conf_reads_env(monkeypatch):
+    monkeypatch.setenv("MILVUS_URI", "https://example.zillizcloud.com")
+    monkeypatch.setenv("MILVUS_TOKEN", "env-token")
+    monkeypatch.setenv("MILVUS_DB_NAME", "memory")
+    conf = MilvusConf(
+        uri="$MILVUS_URI",
+        token="${MILVUS_TOKEN}",
+        db_name="$MILVUS_DB_NAME",
+    )
+    assert conf.uri == "https://example.zillizcloud.com"
+    assert conf.token == SecretStr("env-token")
+    assert conf.db_name == "memory"
+
+
+def test_milvus_conf_rejects_invalid_values():
+    with pytest.raises(ValueError, match="non-empty 'uri'"):
+        MilvusConf(uri="")
+    with pytest.raises(ValueError, match="consistency_level"):
+        MilvusConf(consistency_level="Linearizable")
 
 
 def test_neo4j_pool_lifecycle_fields():
