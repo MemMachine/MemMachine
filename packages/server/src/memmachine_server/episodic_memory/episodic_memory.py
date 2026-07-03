@@ -336,6 +336,7 @@ class EpisodicMemory:
         expand_context: int,
         score_threshold: float,
         property_filter: FilterExpr | None,
+        use_fts: bool = False, # Full-Text Search flag for hybrid search
     ) -> list[tuple[float, Episode]]:
         """Query long-term memory or return an empty result if unavailable."""
         if self._long_term_memory is None:
@@ -347,6 +348,7 @@ class EpisodicMemory:
             expand_context=expand_context,
             score_threshold=score_threshold,
             property_filter=property_filter,
+            use_fts=use_fts, # Full-Text Search flag for hybrid search
         )
 
     async def query_memory(
@@ -357,6 +359,7 @@ class EpisodicMemory:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
+        use_fts: bool = False, # Full-Text Search flag for hybrid search
         mode: QueryMode = QueryMode.BOTH,
     ) -> QueryResponse | None:
         """
@@ -400,6 +403,7 @@ class EpisodicMemory:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=property_filter,
+                    use_fts=use_fts, # Full-Text Search flag for hybrid search
                 )
             elif self._long_term_memory is None:
                 short_episode, short_summary = await self._query_short_term_memory(
@@ -421,6 +425,7 @@ class EpisodicMemory:
                         expand_context=expand_context,
                         score_threshold=score_threshold,
                         property_filter=property_filter,
+                        use_fts=use_fts, # Full-Text Search flag for hybrid search
                     ),
                 )
                 short_episode, short_summary = session_result
@@ -431,6 +436,7 @@ class EpisodicMemory:
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=property_filter,
+                use_fts=use_fts, # Full-Text Search flag for hybrid search
             )
         elif mode is EpisodicMemory.QueryMode.SHORT_TERM_ONLY:
             short_episode, short_summary = await self._query_short_term_memory(

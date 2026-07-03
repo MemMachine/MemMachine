@@ -621,6 +621,14 @@ class SearchMemoriesSpec(_WithOrgAndProj):
         ),
     ]
 
+    # Flags for using Hybrid Search(Vector + Full-Text Search)
+    use_fts: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Use Full-Text Search (keyword search) with Vector Search",
+        ),
+    ]
 
 class DeleteMemoriesSpec(_WithOrgAndProj):
     """Specification model for deleting memories."""

@@ -1,7 +1,9 @@
 """Long-term memory facade with declarative + event backends."""
 
+import asyncio # For parallel execution in Hybrid Search
 import datetime
 import logging
+from datetime import timezone # For FTS Episode created_at default value (UTC)
 from collections.abc import Iterable
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4, uuid5
@@ -24,6 +26,8 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+# Converts content to SANITIZED_property_u5f_content
+from memmachine_server.common.vector_graph_store.data_types import mangle_property_name
 from memmachine_server.common.vector_store import (
     VectorStore,
     VectorStoreCollection,
@@ -251,6 +255,7 @@ class LongTermMemory:
         expand_context: int = 0,
         score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
+        use_fts: bool = False,  # Full-Text Search flag for hybrid search
     ) -> list[tuple[float, Episode]]:
         """Score-thresholded query.
 
@@ -262,6 +267,16 @@ class LongTermMemory:
         which silently inverted to "drop everything" under euclidean.
         """
         if self._backend == "declarative":
+            # Full-Text Search is enabled
+            if use_fts:
+                # Perform hybrid search: Vector + Full-Text Search with dedup
+                return await self._search_scored_hybrid(
+                    query,
+                    num_episodes_limit=num_episodes_limit,
+                    expand_context=expand_context,
+                    score_threshold=score_threshold,
+                    property_filter=property_filter,
+                )
             return await self._search_scored_declarative(
                 query,
                 num_episodes_limit=num_episodes_limit,
@@ -276,6 +291,173 @@ class LongTermMemory:
             score_threshold=score_threshold,
             property_filter=property_filter,
         )
+
+    async def _search_scored_hybrid(
+        self,
+        query: str,
+        *,
+        num_episodes_limit: int,
+        expand_context: int,
+        score_threshold: float | None,
+        property_filter: FilterExpr | None,
+    ) -> list[tuple[float, Episode]]:
+        """Hybrid search: Vector (reranked via RRF) + FTS Top-10 with dedup.
+
+        Vector search results (already reranked with RRF by _search_scored_declarative)
+        are combined with FTS Top-10 results after removing duplicates (by episode uid).
+
+        Returns up to num_episodes_limit + 10 results (e.g., 50 + 10 = 60 max).
+        """
+        assert self._declarative_memory is not None
+
+        # 1. Run Vector Search and FTS in parallel
+        # _search_scored_declarative already returns RRF reranked results
+        # _search_fts over-fetches 5x for FTS Top-10 (50 items)
+        vector_results, fts_results_full = await asyncio.gather(
+            self._search_scored_declarative(
+                query,
+                num_episodes_limit=num_episodes_limit,
+                expand_context=expand_context,
+                score_threshold=None, # Apply threshold after merge
+                property_filter=property_filter,
+            ),
+            self._search_fts(
+                query,
+                num_episodes_limit=10,  # FTS Top-10 (over-fetch 5x = 50 internally)
+            ),
+        )
+
+        # 2. Limit FTS results to Top-10 by score (descending order)
+        fts_top_10 = fts_results_full[:10]
+
+        # 3. Merge FTS Top-10 into Vector results with dedup by episode uid
+        # Preserve vector result order, append unique FTS results
+        merged_results = list(vector_results)
+        seen_uids = {ep.uid for _, ep in merged_results}
+
+        for score, episode in fts_top_10:
+            if episode.uid not in seen_uids:
+                merged_results.append((score, episode))
+                seen_uids.add(episode.uid)
+
+        # 4. Apply score threshold
+        if score_threshold is not None:
+            merged_results = [
+                (score, episode) for score, episode in merged_results
+                if score >= score_threshold
+            ]
+        return merged_results
+
+    @staticmethod
+    def _escape_lucene_query(query: str) -> str:
+        r"""
+        Escape Lucene special characters in FTS query.
+        Lucene special characters: + - = && || > < ! ( ) { } [ ] ^ " ~ * ? : \ /
+        """
+        lucene_special_chars = ['+', '-', '=', '&', '|', '>', '<', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', ':', '\\', '/']
+        escaped_query = query
+        for char in lucene_special_chars:
+            escaped_query = escaped_query.replace(char, f'\\{char}')
+        return escaped_query
+
+    async def _search_fts(
+        self,
+        query: str,
+        *,
+        num_episodes_limit: int,
+    ) -> list[tuple[float, Episode]]:
+        """Search using Neo4j Full-Text Search only."""
+        assert self._declarative_memory is not None
+
+        long_term_memory = self._declarative_memory
+        vector_graph_store = long_term_memory._vector_graph_store
+        derivative_collection = long_term_memory._derivative_collection
+
+        # Generate FTS index name (auto-created during ingest)
+        sanitized_derivative_collection = vector_graph_store._sanitize_name(derivative_collection)
+        fts_index_name = f"fts_{sanitized_derivative_collection}_content"
+
+        logger.info(f"FTS Search: index={fts_index_name}, query={query}")
+
+        # Neo4j FTS query
+        driver = vector_graph_store._driver
+        fts_query_terms = query.lower().split()
+        # Escape Lucene special characters
+        fts_query_string = " ".join(self._escape_lucene_query(term) for term in fts_query_terms)
+
+        # Use sanitized property name
+        # FTS index is on content field, stored as SANITIZED_property_u5f_content after mangle_property_name
+        sanitized_content = vector_graph_store._sanitize_name(mangle_property_name("content"))
+
+        # FTS query: Follow DERIVED_FROM relation to get Episode Node uid directly
+        # Returns same Episode.uid as Vector Search for correct dedup
+        derivative_episode_relation = long_term_memory._derived_from_relation
+        sanitized_derived_from_relation = vector_graph_store._sanitize_name(derivative_episode_relation)
+        # Episode label also needs sanitization (same as collection name)
+        sanitized_episode_collection = vector_graph_store._sanitize_name(long_term_memory._episode_collection)
+
+        records, _, _ = await driver.execute_query(
+            f"""
+            CALL db.index.fulltext.queryNodes(
+                '{fts_index_name}',
+                $query,
+                {{ limit: $limit }}
+            )
+            YIELD node AS derivative, score
+            MATCH (derivative)-[:{sanitized_derived_from_relation}]->(episode:{sanitized_episode_collection})
+            RETURN episode.uid AS uid,
+                   derivative.{sanitized_content} AS content,
+                   derivative.SANITIZED_property_u5f_filterable_u5f_metadata_u2e_lme_u5f_session_u5f_id AS lme_session_id,
+                   derivative.SANITIZED_property_u5f_filterable_u5f_metadata_u2e_lme_u5f_turn_u5f_idx AS lme_turn_idx,
+                   score
+            ORDER BY score DESC
+            """,
+            query=fts_query_string,
+            limit=num_episodes_limit * 5,
+        )
+
+        # Convert to Episode objects
+        # FTS returns only content, so timestamp and producer_id are set to empty/default values
+        fts_episodes = []
+        for record in records:
+            uid = record.get("uid")
+            if uid:
+                content = record.get("content", "")
+                # Get metadata explicitly from Neo4j (using sanitized property names)
+                lme_session_id = record.get("lme_session_id")
+                lme_turn_idx = record.get("lme_turn_idx")
+                metadata = {}
+                if lme_session_id is not None and lme_turn_idx is not None:
+                    metadata["lme_session_id"] = lme_session_id
+                    metadata["lme_turn_idx"] = lme_turn_idx
+                # Extract source from content (format: "User: ..." or "Assistant: ...")
+                producer_id = ""
+                producer_role = ""
+                if content.startswith("User:"):
+                    producer_id = "User"
+                    producer_role = "user"
+                elif content.startswith("Assistant:"):
+                    producer_id = "Assistant"
+                    producer_role = "assistant"
+
+                episode = Episode(
+                    uid=uid,  # Now Episode Node uid (session_id:turn_idx format)
+                    sequence_num=0,
+                    session_key="",
+                    episode_type=EpisodeType.MESSAGE,
+                    content_type=ContentType.STRING,
+                    content=content,
+                    created_at=datetime.datetime.now(timezone.utc),  # FTS has no timestamp info (use current time)
+                    producer_id=producer_id,
+                    producer_role=producer_role,
+                    produced_for_id=None,
+                    metadata=metadata,  # Use metadata from Neo4j
+                    filterable_metadata=None,
+                )
+                fts_episodes.append((record.get("score", 0.0), episode))
+
+        logger.info(f"FTS returned {len(fts_episodes)} results")
+        return fts_episodes
 
     async def _search_scored_declarative(
         self,
