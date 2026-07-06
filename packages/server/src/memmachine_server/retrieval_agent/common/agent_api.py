@@ -42,6 +42,7 @@ class QueryParam(BaseModel):
     score_threshold: float = -float("inf")
     property_filter: FilterExpr | None = None
     memory: InstanceOf[EpisodicMemory]
+    use_fts: bool = False   # Full-Text Search flag for hybrid search 
 
 
 class AgentToolBaseParam(BaseModel):
