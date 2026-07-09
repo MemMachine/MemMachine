@@ -294,7 +294,7 @@ def test_milvus_conf_reads_env(monkeypatch):
     monkeypatch.setenv("MILVUS_DB_NAME", "memory")
     conf = MilvusConf(
         uri="$MILVUS_URI",
-        token="${MILVUS_TOKEN}",
+        token=SecretStr("${MILVUS_TOKEN}"),
         db_name="$MILVUS_DB_NAME",
     )
     assert conf.uri == "https://example.zillizcloud.com"

@@ -260,19 +260,14 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
                 return
 
             entities = [self._build_entity(record) for record in records]
-            primary_ids = [entity[_ID_FIELD] for entity in entities]
 
-            def _replace() -> None:
-                self._client.delete(
-                    collection_name=self._collection_name,
-                    ids=primary_ids,
-                )
+            def _insert() -> None:
                 self._client.insert(
                     collection_name=self._collection_name,
                     data=entities,
                 )
 
-            await asyncio.to_thread(_replace)
+            await asyncio.to_thread(_insert)
 
     @override
     async def query(
@@ -593,7 +588,7 @@ class MilvusVectorStore(VectorStore):
                 self._client.get,
                 collection_name=registry_collection_name,
                 ids=[name],
-                output_fields=[self._REGISTRY_CONFIG],
+                output_fields=[_ID_FIELD, self._REGISTRY_CONFIG],
             )
         except MilvusException as exc:
             if MilvusVectorStore._is_not_found_error(exc):
@@ -614,7 +609,7 @@ class MilvusVectorStore(VectorStore):
                 self._client.query,
                 collection_name=registry_collection_name,
                 filter=filter_expr,
-                output_fields=[self._REGISTRY_CONFIG],
+                output_fields=[_ID_FIELD, self._REGISTRY_CONFIG],
             )
             rows = list(rows)
             if not rows:

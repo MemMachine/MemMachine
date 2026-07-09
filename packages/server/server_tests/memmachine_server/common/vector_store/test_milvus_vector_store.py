@@ -106,6 +106,31 @@ class TestCollectionLifecycle:
         await store.delete_collection(namespace=NAMESPACE, name="lifecycle")
 
     @pytest.mark.asyncio
+    async def test_registry_lookup_requests_primary_key(self, store, monkeypatch):
+        await store.create_collection(
+            namespace=NAMESPACE,
+            name="registry_fields",
+            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+        )
+
+        captured_output_fields = None
+        original_get = MilvusClient.get
+
+        def tracked_get(self, *args, **kwargs):
+            nonlocal captured_output_fields
+            captured_output_fields = kwargs.get("output_fields")
+            return original_get(self, *args, **kwargs)
+
+        monkeypatch.setattr(MilvusClient, "get", tracked_get)
+        coll = await store.open_collection(namespace=NAMESPACE, name="registry_fields")
+
+        assert coll is not None
+        assert captured_output_fields is not None
+        assert "id" in captured_output_fields
+        assert "config" in captured_output_fields
+        await store.delete_collection(namespace=NAMESPACE, name="registry_fields")
+
+    @pytest.mark.asyncio
     async def test_duplicate_name_raises(self, store, collection):
         with pytest.raises(VectorStoreCollectionAlreadyExistsError):
             await store.create_collection(
@@ -281,6 +306,40 @@ class TestUpsertAndQuery:
             property_filter=IsNull(field="name"),
         )
         assert {match.record.uuid for match in results[0].matches} == {record.uuid}
+
+    @pytest.mark.asyncio
+    async def test_upsert_insert_failure_preserves_existing_record(
+        self, collection, monkeypatch
+    ):
+        old_vector = _normalize([1.0, 0.0, 0.0])
+        new_vector = _normalize([0.0, 1.0, 0.0])
+        record = _make_record(vector=old_vector, properties={"name": "old"})
+        await collection.upsert(records=[record])
+
+        def fail_insert(*args, **kwargs):
+            raise RuntimeError("insert failed")
+
+        monkeypatch.setattr(collection._client, "insert", fail_insert)
+
+        with pytest.raises(RuntimeError, match="insert failed"):
+            await collection.upsert(
+                records=[
+                    Record(
+                        uuid=record.uuid,
+                        vector=new_vector,
+                        properties={"name": "new"},
+                    )
+                ]
+            )
+
+        records = await collection.get(
+            record_uuids=[record.uuid],
+            return_vector=True,
+            return_properties=True,
+        )
+        assert len(records) == 1
+        assert records[0].vector == old_vector
+        assert records[0].properties == {"name": "old"}
 
 
 class TestFilters:
