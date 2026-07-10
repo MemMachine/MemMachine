@@ -309,15 +309,15 @@ wheels = [
 
 [[package]]
 name = "boto3-stubs"
-version = "1.43.13"
+version = "1.43.45"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/57/52ca31c8cd3356e7bdefb9e45cbb6ce558404f700cf46468b06a386dc16a/boto3_stubs-1.43.13.tar.gz", hash = "sha256:6e301825b4082dd8d121cf2aa4ac7d9c654e9bb3333b3fc1d1000f4ec4a70a51", size = 102684, upload-time = "2026-05-21T22:51:10.303Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/3c/b373a08039ec260a103709d58c226e5a85a2af859e7a010cea7b18105874/boto3_stubs-1.43.45.tar.gz", hash = "sha256:967d5d2bb9ac7e24f2ca8bf90f646c2de3ce5207e45723fb794f02d48fa26e48", size = 103212, upload-time = "2026-07-09T21:05:45.964Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/d5/6fb0120066ceed984cf0de24d038b890e369ed052c3fdcd13fd311525fe0/boto3_stubs-1.43.13-py3-none-any.whl", hash = "sha256:993a1a0b2fcd7e426b0a49473aa6c10da3cdee5a6858d9db6a7940e11d5cf370", size = 70667, upload-time = "2026-05-21T22:51:03.063Z" },
+    { url = "https://files.pythonhosted.org/packages/12/a0/bfe5ee5b62b42bbc3c138f56a64d0510f227c98d840f3fb9f4db3da476a6/boto3_stubs-1.43.45-py3-none-any.whl", hash = "sha256:696b4a92120ad2f8b53a125240af49522ae8eb84c8b73caa45a9d2df10963f8a", size = 70961, upload-time = "2026-07-09T21:05:41.849Z" },
 ]
 
 [[package]]
@@ -1964,7 +1964,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "babel", specifier = ">=2.18.0" },
     { name = "boto3", specifier = ">=1.40.40" },
-    { name = "boto3-stubs", specifier = "==1.43.13" },
+    { name = "boto3-stubs", specifier = "==1.43.45" },
     { name = "cohere", specifier = ">=5.20.0" },
     { name = "dotenv", specifier = ">=0.9.9" },
     { name = "fastapi", specifier = ">=0.116.1" },
@@ -1975,7 +1975,7 @@ requires-dist = [
     { name = "json-repair", specifier = ">=0.54" },
     { name = "langchain-aws", specifier = ">=0.2.33" },
     { name = "langchain-text-splitters", specifier = ">=1.1.1" },
-    { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.63.0,<1.86" },
+    { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.63.0,<1.92" },
     { name = "memmachine-common", editable = "packages/common" },
     { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1" },
     { name = "neo4j", specifier = ">=5.28.2" },
