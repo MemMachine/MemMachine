@@ -101,6 +101,14 @@ extra-paths = ["../common/src", "../client/src"]
 [tool.ty.src]
 exclude = ["build/**"]
 
+[tool.ty.analysis]
+# spaCy is an optional dependency (the ``multihop`` dependency-group) and is not
+# installed in the type-checking environments (notably the Python 3.14 matrix,
+# where spaCy 3.8.x has no wheels). Suppress unresolved-import for spaCy so the
+# static checks pass without it; the decomposer falls back to LLM splitting at
+# runtime when spaCy is absent.
+allowed-unresolved-imports = ["spacy.**"]
+
 [tool.ruff]
 extend = "../../pyproject.toml"
 target-version = "py312"

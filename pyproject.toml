@@ -5,6 +5,7 @@ members = ["packages/client", "packages/common", "packages/server"]
 memmachine-common = { workspace = true }
 memmachine-server = { workspace = true }
 memmachine-client = { workspace = true }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 
 [tool.uv]
 constraint-dependencies = [
@@ -33,6 +34,16 @@ dev = [
     "tomli>=2.4.1",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
+]
+# Optional spaCy deps for the non-LLM multi-hop decomposer. Not a hard runtime
+# dependency of memmachine-server: when spaCy is absent, RaragQueryAgent falls
+# back to LLM-based query splitting. Kept out of the server package's install
+# deps because (1) spaCy model wheels aren't on PyPI (pip can't resolve them)
+# and (2) spaCy 3.8.x has no cp314 wheels, so they must be skipped on 3.14.
+# Install with: uv sync --group multihop
+multihop = [
+    "spacy>=3.8.0,<3.9.0; python_version < '3.14'",
+    "en-core-web-sm; python_version < '3.14'",
 ]
 
 [tool.ruff]
