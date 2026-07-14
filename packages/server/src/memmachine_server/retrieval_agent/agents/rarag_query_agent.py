@@ -6,6 +6,8 @@ combined queries from the top overlaps, deduplicates, and returns up to 200
 episodes. Positioned as an optimized drop-in for the ChainOfQueryAgent slot.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import time
@@ -23,16 +25,19 @@ from memmachine_server.retrieval_agent.common.agent_api import (
 logger = logging.getLogger(__name__)
 
 # Non-LLM hop decomposer (embedded helper for RaragQueryAgent).
+# Optional (``multihop`` dependency-group): when spaCy is unavailable this stays
+# ``None`` and RaragQueryAgent falls back to LLM-based query splitting.
+MultiHopDecomposer: type[MultiHopDecomposer] | None = None
 try:
     from memmachine_server.retrieval_agent.agents.decomposer.decomposer import (
         MultiHopDecomposer,
     )
+
     DECOMPOSER_AVAILABLE = True
     logger.info("Decomposer imported successfully!")
-except ImportError as e:
+except ImportError:
     DECOMPOSER_AVAILABLE = False
-    MultiHopDecomposer = None
-    logger.error("Decomposer import FAILED: %s", e)
+    logger.exception("Decomposer import FAILED")
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
@@ -175,10 +180,15 @@ class RaragQueryAgent(AgentToolBase):
         )
         # Hop-splitting strategy: non-LLM decomposer when configured and
         # available, otherwise the original LLM-based splitting.
-        self._use_decomposer = bool(
-            (param.extra_params or {}).get("multi_hop_decomposer", False)
-        ) and DECOMPOSER_AVAILABLE
-        self._decomposer = MultiHopDecomposer() if DECOMPOSER_AVAILABLE else None
+        self._use_decomposer = (
+            bool((param.extra_params or {}).get("multi_hop_decomposer", False))
+            and DECOMPOSER_AVAILABLE
+        )
+        self._decomposer = (
+            MultiHopDecomposer()
+            if DECOMPOSER_AVAILABLE and MultiHopDecomposer is not None
+            else None
+        )
         # Fixed per-sub-search limit for A, A->C, and combined-query searches,
         # independent of the user-configured top-k limit (query.limit).
         self._sub_search_limit = int(
@@ -186,9 +196,7 @@ class RaragQueryAgent(AgentToolBase):
         )
         logger.info(
             "RaragQueryAgent hop splitting: %s (sub_limit=%d)",
-            "non-LLM decomposer"
-            if self._use_decomposer
-            else "LLM-based",
+            "non-LLM decomposer" if self._use_decomposer else "LLM-based",
             self._sub_search_limit,
         )
 
@@ -241,13 +249,71 @@ class RaragQueryAgent(AgentToolBase):
         logger.info("Step 0: Split using LLM into %d sub-queries", len(sub_queries))
         return sub_queries, input_token, output_token, llm_time
 
+    async def _run_combined_queries(
+        self,
+        policy: QueryPolicy,
+        query: QueryParam,
+        query_c: str,
+        episodes_a: list[Episode],
+        overlap_uids: list[str],
+        perf_metrics: dict[str, Any],
+    ) -> list[Episode]:
+        """Run combined queries (overlap content + C) and collect results.
+
+        Sequential, not parallel: concurrent reranker calls raise per-search
+        latency (server contention) enough to offset the concurrency gain.
+        """
+        episodes_a_by_uid = {ep.uid: ep for ep in episodes_a}
+        # Overlap cap = 400 / sub_search_limit: keeps raw results (overlap *
+        # sub_search_limit) near 400, so ~half dedup lands near the 200 cap.
+        # episodes_a is in reranker-score order, so these are the top overlaps.
+        overlap_limit = (
+            int(200 / (self._sub_search_limit / 2)) if self._sub_search_limit > 0 else 0
+        )
+        overlap_uids_limited = overlap_uids[:overlap_limit]
+
+        logger.info(
+            "Step 3: Searching with %d combined queries (cap=%d, total overlaps=%d, sequentially)",
+            len(overlap_uids_limited),
+            overlap_limit,
+            len(overlap_uids),
+        )
+        combined_query_results: list[Episode] = []
+        for i, overlap_uid in enumerate(overlap_uids_limited):
+            overlap_content = episodes_a_by_uid[overlap_uid].content
+            combined_query = f"{overlap_content} {query_c}"
+            preview = (
+                combined_query[:100] + "..."
+                if len(combined_query) > 100
+                else combined_query
+            )
+            logger.info(
+                "Step 3.%d: Combined query (len=%d): '%s'",
+                i + 1,
+                len(combined_query),
+                preview,
+            )
+
+            perf_metrics["queries"].append(combined_query)
+            param_combined = query.model_copy()
+            param_combined.query = combined_query
+            param_combined.limit = self._sub_search_limit
+            episodes_combined, perf_combined = await super().do_query(
+                policy, param_combined
+            )
+            perf_metrics = self._update_perf_metrics(perf_combined, perf_metrics)
+            combined_query_results.extend(episodes_combined)
+        return combined_query_results
+
     async def do_query(
         self,
         policy: QueryPolicy,
         query: QueryParam,
     ) -> tuple[list[Episode], dict[str, Any]]:
         # Truncate query for logging to avoid excessive output
-        query_preview = query.query[:200] + "..." if len(query.query) > 200 else query.query
+        query_preview = (
+            query.query[:200] + "..." if len(query.query) > 200 else query.query
+        )
         logger.debug("CALLING %s with query: %s", self.agent_name, query_preview)
         perf_metrics: dict[str, Any] = {
             "queries": [],
@@ -264,20 +330,34 @@ class RaragQueryAgent(AgentToolBase):
         output_token = 0
 
         use_decomposer_result = False
-        if self._use_decomposer:
+        if self._use_decomposer and self._decomposer is not None:
             try:
                 result = self._decomposer.decompose(query.query)
                 if result.is_multi_hop:
-                    sub_queries = [result.first_hop, result.second_hop_template.replace("[HOP]", result.first_hop)]
-                    logger.info("Step 0: Decomposed using non-LLM decomposer: %s -> %s", result.first_hop, result.second_hop_template)
+                    sub_queries = [
+                        result.first_hop,
+                        result.second_hop_template.replace("[HOP]", result.first_hop),
+                    ]
+                    logger.info(
+                        "Step 0: Decomposed using non-LLM decomposer: %s -> %s",
+                        result.first_hop,
+                        result.second_hop_template,
+                    )
                     use_decomposer_result = True
                 else:
-                    logger.info("Step 0: Decomposer says not multi-hop, falling back to LLM")
+                    logger.info(
+                        "Step 0: Decomposer says not multi-hop, falling back to LLM"
+                    )
             except Exception as e:
                 logger.warning("Step 0: Decomposer failed, falling back to LLM: %s", e)
 
         if not use_decomposer_result:
-            sub_queries, input_token, output_token, llm_time = await self._split_with_llm(query)
+            (
+                sub_queries,
+                input_token,
+                output_token,
+                llm_time,
+            ) = await self._split_with_llm(query)
             perf_metrics["llm_time"] += llm_time
 
         # Strategy:
@@ -302,7 +382,11 @@ class RaragQueryAgent(AgentToolBase):
         query_c = sub_queries[1] if len(sub_queries) >= 2 else None
         query_original = query.query
 
-        logger.info("Step 1: Searching with A='%s' and A->C='%s' (in parallel)", query_a, query_original)
+        logger.info(
+            "Step 1: Searching with A='%s' and A->C='%s' (in parallel)",
+            query_a,
+            query_original,
+        )
 
         # Search with A and A->C in parallel
         perf_metrics["queries"].append(query_a)
@@ -317,8 +401,7 @@ class RaragQueryAgent(AgentToolBase):
 
         # asyncio.gather returns list of results, each result is (episodes, perf_metrics) tuple
         results = await asyncio.gather(
-            super().do_query(policy, param_a),
-            super().do_query(policy, param_original)
+            super().do_query(policy, param_a), super().do_query(policy, param_original)
         )
         episodes_a, perf_a = results[0]
         episodes_original, perf_original = results[1]
@@ -327,51 +410,32 @@ class RaragQueryAgent(AgentToolBase):
         perf_metrics = self._update_perf_metrics(perf_a, perf_metrics)
         perf_metrics = self._update_perf_metrics(perf_original, perf_metrics)
 
-        logger.info("Step 1: A=%d episodes, A->C=%d episodes (parallel search complete)", len(episodes_a), len(episodes_original))
+        logger.info(
+            "Step 1: A=%d episodes, A->C=%d episodes (parallel search complete)",
+            len(episodes_a),
+            len(episodes_original),
+        )
 
-        # Step 2: Find overlapping episodes between A and A->C by UID
-        # Build a set of UIDs from episodes_original for O(1) lookup
+        # Step 2: Find overlapping episodes between A and A->C by UID.
+        # Build a set of UIDs from episodes_original for O(1) lookup.
         episodes_original_uids = {ep.uid for ep in episodes_original}
-        # Preserve order from episodes_a (instead of using set intersection which is non-deterministic)
-        overlap_uids = []
-        for ep in episodes_a:
-            if ep.uid in episodes_original_uids:
-                overlap_uids.append(ep.uid)
+        # Preserve order from episodes_a (instead of using set intersection which is non-deterministic).
+        overlap_uids = [ep.uid for ep in episodes_a if ep.uid in episodes_original_uids]
 
-        logger.info("Step 2: Found %d overlapping UIDs between A and A->C", len(overlap_uids))
+        logger.info(
+            "Step 2: Found %d overlapping UIDs between A and A->C", len(overlap_uids)
+        )
 
         # Step 3: For each overlapping episode (by UID), create combined query:
         # overlap_content + C, and search sequentially.
-        # Sequential, not parallel: concurrent reranker calls raise per-search
-        # latency (server contention) enough to offset the concurrency gain.
         if query_c and overlap_uids:
-            # Map UID -> episode for episodes_a (combined-query content source).
-            episodes_a_by_uid = {ep.uid: ep for ep in episodes_a}
-            # Overlap cap = 400 / sub_search_limit: keeps raw results (overlap *
-            # sub_search_limit) near 400, so ~half dedup lands near the 200 cap.
-            # episodes_a is in reranker-score order, so these are the top overlaps.
-            overlap_limit = (
-                int(200 / (self._sub_search_limit / 2))
-                if self._sub_search_limit > 0
-                else 0
+            combined_query_results = await self._run_combined_queries(
+                policy, query, query_c, episodes_a, overlap_uids, perf_metrics
             )
-            overlap_uids_limited = overlap_uids[:overlap_limit]
-
-            logger.info("Step 3: Searching with %d combined queries (cap=%d, total overlaps=%d, sequentially)", len(overlap_uids_limited), overlap_limit, len(overlap_uids))
-            for i, overlap_uid in enumerate(overlap_uids_limited):
-                overlap_content = episodes_a_by_uid[overlap_uid].content
-                combined_query = f"{overlap_content} {query_c}"
-                logger.info("Step 3.%d: Combined query (len=%d): '%s'", i+1, len(combined_query), combined_query[:100] + "..." if len(combined_query) > 100 else combined_query)
-
-                perf_metrics["queries"].append(combined_query)
-                param_combined = query.model_copy()
-                param_combined.query = combined_query
-                param_combined.limit = self._sub_search_limit
-                episodes_combined, perf_combined = await super().do_query(policy, param_combined)
-                perf_metrics = self._update_perf_metrics(perf_combined, perf_metrics)
-                combined_query_results.extend(episodes_combined)
         else:
-            logger.info("Step 3: Skipping combined query search (no C query or no overlap)")
+            logger.info(
+                "Step 3: Skipping combined query search (no C query or no overlap)"
+            )
 
         self._update_perf_metrics(
             {
@@ -382,26 +446,37 @@ class RaragQueryAgent(AgentToolBase):
         )
 
         # Step 5: Deduplicate combined query results by UID
-        logger.info("Step 5: Deduplicating %d combined query results by UID", len(combined_query_results))
+        logger.info(
+            "Step 5: Deduplicating %d combined query results by UID",
+            len(combined_query_results),
+        )
 
         # Fallback: if there were no overlaps (no combined queries), return
         # the A->C (original query) results instead of an empty set, so a
         # zero-overlap multi-hop question still yields memories.
-        dedup_source = combined_query_results if combined_query_results else episodes_original
+        dedup_source = combined_query_results or episodes_original
 
         # Deduplicate by episode UID (keep first occurrence by created_at)
         seen_uids = set()
         deduplicated = []
-        for ep in sorted(dedup_source, key=lambda x: x.created_at):  # Sort by created_at first
+        for ep in sorted(
+            dedup_source, key=lambda x: x.created_at
+        ):  # Sort by created_at first
             if ep.uid not in seen_uids:
                 seen_uids.add(ep.uid)
                 deduplicated.append(ep)
 
-        logger.info("Step 5: After deduplication, %d episodes remain", len(deduplicated))
+        logger.info(
+            "Step 5: After deduplication, %d episodes remain", len(deduplicated)
+        )
 
         # Step 6: Return the deduplicated combined results capped at 200. No
         # 2nd-stage reranking. The overlap cap (Step 3) is sized so that, after
         # ~half dedup, the result lands near this fixed 200 cap.
         final_episodes = deduplicated[:200]
-        logger.info("Step 6: Returning %d episodes (cap=200, dedup=%d)", len(final_episodes), len(deduplicated))
+        logger.info(
+            "Step 6: Returning %d episodes (cap=200, dedup=%d)",
+            len(final_episodes),
+            len(deduplicated),
+        )
         return final_episodes, perf_metrics

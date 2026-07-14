@@ -370,7 +370,10 @@ async def init_agent(
         "multi_hop_sub_limit": multi_hop_sub_limit,
     }
     param: AgentToolBaseParam = AgentToolBaseParam(
-        model=model, children_tools=[memory_agent], extra_params=split_extra_params, reranker=reranker
+        model=model,
+        children_tools=[memory_agent],
+        extra_params=split_extra_params,
+        reranker=reranker,
     )
 
     # The ChainOfQueryAgent slot: RaragQueryAgent (optimized) when configured,
