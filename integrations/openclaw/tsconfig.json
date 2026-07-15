@@ -3,14 +3,14 @@
   "compilerOptions": {
     "target": "ES2021",
     "module": "ESNext",
-    "moduleResolution": "node",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "lib": ["ES2021", "DOM"],
-    "types": [],
+    "types": ["jest"],
     "baseUrl": ".",
     "paths": {
       "@sinclair/typebox": ["types/shims/typebox"],
-      "@memmachine/client": ["types/shims/memmachine-client"],
-      "openclaw/plugin-sdk": ["types/shims/openclaw-plugin-entry"]
+      "@memmachine/client": ["types/shims/memmachine-client"]
     },
     "esModuleInterop": true,
     "resolveJsonModule": true,

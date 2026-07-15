@@ -2,17 +2,15 @@ import { Type } from "@sinclair/typebox";
 import MemMachineClient, {
   type AddMemoryResult,
   type EpisodicMemory,
+  type ListEpisodicMemory,
+  type ListMemoriesResult,
   type MemoryType,
   type SearchMemoriesResult,
   type SemanticMemory,
 } from "@memmachine/client";
-import {
-  jsonResult,
-  type MemoryPromptSectionBuilder,
-  type OpenClawPluginApi,
-  readNumberParam,
-  readStringParam,
-} from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { jsonResult, readNumberParam, readStringParam } from "openclaw/plugin-sdk/core";
+import type { MemoryPromptSectionBuilder } from "openclaw/plugin-sdk/memory-host-core";
 
 type PluginConfig = {
   apiKey?: string;
@@ -280,6 +278,13 @@ function normalizeScope(value: string | undefined, fallback: MemoryScope): Memor
   return fallback;
 }
 
+function normalizeToolParams(params: unknown): Record<string, unknown> {
+  if (!params || typeof params !== "object") {
+    return {};
+  }
+  return params as Record<string, unknown>;
+}
+
 function resolveMemoryHandle(api: OpenClawPluginApi, ctx: { sessionKey?: string }): MemoryHandle {
   const cfg = resolvePluginConfig(api);
   const { orgId, projectId } = requireProjectConfig(cfg);
@@ -309,7 +314,7 @@ function toMetadata(
   return merged;
 }
 
-function extractEpisodicEpisodes(result: SearchMemoriesResult | null): EpisodicMemory[] {
+function extractSearchEpisodicEpisodes(result: SearchMemoriesResult | null): EpisodicMemory[] {
   const episodic = result?.content?.episodic_memory;
   if (!episodic) {
     return [];
@@ -319,7 +324,13 @@ function extractEpisodicEpisodes(result: SearchMemoriesResult | null): EpisodicM
   return [...longTerm, ...shortTerm].filter(Boolean);
 }
 
-function extractSemanticMemories(result: SearchMemoriesResult | null): SemanticMemory[] {
+function extractListEpisodicMemories(result: ListMemoriesResult | null): ListEpisodicMemory[] {
+  return result?.content?.episodic_memory ?? [];
+}
+
+function extractSemanticMemories(
+  result: SearchMemoriesResult | ListMemoriesResult | null,
+): SemanticMemory[] {
   return result?.content?.semantic_memory ?? [];
 }
 
@@ -343,7 +354,7 @@ async function listMemories(params: {
   sessionKey?: string;
   pageSize?: number;
   pageNum?: number;
-}): Promise<{ episodic: EpisodicMemory[]; semantic: SemanticMemory[] } | null> {
+}): Promise<{ episodic: ListEpisodicMemory[]; semantic: SemanticMemory[] } | null> {
   const { handle, scope, sessionKey, pageSize, pageNum } = params;
   const filter = buildScopeFilter(scope, sessionKey, handle.config.userId);
   const listOptions = {
@@ -362,7 +373,10 @@ async function listMemories(params: {
       type: "semantic",
     });
 
-    const episodic = dedupeBy(extractEpisodicEpisodes(episodicResult), (entry) => entry.uid);
+    const episodic = dedupeBy(
+      extractListEpisodicMemories(episodicResult),
+      (entry) => entry.uid,
+    );
     const semantic = dedupeBy(
       extractSemanticMemories(semanticResult),
       (entry) => entry.metadata?.id ?? "",
@@ -542,14 +556,15 @@ export default {
         description: "Search memories with scope: session | all.",
         parameters: MemorySearchSchema,
         async execute(_toolCallId, params) {
-          const query = readStringParam(params, "query", { required: true });
-          const scope = normalizeScope(readStringParam(params, "scope"), "all");
+          const toolParams = normalizeToolParams(params);
+          const query = readStringParam(toolParams, "query", { required: true });
+          const scope = normalizeScope(readStringParam(toolParams, "scope"), "all");
           if (scope === "session" && !ctx.sessionKey) {
             return jsonResult({ error: "Session scope requires sessionKey" });
           }
-          const limit = readNumberParam(params, "limit") ?? cfg.topK ?? DEFAULT_TOP_K;
+          const limit = readNumberParam(toolParams, "limit") ?? cfg.topK ?? DEFAULT_TOP_K;
           const minScore =
-            readNumberParam(params, "minScore") ??
+            readNumberParam(toolParams, "minScore") ??
             cfg.searchThreshold ??
             DEFAULT_SEARCH_THRESHOLD;
 
@@ -579,13 +594,14 @@ export default {
         description: "Store memory in the current session (run_id).",
         parameters: MemoryStoreSchema,
         async execute(_toolCallId, params) {
-          const text = readStringParam(params, "text", { required: true });
+          const toolParams = normalizeToolParams(params);
+          const text = readStringParam(toolParams, "text", { required: true });
           if (!ctx.sessionKey) {
             return jsonResult({ error: "No active session for memory_store" });
           }
-          const role = readStringParam(params, "role");
-          const types = params.types as MemoryType[] | undefined;
-          const metadata = (params.metadata ?? {}) as Record<string, string>;
+          const role = readStringParam(toolParams, "role");
+          const types = toolParams.types as MemoryType[] | undefined;
+          const metadata = (toolParams.metadata ?? {}) as Record<string, string>;
           const handle = resolveMemoryHandle(api, { sessionKey: ctx.sessionKey });
           const producer = role ?? "user";
 
@@ -612,14 +628,15 @@ export default {
         description: "Fetch memory by ID.",
         parameters: MemoryGetSchema,
         async execute(_toolCallId, params) {
-          const id = readStringParam(params, "id", { required: true });
-          const type = readStringParam(params, "type") ?? "auto";
+          const toolParams = normalizeToolParams(params);
+          const id = readStringParam(toolParams, "id", { required: true });
+          const type = readStringParam(toolParams, "type") ?? "auto";
           const handle = resolveMemoryHandle(api, { sessionKey: ctx.sessionKey });
 
           const idFilter = `uid = '${sanitizeFilterValue(id)}'`;
           const metadataFilter = `metadata.id = '${sanitizeFilterValue(id)}'`;
 
-          let episodic: EpisodicMemory[] = [];
+          let episodic: ListEpisodicMemory[] = [];
           let semantic: SemanticMemory[] = [];
 
           if (type === "episodic" || type === "auto") {
@@ -628,7 +645,7 @@ export default {
               filter: idFilter,
               page_size: 1,
             });
-            episodic = extractEpisodicEpisodes(result);
+            episodic = extractListEpisodicMemories(result);
           }
 
           if (type === "semantic" || (type === "auto" && episodic.length === 0)) {
@@ -653,13 +670,14 @@ export default {
         description: "List memories by scope: session | all (deduped).",
         parameters: MemoryListSchema,
         async execute(_toolCallId, params) {
-          const scope = normalizeScope(readStringParam(params, "scope"), "all");
+          const toolParams = normalizeToolParams(params);
+          const scope = normalizeScope(readStringParam(toolParams, "scope"), "all");
           if (scope === "session" && !ctx.sessionKey) {
             return jsonResult({ error: "Session scope requires sessionKey" });
           }
           const pageSize =
-            readNumberParam(params, "pageSize", { integer: true }) ?? DEFAULT_PAGE_SIZE;
-          const pageNum = readNumberParam(params, "pageNum", { integer: true }) ?? 0;
+            readNumberParam(toolParams, "pageSize", { integer: true }) ?? DEFAULT_PAGE_SIZE;
+          const pageNum = readNumberParam(toolParams, "pageNum", { integer: true }) ?? 0;
           const handle = resolveMemoryHandle(api, { sessionKey: ctx.sessionKey });
           const result = await listMemories({
             handle,
@@ -682,11 +700,12 @@ export default {
         description: "Forget memory by memoryId or search+forget (high-confidence).",
         parameters: MemoryForgetSchema,
         async execute(_toolCallId, params) {
-          const memoryId = readStringParam(params, "memoryId");
-          const query = readStringParam(params, "query");
+          const toolParams = normalizeToolParams(params);
+          const memoryId = readStringParam(toolParams, "memoryId");
+          const query = readStringParam(toolParams, "query");
           const minScore =
-            readNumberParam(params, "minScore") ?? DEFAULT_FORGET_THRESHOLD;
-          const scope = normalizeScope(readStringParam(params, "scope"), "all");
+            readNumberParam(toolParams, "minScore") ?? DEFAULT_FORGET_THRESHOLD;
+          const scope = normalizeScope(readStringParam(toolParams, "scope"), "all");
           if (scope === "session" && !ctx.sessionKey) {
             return jsonResult({ error: "Session scope requires sessionKey" });
           }
@@ -708,7 +727,7 @@ export default {
             filter,
           });
 
-          const episodic = extractEpisodicEpisodes(searchResult)
+          const episodic = extractSearchEpisodicEpisodes(searchResult)
             .filter((entry) => typeof entry.score === "number")
             .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
 
@@ -823,7 +842,7 @@ export default {
             score_threshold: cfg.searchThreshold ?? DEFAULT_SEARCH_THRESHOLD,
             filter,
           });
-          const episodic = extractEpisodicEpisodes(result);
+          const episodic = extractSearchEpisodicEpisodes(result);
           const semantic = extractSemanticMemories(result);
           if (episodic.length === 0 && semantic.length === 0) {
             return;
