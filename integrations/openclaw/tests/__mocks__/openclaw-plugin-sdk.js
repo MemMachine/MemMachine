@@ -1,4 +1,12 @@
 // Runtime stub for openclaw/plugin-sdk used in Jest tests.
-export function jsonResult(...args) { return args; }
-export function readNumberParam(...args) { return args[1]; }
-export function readStringParam(...args) { return args[1]; }
+export function jsonResult(value) { return value; }
+export function readNumberParam(params, key) {
+  return typeof params[key] === "number" ? params[key] : undefined;
+}
+export function readStringParam(params, key, options = {}) {
+  const value = typeof params[key] === "string" ? params[key] : undefined;
+  if (options.required && value === undefined) {
+    throw new Error(`Missing required parameter: ${key}`);
+  }
+  return value;
+}
