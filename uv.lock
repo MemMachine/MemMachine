@@ -1725,7 +1725,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.83.0"
+version = "1.94.0.dev2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1741,9 +1741,12 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/92/6ce9737554994ca8e536e5f4f6a87cc7c4774b656c9eb9add071caf7d54b/litellm-1.83.0.tar.gz", hash = "sha256:860bebc76c4bb27b4cf90b4a77acd66dba25aced37e3db98750de8a1766bfb7a", size = 17333062, upload-time = "2026-03-31T05:08:25.331Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/19/e903a2c252c010a5b86707608be4737d04491318b1e5effa5c54d77acc89/litellm-1.94.0.dev2.tar.gz", hash = "sha256:b6071f857d451a89ebb88086251bfec91e53d2ab24b723446902680f69165851", size = 16057135, upload-time = "2026-07-16T04:04:39.852Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/2c/a670cc050fcd6f45c6199eb99e259c73aea92edba8d5c2fc1b3686d36217/litellm-1.83.0-py3-none-any.whl", hash = "sha256:88c536d339248f3987571493015784671ba3f193a328e1ea6780dbebaa2094a8", size = 15610306, upload-time = "2026-03-31T05:08:21.987Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/ef/1c77a1a34923b93e7b5ad42da893a6befd8d9b49207747b0fb0bffc5b5bc/litellm-1.94.0.dev2-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:2fa39ac68849ffecf39ade8aa0127490b98153426a217a09311819f7f358269b", size = 20287610, upload-time = "2026-07-16T04:04:29.07Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/70/9e2eff0e32276d987c4926711b05743e0861a6ba285b06f5799b94bbc9ed/litellm-1.94.0.dev2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4890f48faac191d26abd0e6a6645c24650d1eea31f4c8a9106fd75c16d754fc0", size = 20285877, upload-time = "2026-07-16T04:04:31.986Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/ee/4ec59e7bd146fe4ffccfe356e3f1454da944f0404d8115e8c58ae7d558c4/litellm-1.94.0.dev2-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:4f744c2054123dccc5b5cec558a7d372c40584d868f5a9be26997df5687836d1", size = 20287991, upload-time = "2026-07-16T04:04:34.636Z" },
+    { url = "https://files.pythonhosted.org/packages/14/2a/74d99b88e766438d03aa09b775a2f9bff36eff78161315596eb1a353e786/litellm-1.94.0.dev2-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:ba5ec160f156076a83cb975114a91a7891ebe5c7db940cb1f8d42a9e9b6c81fa", size = 20286088, upload-time = "2026-07-16T04:04:37.359Z" },
 ]
 
 [[package]]
@@ -1975,7 +1978,7 @@ requires-dist = [
     { name = "json-repair", specifier = ">=0.54" },
     { name = "langchain-aws", specifier = ">=0.2.33" },
     { name = "langchain-text-splitters", specifier = ">=1.1.1" },
-    { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.63.0,<1.86" },
+    { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.94.0.dev2,<1.95" },
     { name = "memmachine-common", editable = "packages/common" },
     { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1" },
     { name = "neo4j", specifier = ">=5.28.2" },
