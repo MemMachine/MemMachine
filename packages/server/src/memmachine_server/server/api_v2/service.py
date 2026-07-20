@@ -118,6 +118,7 @@ async def _search_target_memories(
         if spec.score_threshold is not None
         else -float("inf"),
         agent_mode=spec.agent_mode,
+        use_fts=spec.use_fts, # Full-Text Search flag for hybrid search
     )
     content = SearchResultContent(
         episodic_memory=None,

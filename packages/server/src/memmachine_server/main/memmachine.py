@@ -749,6 +749,7 @@ class MemMachine:
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
         retrieval_agent: AgentToolBase | None = None,
+        use_fts: bool = False, # Full-Text Search flag for hybrid search
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -783,6 +784,7 @@ class MemMachine:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=search_filter,
+                    use_fts=use_fts, # Full-Text Search flag for hybrid search
                 )
             else:
                 response = await self._query_episodic_with_retrieval_agent(
@@ -957,6 +959,7 @@ class MemMachine:
         score_threshold: float = -float("inf"),
         search_filter: str | None = None,
         agent_mode: bool = False,
+        use_fts: bool = False,  # Full-Text Search flag for hybrid search
     ) -> SearchResponse:
         """
         Search across enabled memory types using a query string.
@@ -991,6 +994,7 @@ class MemMachine:
                     score_threshold=score_threshold,
                     search_filter=property_filter,
                     retrieval_agent=retrieval_agent,
+                    use_fts=use_fts, # Full-Text Search flag for hybrid search
                 )
             )
 
