@@ -1,5 +1,6 @@
 """Tests for SQLiteVectorStore."""
 
+import asyncio
 import math
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
@@ -33,6 +34,9 @@ from memmachine_server.common.vector_store.sqlite_vector_store import (
 )
 from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
     USearchVectorSearchEngine,
+)
+from memmachine_server.common.vector_store.vector_search_engine.vector_search_engine import (
+    VectorSearchEngine,
 )
 
 NAMESPACE = "test_namespace"
@@ -1072,6 +1076,150 @@ class TestConcurrentAsync:
             await collection.upsert(records=more_records)
 
         await asyncio.gather(query_loop(), upsert_more())
+
+
+# ── row_id reuse (issue #1468) ──
+
+
+class _GatedRemoveEngine(VectorSearchEngine):
+    """Delegates to a real engine; the next remove() waits on `gate` first.
+
+    delete() already suspends at its engine remove() (an await point after
+    the SQL commit); the gate only widens that window so the interleaving
+    with a concurrent upsert() is deterministic.
+    """
+
+    def __init__(self, inner: VectorSearchEngine) -> None:
+        self.inner = inner
+        self.gate: asyncio.Event | None = None
+        self.gate_reached = asyncio.Event()
+
+    async def add(self, vectors):
+        await self.inner.add(vectors)
+
+    async def remove(self, keys):
+        if self.gate is not None:
+            gate, self.gate = self.gate, None
+            self.gate_reached.set()
+            await gate.wait()
+        await self.inner.remove(keys)
+
+    async def search(self, vectors, *, limit, allowed_keys=None):
+        return await self.inner.search(vectors, limit=limit, allowed_keys=allowed_keys)
+
+    async def get_vectors(self, keys):
+        return await self.inner.get_vectors(keys)
+
+    async def save(self, path):
+        await self.inner.save(path)
+
+    async def load(self, path):
+        await self.inner.load(path)
+
+
+class TestRowIdReuse:
+    """Regression tests for row_id reuse (issue #1468).
+
+    Without AUTOINCREMENT, SQLite assigns max(rowid) + 1, so deleting the
+    record holding the maximum row_id frees that id for the very next
+    insert. A delete() suspended between its SQL commit and its engine
+    remove() can then erase the vector of a concurrently upserted record
+    that reused the id.
+    """
+
+    async def _row_id_of(self, collection, record_uuid):
+        async with collection._create_session() as session:
+            return (
+                await session.execute(
+                    select(collection._records_table.c.row_id).where(
+                        collection._records_table.c.uuid == record_uuid
+                    )
+                )
+            ).scalar_one()
+
+    @pytest.mark.asyncio
+    async def test_row_ids_are_never_reused(self, collection):
+        """A new record must not be assigned a previously deleted row_id."""
+        record_a = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await collection.upsert(records=[record_a])
+        row_id_a = await self._row_id_of(collection, record_a.uuid)
+
+        await collection.delete(record_uuids=[record_a.uuid])
+
+        record_b = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        await collection.upsert(records=[record_b])
+        row_id_b = await self._row_id_of(collection, record_b.uuid)
+
+        assert row_id_b != row_id_a
+
+    @pytest.mark.asyncio
+    async def test_concurrent_delete_and_upsert_keeps_upserted_vector(self, tmp_path):
+        """delete() racing upsert() must not lose the upserted record's vector.
+
+        Interleaving: delete(A) commits its SQL transaction and suspends at
+        its engine remove(); upsert(B) runs to completion in that window;
+        delete(A) resumes and removes A's row_id from the engine. B must
+        remain searchable afterwards.
+        """
+        db_path = tmp_path / "test.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        gated_engines: list[_GatedRemoveEngine] = []
+
+        def factory(ndim, metric):
+            gated = _GatedRemoveEngine(
+                USearchVectorSearchEngine(num_dimensions=ndim, similarity_metric=metric)
+            )
+            gated_engines.append(gated)
+            return gated
+
+        store = SQLiteVectorStore(
+            SQLiteVectorStoreParams(
+                sqlalchemy_engine=engine,
+                vector_search_engine_factory=factory,
+            )
+        )
+        await store.startup()
+        try:
+            collection = await store.open_or_create_collection(
+                namespace=NAMESPACE,
+                name=NAME,
+                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+            )
+            (gated_engine,) = gated_engines
+
+            record_a = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            await collection.upsert(records=[record_a])
+
+            # delete(A) commits its SQL transaction, then blocks at the
+            # gated engine remove(). Wait for it to consume the gate so
+            # upsert(B)'s own engine remove() passes through unblocked.
+            gate = asyncio.Event()
+            gated_engine.gate = gate
+            delete_task = asyncio.create_task(
+                collection.delete(record_uuids=[record_a.uuid])
+            )
+            await gated_engine.gate_reached.wait()
+
+            record_b = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+            await collection.upsert(records=[record_b])
+
+            gate.set()
+            await delete_task
+
+            fetched = await collection.get(record_uuids=[record_b.uuid])
+            assert len(fetched) == 1
+
+            results = await collection.query(
+                query_vectors=[_normalize([0.0, 1.0, 0.0])], limit=5
+            )
+            assert any(
+                match.record.uuid == record_b.uuid
+                for result in results
+                for match in result.matches
+            ), "upserted record lost from the search engine"
+        finally:
+            await store.shutdown()
+            await engine.dispose()
 
 
 # ── Crash recovery & pending operations ──
