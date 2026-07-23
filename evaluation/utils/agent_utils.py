@@ -1,9 +1,11 @@
+import logging
 import re
 import time
 from pathlib import Path
 from typing import Any
 
 from memmachine_server.common.configuration import Configuration
+from memmachine_server.common.configuration.retrieval_config import OptimizedCoqConf
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import PrometheusMetricsFactory
@@ -22,6 +24,7 @@ from memmachine_server.episodic_memory.long_term_memory import (
 from memmachine_server.retrieval_agent.agents import (
     ChainOfQueryAgent,
     MemMachineAgent,
+    RaragQueryAgent,
     SplitQueryAgent,
     ToolSelectAgent,
 )
@@ -31,6 +34,8 @@ from memmachine_server.retrieval_agent.common.agent_api import (
     QueryParam,
     QueryPolicy,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def load_eval_config(config_path: str) -> ResourceManagerImpl:
@@ -346,6 +351,9 @@ async def init_agent(
     model: LanguageModel,
     reranker: Reranker,
     agent_name: str,
+    multi_hop_decomposer: bool = False,
+    multi_hop_sub_limit: int = 20,
+    use_optimized_coq: bool = False,
 ) -> AgentToolBase:
     param: AgentToolBaseParam = AgentToolBaseParam(
         model=None,
@@ -357,11 +365,24 @@ async def init_agent(
     if agent_name == memory_agent.agent_name:
         return memory_agent
 
+    split_extra_params: dict[str, Any] = {
+        "multi_hop_decomposer": multi_hop_decomposer,
+        "multi_hop_sub_limit": multi_hop_sub_limit,
+    }
     param: AgentToolBaseParam = AgentToolBaseParam(
-        model=model, children_tools=[memory_agent], extra_params={}, reranker=reranker
+        model=model,
+        children_tools=[memory_agent],
+        extra_params=split_extra_params,
+        reranker=reranker,
     )
 
-    coq_agent: ChainOfQueryAgent = ChainOfQueryAgent(param)
+    # The ChainOfQueryAgent slot: RaragQueryAgent (optimized) when configured,
+    # otherwise the original ChainOfQueryAgent. RaragQueryAgent reports its
+    # agent_name as "ChainOfQueryAgent", so the slot name is consistent.
+    if use_optimized_coq:
+        coq_agent: AgentToolBase = RaragQueryAgent(param)
+    else:
+        coq_agent = ChainOfQueryAgent(param)
     split_agent: SplitQueryAgent = SplitQueryAgent(param)
 
     if agent_name == coq_agent.agent_name:
@@ -372,7 +393,11 @@ async def init_agent(
     param: AgentToolBaseParam = AgentToolBaseParam(
         model=model,
         children_tools=[split_agent, coq_agent, memory_agent],
-        extra_params={"default_tool_name": coq_agent.agent_name},
+        extra_params={
+            "default_tool_name": coq_agent.agent_name,
+            "multi_hop_decomposer": multi_hop_decomposer,
+            "multi_hop_sub_limit": multi_hop_sub_limit,
+        },
     )
 
     select_agent: ToolSelectAgent = ToolSelectAgent(param)
@@ -468,6 +493,26 @@ async def init_memmachine_params(
         ),
     )
 
-    query_agent = await init_agent(agent_model, reranker, agent_name)
+    use_optimized_coq = bool(conf.retrieval_agent.use_optimized_coq)
+    use_multi_hop_decomposer = False
+    use_multi_hop_sub_limit = 20
+    if use_optimized_coq:
+        optimized_coq = conf.retrieval_agent.optimized_coq or OptimizedCoqConf()
+        use_multi_hop_decomposer = bool(optimized_coq.multi_hop_decomposer)
+        use_multi_hop_sub_limit = int(optimized_coq.multi_hop_sub_limit)
+        logger.info(
+            "CoQ slot: RaragQueryAgent (optimized) | hop splitting: %s (sub_limit=%d)",
+            "non-LLM decomposer" if use_multi_hop_decomposer else "LLM-based",
+            use_multi_hop_sub_limit,
+        )
+
+    query_agent = await init_agent(
+        agent_model,
+        reranker,
+        agent_name,
+        multi_hop_decomposer=use_multi_hop_decomposer,
+        multi_hop_sub_limit=use_multi_hop_sub_limit,
+        use_optimized_coq=use_optimized_coq,
+    )
 
     return memory, answer_model, query_agent, agent_model_id, answer_model_id
