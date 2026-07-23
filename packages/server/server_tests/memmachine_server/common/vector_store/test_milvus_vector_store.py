@@ -216,6 +216,30 @@ class TestCollectionLifecycle:
 
 class TestUpsertAndQuery:
     @pytest.mark.asyncio
+    async def test_upsert_calls_native_upsert(self, collection, monkeypatch):
+        captured_kwargs = None
+
+        def tracked_upsert(**kwargs):
+            nonlocal captured_kwargs
+            captured_kwargs = kwargs
+
+        def fail_insert(*args, **kwargs):
+            pytest.fail("collection upsert must not call MilvusClient.insert")
+
+        monkeypatch.setattr(collection._client, "upsert", tracked_upsert)
+        monkeypatch.setattr(collection._client, "insert", fail_insert)
+
+        record = _make_record(
+            vector=_normalize([1.0, 0.0, 0.0]),
+            properties={"name": "test"},
+        )
+        await collection.upsert(records=[record])
+
+        assert captured_kwargs is not None
+        assert captured_kwargs["collection_name"] == collection._collection_name
+        assert captured_kwargs["data"] == [collection._build_entity(record)]
+
+    @pytest.mark.asyncio
     async def test_upsert_and_query_basic(self, collection):
         v1 = _normalize([1.0, 0.0, 0.0])
         v2 = _normalize([0.0, 1.0, 0.0])
@@ -308,7 +332,7 @@ class TestUpsertAndQuery:
         assert {match.record.uuid for match in results[0].matches} == {record.uuid}
 
     @pytest.mark.asyncio
-    async def test_upsert_insert_failure_preserves_existing_record(
+    async def test_upsert_failure_preserves_existing_record(
         self, collection, monkeypatch
     ):
         old_vector = _normalize([1.0, 0.0, 0.0])
@@ -316,12 +340,12 @@ class TestUpsertAndQuery:
         record = _make_record(vector=old_vector, properties={"name": "old"})
         await collection.upsert(records=[record])
 
-        def fail_insert(*args, **kwargs):
-            raise RuntimeError("insert failed")
+        def fail_upsert(*args, **kwargs):
+            raise RuntimeError("upsert failed")
 
-        monkeypatch.setattr(collection._client, "insert", fail_insert)
+        monkeypatch.setattr(collection._client, "upsert", fail_upsert)
 
-        with pytest.raises(RuntimeError, match="insert failed"):
+        with pytest.raises(RuntimeError, match="upsert failed"):
             await collection.upsert(
                 records=[
                     Record(

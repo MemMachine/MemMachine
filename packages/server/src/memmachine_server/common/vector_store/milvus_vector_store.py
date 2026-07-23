@@ -189,6 +189,9 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
             _VECTOR_FIELD: record.vector,
             _PROPERTIES_FIELD: encode_properties(properties),
         }
+        # Explicit nulls clear stale dynamic fields during native Milvus upserts.
+        for key in self._config.indexed_properties_schema:
+            entity[_property_field(key)] = None
         for key, value in properties.items():
             entity[_property_field(key)] = _normalize_property_filter_value(value)
         return entity
@@ -261,13 +264,13 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
 
             entities = [self._build_entity(record) for record in records]
 
-            def _insert() -> None:
-                self._client.insert(
+            def _upsert() -> None:
+                self._client.upsert(
                     collection_name=self._collection_name,
                     data=entities,
                 )
 
-            await asyncio.to_thread(_insert)
+            await asyncio.to_thread(_upsert)
 
     @override
     async def query(
