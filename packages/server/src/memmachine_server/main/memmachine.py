@@ -330,6 +330,8 @@ class MemMachine:
                 self._retrieval_agent = create_retrieval_agent(
                     model=llm_model,
                     reranker=reranker,
+                    use_optimized_coq=conf.use_optimized_coq,
+                    optimized_coq=conf.optimized_coq,
                 )
             except Exception:
                 logger.exception("Failed to initialize retrieval agent.")
