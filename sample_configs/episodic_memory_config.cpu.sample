@@ -115,6 +115,23 @@ resources:
         https: false
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
     #
+    # Alternative: Milvus. The local .db URI uses Milvus Lite; replace it with
+    # http(s)://... plus token/db_name for Milvus server or Zilliz Cloud.
+    # event_vector_store:
+    #   provider: milvus
+    #   config:
+    #     uri: event_milvus.db
+    #     # token: $MILVUS_TOKEN
+    #     # db_name: default
+    #     consistency_level: Session       # Strong, Session, Bounded, Eventually
+    # semantic_vector_store:
+    #   provider: milvus
+    #   config:
+    #     uri: semantic_milvus.db
+    #     # token: $MILVUS_TOKEN
+    #     # db_name: default
+    #     consistency_level: Session
+    #
     # Alternative: a local file-backed SQLite vector store. Single-writer; OK
     # for embedded/dev use, not recommended for multi-process server deploys.
     # event_vector_store:

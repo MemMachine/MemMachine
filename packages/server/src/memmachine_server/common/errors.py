@@ -158,6 +158,10 @@ class QdrantConfigurationError(MemMachineError):
     """Error related to Qdrant configuration."""
 
 
+class MilvusConfigurationError(MemMachineError):
+    """Error related to Milvus configuration."""
+
+
 class VectorStoreConfigurationError(MemMachineError):
     """Error related to VectorStore configuration."""
 

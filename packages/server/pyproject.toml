@@ -67,6 +67,10 @@ nebula = [
 qdrant = [
     "qdrant-client>=1.17.0",
 ]
+milvus = [
+    "pymilvus>=3.0.0",
+    "milvus-lite>=3.0.0",
+]
 litellm = [
     "litellm>=1.63.0,<1.86",
 ]

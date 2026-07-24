@@ -18,6 +18,7 @@ from memmachine_server.common.configuration.database_conf import (
 )
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.errors import (
+    MilvusConfigurationError,
     Neo4JConfigurationError,
     QdrantConfigurationError,
     SQLConfigurationError,
@@ -38,6 +39,7 @@ from memmachine_server.common.vector_store.vector_search_engine import (
 # installed unless those backends are actually used. Imports happen at use sites.
 if TYPE_CHECKING:
     from nebulagraph_python.client import NebulaAsyncClient
+    from pymilvus import MilvusClient
     from qdrant_client import AsyncQdrantClient
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,7 @@ class DatabaseManager:
         # Type checkers see it, but runtime treats it as a string literal.
         self.nebula_clients: dict[str, NebulaAsyncClient] = {}
         self.qdrant_clients: dict[str, AsyncQdrantClient] = {}
+        self.milvus_clients: dict[str, MilvusClient] = {}
         # SQLAlchemy engines that back SQLite-based vector stores. Tracked
         # separately from `sql_engines` (which holds user-facing relational
         # databases) so vector store internals don't collide with caller names.
@@ -68,6 +71,7 @@ class DatabaseManager:
         self._sql_locks: dict[str, Lock] = {}
         self._nebula_locks: dict[str, Lock] = {}
         self._qdrant_locks: dict[str, Lock] = {}
+        self._milvus_locks: dict[str, Lock] = {}
         self._vector_store_locks: dict[str, Lock] = {}
 
     async def build_all(self, validate: bool = False) -> Self:
@@ -88,6 +92,10 @@ class DatabaseManager:
             self.async_get_qdrant_client(name, validate=validate)
             for name in self.conf.qdrant_confs
         ]
+        milvus_tasks = [
+            self.async_get_milvus_client(name, validate=validate)
+            for name in self.conf.milvus_confs
+        ]
         sqlite_vs_tasks = [
             self.async_get_sqlite_vector_store(name)
             for name in self.conf.sqlite_vector_store_confs
@@ -102,6 +110,7 @@ class DatabaseManager:
             + relation_db_tasks
             + nebula_tasks
             + qdrant_tasks
+            + milvus_tasks
             + sqlite_vs_tasks
             + sqlite_vec_vs_tasks
         )
@@ -113,6 +122,7 @@ class DatabaseManager:
                 self._validate_sql_engines(),
                 self._validate_nebula_clients(),
                 self._validate_qdrant_clients(),
+                self._validate_milvus_clients(),
             )
 
         return self
@@ -131,6 +141,8 @@ class DatabaseManager:
                 tasks.append(self._close_nebula_client(name, client))
             for name, client in self.qdrant_clients.items():
                 tasks.append(self._close_qdrant_client(name, client))
+            for name, client in self.milvus_clients.items():
+                tasks.append(self._close_milvus_client(name, client))
             for name, vector_store in self.vector_stores.items():
                 tasks.append(self._shutdown_vector_store(name, vector_store))
             await asyncio.gather(*tasks)
@@ -141,10 +153,12 @@ class DatabaseManager:
             self.vector_store_sql_engines.clear()
             self.nebula_clients.clear()
             self.qdrant_clients.clear()
+            self.milvus_clients.clear()
             self._neo4j_locks.clear()
             self._sql_locks.clear()
             self._nebula_locks.clear()
             self._qdrant_locks.clear()
+            self._milvus_locks.clear()
             self._vector_store_locks.clear()
 
     @staticmethod
@@ -605,6 +619,84 @@ class DatabaseManager:
         for name, client in self.qdrant_clients.items():
             await self.validate_qdrant_client(name, client)
 
+    # --- Milvus ---
+
+    @staticmethod
+    async def _close_milvus_client(name: str, client: "MilvusClient") -> None:
+        try:
+            await asyncio.to_thread(client.close)
+        except Exception as ex:
+            logger.warning("Error closing Milvus client '%s': %s", name, ex)
+
+    async def async_get_milvus_client(
+        self, name: str, validate: bool = False
+    ) -> "MilvusClient":
+        """Return a Milvus client, creating it if necessary (lazy)."""
+        if name not in self._milvus_locks:
+            async with self._lock:
+                self._milvus_locks.setdefault(name, Lock())
+
+        async with self._milvus_locks[name]:
+            if name in self.milvus_clients:
+                return self.milvus_clients[name]
+
+            conf = self.conf.milvus_confs.get(name)
+            if not conf:
+                raise ValueError(f"Milvus config '{name}' not found.")
+
+            from pymilvus import MilvusClient
+
+            client_kwargs: dict[str, Any] = {"uri": conf.uri}
+            token = conf.token.get_secret_value()
+            if token:
+                client_kwargs["token"] = token
+            if conf.db_name:
+                client_kwargs["db_name"] = conf.db_name
+
+            client = MilvusClient(**client_kwargs)
+
+            if validate:
+                await self.validate_milvus_client(name, client)
+
+            from memmachine_server.common.vector_store.milvus_vector_store import (
+                MilvusVectorStore,
+                MilvusVectorStoreParams,
+            )
+
+            params = MilvusVectorStoreParams(
+                client=client,
+                consistency_level=conf.consistency_level,
+            )
+            try:
+                store = MilvusVectorStore(params)
+                await store.startup()
+            except Exception:
+                await asyncio.to_thread(client.close)
+                raise
+
+            self.milvus_clients[name] = client
+            self.vector_stores[name] = store
+
+            return client
+
+    @staticmethod
+    async def validate_milvus_client(name: str, client: "MilvusClient") -> None:
+        """Validate connectivity to a Milvus instance."""
+        try:
+            logger.info("Validating Milvus client '%s'", name)
+            await asyncio.to_thread(client.list_collections)
+            logger.info("Milvus client '%s' validated successfully", name)
+        except Exception as e:
+            await asyncio.to_thread(client.close)
+            raise MilvusConfigurationError(
+                f"Milvus config '{name}' failed verification: {e}",
+            ) from e
+
+    async def _validate_milvus_clients(self) -> None:
+        """Validate connectivity to each Milvus instance."""
+        for name, client in self.milvus_clients.items():
+            await self.validate_milvus_client(name, client)
+
     # --- SQLite-backed VectorStores ---
 
     @staticmethod
@@ -736,6 +828,9 @@ class DatabaseManager:
         """Return a vector store by name, auto-detecting the backend."""
         if name in self.conf.qdrant_confs:
             await self.async_get_qdrant_client(name, validate=True)
+            return self.vector_stores[name]
+        if name in self.conf.milvus_confs:
+            await self.async_get_milvus_client(name, validate=True)
             return self.vector_stores[name]
         if name in self.conf.sqlite_vector_store_confs:
             return await self.async_get_sqlite_vector_store(name)

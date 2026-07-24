@@ -76,11 +76,14 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         session_key: user-session-id
         metrics_factory_id: prometheus
         long_term_memory:
+          backend: event
           session_id: user-session-id
-          vector_graph_store: my-neo4j-store
+          vector_store: my-vector-store
+          segment_store: profile_storage
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
-          message_sentence_chunking: false
+          properties_schema:
+            source_role: str
         short_term_memory:
           session_key: user-session-id
           llm_model: my-summarization-llm
@@ -98,11 +101,14 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         session_key: user-session-id # Unique session identifier
         metrics_factory_id: prometheus # Metrics exporter ID
         long_term_memory: # Configuration for long-term memory
+          backend: event # Use VectorStore + SegmentStore. Use declarative for VectorGraphStore.
           session_id: user-session-id # Reuses parent session_key
-          vector_graph_store: my-neo4j-store # ID of the VectorGraphStore from 'resources.databases'
+          vector_store: my-vector-store # ID of the VectorStore from 'resources.databases'
+          segment_store: profile_storage # ID of the SQL database used by SegmentStore
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
-          message_sentence_chunking: false # chunk episodes by sentence before embedding
+          properties_schema: # Optional filterable event-memory properties
+            source_role: str
         short_term_memory: # Configuration for short-term memory
           session_key: user-session-id # Reuses parent session_key
           llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
@@ -124,11 +130,14 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory_enabled`      | Whether long-term episodic memory is enabled.                              | `true`       |
     | `short_term_memory_enabled`     | Whether short-term episodic memory is enabled.                             | `true`       |
     | `enabled`                       | Whether episodic memory as a whole is enabled.                             | `true`       |
-    | `long_term_memory.vector_graph_store` | The ID of a database defined in `resources.databases` for long-term storage. | *Required* |
+    | `long_term_memory.backend`      | Long-term memory backend. Use `event` for VectorStore + SegmentStore, or `declarative` for VectorGraphStore. | `declarative` when omitted |
+    | `long_term_memory.vector_store` | Event backend only: ID of a VectorStore defined in `resources.databases`. | *Required for event backend* |
+    | `long_term_memory.segment_store` | Event backend only: ID of a SQL database defined in `resources.databases`. | *Required for event backend* |
+    | `long_term_memory.vector_graph_store` | Declarative backend only: ID of a VectorGraphStore defined in `resources.databases`. | *Required for declarative backend* |
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
-    | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. | *Required* |
+    | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. Event backend can omit it to use embedding scores directly. | Depends on backend |
     | `long_term_memory.session_id`   | The same `session_key` used for long-term memory operations.               | *Inherited from `session_key`* |
-    | `long_term_memory.message_sentence_chunking` | If true, chunk messages into sentences before embedding. | `false` |
+    | `long_term_memory.properties_schema` | Event backend only: user-defined filterable properties and their type names. | `{}` |
     | `short_term_memory.session_key` | Session key for short-term memory summarization.                           | *Inherited from `session_key`* |
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
     | `short_term_memory.summary_prompt_system` | System prompt ID for short-term summarization. | *Required* |
@@ -301,7 +310,10 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     This section centralizes the definitions of various external resources, which can then be referenced by ID in other parts of the configuration. 
 
     ### Databases
-    Defines connections to various database backends (Neo4j, PostgreSQL, SQLite).
+    Defines connections to various database backends. Relational and graph
+    databases store structured memory data; VectorStore providers such as
+    Qdrant, Milvus, SQLiteVectorStore, and SQLiteVec back event-memory and
+    vector-backed semantic-memory indexes.
     <Tabs>
     <Tab title="Parameters">
       ```yaml
@@ -325,6 +337,14 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite
             config:
               path: sqlite_test.db
+          milvus_vector_store:
+            provider: milvus
+            config:
+              uri: ./memmachine_milvus.db
+              # uri: https://example.api.gcp-us-west1.zillizcloud.com
+              # token: $MILVUS_TOKEN
+              # db_name: default
+              consistency_level: Session
       ```
     </Tab>
     <Tab title="With Comments">
@@ -332,30 +352,37 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     resources:
         databases:
           profile_storage:
-            provider: postgres # The database provider type: `neo4j`, `postgres`, or `sqlite`
+            provider: postgres # Relational database provider
             config: # A dictionary containing provider-specific configuration
               host: localhost # Hostname for the database
               port: 5432 # Port number for the database connection
               user: postgres # Username for database authentication
               db_name: postgres # Database name
               password: <YOUR_PASSWORD_HERE> # Password for database authentication
-          my_storage_id: # he specific configuration for the system's internal graph store
-            provider: neo4j #The database provider type: `neo4j`, `postgres`, or `sqlite`
+          my_storage_id: # The specific configuration for the internal graph store
+            provider: neo4j # Graph database provider
             config: # A dictionary containing provider-specific configuration
               uri: 'bolt://localhost:7687' # The URI for the given database
               username: neo4j. # Username for internal graph store authentication
               password: <YOUR_PASSWORD_HERE> # Password for graph store authentication
           sqlite_test: # The configuration for the SQLite database used for testing
-            provider: sqlite #The database provider type: `neo4j`, `postgres`, or `sqlite`
+            provider: sqlite # Local relational database provider
             config: # A dictionary containing provider-specific configuration
               path: sqlite_test.db. # The path for the given database
+          milvus_vector_store: # VectorStore for event or vector-backed semantic memory
+            provider: milvus # Milvus Lite by default, or Milvus server / Zilliz Cloud
+            config:
+              uri: ./memmachine_milvus.db # Local Milvus Lite file path
+              # token: $MILVUS_TOKEN # Required for Zilliz Cloud or auth-enabled Milvus
+              # db_name: default # Optional Milvus database name
+              consistency_level: Session # Strong, Session, Bounded, or Eventually
       ```
     </Tab>
     </Tabs>
       **Parameter Descriptions:**
       | Parameter     | Description                                                          | Default     |
       |---------------|----------------------------------------------------------------------|-------------|
-      | `provider`    | The database provider type: `neo4j`, `postgres`, or `sqlite`.        | *Required*  |
+      | `provider`    | The database provider type: `neo4j`, `postgres`, `sqlite`, `nebula_graph`, `qdrant`, `milvus`, `sqlite_vector_store`, or `sqlite_vec_vector_store`. | *Required*  |
       | `config`      | A dictionary containing provider-specific configuration.             | *Required*  |
       | `config.host` | Hostname for the database (e.g., `localhost`).                       | Depends on provider |
       | `config.port` | Port number for the database connection.                             | Depends on provider |
@@ -363,6 +390,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.db_name`| Database name (for `postgres`).                                    | Depends on provider |
       | `config.password`| Password for database authentication.                             | Depends on provider |
       | `config.uri`  | The URI for the given database.                                      | Depends on provider |
+      | `config.token` | Milvus auth token for Zilliz Cloud or auth-enabled Milvus server.   | `""` |
+      | `config.consistency_level` | Milvus collection consistency level: `Strong`, `Session`, `Bounded`, or `Eventually`. | `Session` |
       | `config.path`  | The path for the given database.                                    | Depends on provider |
       | `config.username` | Username for internal graph store authentication.                | Depends on provider |
       | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |
