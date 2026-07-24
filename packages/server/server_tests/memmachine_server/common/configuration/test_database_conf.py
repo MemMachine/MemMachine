@@ -115,6 +115,11 @@ def db_conf_dict() -> dict:
                     "api_key": "test-key",
                     "is_distributed": True,
                     "registry_replication_factor": 3,
+                    "hnsw_config": {"ef_construct": 256, "payload_m": 32},
+                    "optimizers_config": {"default_segment_number": 4},
+                    "quantization_config": {
+                        "turbo": {"always_ram": True, "bits": "bits2"}
+                    },
                 },
             },
             "my_sqlite_vs": {
@@ -184,6 +189,11 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert qdrant_conf.api_key == SecretStr("test-key")
     assert qdrant_conf.is_distributed is True
     assert qdrant_conf.registry_replication_factor == 3
+    assert qdrant_conf.hnsw_config == {"ef_construct": 256, "payload_m": 32}
+    assert qdrant_conf.optimizers_config == {"default_segment_number": 4}
+    assert qdrant_conf.quantization_config == {
+        "turbo": {"always_ram": True, "bits": "bits2"}
+    }
 
     # SQLiteVectorStore (hnswlib engine)
     sqlite_vs_conf = storage_conf.sqlite_vector_store_confs["my_sqlite_vs"]
@@ -307,6 +317,9 @@ def test_qdrant_conf_defaults():
     assert conf.is_distributed is False
     assert conf.registry_replication_factor == 1
     assert conf.api_key.get_secret_value() == ""
+    assert conf.hnsw_config is None
+    assert conf.optimizers_config is None
+    assert conf.quantization_config is None
 
 
 def test_qdrant_conf_api_key_from_env(monkeypatch):
