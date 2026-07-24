@@ -25,7 +25,9 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && npm exec tsup",
+    "lint": "npm exec tsc -- --noEmit",
     "test": "node --experimental-vm-modules node_modules/.bin/jest",
+    "test:smoke": "npm run build && node tests/runtime-import-smoke.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

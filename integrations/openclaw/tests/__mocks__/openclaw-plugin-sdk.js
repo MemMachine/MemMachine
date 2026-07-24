@@ -1,4 +1,1 @@
-// Runtime stub for openclaw/plugin-sdk used in Jest tests.
-export function jsonResult(...args) { return args; }
-export function readNumberParam(...args) { return args[1]; }
-export function readStringParam(...args) { return args[1]; }
+// The root OpenClaw SDK has no runtime exports used by this plugin.

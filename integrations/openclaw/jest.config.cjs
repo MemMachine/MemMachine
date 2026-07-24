@@ -15,6 +15,7 @@ const config = {
     "^@sinclair/typebox$": "<rootDir>/tests/__mocks__/typebox.js",
     "^@memmachine/client$": "<rootDir>/tests/__mocks__/memmachine-client.js",
     "^openclaw/plugin-sdk$": "<rootDir>/tests/__mocks__/openclaw-plugin-sdk.js",
+    "^openclaw/plugin-sdk/core$": "<rootDir>/tests/__mocks__/openclaw-plugin-sdk-core.js",
   },
   transform: {
     "^.+\\.m?ts$": [
