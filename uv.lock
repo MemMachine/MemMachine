@@ -1956,6 +1956,9 @@ nebula = [
 qdrant = [
     { name = "qdrant-client" },
 ]
+turbovec = [
+    { name = "turbovec" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1992,11 +1995,12 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'gpu'", specifier = ">=5.1.0" },
     { name = "sqlalchemy", specifier = ">=2.0.43" },
     { name = "sqlite-vec", specifier = ">=0.1.9" },
+    { name = "turbovec", marker = "extra == 'turbovec'", specifier = ">=0.7.0" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "usearch", specifier = ">=2.25.1" },
     { name = "uvicorn", specifier = ">=0.35.0" },
 ]
-provides-extras = ["gpu", "hnswlib", "nebula", "qdrant", "litellm"]
+provides-extras = ["gpu", "hnswlib", "nebula", "qdrant", "litellm", "turbovec"]
 
 [[package]]
 name = "minijinja"
@@ -3931,6 +3935,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/37/92/e97fcc6b2c27cdb87ce5ee063d77f8f26f19f06916aa680464c8104ef0f6/triton-3.5.1-cp313-cp313t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0b4d2c70127fca6a23e247f9348b8adde979d2e7a20391bfbabaac6aebc7e6a8", size = 170579924, upload-time = "2025-11-11T17:41:12.455Z" },
     { url = "https://files.pythonhosted.org/packages/a4/e6/c595c35e5c50c4bc56a7bac96493dad321e9e29b953b526bbbe20f9911d0/triton-3.5.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d0637b1efb1db599a8e9dc960d53ab6e4637db7d4ab6630a0974705d77b14b60", size = 170480488, upload-time = "2025-11-11T17:41:18.222Z" },
     { url = "https://files.pythonhosted.org/packages/16/b5/b0d3d8b901b6a04ca38df5e24c27e53afb15b93624d7fd7d658c7cd9352a/triton-3.5.1-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:bac7f7d959ad0f48c0e97d6643a1cc0fd5786fe61cb1f83b537c6b2d54776478", size = 170582192, upload-time = "2025-11-11T17:41:23.963Z" },
+]
+
+[[package]]
+name = "turbovec"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e1/f6/adbdaca6f0023a0d1887a63c332f37938644c714989af51c779fadb42b80/turbovec-0.7.0.tar.gz", hash = "sha256:35a5d29a7db962dbe59c56c93e6b8a685228d2d3e3e2fdef9e126c860bb581ce", size = 168791, upload-time = "2026-05-30T13:17:05.165Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/55/5e0c31ccbde716859ec81a8c4dc197973c40e0519a54778b26121d5f8056/turbovec-0.7.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:f57159e5d197879849bf532a14bef13ffeb6cc37fe7eec9cd5c833061c8dc03f", size = 834972, upload-time = "2026-05-30T13:16:57.569Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/42/08535de942011b644dc4ca856082bbe7365f6244ae2b80afe55bc4f76225/turbovec-0.7.0-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:99cb2a6a841b760b00e097c4bdef1b8697f0a1edaf67e91df1f488a5a353c4ba", size = 6113489, upload-time = "2026-05-30T13:16:59.651Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/5d/ad86864477be969dc9f934ef2c10c515096ba69790068df77605c989709e/turbovec-0.7.0-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:cd30062633060f6a0f66217fc789853155927ff46b524172df0494490bca306f", size = 13111465, upload-time = "2026-05-30T13:17:01.272Z" },
+    { url = "https://files.pythonhosted.org/packages/76/9a/1f8d8acfe5666871b794047ffcb7312b3d720e277c9d395dbaf7d79e3b1f/turbovec-0.7.0-cp39-abi3-win_amd64.whl", hash = "sha256:79e29e1e431d897d2de482abc96a5623bba26eea71cec27db57c1c1212b26997", size = 659245, upload-time = "2026-05-30T13:17:03.489Z" },
 ]
 
 [[package]]
