@@ -72,7 +72,7 @@ milvus = [
     "milvus-lite>=3.0.0",
 ]
 litellm = [
-    "litellm>=1.63.0,<1.86",
+    "litellm>=1.93.0,<1.94",
 ]
 
 [project.scripts]
