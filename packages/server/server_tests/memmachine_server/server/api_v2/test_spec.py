@@ -487,9 +487,11 @@ def test_dict_key_wiring_via_memory_message_metadata():
 
 
 def test_scalar_wiring_via_add_feature_spec():
-    """One sample of scalar `SafeFieldName` enforcement; same wiring is
-    reused on `tag`, `feature`, `name`, `category_name` (create paths),
-    `tag_name`."""
+    """One sample of scalar `SafeFieldName` enforcement (via
+    `AddFeatureSpec.tag`); the same wiring is reused on `feature`,
+    `CreateSemanticSetTypeSpec.name`, the category-create specs'
+    `category_name`, and `tag_name`. `AddFeatureSpec.category_name` is
+    deliberately NOT validated here (permissive lookup carveout)."""
     with pytest.raises(ValidationError):
         AddFeatureSpec.model_validate(
             {

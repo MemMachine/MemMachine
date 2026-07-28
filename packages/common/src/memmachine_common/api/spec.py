@@ -209,9 +209,12 @@ def _is_valid_field_name(v: str) -> str:
     the specific rule that was violated.
     """
     if not v or len(v) > MAX_FIELD_NAME_LENGTH:
+        # Do not echo the (potentially very large) value here; only the
+        # reserved-prefix/charset checks below do, and by then v is already
+        # length-bounded (<=32).
         raise InvalidNameError(
             f"Field/property name must be 1-{MAX_FIELD_NAME_LENGTH} chars, "
-            f"got {len(v)}: '{v}'",
+            f"got {len(v)}.",
         )
     if v.startswith(RESERVED_FIELD_NAME_PREFIX):
         raise InvalidNameError(
