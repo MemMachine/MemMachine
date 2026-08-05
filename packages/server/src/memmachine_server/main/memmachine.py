@@ -749,7 +749,7 @@ class MemMachine:
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
         retrieval_agent: AgentToolBase | None = None,
-        use_fts: bool = False, # Full-Text Search flag for hybrid search
+        use_fts: bool = False,  # Full-Text Search flag for hybrid search
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -762,6 +762,7 @@ class MemMachine:
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
             retrieval_agent: Optional top-level retrieval agent for long-term search.
+            use_fts: Full-Text Search flag for hybrid search
 
         Returns:
             Episodic memory query response, if episodic memory is enabled.
@@ -784,7 +785,7 @@ class MemMachine:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=search_filter,
-                    use_fts=use_fts, # Full-Text Search flag for hybrid search
+                    use_fts=use_fts,  # Full-Text Search flag for hybrid search
                 )
             else:
                 response = await self._query_episodic_with_retrieval_agent(
@@ -974,6 +975,7 @@ class MemMachine:
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
+            use_fts: Full-Text Search flag for hybrid search
 
         Returns:
             Aggregated search results across memory types.
@@ -994,7 +996,7 @@ class MemMachine:
                     score_threshold=score_threshold,
                     search_filter=property_filter,
                     retrieval_agent=retrieval_agent,
-                    use_fts=use_fts, # Full-Text Search flag for hybrid search
+                    use_fts=use_fts,  # Full-Text Search flag for hybrid search
                 )
             )
 

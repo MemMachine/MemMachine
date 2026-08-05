@@ -630,6 +630,7 @@ class SearchMemoriesSpec(_WithOrgAndProj):
         ),
     ]
 
+
 class DeleteMemoriesSpec(_WithOrgAndProj):
     """Specification model for deleting memories."""
 

@@ -444,6 +444,7 @@ class Memory:
             filter=filter_str,
             set_metadata=set_metadata,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types
+            use_fts=False,
         )
         v2_search_data = spec.model_dump(mode="json", exclude_none=True)
 

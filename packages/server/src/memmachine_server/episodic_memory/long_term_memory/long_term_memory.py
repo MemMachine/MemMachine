@@ -1,9 +1,8 @@
 """Long-term memory facade with declarative + event backends."""
 
-import asyncio # For parallel execution in Hybrid Search
+import asyncio  # For parallel execution in Hybrid Search
 import datetime
 import logging
-from datetime import timezone # For FTS Episode created_at default value (UTC)
 from collections.abc import Iterable
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4, uuid5
@@ -26,6 +25,7 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+
 # Converts content to SANITIZED_property_u5f_content
 from memmachine_server.common.vector_graph_store.data_types import mangle_property_name
 from memmachine_server.common.vector_store import (
@@ -318,7 +318,7 @@ class LongTermMemory:
                 query,
                 num_episodes_limit=num_episodes_limit,
                 expand_context=expand_context,
-                score_threshold=None, # Apply threshold after merge
+                score_threshold=None,  # Apply threshold after merge
                 property_filter=property_filter,
             ),
             self._search_fts(
@@ -343,21 +343,45 @@ class LongTermMemory:
         # 4. Apply score threshold
         if score_threshold is not None:
             merged_results = [
-                (score, episode) for score, episode in merged_results
+                (score, episode)
+                for score, episode in merged_results
                 if score >= score_threshold
             ]
         return merged_results
 
     @staticmethod
     def _escape_lucene_query(query: str) -> str:
-        r"""
-        Escape Lucene special characters in FTS query.
+        r"""Escape Lucene special characters in an FTS query.
+
         Lucene special characters: + - = && || > < ! ( ) { } [ ] ^ " ~ * ? : \ /
         """
-        lucene_special_chars = ['+', '-', '=', '&', '|', '>', '<', '!', '(', ')', '{', '}', '[', ']', '^', '"', '~', '*', '?', ':', '\\', '/']
+        lucene_special_chars = [
+            "+",
+            "-",
+            "=",
+            "&",
+            "|",
+            ">",
+            "<",
+            "!",
+            "(",
+            ")",
+            "{",
+            "}",
+            "[",
+            "]",
+            "^",
+            '"',
+            "~",
+            "*",
+            "?",
+            ":",
+            "\\",
+            "/",
+        ]
         escaped_query = query
         for char in lucene_special_chars:
-            escaped_query = escaped_query.replace(char, f'\\{char}')
+            escaped_query = escaped_query.replace(char, f"\\{char}")
         return escaped_query
 
     async def _search_fts(
@@ -369,32 +393,37 @@ class LongTermMemory:
         """Search using Neo4j Full-Text Search only."""
         assert self._declarative_memory is not None
 
-        long_term_memory = self._declarative_memory
-        vector_graph_store = long_term_memory._vector_graph_store
-        derivative_collection = long_term_memory._derivative_collection
+        # There is no full-text search API on the DeclarativeMemory or
+        # VectorGraphStore interfaces yet, so the collection/relation names,
+        # the Neo4j driver, and the name sanitizer are read directly here.
+        declarative_memory = self._declarative_memory
+        vector_graph_store = declarative_memory._vector_graph_store  # noqa: SLF001
+        derivative_collection = declarative_memory._derivative_collection  # noqa: SLF001
+        episode_collection = declarative_memory._episode_collection  # noqa: SLF001
+        derivative_episode_relation = declarative_memory._derived_from_relation  # noqa: SLF001
+        driver = vector_graph_store._driver  # noqa: SLF001
+        sanitize_name = vector_graph_store._sanitize_name  # noqa: SLF001
 
         # Generate FTS index name (auto-created during ingest)
-        sanitized_derivative_collection = vector_graph_store._sanitize_name(derivative_collection)
-        fts_index_name = f"fts_{sanitized_derivative_collection}_content"
+        fts_index_name = f"fts_{sanitize_name(derivative_collection)}_content"
 
-        logger.info(f"FTS Search: index={fts_index_name}, query={query}")
+        logger.info("FTS Search: index=%s, query=%s", fts_index_name, query)
 
-        # Neo4j FTS query
-        driver = vector_graph_store._driver
         fts_query_terms = query.lower().split()
         # Escape Lucene special characters
-        fts_query_string = " ".join(self._escape_lucene_query(term) for term in fts_query_terms)
+        fts_query_string = " ".join(
+            self._escape_lucene_query(term) for term in fts_query_terms
+        )
 
         # Use sanitized property name
         # FTS index is on content field, stored as SANITIZED_property_u5f_content after mangle_property_name
-        sanitized_content = vector_graph_store._sanitize_name(mangle_property_name("content"))
+        sanitized_content = sanitize_name(mangle_property_name("content"))
 
         # FTS query: Follow DERIVED_FROM relation to get Episode Node uid directly
         # Returns same Episode.uid as Vector Search for correct dedup
-        derivative_episode_relation = long_term_memory._derived_from_relation
-        sanitized_derived_from_relation = vector_graph_store._sanitize_name(derivative_episode_relation)
+        sanitized_derived_from_relation = sanitize_name(derivative_episode_relation)
         # Episode label also needs sanitization (same as collection name)
-        sanitized_episode_collection = vector_graph_store._sanitize_name(long_term_memory._episode_collection)
+        sanitized_episode_collection = sanitize_name(episode_collection)
 
         records, _, _ = await driver.execute_query(
             f"""
@@ -447,7 +476,9 @@ class LongTermMemory:
                     episode_type=EpisodeType.MESSAGE,
                     content_type=ContentType.STRING,
                     content=content,
-                    created_at=datetime.datetime.now(timezone.utc),  # FTS has no timestamp info (use current time)
+                    created_at=datetime.datetime.now(
+                        datetime.UTC
+                    ),  # FTS has no timestamp info (use current time)
                     producer_id=producer_id,
                     producer_role=producer_role,
                     produced_for_id=None,
@@ -456,7 +487,7 @@ class LongTermMemory:
                 )
                 fts_episodes.append((record.get("score", 0.0), episode))
 
-        logger.info(f"FTS returned {len(fts_episodes)} results")
+        logger.info("FTS returned %d results", len(fts_episodes))
         return fts_episodes
 
     async def _search_scored_declarative(

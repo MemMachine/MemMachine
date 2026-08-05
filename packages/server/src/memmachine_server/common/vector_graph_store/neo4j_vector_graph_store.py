@@ -148,7 +148,7 @@ class Neo4jVectorGraphStoreParams(BaseModel):
         ),
     )
     range_index_creation_threshold: int = Field(
-        1_000, # [10k→1k] Enable range index creation for small-to-medium datasets (< 10k nodes)
+        1_000,  # [10k→1k] Enable range index creation for small-to-medium datasets (< 10k nodes)
         description=(
             "Threshold number of entities "
             "in a collection or having a relation "
@@ -156,7 +156,7 @@ class Neo4jVectorGraphStoreParams(BaseModel):
         ),
     )
     vector_index_creation_threshold: int = Field(
-        1_000, # [10k→1k] Enable vector index creation for small-to-medium datasets (< 10k nodes)
+        1_000,  # [10k→1k] Enable vector index creation for small-to-medium datasets (< 10k nodes)
         description=(
             "Threshold number of entities "
             "in a collection or having a relation "
@@ -307,8 +307,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 self._track_task(
                     asyncio.create_task(
                         self._create_fts_index_if_not_exists(
-                            entity_type=EntityType.NODE,      
-                            sanitized_collection_or_relation=sanitized_collection,
+                            sanitized_collection=sanitized_collection,
                         ),
                     )
                 )
@@ -1073,31 +1072,33 @@ class Neo4jVectorGraphStore(VectorGraphStore):
 
     async def _create_fts_index_if_not_exists(
         self,
-        entity_type: EntityType,
-        sanitized_collection_or_relation: str,
+        sanitized_collection: str,
     ) -> None:
-        """Create a Full-Text Search (FTS) index if missing and wait for it to be online."""
+        """Create a Full-Text Search (FTS) index if missing and wait for it to be online.
+
+        FTS indexes are only supported for nodes, so no entity type is accepted.
+        """
         async with self._tracker("create_fts_index_if_not_exists"):
-            logger.info(f"Creating FTS index for '{sanitized_collection_or_relation}'...")
+            logger.info("Creating FTS index for '%s'...", sanitized_collection)
             await self._populate_index_state_cache()
 
-            fts_index_name = f"fts_{sanitized_collection_or_relation}_content"
-            logger.info(f"FTS index name: '{fts_index_name}'")
+            fts_index_name = f"fts_{sanitized_collection}_content"
+            logger.info("FTS index name: '%s'", fts_index_name)
 
             cached_index_state = self._index_state_cache.get(fts_index_name)
-            logger.info(f"Cached index state: {cached_index_state}")
+            logger.info("Cached index state: %s", cached_index_state)
 
             match cached_index_state:
                 case Neo4jVectorGraphStore.CacheIndexState.CREATING:
                     # Wait for the index to be online.
-                    logger.info(f"FTS index is already being created, waiting...")
+                    logger.info("FTS index is already being created, waiting...")
                     await self._await_create_index_if_not_exists(
                         fts_index_name,
                         asyncio.sleep(0),
                     )
                     return
                 case Neo4jVectorGraphStore.CacheIndexState.ONLINE:
-                    logger.info(f"FTS index is already online")
+                    logger.info("FTS index is already online")
                     return
 
             # Code is synchronous between the cache read and this write,
@@ -1107,9 +1108,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             )
 
             # FTS only supports NODE entities; use 'n' alias to match ON EACH clause.
-            query_index_for_expression = f"(n:{sanitized_collection_or_relation})"
+            query_index_for_expression = f"(n:{sanitized_collection})"
 
-            logger.info(f"Executing CREATE FULLTEXT INDEX query...")
+            logger.info("Executing CREATE FULLTEXT INDEX query...")
             create_index_awaitable = self._driver.execute_query(
                 _neo4j_query(
                     f"CREATE FULLTEXT INDEX {fts_index_name}\n"
@@ -1124,12 +1125,12 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 ),
             )
 
-            logger.info(f"Waiting for FTS index to be online...")
+            logger.info("Waiting for FTS index to be online...")
             await self._await_create_index_if_not_exists(
                 fts_index_name,
                 create_index_awaitable,
             )
-            logger.info(f"FTS index '{fts_index_name}' is now online")
+            logger.info("FTS index '%s' is now online", fts_index_name)
 
     async def _create_vector_index_if_not_exists(
         self,
