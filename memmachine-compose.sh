@@ -262,6 +262,7 @@ generate_config_for_provider() {
         current_section = ""
         in_episodic = 0
         in_semantic = 0
+        in_retrieval = 0
         in_long_term = 0
         in_short_term = 0
     }
@@ -290,7 +291,7 @@ generate_config_for_provider() {
     }
     
     # Exit embedders/language_models when hitting another 2-space section
-    /^  [a-zA-Z_][a-zA-Z0-9_]*:$/ && !/^  (embedders|language_models):$/ && !in_episodic && !in_semantic {
+    /^  [a-zA-Z_][a-zA-Z0-9_]*:$/ && !/^  (embedders|language_models):$/ && !in_episodic && !in_semantic && !in_retrieval {
         if (in_model_section || in_embedder_section) {
             print ""
             in_model_section = 0
@@ -328,6 +329,12 @@ generate_config_for_provider() {
             in_semantic = 0
         }
         
+        if (current_section == "retrieval_agent") {
+            in_retrieval = 1
+        } else {
+            in_retrieval = 0
+        }
+
         print
         next
     }
@@ -426,6 +433,16 @@ generate_config_for_provider() {
         next
     }
     
+    # Handle retrieval_agent section - update model reference
+    in_retrieval {
+        if (/^  llm_model:/) {
+            print "  llm_model: " model_name
+            next
+        }
+        print
+        next
+    }
+
     # Default: print all other lines
     { print }
 AWK_SCRIPT
