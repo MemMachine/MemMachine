@@ -412,7 +412,8 @@ class ShortTermMemory:
             if self._closed:
                 raise ShortTermMemoryClosedError(self._session_key)
             await self._consolidator.wait_until_done()
-            length = await self.get_summary_length()
+            summary = await self._consolidator.summary
+            length = len(summary)
             episodes: deque[Episode] = deque()
 
             for e in reversed(self._memory):
@@ -429,7 +430,7 @@ class ShortTermMemory:
                     break
                 episodes.appendleft(e)
                 length += msg_len
-            return list(episodes), await self.get_summary()
+            return list(episodes), summary
 
     @staticmethod
     def _compute_episode_length(episode: Episode) -> int:

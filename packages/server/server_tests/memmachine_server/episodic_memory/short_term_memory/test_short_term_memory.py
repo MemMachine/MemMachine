@@ -350,6 +350,60 @@ class TestSessionMemoryPublicAPI:
         ]
         assert mock_model.call_count == 4
 
+    async def test_query_completes_when_write_waits_during_summary(
+        self, memory, mock_model, monkeypatch
+    ):
+        """A waiting writer must not deadlock a query after summarization."""
+        summary_started = asyncio.Event()
+        finish_summary = asyncio.Event()
+        generate_response = mock_model.generate_response
+
+        async def blocking_generate_response(*args, **kwargs):
+            summary_started.set()
+            await finish_summary.wait()
+            return await generate_response(*args, **kwargs)
+
+        monkeypatch.setattr(mock_model, "generate_response", blocking_generate_response)
+        summarized_episode = create_test_episode(content="x" * 17)
+        query_task = None
+        write_task = None
+        try:
+            await memory.add_episodes([summarized_episode])
+            await summary_started.wait()
+
+            query_task = asyncio.create_task(
+                memory.get_short_term_memory_context(query="test")
+            )
+            await asyncio.sleep(0)
+            assert memory._lock._readers == 1
+
+            write_task = asyncio.create_task(
+                memory.add_episodes([create_test_episode(content="y")])
+            )
+            await asyncio.sleep(0)
+            assert memory._lock._read_gate.locked()
+
+            finish_summary.set()
+            _, pending = await asyncio.wait(
+                {query_task, write_task},
+                timeout=1,
+            )
+
+            assert not pending
+            episodes, summary = await query_task
+            assert episodes == [summarized_episode]
+            assert summary == "summary:x"
+            assert await write_task is True
+        finally:
+            finish_summary.set()
+            if write_task is not None and not write_task.done():
+                write_task.cancel()
+                await asyncio.gather(write_task, return_exceptions=True)
+            if query_task is not None and not query_task.done():
+                query_task.cancel()
+                await asyncio.gather(query_task, return_exceptions=True)
+            await memory._consolidator.wait_until_done()
+
     @pytest.mark.asyncio
     async def test_summary_exceed_context_window(self, memory, mock_model):
         chars = string.digits
