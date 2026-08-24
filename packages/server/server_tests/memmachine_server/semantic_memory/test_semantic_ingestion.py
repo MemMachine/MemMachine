@@ -277,6 +277,130 @@ async def test_process_single_set_marks_context_length_errors_as_ingested(
 
 
 @pytest.mark.asyncio
+async def test_process_single_set_gives_up_on_persistent_generic_errors(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    monkeypatch,
+):
+    """A message whose feature update fails deterministically (e.g. a
+    malformed LLM response for that specific content) must not be re-fetched
+    and re-sent to the LLM forever. Regression test for the runaway
+    background-ingestion cost reported in #1453: previously a generic
+    (non-context-length) failure left the message permanently un-ingested,
+    so every subsequent background poll cycle re-sent it to the LLM with no
+    backoff and no way to ever stop."""
+    message_id = await add_history(
+        episode_storage,
+        content="message that always fails feature extraction",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user-poison-message",
+        history_id=message_id,
+    )
+
+    llm_feature_update_mock = AsyncMock(
+        side_effect=ValueError("structured-output validation failed")
+    )
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        llm_feature_update_mock,
+    )
+
+    await ingestion_service._process_single_set("user-poison-message")
+
+    # Retried a bounded number of times, not once and not forever.
+    from memmachine_server.semantic_memory.semantic_ingestion import (
+        _MAX_FEATURE_UPDATE_ATTEMPTS,
+    )
+
+    assert llm_feature_update_mock.await_count == _MAX_FEATURE_UPDATE_ATTEMPTS
+
+    # Given up and marked ingested so it stops showing up as pending work.
+    assert (
+        await _collect(
+            semantic_storage.get_history_messages(
+                set_ids=["user-poison-message"],
+                is_ingested=False,
+            )
+        )
+        == []
+    )
+    assert await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-poison-message"],
+            is_ingested=True,
+        )
+    ) == [message_id]
+
+    # Simulate the next background poll cycle: with nothing left pending,
+    # it must not call the LLM again.
+    await ingestion_service._process_single_set("user-poison-message")
+    assert llm_feature_update_mock.await_count == _MAX_FEATURE_UPDATE_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_process_single_set_retries_and_recovers_from_transient_error(
+    ingestion_service: IngestionService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    semantic_category: SemanticCategory,
+    embedder_double: MockEmbedder,
+    monkeypatch,
+):
+    """A transient failure on the first attempt should not give up early —
+    the retry should recover and the message should be fully ingested."""
+    message_id = await add_history(
+        episode_storage,
+        content="I love blue cars",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user-transient-error",
+        history_id=message_id,
+    )
+
+    commands = [
+        SemanticCommand(
+            command=SemanticCommandType.ADD,
+            feature="favorite_car",
+            tag="car",
+            value="blue",
+        ),
+    ]
+
+    async def flaky(*args, **kwargs):
+        if llm_feature_update_mock.await_count == 1:
+            raise ValueError("transient parse failure")
+        return commands
+
+    llm_feature_update_mock = AsyncMock(side_effect=flaky)
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        llm_feature_update_mock,
+    )
+
+    await ingestion_service._process_single_set("user-transient-error")
+
+    assert llm_feature_update_mock.await_count == 2
+    assert await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-transient-error"],
+            is_ingested=True,
+        )
+    ) == [message_id]
+
+    filter_str = (
+        f"set_id IN ('user-transient-error') "
+        f"AND category_name IN ('{semantic_category.name}')"
+    )
+    features = await _collect(
+        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+    )
+    assert len(features) == 1
+    assert features[0].feature_name == "favorite_car"
+
+
+@pytest.mark.asyncio
 async def test_consolidation_groups_by_tag(
     ingestion_service: IngestionService,
     semantic_storage: SemanticStorage,
