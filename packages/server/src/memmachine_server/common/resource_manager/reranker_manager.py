@@ -168,7 +168,7 @@ class RerankerManager(BaseResourceManager[Reranker]):
         return self._rerankers[name]
 
     async def _build_cohere_reranker(self, name: str) -> Reranker:
-        from cohere import ClientV2
+        from cohere import AsyncClientV2
 
         from memmachine_server.common.reranker.cohere_reranker import (
             CohereReranker,
@@ -179,9 +179,9 @@ class RerankerManager(BaseResourceManager[Reranker]):
 
         cohere_api_key = conf.cohere_key.get_secret_value() if conf.cohere_key else None
         if conf.base_url is not None:
-            client = ClientV2(api_key=cohere_api_key, base_url=conf.base_url)
+            client = AsyncClientV2(api_key=cohere_api_key, base_url=conf.base_url)
         else:
-            client = ClientV2(api_key=cohere_api_key)
+            client = AsyncClientV2(api_key=cohere_api_key)
         params = CohereRerankerParams(
             client=client,
             model=conf.model,

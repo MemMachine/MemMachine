@@ -144,7 +144,7 @@ async def test_build_cohere_reranker_passes_base_url(monkeypatch):
         captured_kwargs.update(kwargs)
         return FakeCohereClient()
 
-    monkeypatch.setattr("cohere.ClientV2", fake_client_v2)
+    monkeypatch.setattr("cohere.AsyncClientV2", fake_client_v2)
 
     conf = RerankersConf(
         cohere={
@@ -179,7 +179,7 @@ async def test_build_cohere_reranker_omits_base_url_when_not_configured(monkeypa
         captured_kwargs.update(kwargs)
         return FakeCohereClient()
 
-    monkeypatch.setattr("cohere.ClientV2", fake_client_v2)
+    monkeypatch.setattr("cohere.AsyncClientV2", fake_client_v2)
 
     conf = RerankersConf(
         cohere={
