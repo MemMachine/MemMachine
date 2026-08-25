@@ -159,6 +159,7 @@ async def _event_params(
         segmenter=segmenter,
         deriver=deriver,
         user_property_keys=frozenset(config.properties_schema),
+        metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
     )
 
 

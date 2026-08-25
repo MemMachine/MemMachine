@@ -22,6 +22,7 @@ from memmachine_server.common.filter.filter_parser import (
     map_filter_fields,
     normalize_filter_field,
 )
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import (
@@ -148,6 +149,13 @@ class EventBackendParams(BaseModel):
     reranker: InstanceOf[Reranker] | None = Field(default=None)
     segmenter: InstanceOf[Segmenter] = Field(...)
     deriver: InstanceOf[Deriver] = Field(...)
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        default=None,
+        description=(
+            "Metrics factory handed to EventMemory's OperationTracker. Without "
+            "it the tracker discards every timing it takes, silently."
+        ),
+    )
     user_property_keys: frozenset[str] = Field(
         default_factory=frozenset,
         description=(
@@ -217,6 +225,7 @@ class LongTermMemory:
                         deriver=params.deriver,
                         embedder=params.embedder,
                         reranker=params.reranker,
+                        metrics_factory=params.metrics_factory,
                     ),
                 )
                 self._vector_store = params.vector_store
