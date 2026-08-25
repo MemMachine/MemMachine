@@ -144,6 +144,38 @@ def start_http() -> None:
     )
 
 
+def _prepare_multiproc_dir() -> None:
+    """Make PROMETHEUS_MULTIPROC_DIR usable before any metric is created.
+
+    prometheus_client picks its value class at import time and each worker
+    mmaps a file into this directory as soon as it registers a metric, so the
+    directory has to exist by then - after that it is too late, and the failure
+    surfaces as an unrelated error deep in a worker.
+
+    Stale files are cleared for the same reason: they belong to workers from a
+    previous run of this process, and MultiProcessCollector would otherwise add
+    their dead counters to the live ones on every scrape.
+
+    Deliberately best-effort. A deployment may mount the directory read-only or
+    pre-seed it, and refusing to start over metrics would be the wrong trade.
+    """
+    path = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not path:
+        return
+    try:
+        directory = Path(path)
+        directory.mkdir(parents=True, exist_ok=True)
+        for stale in directory.glob("*.db"):
+            stale.unlink()
+    except OSError:
+        logger.warning(
+            "PROMETHEUS_MULTIPROC_DIR=%s is not writable; per-worker metrics "
+            "will not be aggregated",
+            path,
+            exc_info=True,
+        )
+
+
 def main() -> None:
     """Execute the CLI entry point for the application."""
     # Load environment variables from .env file
@@ -156,6 +188,8 @@ def main() -> None:
     # Configure basic logging to ensure we see startup messages
     logging.basicConfig(level=logging.INFO)
     logger.debug("memmachine-server entrypoint called")
+
+    _prepare_multiproc_dir()
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="MemMachine server")
