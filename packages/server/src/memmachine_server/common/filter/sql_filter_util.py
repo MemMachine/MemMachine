@@ -62,6 +62,26 @@ def _get_op(op: str) -> Callable[[ColumnElement, object], ColumnElement[bool]]:
     return op_fn
 
 
+def _normalize_column_value(value: PropertyValue) -> PropertyValue:
+    """Normalize a datetime to UTC before comparing it against a stored column.
+
+    Timestamp columns hold the UTC instant, because SQLite's DateTime does not
+    persist tzinfo and a non-UTC value written verbatim reads back shifted. The
+    comparison side has to agree. Bound as-is, an aware value is rendered with its
+    own offset and compared against the stored text lexically, so the WALL CLOCK
+    decides: `<= 2024-01-01T08:00+08:00` excludes a row stored at 00:00Z even
+    though that is the same instant.
+
+    PostgreSQL compares TIMESTAMPTZ by instant and is unaffected either way, so
+    normalizing here makes the two backends agree rather than changing Postgres.
+    This is the same conversion the write path and the typed-JSON comparison path
+    already perform.
+    """
+    if isinstance(value, datetime):
+        return ensure_tz_aware(value).astimezone(UTC)
+    return value
+
+
 def _compile_column_leaf(
     expr: IsNull | In | Comparison,
     column: ColumnElement,
@@ -71,8 +91,8 @@ def _compile_column_leaf(
     if isinstance(expr, In):
         if not expr.values:
             return false()
-        return column.in_(expr.values)
-    return _get_op(expr.op)(column, expr.value)
+        return column.in_([_normalize_column_value(v) for v in expr.values])
+    return _get_op(expr.op)(column, _normalize_column_value(expr.value))
 
 
 def _cast_json_value(

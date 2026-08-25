@@ -3,7 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,7 +11,7 @@ import pytest_asyncio
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from memmachine_server.common.filter.filter_parser import Comparison
+from memmachine_server.common.filter.filter_parser import Comparison, parse_filter
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
 )
@@ -190,6 +190,78 @@ async def test_add_segments_with_no_context(
 
     result = await partition.get_segment_contexts([seg.uuid])
     assert result[seg.uuid][0].context == NullContext()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tz",
+    [
+        UTC,
+        timezone(timedelta(hours=-8)),
+        timezone(timedelta(hours=5, minutes=30)),
+    ],
+)
+async def test_timestamp_roundtrips_with_timezone(
+    partition: SQLAlchemySegmentStorePartition,
+    tz: timezone,
+) -> None:
+    """A timezone-aware timestamp roundtrips with its instant and offset intact.
+
+    SQLite's DateTime(timezone=True) discards tzinfo and stores the wall-clock
+    fields verbatim, so a non-UTC timestamp that is not normalized to UTC before
+    writing comes back shifted by its offset. Regression test for that bug.
+    """
+    ts = datetime(2024, 1, 1, 13, 30, 45, tzinfo=tz)
+    seg = Segment(
+        uuid=uuid4(),
+        event_uuid=uuid4(),
+        index=0,
+        offset=0,
+        timestamp=ts,
+        block=TextBlock(text="tz"),
+        context=_NULL_CONTEXT,
+        properties={},
+    )
+    await partition.add_segments(_links(seg))
+
+    result = await partition.get_segment_contexts([seg.uuid])
+    returned = result[seg.uuid][0].timestamp
+    # Aware-datetime equality compares absolute instants.
+    assert returned == ts
+    # The original UTC offset is reconstructed, not collapsed to UTC.
+    assert returned.utcoffset() == ts.utcoffset()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "2024-01-01T00:00:30+00:00",
+        "2024-01-01T08:00:30+08:00",  # the same instant, named in another zone
+        "2023-12-31T16:00:30-08:00",  # and another
+    ],
+)
+async def test_timestamp_filter_compares_instants_not_wall_clocks(
+    partition: SQLAlchemySegmentStorePartition,
+    bound: str,
+) -> None:
+    """A datetime bound means an instant, whatever zone it is written in.
+
+    Companion to the write-side normalization: timestamps are stored as the UTC
+    instant, so a bound bound with its own offset would be compared on its
+    wall-clock digits, and `<= 08:00+08:00` would exclude a row stored at 00:00Z.
+    Both backends must agree, which is why this runs against SQLite and Postgres.
+    """
+    early = _seg(ts_offset_seconds=0)
+    late = _seg(ts_offset_seconds=60)
+    await partition.add_segments(_links(early, late))
+
+    result = await partition.get_segment_contexts(
+        [early.uuid],
+        max_forward_segments=5,
+        property_filter=parse_filter(f"timestamp <= date('{bound}')"),
+    )
+    assert [s.uuid for s in result[early.uuid]] == [early.uuid]
 
 
 @pytest.mark.asyncio
