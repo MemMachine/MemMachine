@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import re
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -16,7 +15,7 @@ from memmachine_server.common.data_types import (
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.utils import (
-    chunk_text_balanced,
+    chunk_text,
     cluster_texts,
     unflatten_like,
 )
@@ -74,17 +73,6 @@ class OpenAIEmbedder(Embedder):
     max_num_inputs_per_request = 2048
     max_total_input_length_per_request = (
         75000  # Assume at most 4 tokens per Unicode code point.
-    )
-
-    # Tokens that cause 500 errors on text-embedding-3-small.
-    _SPECIAL_TOKEN_PATTERN = re.compile(
-        r"<\|endoftext\|>"
-        r"|<\|im_start\|>"
-        r"|<\|im_end\|>"
-        r"|<\|fim_prefix\|>"
-        r"|<\|fim_middle\|>"
-        r"|<\|fim_suffix\|>"
-        r"|<\|endofprompt\|>"
     )
 
     def __init__(self, params: OpenAIEmbedderParams) -> None:
@@ -149,17 +137,18 @@ class OpenAIEmbedder(Embedder):
         if max_attempts <= 0:
             raise ValueError("max_attempts must be a positive integer")
 
-        inputs = [
-            OpenAIEmbedder._SPECIAL_TOKEN_PATTERN.sub("", input_text) or "."
-            for input_text in inputs
-        ]
+        # The OpenAI API rejects empty inputs,
+        # and averaging over zero chunks is undefined.
+        inputs = [input_text or "." for input_text in inputs]
 
         effective_max = (
             self._max_input_length or self.max_total_input_length_per_request
         )
-        inputs_chunks = [
-            chunk_text_balanced(input_text, effective_max) for input_text in inputs
-        ]
+        # Greedy max-size chunks measured more faithful to the whole-text
+        # embedding than balanced chunks when combined with the
+        # length-weighted average below: most characters get the largest
+        # available context window.
+        inputs_chunks = [chunk_text(input_text, effective_max) for input_text in inputs]
 
         chunks = [chunk for input_chunks in inputs_chunks for chunk in input_chunks]
         chunk_clusters = cluster_texts(
@@ -203,10 +192,21 @@ class OpenAIEmbedder(Embedder):
             inputs_chunks,
         )
 
-        # Average chunk embeddings to get input embeddings.
+        # Average chunk embeddings to get input embeddings, weighting each
+        # chunk by its length: under mean pooling the whole-text embedding is
+        # approximately a length-weighted average of its chunks' embeddings,
+        # and greedy chunking makes chunk lengths uneven.
         return [
-            np.mean(chunk_embeddings, axis=0).astype(float).tolist()
-            for chunk_embeddings in inputs_chunk_embeddings
+            np.average(
+                chunk_embeddings,
+                axis=0,
+                weights=[max(len(chunk), 1) for chunk in input_chunks],
+            )
+            .astype(float)
+            .tolist()
+            for input_chunks, chunk_embeddings in zip(
+                inputs_chunks, inputs_chunk_embeddings, strict=True
+            )
         ]
 
     async def _embed_chunk_cluster(

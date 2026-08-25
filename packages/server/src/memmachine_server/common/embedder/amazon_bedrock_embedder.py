@@ -16,7 +16,7 @@ from memmachine_server.common.data_types import (
     ExternalServiceAPIError,
     SimilarityMetric,
 )
-from memmachine_server.common.utils import chunk_text_balanced, unflatten_like
+from memmachine_server.common.utils import chunk_text, unflatten_like
 
 from .embedder import Embedder
 
@@ -135,8 +135,12 @@ class AmazonBedrockEmbedder(Embedder):
 
         inputs = [input_text or "." for input_text in inputs]
 
+        # Greedy max-size chunks measured more faithful to the whole-text
+        # embedding than balanced chunks when combined with the
+        # length-weighted average below: most characters get the largest
+        # available context window.
         inputs_chunks = [
-            chunk_text_balanced(input_text, self._max_input_length)
+            chunk_text(input_text, self._max_input_length)
             if self._max_input_length is not None
             else [input_text]
             for input_text in inputs
@@ -203,10 +207,21 @@ class AmazonBedrockEmbedder(Embedder):
             inputs_chunks,
         )
 
-        # Average chunk embeddings to get input embeddings.
+        # Average chunk embeddings to get input embeddings, weighting each
+        # chunk by its length: under mean pooling the whole-text embedding is
+        # approximately a length-weighted average of its chunks' embeddings,
+        # and greedy chunking makes chunk lengths uneven.
         return [
-            np.mean(chunk_embeddings, axis=0).astype(float).tolist()
-            for chunk_embeddings in inputs_chunk_embeddings
+            np.average(
+                chunk_embeddings,
+                axis=0,
+                weights=[max(len(chunk), 1) for chunk in input_chunks],
+            )
+            .astype(float)
+            .tolist()
+            for input_chunks, chunk_embeddings in zip(
+                inputs_chunks, inputs_chunk_embeddings, strict=True
+            )
         ]
 
     @property

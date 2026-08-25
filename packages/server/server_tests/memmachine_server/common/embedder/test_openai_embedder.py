@@ -166,6 +166,6 @@ async def test_embed_oversized_input_with_no_max_input_length():
 
     assert len(result) == 1
     assert len(result[0]) == 256
-    # The text must have been split: balanced chunks of 80,000 chars at limit
-    # 75,000 produce two chunks of 40,000 each, each in its own cluster.
+    # The text must have been split: greedy chunks of 80,000 chars at limit
+    # 75,000 produce chunks of 75,000 and 5,000, each in its own cluster.
     assert mock_client.embeddings.create.call_count >= 2
