@@ -1,6 +1,15 @@
 # MemMachine Helm Chart
 
-Deploys MemMachine with optional in-cluster PostgreSQL (pgvector) and Neo4j. Both databases can be replaced with external instances via `postgres.enabled=false` / `neo4j.enabled=false`.
+Deploys MemMachine with optional in-cluster PostgreSQL (pgvector), Qdrant, and Neo4j. Each database can be replaced with an external instance via `postgres.enabled=false` / `qdrant.enabled=false` / `neo4j.enabled=false`.
+
+The long-term memory backend is selected by `memmachine.longTermMemory.backend`:
+
+| Backend                | Stores used            | Enable with |
+|------------------------|------------------------|-------------|
+| `event` (**default**)  | Qdrant + PostgreSQL    | *(nothing; this is the default)* |
+| `declarative`          | Neo4j                  | `--set memmachine.longTermMemory.backend=declarative --set neo4j.enabled=true` |
+
+Only the resources the selected backend needs are written into `configuration.yml`, because MemMachine connects to and validates **every** configured resource at startup. Neo4j is therefore not deployed by default (`neo4j.enabled=false`).
 
 ## Chart Info
 
@@ -26,7 +35,8 @@ Deploys MemMachine with optional in-cluster PostgreSQL (pgvector) and Neo4j. Bot
   │   (port 8080)       │
   │                     │
   │  init: wait-for-postgres ──► postgres.host:postgres.port
-  │  init: wait-for-neo4j    ──► neo4j.host:neo4j.port
+  │  init: wait-for-qdrant   ──► qdrant.host:qdrant.port   (event backend)
+  │  init: wait-for-neo4j    ──► neo4j.host:neo4j.port     (declarative backend)
   └──────────┬──────────┘
              │ reads configuration.yml + .env from ConfigMaps
              │ reads OPENAI_API_KEY, POSTGRES_PASSWORD,
@@ -36,17 +46,18 @@ Deploys MemMachine with optional in-cluster PostgreSQL (pgvector) and Neo4j. Bot
      ┌───────┴────────┐
      │                │
      ▼                ▼
-memmachine-postgres  memmachine-neo4j       ← only if enabled: true
-(ClusterIP :5432)    (ClusterIP :7687 Bolt, :7474 HTTP, :7473 HTTPS)
-     │                │
-postgres-pvc         neo4j-pvc              ← only if enabled: true
-(/var/lib/           (/data)
+memmachine-postgres  memmachine-qdrant     memmachine-neo4j    ← only if enabled: true
+(ClusterIP :5432)    (ClusterIP :6333 REST, (ClusterIP :7687 Bolt,
+     │                :6334 gRPC)            :7474 HTTP, :7473 HTTPS)
+     │                │                      │
+postgres-pvc         qdrant-pvc             neo4j-pvc           ← only if enabled: true
+(/var/lib/           (/qdrant/storage)      (/data)
  postgresql/data)
 ```
 
-**Startup order**: Two `initContainers` (`wait-for-postgres`, `wait-for-neo4j`) use `busybox` + `nc` to poll TCP connectivity before the main container starts. The host/port probed are taken from `postgres.host`/`postgres.port` and `neo4j.host`/`neo4j.port`, so they work for both in-cluster and external endpoints.
+**Startup order**: Two `initContainers` use `busybox` + `nc` to poll TCP connectivity before the main container starts: `wait-for-postgres` always, plus `wait-for-qdrant` (event backend) or `wait-for-neo4j` (declarative backend). The host/port probed are taken from the matching `*.host`/`*.port` values, so they work for both in-cluster and external endpoints.
 
-**Network model**: When deployed in-cluster, PostgreSQL and Neo4j are only reachable inside the cluster (ClusterIP). When `enabled: false`, MemMachine connects directly to the externally configured host. Only the MemMachine API is exposed externally via a NodePort.
+**Network model**: When deployed in-cluster, PostgreSQL, Qdrant, and Neo4j are only reachable inside the cluster (ClusterIP). When `enabled: false`, MemMachine connects directly to the externally configured host. Only the MemMachine API is exposed externally via a NodePort.
 
 ---
 
@@ -58,14 +69,16 @@ postgres-pvc         neo4j-pvc              ← only if enabled: true
 |----------------------|------------|--------------------------------|---------------------------------|------------------------|
 | MemMachine           | Deployment | `memmachine-service`           | NodePort 31001 → :80 → pod:8080 | Always                 |
 | PostgreSQL (pgvector)| Deployment | `memmachine-postgres`          | ClusterIP :5432                 | `postgres.enabled=true`|
-| Neo4j                | Deployment | `memmachine-neo4j`             | ClusterIP :7687, :7474, :7473   | `neo4j.enabled=true`   |
+| Qdrant               | Deployment | `memmachine-qdrant`            | ClusterIP :6333, :6334          | `qdrant.enabled=true` (default) |
+| Neo4j                | Deployment | `memmachine-neo4j`             | ClusterIP :7687, :7474, :7473   | `neo4j.enabled=true` (off by default) |
 
 ### Persistent Storage
 
-Up to three PVCs are created, all using the same `storageClass` and `pvcSize`:
+Up to four PVCs are created, all using the same `storageClass` and `pvcSize`:
 
 | PVC name         | Mounted in     | Mount path                    | Purpose                         | Conditional?           |
 |------------------|----------------|-------------------------------|---------------------------------|------------------------|
+| `qdrant-pvc`     | Qdrant pod     | `/qdrant/storage`             | Derivative vectors and indexes  | `qdrant.enabled=true`  |
 | `neo4j-pvc`      | Neo4j pod      | `/data`                       | Graph data, indexes, plugins    | `neo4j.enabled=true`   |
 | `postgres-pvc`   | PostgreSQL pod | `/var/lib/postgresql/data`    | Relational/vector data          | `postgres.enabled=true`|
 | `memmachine-pvc` | MemMachine pod | `/app/data`                   | Application logs and data files | Always                 |
@@ -74,7 +87,7 @@ All PVCs request `ReadWriteMany` (RWX) access mode. This requires a StorageClass
 
 ### Secrets
 
-All three secrets are always created regardless of `postgres.enabled` / `neo4j.enabled`.
+All three secrets are always created regardless of `postgres.enabled` / `qdrant.enabled` / `neo4j.enabled`.
 
 | Secret name          | Keys                                          | Consumed by                                                                   |
 |----------------------|-----------------------------------------------|-------------------------------------------------------------------------------|
@@ -100,9 +113,11 @@ All three secrets are always created regardless of `postgres.enabled` / `neo4j.e
 | `templates/memmachine-configmaps.yaml` | ConfigMap × 2            | `memmachine-config` (configuration.yml) and `memmachine-env-config` (.env) |
 | `templates/neo4j-deployment.yaml`      | Deployment (neo4j)       | Neo4j with APOC + GDS plugins, PVC for data                     |
 | `templates/neo4j-service.yaml`         | Service (ClusterIP)      | Internal Neo4j access (Bolt 7687, HTTP 7474, HTTPS 7473)        |
+| `templates/qdrant-deployment.yaml`     | Deployment (qdrant)      | Qdrant vector store, PVC for storage                            |
+| `templates/qdrant-service.yaml`        | Service (ClusterIP)      | Internal Qdrant access (REST 6333, gRPC 6334)                   |
 | `templates/postgres-deployment.yaml`   | Deployment (memmachine-postgres) | PostgreSQL with pgvector, credentials from Secret           |
 | `templates/postgres-service.yaml`      | Service (ClusterIP)      | Internal PostgreSQL access on port 5432                         |
-| `templates/pvc.yaml`                   | PersistentVolumeClaim × 1–3 | `memmachine-pvc` always; `neo4j-pvc` if `neo4j.enabled`; `postgres-pvc` if `postgres.enabled` |
+| `templates/pvc.yaml`                   | PersistentVolumeClaim × 1–4 | `memmachine-pvc` always; `postgres-pvc` if `postgres.enabled`; `qdrant-pvc` if `qdrant.enabled`; `neo4j-pvc` if `neo4j.enabled` |
 | `templates/secrets.yaml`               | Secret × 3               | `postgres-secret`, `memmachine-secrets`, `neo4j-secret` — all always created |
 
 ---
@@ -121,10 +136,14 @@ episode_store:
   database: db_postgres            # references resources.databases.db_postgres
 
 episodic_memory:
-  long_term_memory:
+  long_term_memory:                # shape depends on memmachine.longTermMemory.backend
+    backend: event                 # default; "declarative" swaps the two lines below
     embedder: default_embedder     # references resources.embedders.default_embedder
     reranker: my_reranker_id       # references resources.rerankers.my_reranker_id
-    vector_graph_store: db_neo4j   # references resources.databases.db_neo4j
+    vector_store: db_qdrant        # event backend: references resources.databases.db_qdrant
+    segment_store: db_postgres     # event backend: references resources.databases.db_postgres
+  # backend: declarative
+  #   vector_graph_store: db_neo4j # declarative backend: references resources.databases.db_neo4j
   short_term_memory:
     llm_model: default_model       # references resources.language_models.default_model
     message_capacity: 500
@@ -145,7 +164,8 @@ prompt:
 resources:
   databases:
     db_postgres: { provider: postgres, config: { host, port, user, password: $POSTGRES_PASSWORD, ... } }
-    db_neo4j:    { provider: neo4j,    config: { uri, username: $NEO4J_USER, password: $NEO4J_PASSWORD, pool, ... } }
+    db_qdrant:   { provider: qdrant,   config: { host, port, grpc_port, prefer_grpc, https } }   # event backend only
+    db_neo4j:    { provider: neo4j,    config: { uri, username: $NEO4J_USER, password: $NEO4J_PASSWORD, pool, ... } }  # declarative backend only
   embedders:
     default_embedder: { provider, config: { model, api_key: $OPENAI_API_KEY, base_url, dimensions } }
   language_models:
@@ -156,7 +176,7 @@ resources:
     bm_ranker_id:     { provider: bm25 }
 ```
 
-Resource IDs used in top-level sections (`default_model`, `default_embedder`, `db_postgres`, `db_neo4j`, `my_reranker_id`) are resolved under `resources.*`.
+Resource IDs used in top-level sections (`default_model`, `default_embedder`, `db_postgres`, `db_qdrant`, `db_neo4j`, `my_reranker_id`) are resolved under `resources.*`. Only the database resource the selected backend needs is emitted -- MemMachine connects to and validates every configured resource at startup, so an unused entry would make its server a hard dependency.
 
 ---
 
@@ -166,7 +186,7 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 
 | Value          | Default        | Description                                                                 |
 |----------------|----------------|-----------------------------------------------------------------------------|
-| `storageClass` | `nfs-client`   | StorageClass for all three PVCs (e.g., `standard` on kind/minikube)        |
+| `storageClass` | `nfs-client`   | StorageClass for all PVCs (e.g., `standard` on kind/minikube)              |
 | `accessMode`   | `ReadWriteMany`| PVC access mode. Use `ReadWriteMany` for NFS-style RWX classes, or `ReadWriteOnce` for local/standard classes that do not support RWX. |
 | `pvcSize`      | `5Gi`          | Storage request size for each PVC                                           |
 
@@ -174,7 +194,7 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 
 | Value                                 | Default               | Description                              |
 |---------------------------------------|-----------------------|------------------------------------------|
-| `neo4j.enabled`                       | `true`                | Deploy in-cluster Neo4j. Set to `false` to skip and use an external host |
+| `neo4j.enabled`                       | `false`               | Deploy in-cluster Neo4j. Only the `declarative` backend uses it; set to `true` together with `memmachine.longTermMemory.backend=declarative`, or point `neo4j.host` at an external instance |
 | `neo4j.host`                          | `memmachine-neo4j`    | Bolt hostname; override with external host when `enabled: false` |
 | `neo4j.port`                          | `7687`                | Bolt port; override if external uses a different port |
 | `neo4j.image`                         | `neo4j:5.23-community`| Container image                          |
@@ -191,6 +211,23 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 | `neo4j.resources.requests.cpu`        | `500m`                | CPU request (JVM startup is CPU-intensive) |
 | `neo4j.resources.requests.memory`     | `1Gi`                 | Memory request (covers JVM heap initial 512m + overhead) |
 | `neo4j.resources.limits.memory`       | `2Gi`                 | Memory limit (covers heap.max 1G + page cache + OS overhead) |
+
+### Qdrant (`qdrant.*`)
+
+Backing vector store for the default `event` long-term memory backend.
+
+| Value                                 | Default               | Description                              |
+|---------------------------------------|-----------------------|------------------------------------------|
+| `qdrant.enabled`                      | `true`                | Deploy in-cluster Qdrant. Set to `false` to skip and use an external host |
+| `qdrant.host`                         | `memmachine-qdrant`   | Hostname; override with external host when `enabled: false` |
+| `qdrant.port`                         | `6333`                | REST port                                |
+| `qdrant.grpcPort`                     | `6334`                | gRPC port                                |
+| `qdrant.image`                        | `qdrant/qdrant:v1.19.0` | Container image                        |
+| `qdrant.preferGrpc`                   | `false`               | Use gRPC instead of REST for client calls |
+| `qdrant.https`                        | `false`               | Use HTTPS/TLS for client calls           |
+| `qdrant.resources.requests.cpu`       | `250m`                | CPU request                              |
+| `qdrant.resources.requests.memory`    | `512Mi`               | Memory request                           |
+| `qdrant.resources.limits.memory`      | `2Gi`                 | Memory limit                             |
 
 ### PostgreSQL (`postgres.*`)
 
@@ -217,6 +254,7 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 | `memmachine.tag`                   | `v0.2.6-cpu`                                     | Image tag                                     |
 | `memmachine.pullPolicy`            | `IfNotPresent`                                   | Image pull policy                             |
 | `memmachine.openaiApiKey`          | `<OPENAI_API_KEY>`                               | Stored in `memmachine-secrets`; injected as `OPENAI_API_KEY` env var and used as `api_key` for LLM and embedder |
+| `memmachine.longTermMemory.backend` | `event`                                         | Long-term memory backend: `event` (Qdrant + PostgreSQL) or `declarative` (Neo4j; also set `neo4j.enabled=true`) |
 | `memmachine.config.loggingLevel`   | `INFO`                                           | Controls `FAST_MCP_LOG_LEVEL` env var         |
 | `memmachine.config.memoryConfigPath` | `/app/configuration.yml`                       | Path to configuration.yml inside the container |
 | `memmachine.config.baseUrl`        | `http://127.0.0.1:8080`                          | `MCP_BASE_URL` env var                        |

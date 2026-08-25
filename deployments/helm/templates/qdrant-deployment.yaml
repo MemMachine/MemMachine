@@ -1,0 +1,58 @@
+{{- if .Values.qdrant.enabled }}
+# qdrant-deployment.yaml
+# Deploys Qdrant (1 replica), the VectorStore backing the event long-term
+# memory backend (memmachine.longTermMemory.backend: event, the default).
+# Data is persisted to the qdrant-pvc PVC at /qdrant/storage.
+# Exposes: REST (6333), gRPC (6334).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qdrant
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qdrant
+  template:
+    metadata:
+      labels:
+        app: qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: {{ .Values.qdrant.image }}
+          ports:
+            - containerPort: 6333
+            - containerPort: 6334
+          resources:
+            {{- toYaml .Values.qdrant.resources | nindent 12 }}
+          startupProbe:
+            tcpSocket:
+              port: 6333
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            tcpSocket:
+              port: 6333
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: 6333
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: qdrant-data
+              mountPath: /qdrant/storage
+      volumes:
+        - name: qdrant-data
+          persistentVolumeClaim:
+            claimName: qdrant-pvc
+{{- end }}

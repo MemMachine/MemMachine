@@ -6,6 +6,12 @@
 #      application configuration: database connections, LLM/embedder resource
 #      definitions, reranker pipeline, episodic/semantic memory settings, and
 #      session manager. Values are templated from values.yaml.
+#      The long-term memory backend is selected by
+#      memmachine.longTermMemory.backend: "event" (default) wires the
+#      VectorStore + SegmentStore pair (db_qdrant + db_postgres), while
+#      "declarative" wires the VectorGraphStore (db_neo4j). Only the resource
+#      the selected backend needs is emitted, because every configured
+#      resource is connected and validated at startup.
 #
 #   2. memmachine-env-config
 #      Generates /app/.env with non-secret env vars (POSTGRES_HOST, POSTGRES_PORT,
@@ -29,9 +35,18 @@ data:
 
     episodic_memory:
       long_term_memory:
+        {{- if eq .Values.memmachine.longTermMemory.backend "event" }}
+        backend: event
+        embedder: default_embedder
+        reranker: my_reranker_id
+        vector_store: db_qdrant
+        segment_store: db_postgres
+        {{- else }}
+        backend: declarative
         embedder: default_embedder
         reranker: my_reranker_id
         vector_graph_store: db_neo4j
+        {{- end }}
       short_term_memory:
         llm_model: default_model
         message_capacity: 500
@@ -64,6 +79,16 @@ data:
             pool_timeout: {{ .Values.postgres.pool_timeout }}
             pool_recycle: {{ .Values.postgres.pool_recycle }}
             pool_pre_ping: {{ .Values.postgres.pool_pre_ping }}
+        {{- if eq .Values.memmachine.longTermMemory.backend "event" }}
+        db_qdrant:
+          provider: qdrant
+          config:
+            host: {{ .Values.qdrant.host }}
+            port: {{ .Values.qdrant.port }}
+            grpc_port: {{ .Values.qdrant.grpcPort }}
+            prefer_grpc: {{ .Values.qdrant.preferGrpc }}
+            https: {{ .Values.qdrant.https }}
+        {{- else }}
         db_neo4j:
           provider: neo4j
           config:
@@ -78,6 +103,7 @@ data:
             {{- if ne .Values.neo4j.pool.liveness_check_timeout nil }}
             liveness_check_timeout: {{ .Values.neo4j.pool.liveness_check_timeout }}
             {{- end }}
+        {{- end }}
       embedders:
         default_embedder:
           provider: "{{ .Values.memmachine.embedder.provider }}"

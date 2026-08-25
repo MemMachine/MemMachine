@@ -7,8 +7,10 @@ episode_store:
 
 episodic_memory:
   long_term_memory:
-    # Default backend: a VectorGraphStore-backed declarative memory.
-    # backend: declarative                  # explicit; same as omitting the field
+    # This sample demonstrates the declarative backend on NebulaGraph, so it
+    # deliberately keeps `backend: declarative`. The default backend for new
+    # deployments is event memory -- see the cpu/gpu samples.
+    backend: declarative
     embedder: openai_embedder
     reranker: my_reranker_id
     vector_graph_store: nebula_storage  # Using NebulaGraph

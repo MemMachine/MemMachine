@@ -459,6 +459,9 @@ set_config_defaults() {
 /provider:/ && /postgres/ {
   vendor = "postgres"
 }
+/provider:/ && /qdrant/ {
+  vendor = "qdrant"
+}
 
 vendor == "neo4j" && /host:/ { sub(/localhost/, "neo4j") }
 vendor == "neo4j" && /uri:/ { sub(/localhost/, "neo4j") }
@@ -469,6 +472,9 @@ vendor == "postgres" && /host:/ { sub(/localhost/, "postgres") }
 vendor == "postgres" && /user:/ { sub(/postgres/, pg_user) }
 vendor == "postgres" && /db_name:/ { sub(/postgres/, pg_db) }
 vendor == "postgres" && /password:/ { sub(/<YOUR_PASSWORD_HERE>/, pg_pass) }
+
+# Handle qdrant configurations (event long-term memory vector store)
+vendor == "qdrant" && /host:/ { sub(/localhost/, "qdrant") }
 
 { print }
 ' configuration.yml > configuration.yml.tmp && mv configuration.yml.tmp configuration.yml
@@ -830,13 +836,24 @@ wait_for_health() {
         exit 1
     fi
     
-    # Wait for Neo4j
-    print_info "Waiting for Neo4j to be ready..."
-    if timeout 120 bash -c "until docker exec memmachine-neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
-        print_success "Neo4j is ready"
+    # Wait for Qdrant (vector store for the event long-term memory backend)
+    print_info "Waiting for Qdrant to be ready..."
+    if timeout 120 bash -c "until curl -f http://localhost:${QDRANT_PORT:-6333}/healthz > /dev/null 2>&1; do sleep 2; done"; then
+        print_success "Qdrant is ready"
     else
-        print_error "Neo4j failed to become ready in 120 seconds. Check container logs and configuration."
+        print_error "Qdrant failed to become ready in 120 seconds. Check container logs and configuration."
         exit 1
+    fi
+
+    # Wait for Neo4j, but only when it was started (declarative backend profile)
+    if docker ps --format '{{.Names}}' | grep -q '^memmachine-neo4j$'; then
+        print_info "Waiting for Neo4j to be ready..."
+        if timeout 120 bash -c "until docker exec memmachine-neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
+            print_success "Neo4j is ready"
+        else
+            print_error "Neo4j failed to become ready in 120 seconds. Check container logs and configuration."
+            exit 1
+        fi
     fi
     
     # Wait for MemMachine
@@ -855,13 +872,18 @@ show_service_info() {
     echo ""
     echo "Service URLs:"
     echo "  📊 MemMachine API Docs: http://localhost:${MEMORY_SERVER_PORT:-8080}/docs"
-    echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
+    if docker ps --format '{{.Names}}' | grep -q '^memmachine-neo4j$'; then
+        echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
+    fi
     echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/health"
     echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/metrics"
     echo ""
     echo "Database Access:"
     echo "  🐘 PostgreSQL: localhost:${POSTGRES_PORT:-5432} (user: ${POSTGRES_USER:-memmachine}, db: ${POSTGRES_DB:-memmachine})"
-    echo "  🔗 Neo4j Bolt: localhost:${NEO4J_PORT:-7687} (user: ${NEO4J_USER:-neo4j})"
+    echo "  🧭 Qdrant: localhost:${QDRANT_PORT:-6333} (dashboard: http://localhost:${QDRANT_PORT:-6333}/dashboard)"
+    if docker ps --format '{{.Names}}' | grep -q '^memmachine-neo4j$'; then
+        echo "  🔗 Neo4j Bolt: localhost:${NEO4J_PORT:-7687} (user: ${NEO4J_USER:-neo4j})"
+    fi
     echo ""
     echo "Useful Commands:"
     echo "  📋 View logs: ${COMPOSE_CMD} logs -f"

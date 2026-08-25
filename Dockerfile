@@ -29,9 +29,9 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SCM_VERSION}
 # Install dependencies into a virtual environment, but NOT the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$GPU" = "true" ]; then \
-        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --extra gpu; \
+        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --extra gpu --extra qdrant; \
     else \
-        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev; \
+        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --extra qdrant; \
     fi
 
 # Copy the application source code
@@ -40,9 +40,9 @@ COPY . /app
 # Install the project itself from the local source
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$GPU" = "true" ]; then \
-        uv sync --frozen --package memmachine-server --no-editable --no-dev --extra gpu; \
+        uv sync --frozen --package memmachine-server --no-editable --no-dev --extra gpu --extra qdrant; \
     else \
-        uv sync --frozen --package memmachine-server --no-editable --no-dev; \
+        uv sync --frozen --package memmachine-server --no-editable --no-dev --extra qdrant; \
     fi
 
 #
