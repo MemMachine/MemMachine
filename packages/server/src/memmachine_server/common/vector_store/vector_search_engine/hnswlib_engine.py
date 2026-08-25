@@ -12,6 +12,7 @@ import numpy as np
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.rw_locks import AsyncRWLock
 
+from .index_persistence import atomic_index_write, clear_stale_index_temp
 from .vector_search_engine import SearchMatch, SearchResult, VectorSearchEngine
 
 
@@ -321,7 +322,8 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
             await asyncio.to_thread(self._sync_save, path)
 
     def _sync_save(self, path: str) -> None:
-        self._index.save_index(path)
+        with atomic_index_write(path) as temp_path:
+            self._index.save_index(temp_path)
         # Reconcile _known_labels with hnswlib's label_lookup_.
         if self._allow_replace_deleted:
             self._known_labels = {int(k) for k in self._index.get_ids_list()}
@@ -332,6 +334,7 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
             await asyncio.to_thread(self._sync_load, path)
 
     def _sync_load(self, path: str) -> None:
+        clear_stale_index_temp(path)
         self._index = hnswlib.Index(space=self._space, dim=self._num_dimensions)
         self._index.load_index(path, allow_replace_deleted=self._allow_replace_deleted)
         self._index.set_ef(self._ef_search)

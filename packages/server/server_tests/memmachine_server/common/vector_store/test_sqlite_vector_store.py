@@ -1483,3 +1483,54 @@ class TestIndexFileDurability:
 
         await store2.shutdown()
         await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_reverted_publication_costs_search_not_records(self, tmp_path):
+        """A publication lost to power failure leaves records unsearchable.
+
+        The swap is atomic, not durable, so a power failure can revert the last
+        publication after the trim behind it has committed. Restoring the
+        previous index bytes reconstructs exactly that state, deterministically
+        rather than by pulling a plug, and pins the direction it fails in: the
+        record survives and still resolves by uuid, it simply cannot be found
+        by search until it is upserted again.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1)
+
+        coll = await store1.open_or_create_collection(
+            namespace=NAMESPACE, name=NAME, config=CONFIG
+        )
+        r1 = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await coll.upsert(records=[r1])
+
+        index_dir = tmp_path / "indexes"
+        idx_files = list(index_dir.glob("*.idx"))
+        assert len(idx_files) == 1
+        published_without_r2 = idx_files[0].read_bytes()
+
+        # Publishes an index holding both, then trims r2's only other copy.
+        r2 = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        await coll.upsert(records=[r2])
+        assert await _pending_operation_count(engine1) == 0
+
+        await store1.shutdown()
+        await engine1.dispose()
+
+        # Power failure: the publication that held r2 never reached the disk.
+        idx_files[0].write_bytes(published_without_r2)
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        coll2 = await store2.open_collection(namespace=NAMESPACE, name=NAME)
+        assert coll2 is not None
+
+        # The record is still a record.
+        fetched = await coll2.get(record_uuids=[r2.uuid])
+        assert [record.uuid for record in fetched] == [r2.uuid]
+
+        # The index just cannot find it any more.
+        results = await coll2.query(query_vectors=[r2.vector], limit=10)
+        assert [match.record.uuid for match in results[0].matches] == [r1.uuid]
+
+        await store2.shutdown()
+        await engine2.dispose()
