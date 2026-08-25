@@ -62,7 +62,7 @@ hnswlib = [
     "hnswlib>=0.8.0",
 ]
 nebula = [
-    "nebula5-python>=5.2.1",
+    "nebula5-python>=5.2.1,<5.3",
 ]
 qdrant = [
     "qdrant-client>=1.17.0",
