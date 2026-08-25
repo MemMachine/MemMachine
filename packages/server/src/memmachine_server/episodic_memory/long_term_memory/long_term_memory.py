@@ -28,6 +28,10 @@ from memmachine_server.common.vector_graph_store import VectorGraphStore
 
 # Converts content to SANITIZED_property_u5f_content
 from memmachine_server.common.vector_graph_store.data_types import mangle_property_name
+from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
+    Neo4jVectorGraphStore,
+    _neo4j_query,
+)
 from memmachine_server.common.vector_store import (
     VectorStore,
     VectorStoreCollection,
@@ -393,11 +397,13 @@ class LongTermMemory:
         """Search using Neo4j Full-Text Search only."""
         assert self._declarative_memory is not None
 
-        # There is no full-text search API on the DeclarativeMemory or
-        # VectorGraphStore interfaces yet, so the collection/relation names,
-        # the Neo4j driver, and the name sanitizer are read directly here.
         declarative_memory = self._declarative_memory
         vector_graph_store = declarative_memory._vector_graph_store  # noqa: SLF001
+
+        # FTS is Neo4j-only
+        if not isinstance(vector_graph_store, Neo4jVectorGraphStore):
+            raise NotImplementedError("FTS is only supported with the Neo4j backend")
+
         derivative_collection = declarative_memory._derivative_collection  # noqa: SLF001
         episode_collection = declarative_memory._episode_collection  # noqa: SLF001
         derivative_episode_relation = declarative_memory._derived_from_relation  # noqa: SLF001
@@ -426,7 +432,7 @@ class LongTermMemory:
         sanitized_episode_collection = sanitize_name(episode_collection)
 
         records, _, _ = await driver.execute_query(
-            f"""
+            _neo4j_query(f"""
             CALL db.index.fulltext.queryNodes(
                 '{fts_index_name}',
                 $query,
@@ -440,7 +446,7 @@ class LongTermMemory:
                    derivative.SANITIZED_property_u5f_filterable_u5f_metadata_u2e_lme_u5f_turn_u5f_idx AS lme_turn_idx,
                    score
             ORDER BY score DESC
-            """,
+            """),
             query=fts_query_string,
             limit=num_episodes_limit * 5,
         )
