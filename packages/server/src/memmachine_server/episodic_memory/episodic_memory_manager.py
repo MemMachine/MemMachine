@@ -206,7 +206,7 @@ class EpisodicMemoryManager:
             if self._closed:
                 raise EpisodicMemoryManagerClosedError
             async with self._session_locks[session_key].write_lock():
-                await self._session_data_manager.create_new_session(
+                await self._session_data_manager.create_new_session_if_not_exist(
                     session_key,
                     config,
                     episodic_memory_config,
@@ -271,12 +271,14 @@ class EpisodicMemoryManager:
 
                     if instance is None:
                         # session does not exist, create it
-                        await self._session_data_manager.create_new_session(
-                            session_key,
-                            config,
-                            episodic_memory_config,
-                            description,
-                            metadata,
+                        await (
+                            self._session_data_manager.create_new_session_if_not_exist(
+                                session_key,
+                                config,
+                                episodic_memory_config,
+                                description,
+                                metadata,
+                            )
                         )
                         instance = await self._create_episodic_memory(
                             session_key, episodic_memory_config

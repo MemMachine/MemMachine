@@ -97,7 +97,7 @@ async def test_create_tables(sqlalchemy_engine: AsyncEngine):
 
 
 @pytest.mark.asyncio
-async def test_create_new_session(
+async def test_create_new_session_if_not_exist(
     session_manager: SessionDataManager,
     episodic_memory_conf: EpisodicMemoryConf,
 ):
@@ -107,7 +107,7 @@ async def test_create_new_session(
     description = "A test session"
     metadata: dict[str, JsonValue] = {"user": "tester"}
 
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         config,
         episodic_memory_conf,
@@ -135,7 +135,7 @@ async def test_create_existing_session_with_matching_configuration_succeeds(
     session_key = "session1"
     configuration: dict[str, JsonValue] = {"key": "value"}
     metadata: dict[str, JsonValue] = {"user": "tester"}
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         configuration,
         episodic_memory_conf,
@@ -143,7 +143,7 @@ async def test_create_existing_session_with_matching_configuration_succeeds(
         metadata,
     )
 
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         configuration,
         episodic_memory_conf,
@@ -167,7 +167,7 @@ async def test_create_existing_session_with_mismatched_configuration_raises_erro
     session_key = "session1"
     configuration: dict[str, JsonValue] = {"key": "value"}
     metadata: dict[str, JsonValue] = {"user": "tester"}
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         configuration,
         episodic_memory_conf,
@@ -188,7 +188,7 @@ async def test_create_existing_session_with_mismatched_configuration_raises_erro
     with pytest.raises(
         SessionAlreadyExistsError, match=f"Session '{session_key}' already exists"
     ):
-        await session_manager.create_new_session(
+        await session_manager.create_new_session_if_not_exist(
             session_key,
             requested_configuration,
             requested_param,
@@ -204,7 +204,7 @@ async def test_create_existing_session_being_deleted_raises_error(
 ):
     """A session being deleted cannot be treated as an idempotent creation."""
     session_key = "session1"
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         {},
         episodic_memory_conf,
@@ -218,7 +218,7 @@ async def test_create_existing_session_being_deleted_raises_error(
     with pytest.raises(
         SessionAlreadyExistsError, match=f"Session '{session_key}' already exists"
     ):
-        await session_manager.create_new_session(
+        await session_manager.create_new_session_if_not_exist(
             session_key,
             {},
             episodic_memory_conf,
@@ -234,7 +234,7 @@ async def test_delete_session(
 ):
     """Test deleting an existing session."""
     session_key = "session_to_delete"
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         {},
         episodic_memory_conf,
@@ -283,21 +283,21 @@ async def test_get_sessions(
 ):
     """Test retrieving session keys with and without filters."""
     # Create some sessions
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         "session1",
         {},
         episodic_memory_conf,
         "",
         {"tag": "A", "user": "1"},
     )
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         "session2",
         {},
         episodic_memory_conf,
         "",
         {"tag": "B", "user": "1"},
     )
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         "session3",
         {},
         episodic_memory_conf,
@@ -342,7 +342,7 @@ async def test_save_short_term_memory_new(
 ):
     """Test saving short-term memory for a session for the first time."""
     session_key = "stm_session_1"
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         {},
         episodic_memory_conf,
@@ -377,7 +377,7 @@ async def test_save_short_term_memory_update(
 ):
     """Test updating existing short-term memory for a session."""
     session_key = "stm_session_2"
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         {},
         episodic_memory_conf,
@@ -427,7 +427,7 @@ async def test_get_short_term_memory_nonexistent(
 ):
     """Test that getting STM for which none has been saved raises a ValueError."""
     session_key = "session_no_stm"
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         {},
         episodic_memory_conf,
@@ -449,7 +449,7 @@ async def test_delete_session_cascades_to_short_term_memory(
 ):
     """Test that deleting a session also deletes its associated short-term memory data."""
     session_key = "cascade_delete_session"
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         session_key,
         {},
         episodic_memory_conf,
@@ -479,13 +479,13 @@ async def test_update_and_get_session_status(
 ):
     """Test updating session status and retrieving by status."""
     # Create sessions
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         "session_active_1", {}, episodic_memory_conf, "", {}
     )
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         "session_active_2", {}, episodic_memory_conf, "", {}
     )
-    await session_manager.create_new_session(
+    await session_manager.create_new_session_if_not_exist(
         "session_to_delete", {}, episodic_memory_conf, "", {}
     )
 

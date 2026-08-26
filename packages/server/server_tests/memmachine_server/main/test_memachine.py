@@ -214,7 +214,7 @@ async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachin
         for topic in ("alpha", "beta"):
             new_session_key = f"metadata-session-{uuid4()}"
             created_sessions.append(new_session_key)
-            await session_manager.create_new_session(
+            await session_manager.create_new_session_if_not_exist(
                 session_key=new_session_key,
                 configuration={"scope": "integration"},
                 param=memmachine._with_default_episodic_memory_conf(

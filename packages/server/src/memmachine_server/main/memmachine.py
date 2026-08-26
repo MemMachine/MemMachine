@@ -532,7 +532,7 @@ class MemMachine:
             )
 
         session_data_manager = await self._resources.get_session_data_manager()
-        await session_data_manager.create_new_session(
+        await session_data_manager.create_new_session_if_not_exist(
             session_key=session_key,
             configuration={},
             param=episodic_memory_conf,

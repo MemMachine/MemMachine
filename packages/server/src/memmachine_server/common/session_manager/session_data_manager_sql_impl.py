@@ -227,8 +227,8 @@ class SessionDataManagerSQL(SessionDataManager):
                 )
             )
 
-    @timed("create_new_session")
-    async def create_new_session(
+    @timed("create_new_session_if_not_exist")
+    async def create_new_session_if_not_exist(
         self,
         session_key: str,
         configuration: dict[str, JsonValue],

@@ -77,7 +77,7 @@ class MockShortTermMemoryDataManager(SessionDataManager):
         self.data = {}
         self.tables_created = False
 
-    async def create_new_session(
+    async def create_new_session_if_not_exist(
         self,
         session_key: str,
         configuration: dict[str, JsonValue],
