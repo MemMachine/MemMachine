@@ -24,14 +24,18 @@ COPY pyproject.toml uv.lock ./
 # Determine whether to include GPU dependencies
 ARG GPU="false"
 ARG SCM_VERSION="0.0.0"
+# Optional dependency groups, e.g. EXTRAS="--extra qdrant". The vector-store
+# backends are optional extras, so an image built without the one its config
+# selects starts cleanly and then fails every request on ImportError.
+ARG EXTRAS=""
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${SCM_VERSION}
 
 # Install dependencies into a virtual environment, but NOT the project itself
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$GPU" = "true" ]; then \
-        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --extra gpu; \
+        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev --extra gpu ${EXTRAS}; \
     else \
-        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev; \
+        uv sync --frozen --package memmachine-server --no-install-workspace --no-editable --no-dev ${EXTRAS}; \
     fi
 
 # Copy the application source code
@@ -40,9 +44,9 @@ COPY . /app
 # Install the project itself from the local source
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$GPU" = "true" ]; then \
-        uv sync --frozen --package memmachine-server --no-editable --no-dev --extra gpu; \
+        uv sync --frozen --package memmachine-server --no-editable --no-dev --extra gpu ${EXTRAS}; \
     else \
-        uv sync --frozen --package memmachine-server --no-editable --no-dev; \
+        uv sync --frozen --package memmachine-server --no-editable --no-dev ${EXTRAS}; \
     fi
 
 #
