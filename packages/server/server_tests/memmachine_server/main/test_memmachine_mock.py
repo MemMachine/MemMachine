@@ -458,7 +458,7 @@ async def test_query_episodic_with_retrieval_agent_searches_long_then_short(
         query="hello world",
         limit=5,
         expand_context=0,
-        score_threshold=-float("inf"),
+        score_threshold=None,
         search_filter=None,
     )
 
@@ -534,7 +534,7 @@ async def test_query_episodic_with_retrieval_agent_skips_short_term_when_disable
         query="hello world",
         limit=5,
         expand_context=0,
-        score_threshold=-float("inf"),
+        score_threshold=None,
         search_filter=None,
     )
 

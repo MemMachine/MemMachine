@@ -4730,7 +4730,7 @@
               }
             ],
             "title": "Score Threshold",
-            "description": "\n    The minimum score for a memory to be included in the search results. Defaults\n    to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.\n    ",
+            "description": "\n    The minimum score for a memory to be included in the search results. Defaults\n    to None (no threshold). Meaningful only for certain ranking methods. Do not\n    send -inf: under lower-is-better metrics that sentinel drops every hit.\n    ",
             "examples": [
               0.0,
               0.5,
