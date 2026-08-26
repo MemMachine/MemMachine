@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -108,24 +109,7 @@ def start_http() -> None:
 
     config = load_configuration()
 
-    # Determine number of workers.
-    # Note: We do not use (os.cpu_count() - 1) as this is often inaccurate in container
-    # environments (reporting host CPUs vs container limits). We leave it to the
-    # user to configure MEMMACHINE_WORKERS based on their allocated vCPUs to
-    # avoid creating excessive worker processes at startup.
-    workers_env = os.getenv("MEMMACHINE_WORKERS")
-    if workers_env:
-        # Verify workers_env is a valid integer, default to 1 if invalid
-        try:
-            workers = int(workers_env)
-        except ValueError:
-            logger.warning(
-                "Invalid MEMMACHINE_WORKERS value '%s'. Defaulting to 1.", workers_env
-            )
-            workers = 1
-    else:
-        # Default to 1 for predictable resource usage in containers
-        workers = 1
+    workers = _worker_count()
 
     if workers == 1:
         logger.info("Starting server with 1 worker")
@@ -144,6 +128,79 @@ def start_http() -> None:
     )
 
 
+def _worker_count() -> int:
+    """Resolve MEMMACHINE_WORKERS, defaulting to 1.
+
+    Note: We do not use (os.cpu_count() - 1) as this is often inaccurate in
+    container environments (reporting host CPUs vs container limits). We leave
+    it to the user to configure MEMMACHINE_WORKERS based on their allocated
+    vCPUs to avoid creating excessive worker processes at startup.
+    """
+    workers_env = os.getenv("MEMMACHINE_WORKERS")
+    if not workers_env:
+        return 1
+    try:
+        return int(workers_env)
+    except ValueError:
+        logger.warning(
+            "Invalid MEMMACHINE_WORKERS value '%s'. Defaulting to 1.", workers_env
+        )
+        return 1
+
+
+def _prepare_multiproc_dir() -> None:
+    """Make PROMETHEUS_MULTIPROC_DIR usable before any metric is created.
+
+    prometheus_client picks its value class at import time and each worker
+    mmaps a file into this directory as soon as it registers a metric, so the
+    directory has to exist by then - after that it is too late, and the failure
+    surfaces as an unrelated error deep in a worker.
+
+    Stale files are cleared for the same reason: they belong to workers from a
+    previous run of this process, and MultiProcessCollector would otherwise add
+    their dead counters to the live ones on every scrape.
+
+    Deliberately best-effort. A deployment may mount the directory read-only or
+    pre-seed it, and refusing to start over metrics would be the wrong trade.
+
+    With more than one worker and no directory configured, one is chosen here
+    rather than left unset: without it every worker keeps its own unaggregated
+    registry and a scrape returns whichever worker answered, which reads as a
+    plausible number rather than an error. The path is fixed so all workers
+    share it; two servers on one host must set the variable themselves.
+    """
+    path = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    chosen = False
+    if not path:
+        if _worker_count() <= 1:
+            return
+        path = str(Path(tempfile.gettempdir()) / "memmachine-prometheus-multiproc")
+        os.environ["PROMETHEUS_MULTIPROC_DIR"] = path
+        chosen = True
+        logger.info(
+            "MEMMACHINE_WORKERS is above 1 and PROMETHEUS_MULTIPROC_DIR is "
+            "unset; using %s so per-worker metrics are aggregated",
+            path,
+        )
+    try:
+        directory = Path(path)
+        directory.mkdir(parents=True, exist_ok=True)
+        for stale in directory.glob("*.db"):
+            stale.unlink()
+    except OSError:
+        if chosen:
+            # prometheus_client raises in every worker if the directory it is
+            # pointed at cannot be opened, so withdraw a choice we made rather
+            # than take the process down with it.
+            del os.environ["PROMETHEUS_MULTIPROC_DIR"]
+        logger.warning(
+            "PROMETHEUS_MULTIPROC_DIR=%s is not writable; per-worker metrics "
+            "will not be aggregated",
+            path,
+            exc_info=True,
+        )
+
+
 def main() -> None:
     """Execute the CLI entry point for the application."""
     # Load environment variables from .env file
@@ -156,6 +213,8 @@ def main() -> None:
     # Configure basic logging to ensure we see startup messages
     logging.basicConfig(level=logging.INFO)
     logger.debug("memmachine-server entrypoint called")
+
+    _prepare_multiproc_dir()
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="MemMachine server")
