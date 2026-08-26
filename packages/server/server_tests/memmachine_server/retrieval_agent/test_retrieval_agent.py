@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from memmachine_common.api.spec import FtsMode
 
 from memmachine_server.common.episode_store import Episode, EpisodeResponse
 from memmachine_server.common.language_model.language_model import LanguageModel
@@ -92,7 +93,8 @@ class FakeEpisodicMemory(EpisodicMemory):
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: Any | None = None,
-        use_fts: bool = False,
+        use_fts: FtsMode = False,
+        append_n: int = 10,
         mode: EpisodicMemory.QueryMode = EpisodicMemory.QueryMode.BOTH,
     ) -> EpisodicMemory.QueryResponse | None:
         self.queries.append(query)

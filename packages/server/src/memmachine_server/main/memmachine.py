@@ -8,6 +8,7 @@ from collections.abc import Callable, Coroutine, Iterable, Mapping
 from typing import Any, Final, Protocol
 
 from memmachine_common.api import MemoryType
+from memmachine_common.api.spec import FtsMode
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
 
 from memmachine_server.common.configuration import Configuration
@@ -749,7 +750,8 @@ class MemMachine:
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
         retrieval_agent: AgentToolBase | None = None,
-        use_fts: bool = False,  # Full-Text Search flag for hybrid search
+        use_fts: FtsMode = False,  # Full-Text Search flag for hybrid search
+        append_n: int = 10,  # Number of FTS results to append (append mode)
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -763,6 +765,7 @@ class MemMachine:
             score_threshold: Optional minimum score threshold for results.
             retrieval_agent: Optional top-level retrieval agent for long-term search.
             use_fts: Full-Text Search flag for hybrid search
+            append_n: Number of FTS results to append (only used in 'append' mode)
 
         Returns:
             Episodic memory query response, if episodic memory is enabled.
@@ -786,6 +789,7 @@ class MemMachine:
                     score_threshold=score_threshold,
                     property_filter=search_filter,
                     use_fts=use_fts,  # Full-Text Search flag for hybrid search
+                    append_n=append_n,  # Number of FTS results to append (append mode)
                 )
             else:
                 response = await self._query_episodic_with_retrieval_agent(
@@ -960,7 +964,8 @@ class MemMachine:
         score_threshold: float = -float("inf"),
         search_filter: str | None = None,
         agent_mode: bool = False,
-        use_fts: bool = False,  # Full-Text Search flag for hybrid search
+        use_fts: FtsMode = False,  # Full-Text Search flag for hybrid search
+        append_n: int = 10,  # Number of FTS results to append (append mode)
     ) -> SearchResponse:
         """
         Search across enabled memory types using a query string.
@@ -976,6 +981,7 @@ class MemMachine:
             score_threshold: Optional minimum score threshold for results.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
             use_fts: Full-Text Search flag for hybrid search
+            append_n: Number of FTS results to append (only used in 'append' mode)
 
         Returns:
             Aggregated search results across memory types.
@@ -997,6 +1003,7 @@ class MemMachine:
                     search_filter=property_filter,
                     retrieval_agent=retrieval_agent,
                     use_fts=use_fts,  # Full-Text Search flag for hybrid search
+                    append_n=append_n,  # Number of FTS results to append (append mode)
                 )
             )
 

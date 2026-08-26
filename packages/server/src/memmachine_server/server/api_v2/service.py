@@ -119,6 +119,7 @@ async def _search_target_memories(
         else -float("inf"),
         agent_mode=spec.agent_mode,
         use_fts=spec.use_fts,  # Full-Text Search flag for hybrid search
+        append_n=spec.append_n,  # Number of FTS results to append (append mode)
     )
     content = SearchResultContent(
         episodic_memory=None,

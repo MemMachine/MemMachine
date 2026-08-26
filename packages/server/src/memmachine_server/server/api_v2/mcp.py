@@ -18,6 +18,7 @@ from memmachine_common.api.spec import (
     DeleteMemoriesSpec,
     EpisodeIdT,
     FeatureIdT,
+    FtsMode,
     MemoryMessage,
     SearchMemoriesSpec,
     SearchResult,
@@ -221,6 +222,8 @@ class Params(BaseModel):
         expand_context: int = 0,
         score_threshold: float | None = None,
         agent_mode: bool = False,
+        use_fts: FtsMode = False,
+        append_n: int = 10,
     ) -> SearchMemoriesSpec:
         """Convert to SearchMemoriesParam."""
         return SearchMemoriesSpec(
@@ -234,7 +237,8 @@ class Params(BaseModel):
             set_metadata=None,
             types=ALL_MEMORY_TYPES,
             agent_mode=agent_mode,
-            use_fts=False,
+            use_fts=use_fts,
+            append_n=append_n,
         )
 
     def to_delete_memories_spec(
@@ -493,6 +497,8 @@ async def mcp_search_memory(
     proj_id: str = "",
     user_id: str = "",
     top_k: int = 20,
+    use_fts: FtsMode = False,
+    append_n: int = 10,
 ) -> McpResponse | SearchResult:
     """
     Search memory for the specified user.
@@ -507,6 +513,10 @@ async def mcp_search_memory(
         user_id: The unique identifier of the user (flat style).
         query: The current user message or topic of discussion (flat style).
         top_k: The maximum number of memory entries to retrieve (flat style). Defaults to 5.
+        use_fts: Full-Text Search (keyword) mode combined with Vector Search
+            (flat style). False: vector only; True or 'rrf': RRF fusion;
+            'append': append FTS results after vector results.
+        append_n: Number of FTS results to append (only used when use_fts='append').
 
     Returns:
         McpResponse on failure, or SearchResult on success
@@ -524,7 +534,12 @@ async def mcp_search_memory(
             proj_id=proj_id,
             user_id=user_id,
         )
-        spec = param.to_search_memories_spec(query, top_k)
+        spec = param.to_search_memories_spec(
+            query,
+            top_k,
+            use_fts=use_fts,
+            append_n=append_n,
+        )
         return await _search_target_memories(
             target_memories=ALL_MEMORY_TYPES, spec=spec, memmachine=mem_machine
         )

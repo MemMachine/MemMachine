@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4, uuid5
 
+from memmachine_common.api.spec import FTS_APPEND_COUNT_DEFAULT, RRF_K, FtsMode
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
@@ -259,7 +260,8 @@ class LongTermMemory:
         expand_context: int = 0,
         score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
-        use_fts: bool = False,  # Full-Text Search flag for hybrid search
+        use_fts: FtsMode = False,  # Full-Text Search flag for hybrid search
+        append_n: int = FTS_APPEND_COUNT_DEFAULT,  # FTS results to append (append mode)
     ) -> list[tuple[float, Episode]]:
         """Score-thresholded query.
 
@@ -273,13 +275,15 @@ class LongTermMemory:
         if self._backend == "declarative":
             # Full-Text Search is enabled
             if use_fts:
-                # Perform hybrid search: Vector + Full-Text Search with dedup
+                # Perform hybrid search: Vector + Full-Text Search
                 return await self._search_scored_hybrid(
                     query,
                     num_episodes_limit=num_episodes_limit,
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=property_filter,
+                    use_fts=use_fts,
+                    append_n=append_n,
                 )
             return await self._search_scored_declarative(
                 query,
@@ -304,19 +308,30 @@ class LongTermMemory:
         expand_context: int,
         score_threshold: float | None,
         property_filter: FilterExpr | None,
+        use_fts: FtsMode = True,
+        append_n: int = FTS_APPEND_COUNT_DEFAULT,
     ) -> list[tuple[float, Episode]]:
-        """Hybrid search: Vector (reranked via RRF) + FTS Top-10 with dedup.
+        """Hybrid search combining Vector results with FTS (keyword) results.
 
-        Vector search results (already reranked with RRF by _search_scored_declarative)
-        are combined with FTS Top-10 results after removing duplicates (by episode uid).
+        Modes (selected via `use_fts`):
+        - True / "rrf": Reciprocal Rank Fusion — vector and FTS results are each
+          ranked, then fused by RRF score 1/(RRF_K + rank); returns top
+          `num_episodes_limit` results, re-sorted by timestamp (the default
+          MemMachine ordering) to match the vector-only path.
+        - "append": Appends up to `append_n` FTS results (deduplicated by episode
+          uid) after the vector results; no reranking. Returns up to
+          `num_episodes_limit + append_n` results.
 
-        Returns up to num_episodes_limit + 10 results (e.g., 50 + 10 = 60 max).
+        Any other value raises ValueError.
+
+        Vector results are already reranked (e.g. via RRFHybridReranker) by
+        `_search_scored_declarative`; only their rank order is used here.
         """
         assert self._declarative_memory is not None
 
-        # 1. Run Vector Search and FTS in parallel
-        # _search_scored_declarative already returns RRF reranked results
-        # _search_fts over-fetches 5x for FTS Top-10 (50 items)
+        # Both RRF and append modes need vector + FTS results; fetch them in
+        # parallel. The threshold is applied *after* the merge/fusion so that
+        # the two result sets are compared on a common footing.
         vector_results, fts_results_full = await asyncio.gather(
             self._search_scored_declarative(
                 query,
@@ -325,33 +340,109 @@ class LongTermMemory:
                 score_threshold=None,  # Apply threshold after merge
                 property_filter=property_filter,
             ),
-            self._search_fts(
-                query,
-                num_episodes_limit=10,  # FTS Top-10 (over-fetch 5x = 50 internally)
-            ),
+            self._search_fts(query, num_episodes_limit=num_episodes_limit),
         )
 
-        # 2. Limit FTS results to Top-10 by score (descending order)
-        fts_top_10 = fts_results_full[:10]
+        # RRF fusion mode: rank vector + FTS results, fuse by 1/(RRF_K + rank),
+        # take the top `num_episodes_limit`, then re-sort by timestamp (the
+        # MemMachine-default ordering, matching the vector-only path).
+        if use_fts is True or use_fts == "rrf":
+            return self._fuse_rrf(
+                vector_results,
+                fts_results_full,
+                num_episodes_limit=num_episodes_limit,
+                score_threshold=score_threshold,
+            )
 
-        # 3. Merge FTS Top-10 into Vector results with dedup by episode uid
-        # Preserve vector result order, append unique FTS results
-        merged_results = list(vector_results)
-        seen_uids = {ep.uid for _, ep in merged_results}
+        # Append mode: keep vector results (timestamp order) and append up to
+        # `append_n` unique FTS (keyword) results after them, deduplicated by
+        # uid. No re-ordering — vector-first then FTS, not a global sort.
+        if use_fts == "append":
+            fts_top_n = fts_results_full[:append_n]
 
-        for score, episode in fts_top_10:
-            if episode.uid not in seen_uids:
-                merged_results.append((score, episode))
-                seen_uids.add(episode.uid)
+            merged_results = list(vector_results)
+            seen_uids = {ep.uid for _, ep in merged_results}
+            for score, episode in fts_top_n:
+                if episode.uid not in seen_uids:
+                    merged_results.append((score, episode))
+                    seen_uids.add(episode.uid)
 
-        # 4. Apply score threshold
+            # Apply score threshold
+            if score_threshold is not None:
+                merged_results = [
+                    (score, episode)
+                    for score, episode in merged_results
+                    if score >= score_threshold
+                ]
+            return merged_results
+
+        # Unreachable under FtsMode typing, but guards against unexpected runtime
+        # values that bypass the type system (e.g. via MCP/HTTP string args).
+        raise ValueError(
+            f"Invalid use_fts value: {use_fts!r}. Expected True, 'rrf', or 'append'."
+        )
+
+    @staticmethod
+    def _fuse_rrf(
+        vector_results: list[tuple[float, Episode]],
+        fts_results: list[tuple[float, Episode]],
+        *,
+        num_episodes_limit: int,
+        score_threshold: float | None,
+    ) -> list[tuple[float, Episode]]:
+        """Fuse vector and FTS result lists via Reciprocal Rank Fusion.
+
+        Each input list is treated as a ranking (highest-relevance first). For
+        every candidate, RRF accumulates `1/(RRF_K + rank)` across the lists it
+        appears in. Candidates seen in both lists therefore score higher than
+        those seen in only one — the fusion reward for agreement.
+
+        After fusion:
+        1. Take the top `num_episodes_limit` candidates by RRF score.
+        2. Re-sort those top candidates by (timestamp, uid) — the default
+           MemMachine ordering, matching the vector-only path. The RRF score is
+           only used to *select* the winners, not to order the final output.
+        3. Apply `score_threshold` to the RRF score (higher-is-better).
+
+        Deduplication is by episode uid: if the same episode appears in both
+        lists, its RRF contributions are summed under one entry.
+
+        Note: the RRF score lives on a small fixed scale (a single hit at rank 1
+        is `1/(RRF_K + 1)` ≈ 0.0164; a hit in both lists tops out near `2/61` ≈
+        0.0328). A `score_threshold` calibrated for the 0-1 vector/reranker
+        scale will therefore filter *every* RRF candidate out — callers using
+        RRF should pass `score_threshold=None` or rescale accordingly.
+        """
+        rrf_scores: dict[str, float] = {}
+        episodes_by_uid: dict[str, Episode] = {}
+
+        def add_ranking(ranking: list[tuple[float, Episode]]) -> None:
+            for rank, (_score, episode) in enumerate(ranking, start=1):
+                uid = episode.uid
+                episodes_by_uid.setdefault(uid, episode)
+                rrf_scores[uid] = rrf_scores.get(uid, 0.0) + 1.0 / (RRF_K + rank)
+
+        add_ranking(vector_results)
+        add_ranking(fts_results)
+
+        # Select the top candidates by RRF score (descending). Ties broken by
+        # uid for determinism.
+        ranked = sorted(
+            rrf_scores.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+        top = ranked[:num_episodes_limit]
+
+        # Drop below threshold (RRF score is higher-is-better).
         if score_threshold is not None:
-            merged_results = [
-                (score, episode)
-                for score, episode in merged_results
-                if score >= score_threshold
-            ]
-        return merged_results
+            top = [(uid, score) for uid, score in top if score >= score_threshold]
+
+        # Final ordering: timestamp then uid (the MemMachine default), not RRF.
+        fused = [(score, episodes_by_uid[uid]) for uid, score in top]
+        fused.sort(
+            key=lambda scored: (scored[1].created_at, scored[1].uid),
+        )
+        return fused
 
     @staticmethod
     def _escape_lucene_query(query: str) -> str:
@@ -424,6 +515,11 @@ class LongTermMemory:
         # Use sanitized property name
         # FTS index is on content field, stored as SANITIZED_property_u5f_content after mangle_property_name
         sanitized_content = sanitize_name(mangle_property_name("content"))
+        # Timestamp is stored on every node (episode + derivative) under the same
+        # mangled+sanitized key as content. Reading it here lets FTS results carry
+        # the SAME timestamp as the vector-search path, so RRF/append can sort by
+        # timestamp just like vector-only results do.
+        sanitized_timestamp = sanitize_name(mangle_property_name("timestamp"))
 
         # FTS query: Follow DERIVED_FROM relation to get Episode Node uid directly
         # Returns same Episode.uid as Vector Search for correct dedup
@@ -442,6 +538,7 @@ class LongTermMemory:
             MATCH (derivative)-[:{sanitized_derived_from_relation}]->(episode:{sanitized_episode_collection})
             RETURN episode.uid AS uid,
                    derivative.{sanitized_content} AS content,
+                   derivative.{sanitized_timestamp} AS timestamp,
                    derivative.SANITIZED_property_u5f_filterable_u5f_metadata_u2e_lme_u5f_session_u5f_id AS lme_session_id,
                    derivative.SANITIZED_property_u5f_filterable_u5f_metadata_u2e_lme_u5f_turn_u5f_idx AS lme_turn_idx,
                    score
@@ -452,12 +549,25 @@ class LongTermMemory:
         )
 
         # Convert to Episode objects
-        # FTS returns only content, so timestamp and producer_id are set to empty/default values
+        # FTS now returns the stored timestamp (same value as vector-search uses),
+        # so results can be sorted by timestamp consistently across hybrid modes.
         fts_episodes = []
         for record in records:
             uid = record.get("uid")
             if uid:
                 content = record.get("content", "")
+                # Timestamp stored on the derivative node; falls back to now()
+                # only if the node somehow lacks the property (shouldn't happen).
+                timestamp = record.get("timestamp")
+                if timestamp is None:
+                    timestamp = datetime.datetime.now(datetime.UTC)
+                elif hasattr(timestamp, "to_native"):
+                    # The Neo4j driver returns neo4j.time.DateTime for stored
+                    # timestamps. Convert it to a native python datetime so
+                    # pydantic's Episode.created_at accepts it (the vector path
+                    # already gets a native datetime via the declarative-memory
+                    # layer's dm.timestamp).
+                    timestamp = timestamp.to_native()
                 # Get metadata explicitly from Neo4j (using sanitized property names)
                 lme_session_id = record.get("lme_session_id")
                 lme_turn_idx = record.get("lme_turn_idx")
@@ -482,9 +592,7 @@ class LongTermMemory:
                     episode_type=EpisodeType.MESSAGE,
                     content_type=ContentType.STRING,
                     content=content,
-                    created_at=datetime.datetime.now(
-                        datetime.UTC
-                    ),  # FTS has no timestamp info (use current time)
+                    created_at=timestamp,  # Stored timestamp, same as vector path
                     producer_id=producer_id,
                     producer_role=producer_role,
                     produced_for_id=None,

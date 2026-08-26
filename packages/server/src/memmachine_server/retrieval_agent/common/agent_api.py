@@ -7,6 +7,7 @@ import logging
 from abc import abstractmethod
 from typing import Any
 
+from memmachine_common.api.spec import FTS_APPEND_COUNT_DEFAULT, FtsMode
 from pydantic import BaseModel, ConfigDict, InstanceOf
 
 from memmachine_server.common.episode_store import Episode
@@ -42,7 +43,8 @@ class QueryParam(BaseModel):
     score_threshold: float = -float("inf")
     property_filter: FilterExpr | None = None
     memory: InstanceOf[EpisodicMemory]
-    use_fts: bool = False  # Full-Text Search flag for hybrid search
+    use_fts: FtsMode = False  # Full-Text Search flag for hybrid search
+    append_n: int = FTS_APPEND_COUNT_DEFAULT  # FTS results to append (append mode)
 
 
 class AgentToolBaseParam(BaseModel):
