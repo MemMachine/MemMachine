@@ -1,6 +1,7 @@
 """MCP tool implementations for MemMachine."""
 
 import contextvars
+import json
 import logging
 import os
 import uuid
@@ -17,10 +18,13 @@ from memmachine_common.api.spec import (
     AddMemoriesSpec,
     DeleteMemoriesSpec,
     EpisodeIdT,
+    EpisodeResponse,
+    EpisodicSearchResult,
     FeatureIdT,
     MemoryMessage,
     SearchMemoriesSpec,
     SearchResult,
+    SemanticFeature,
 )
 from pydantic import BaseModel, Field, model_validator
 from starlette import status
@@ -120,6 +124,70 @@ def get_current_user_id() -> str | None:
 
 
 MCP_SUCCESS = McpResponse(status=McpStatus.SUCCESS, message="Success")
+
+
+def _format_episode_line(episode: EpisodeResponse) -> str:
+    """Render a single episode in the LLM-readable shape.
+
+    Matches :meth:`DeclarativeMemory.string_from_episode_context`:
+    ``[Weekday, Month DD, YYYY at HH:MM AM/PM] producer: "content"``.
+    Falls back to ``producer: "content"`` if no timestamp is available.
+    """
+    if episode.created_at is not None:
+        date_str = episode.created_at.strftime("%A, %B %d, %Y")
+        time_str = episode.created_at.strftime("%I:%M %p")
+        return (
+            f"[{date_str} at {time_str}] {episode.producer_id}: "
+            f"{json.dumps(episode.content)}"
+        )
+    return f"{episode.producer_id}: {json.dumps(episode.content)}"
+
+
+def _format_episodic_section(episodic: EpisodicSearchResult | None) -> str:
+    """Build the ``[Episodic Memory]`` section, or "" if there's nothing."""
+    if episodic is None:
+        return ""
+    episodes = list(episodic.long_term_memory.episodes) + list(
+        episodic.short_term_memory.episodes
+    )
+    if not episodes:
+        return ""
+    lines = [_format_episode_line(ep) for ep in episodes]
+    return "[Episodic Memory]\n" + "\n".join(lines)
+
+
+def _format_semantic_section(features: list[SemanticFeature] | None) -> str:
+    """Build the ``[Semantic Memory]`` section, or "" if there's nothing.
+
+    Mirrors :func:`_features_to_llm_format`: groups by tag, drops UIDs
+    and other metadata.
+    """
+    if not features:
+        return ""
+    structured: dict[str, dict[str, str]] = {}
+    for feature in features:
+        structured.setdefault(feature.tag, {})[feature.feature_name] = feature.value
+    return "[Semantic Memory]\n" + json.dumps(structured)
+
+
+def _format_search_result_for_mcp(result: SearchResult) -> str:
+    """Render a ``SearchResult`` as a compact LLM-friendly string.
+
+    Mirrors :func:`memmachine_client.format.format_search_result` so the
+    MCP tool returns the same shape consumers see via the Python client.
+
+    Returns an empty string when the result has no content; the LLM
+    should treat that as "no relevant memories found".
+    """
+    sections: list[str] = []
+    episodic_section = _format_episodic_section(result.content.episodic_memory)
+    if episodic_section:
+        sections.append(episodic_section)
+    semantic_section = _format_semantic_section(result.content.semantic_memory)
+    if semantic_section:
+        sections.append(semantic_section)
+    return "\n".join(sections)
+
 
 default_mcp_id = hex(uuid.getnode())
 
@@ -421,31 +489,26 @@ async def mcp_http_lifespan(application: FastAPI) -> AsyncIterator[None]:
         "This tool writes to both short-term (episodic) and long-term (profile) memory, "
         "so that future interactions can recall relevant background knowledge even "
         "across different sessions. "
-        "\n\n**Parameters**: Supports both nested (param object) and flat (user_id, content) styles."
+        "\n\nIdentity (org / project / user) is bound to this MCP connection by the host "
+        "(via `MM_ORG_ID` / `MM_PROJ_ID` / `MM_USER_ID` env vars in stdio mode, or "
+        "`org-id` / `proj-id` / `user-id` request headers in HTTP mode) and is not "
+        "configurable per call."
     ),
 )
-async def mcp_add_memory(
-    content: str,
-    org_id: str = "",
-    proj_id: str = "",
-    user_id: str = "",
-) -> McpResponse:
+async def mcp_add_memory(content: str) -> McpResponse:
     """
-    Add a new memory for the specified user.
+    Add a new memory for the user bound to this MCP connection.
 
     The model should call this whenever it detects new information
     worth remembering — for example, user preferences, recurring topics,
     or summaries of recent exchanges.
 
-    This function supports both nested and flat parameter styles:
-    - Nested: pass an AddMemoryParam object to the param argument
-    - Flat: pass user_id and content as separate arguments
+    Identity is bound to the MCP connection by the host (env vars in
+    stdio mode, request headers in HTTP mode). The LLM cannot supply or
+    override it.
 
     Args:
-        org_id: The organization ID (optional, flat style).
-        proj_id: The project ID (optional, flat style).
-        user_id: The unique identifier of the user (flat style).
-        content: The complete context or summary to store in memory (flat style).
+        content: The complete context or summary to store in memory.
 
     Returns:
         McpResponse indicating success or failure.
@@ -458,11 +521,7 @@ async def mcp_add_memory(
             message="MemMachine is not initialized",
         )
     try:
-        param = Params(
-            org_id=org_id,
-            proj_id=proj_id,
-            user_id=user_id,
-        )
+        param = Params()
         spec = param.to_add_memories_spec(content)
         await _add_messages_to(
             target_memories=ALL_MEMORY_TYPES, spec=spec, memmachine=mem_machine
@@ -477,38 +536,38 @@ async def mcp_add_memory(
 @mcp.tool(
     name="search_memory",
     description=(
-        "Retrieve relevant context, memories or profile for a user whenever "
-        "context is missing or unclear. Use this whenever you need to recall "
-        "what has been previously discussed, "
-        "even if it was from an earlier conversation or session. "
-        "This searches both profile memory (long-term user traits and facts) "
-        "and episodic memory (past conversations and experiences). "
-        "\n\n**Parameters**: Supports both nested (param object) and flat (user_id, query, limit) styles."
+        "Retrieve relevant context, memories or profile for the user bound to "
+        "this MCP connection whenever context is missing or unclear. Use this "
+        "whenever you need to recall what has been previously discussed, even "
+        "if it was from an earlier conversation or session. This searches both "
+        "profile memory (long-term user traits and facts) and episodic memory "
+        "(past conversations and experiences). The response is a compact "
+        "LLM-readable string, not a structured object."
+        "\n\nIdentity (org / project / user) is bound to this MCP connection by "
+        "the host (via `MM_ORG_ID` / `MM_PROJ_ID` / `MM_USER_ID` env vars in "
+        "stdio mode, or `org-id` / `proj-id` / `user-id` request headers in HTTP "
+        "mode) and is not configurable per call."
     ),
 )
 async def mcp_search_memory(
     query: str,
-    org_id: str = "",
-    proj_id: str = "",
-    user_id: str = "",
-    top_k: int = 20,
-) -> McpResponse | SearchResult:
+    top_k: int = 5,
+) -> McpResponse | str:
     """
-    Search memory for the specified user.
+    Search memory for the user bound to this MCP connection.
 
-    This function supports both nested and flat parameter styles:
-    - Nested: pass a SearchMemoryParam object to the param argument
-    - Flat: pass user_id, query, and optionally limit as separate arguments
+    Identity is bound to the MCP connection by the host (env vars in
+    stdio mode, request headers in HTTP mode). The LLM cannot supply or
+    override it.
 
     Args:
-        org_id: The organization ID (optional, flat style).
-        proj_id: The project ID (optional, flat style).
-        user_id: The unique identifier of the user (flat style).
-        query: The current user message or topic of discussion (flat style).
-        top_k: The maximum number of memory entries to retrieve (flat style). Defaults to 5.
+        query: The current user message or topic of discussion.
+        top_k: The maximum number of memory entries to retrieve. Defaults
+            to 5.
 
     Returns:
-        McpResponse on failure, or SearchResult on success
+        McpResponse on failure, or a formatted LLM-readable string on
+        success. Returns an empty string when no memories matched.
 
     """
     global mem_machine
@@ -518,15 +577,12 @@ async def mcp_search_memory(
             message="MemMachine is not initialized",
         )
     try:
-        param = Params(
-            org_id=org_id,
-            proj_id=proj_id,
-            user_id=user_id,
-        )
+        param = Params()
         spec = param.to_search_memories_spec(query, top_k)
-        return await _search_target_memories(
+        result = await _search_target_memories(
             target_memories=ALL_MEMORY_TYPES, spec=spec, memmachine=mem_machine
         )
+        return _format_search_result_for_mcp(result)
     except Exception as e:
         status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
         logger.exception("Failed to search memory")
@@ -536,23 +592,28 @@ async def mcp_search_memory(
 @mcp.tool(
     name="delete_memory",
     description=(
-        "Delete specific memories from the user's memory store. "
-        "Use this to remove outdated, incorrect, or sensitive information "
-        "that should no longer be retained. Specify the unique IDs of the "
-        "memories to delete from episodic or semantic memory stores. Note"
-        "episodic memories and semantic memories are deleted separately. "
-        "They have different ID spaces."
-        "\n\n**Parameters**: Supports flat style with org_id, proj_id, "
-        "semantic_ids, and episodic_ids."
+        "Delete specific memories from the memory store of the user bound to "
+        "this MCP connection. Use this to remove outdated, incorrect, or "
+        "sensitive information that should no longer be retained. Specify the "
+        "unique IDs of the memories to delete from episodic or semantic memory "
+        "stores. Note: episodic memories and semantic memories are deleted "
+        "separately. They have different ID spaces."
+        "\n\nIdentity (org / project) is bound to this MCP connection by the "
+        "host (via `MM_ORG_ID` / `MM_PROJ_ID` env vars in stdio mode, or "
+        "`org-id` / `proj-id` request headers in HTTP mode) and is not "
+        "configurable per call."
     ),
 )
 async def mcp_delete_memory(
-    org_id: str = "",
-    proj_id: str = "",
     episodic_memory_uids: list[EpisodeIdT] | None = None,
     semantic_memory_uids: list[FeatureIdT] | None = None,
 ) -> McpResponse:
-    """Delete specific memories from the user's memory store."""
+    """Delete specific memories from the user's memory store.
+
+    Identity is bound to the MCP connection by the host (env vars in
+    stdio mode, request headers in HTTP mode). The LLM cannot supply or
+    override it.
+    """
     if semantic_memory_uids is None:
         semantic_memory_uids = []
     if episodic_memory_uids is None:
@@ -564,10 +625,7 @@ async def mcp_delete_memory(
             message="MemMachine is not initialized",
         )
     try:
-        param = Params(
-            org_id=org_id,
-            proj_id=proj_id,
-        )
+        param = Params()
         spec = param.to_delete_memories_spec(
             episodic_memory_uids=episodic_memory_uids,
             semantic_memory_uids=semantic_memory_uids,
