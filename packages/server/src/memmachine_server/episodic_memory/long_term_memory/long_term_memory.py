@@ -124,6 +124,13 @@ class DeclarativeBackendParams(BaseModel):
     embedder: InstanceOf[Embedder] = Field(...)
     reranker: InstanceOf[Reranker] = Field(...)
     message_sentence_chunking: bool = Field(False)
+    fts_enabled: bool = Field(
+        True,
+        description=(
+            "Whether to auto-create the Neo4j FTS index for this session at "
+            "session creation. Default True. Ignored on non-declarative backends."
+        ),
+    )
 
 
 class EventBackendParams(BaseModel):
@@ -217,6 +224,7 @@ class LongTermMemory:
                         message_sentence_chunking=params.message_sentence_chunking,
                     ),
                 )
+                self._fts_enabled: bool = params.fts_enabled
             case EventBackendParams():
                 self._event_memory = EventMemory(
                     EventMemoryParams(
@@ -238,6 +246,103 @@ class LongTermMemory:
                     or params.vector_store_collection.config.similarity_metric.higher_is_better
                 )
                 self._user_property_keys = params.user_property_keys
+                # FTS is a declarative-backend-only feature; the event backend
+                # has no Neo4j derivative collection to index.
+                self._fts_enabled = False
+
+    async def initialize_fts(self) -> None:
+        """Create the FTS index up front, at session creation.
+
+        Creates the Neo4j Full-Text Search index on the derivative collection so
+        that the very first ingest is immediately searchable via hybrid
+        (Vector+FTS) search, instead of waiting for the node-count threshold
+        that triggers lazy index creation inside `add_nodes`.
+
+        No-op when FTS is disabled (`fts_enabled=False`), on the event backend,
+        or on a non-Neo4j `VectorGraphStore` (e.g. Nebula, which has no FTS).
+        Never raises on the unsupported cases — skipping is the desired
+        behavior, mirroring how `_search_fts` guards its own Neo4j assumption.
+        """
+        if not self._fts_enabled or self._backend != "declarative":
+            return
+        assert self._declarative_memory is not None
+
+        vector_graph_store = self._declarative_memory._vector_graph_store  # noqa: SLF001
+        if not isinstance(vector_graph_store, Neo4jVectorGraphStore):
+            # Nebula (or any non-Neo4j store): FTS is not supported. Skip
+            # silently rather than raising — FTS initialization is opt-in and
+            # must not break session creation on backends without FTS.
+            logger.warning(
+                "Skipping FTS initialization: backend %s is not Neo4j.",
+                type(vector_graph_store).__name__,
+            )
+            return
+
+        derivative_collection = self._declarative_memory._derivative_collection  # noqa: SLF001
+        sanitized_collection = vector_graph_store._sanitize_name(  # noqa: SLF001
+            derivative_collection
+        )
+        await vector_graph_store._create_fts_index_if_not_exists(  # noqa: SLF001
+            sanitized_collection=sanitized_collection,
+        )
+        logger.info(
+            "FTS index initialized at session creation for collection '%s'.",
+            derivative_collection,
+        )
+
+    async def create_fts_index(self) -> tuple[str, str | None]:
+        """Manually create the FTS index on demand.
+
+        Unlike `initialize_fts` (which runs at session creation and skips
+        silently on unsupported backends), this is the explicit user-triggered
+        command. It creates the index regardless of `fts_enabled` and reports
+        whether the backend supports FTS.
+
+        Returns:
+            A `(status, index_name)` tuple where `status` is one of:
+            - ``"created"``: the index is now online (newly created or already
+              existed — `_create_fts_index_if_not_exists` is idempotent).
+            - ``"unsupported"``: the backend has no FTS (event backend or a
+              non-Neo4j store such as Nebula). `index_name` is ``None``.
+
+        Raises:
+            NotImplementedError: never — unsupported backends return the
+            ``"unsupported"`` status instead of raising, so the API layer can
+            surface a consistent response without try/except branching.
+        """
+        if self._backend != "declarative":
+            logger.info(
+                "create_fts_index: event backend has no FTS; returning 'unsupported'."
+            )
+            return ("unsupported", None)
+        assert self._declarative_memory is not None
+
+        vector_graph_store = self._declarative_memory._vector_graph_store  # noqa: SLF001
+        if not isinstance(vector_graph_store, Neo4jVectorGraphStore):
+            logger.info(
+                "create_fts_index: backend %s is not Neo4j; returning 'unsupported'.",
+                type(vector_graph_store).__name__,
+            )
+            return ("unsupported", None)
+
+        derivative_collection = self._declarative_memory._derivative_collection  # noqa: SLF001
+        sanitized_collection = vector_graph_store._sanitize_name(  # noqa: SLF001
+            derivative_collection
+        )
+        fts_index_name = f"fts_{sanitized_collection}_content"
+
+        # `_create_fts_index_if_not_exists` is idempotent: it short-circuits
+        # when the index is already online, so calling this on an existing
+        # index is a safe no-op that still reports "created".
+        await vector_graph_store._create_fts_index_if_not_exists(  # noqa: SLF001
+            sanitized_collection=sanitized_collection,
+        )
+        logger.info(
+            "create_fts_index: index=%s online, collection=%s",
+            fts_index_name,
+            derivative_collection,
+        )
+        return ("created", fts_index_name)
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)

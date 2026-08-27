@@ -678,6 +678,36 @@ class MemMachine:
             return left
         return FilterAnd(left=left, right=right)
 
+    async def create_fts_index(
+        self,
+        session_data: InstanceOf[SessionData],
+    ) -> tuple[str, str | None]:
+        """Manually create the FTS index for a session's long-term memory.
+
+        Opens (or creates) the session's episodic memory and delegates to
+        `EpisodicMemory.create_fts_index`. Useful when FTS was disabled at
+        session creation or when an existing Neo4j vector store should gain
+        FTS without re-ingesting.
+
+        Args:
+            session_data: Session context identifying the target project.
+
+        Returns:
+            A `(status, index_name)` tuple where `status` is ``"created"`` or
+            ``"unsupported"`` (see `LongTermMemory.create_fts_index`).
+
+        """
+        episodic_memory_manager = await self._resources.get_episodic_memory_manager()
+        async with episodic_memory_manager.open_or_create_episodic_memory(
+            session_key=session_data.session_key,
+            description="",
+            episodic_memory_config=self._with_default_episodic_memory_conf(
+                session_key=session_data.session_key
+            ),
+            metadata={},
+        ) as episodic_session:
+            return await episodic_session.create_fts_index()
+
     async def add_episodes(
         self,
         session_data: InstanceOf[SessionData],

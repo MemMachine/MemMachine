@@ -16,6 +16,7 @@ from fastmcp.server.http import StarletteWithLifespan
 from memmachine_common.api.spec import (
     AddMemoriesSpec,
     DeleteMemoriesSpec,
+    EnableFtsIndexResponse,
     EpisodeIdT,
     FeatureIdT,
     FtsMode,
@@ -38,6 +39,7 @@ from memmachine_server.server.api_v2.service import (
     _delete_memories,
     _search_target_memories,
     _session_key_to_session_data,
+    enable_fts_index,
 )
 from memmachine_server.server.diagnostics import dump_traceback, install_sigusr1_handler
 
@@ -546,6 +548,51 @@ async def mcp_search_memory(
     except Exception as e:
         status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
         logger.exception("Failed to search memory")
+        return McpResponse(status=status_code, message=str(e))
+
+
+@mcp.tool(
+    name="enable_fts_index",
+    description=(
+        "Create the Neo4j Full-Text Search (FTS) index for a project's "
+        "long-term memory on demand. The FTS index is normally auto-created "
+        "when a session starts, so this is only needed when FTS was disabled "
+        "at creation time or when an existing Neo4j-backed project should "
+        "gain keyword (FTS) search without re-ingesting data. Returns "
+        "status='created' on success, or 'unsupported' when the backend has "
+        "no FTS (e.g. Nebula or the event backend). "
+        "\n\n**Parameters**: Supports flat style with org_id and proj_id."
+    ),
+)
+async def mcp_enable_fts_index(
+    org_id: str = "",
+    proj_id: str = "",
+) -> McpResponse | EnableFtsIndexResponse:
+    """Create the FTS index for the specified project.
+
+    Args:
+        org_id: The organization ID (optional, flat style).
+        proj_id: The project ID (optional, flat style).
+
+    Returns:
+        McpResponse on failure, or EnableFtsIndexResponse on success.
+
+    """
+    global mem_machine
+    if mem_machine is None:
+        return McpResponse(
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            message="MemMachine is not initialized",
+        )
+    try:
+        return await enable_fts_index(
+            spec_org_id=org_id,
+            spec_project_id=proj_id,
+            memmachine=mem_machine,
+        )
+    except Exception as e:
+        status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+        logger.exception("Failed to create FTS index")
         return McpResponse(status=status_code, message=str(e))
 
 

@@ -206,6 +206,21 @@ class EpisodicMemory:
         """
         return self._session_key
 
+    async def create_fts_index(self) -> tuple[str, str | None]:
+        """Manually create the FTS index for this session's long-term memory.
+
+        Delegates to `LongTermMemory.create_fts_index`. Returns ``("unsupported",
+        None)`` when long-term memory is disabled or has no FTS backend, so the
+        API layer can report a consistent status without branching.
+
+        Returns:
+            A `(status, index_name)` tuple (see `LongTermMemory.create_fts_index`).
+
+        """
+        if self._long_term_memory is None:
+            return ("unsupported", None)
+        return await self._long_term_memory.create_fts_index()
+
     async def add_memory_episodes(self, episodes: list[Episode]) -> None:
         """
         Add a new memory episode to both session and declarative memory.

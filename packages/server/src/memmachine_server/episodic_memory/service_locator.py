@@ -28,6 +28,10 @@ async def episodic_memory_params_from_config(
             resource_manager,
         )
         long_term_memory = LongTermMemory(long_term_memory_params)
+        # Create the FTS index up front (default) so the first ingest is
+        # immediately searchable via hybrid search. No-op when `fts_enabled`
+        # is False or the backend has no FTS (event backend / Nebula).
+        await long_term_memory.initialize_fts()
 
     short_term_memory: ShortTermMemory | None = None
     if config.short_term_memory and config.short_term_memory_enabled:

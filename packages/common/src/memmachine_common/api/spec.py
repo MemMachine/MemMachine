@@ -220,6 +220,39 @@ class _WithOrgAndProj(BaseModel):
     ]
 
 
+class EnableFtsIndexSpec(_WithOrgAndProj):
+    """Specification model for manually creating the FTS index.
+
+    The FTS index is auto-created at session creation by default (see
+    `DeclarativeLongTermMemoryConf.fts_enabled`). This request creates it on
+    demand — useful when FTS was disabled at creation time, or when an
+    existing Neo4j vector store should gain FTS without re-ingesting.
+    """
+
+
+class EnableFtsIndexResponse(BaseModel):
+    """Response model for the FTS index creation request."""
+
+    status: Annotated[
+        str,
+        Field(
+            description=(
+                "Result status: 'created' when the index is now online "
+                "(newly created or already existed — the operation is "
+                "idempotent); 'unsupported' when the backend has no FTS "
+                "(e.g. Nebula / event backend)."
+            ),
+        ),
+    ]
+    index_name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Name of the FTS index, or None if unsupported.",
+        ),
+    ]
+
+
 class ProjectConfig(BaseModel):
     """
     Project configuration model.

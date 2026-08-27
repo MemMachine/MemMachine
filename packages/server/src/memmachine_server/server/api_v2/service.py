@@ -11,6 +11,7 @@ from memmachine_common.api.spec import (
     AddMemoriesSpec,
     AddMemoryResult,
     DeleteMemoriesSpec,
+    EnableFtsIndexResponse,
     Episode,
     EpisodicSearchResult,
     ListMemoriesSpec,
@@ -175,3 +176,28 @@ async def _list_target_memories(
         status=0,
         content=content,
     )
+
+
+async def enable_fts_index(
+    spec_org_id: str,
+    spec_project_id: str,
+    memmachine: MemMachine,
+) -> EnableFtsIndexResponse:
+    """Manually create the FTS index for a project's long-term memory.
+
+    Args:
+        spec_org_id: Organization ID from the request spec.
+        spec_project_id: Project ID from the request spec.
+        memmachine: The MemMachine instance.
+
+    Returns:
+        An `EnableFtsIndexResponse` carrying the creation status and index name.
+
+    """
+    status, index_name = await memmachine.create_fts_index(
+        session_data=_SessionData(
+            org_id=spec_org_id,
+            project_id=spec_project_id,
+        ),
+    )
+    return EnableFtsIndexResponse(status=status, index_name=index_name)
