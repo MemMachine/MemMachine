@@ -4,7 +4,8 @@ import asyncio
 import contextlib
 import logging
 from asyncio import Task
-from collections.abc import Callable, Coroutine, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
+from functools import partial
 from typing import Any, Final, Protocol
 
 from memmachine_common.api import MemoryType
@@ -420,6 +421,58 @@ class MemMachine:
             logger.info(
                 "Semantic memory is disabled; skipping semantic service startup."
             )
+
+        await self._warm_request_path()
+
+    async def _warm_request_path(self) -> None:
+        """Resolve the resources a search needs, so the first search does not.
+
+        Each resource is lazy-loaded behind a lock, and resolving one imports its
+        module tree and builds pydantic schemas for it. Deferred to the first
+        request that needs it, that work blocks the event loop for seconds - and
+        it is paid once per uvicorn worker, because each worker is a separate
+        process. Kubernetes has already routed traffic by then: the health
+        endpoint touches none of this, so it answers in milliseconds while a
+        search on the same worker takes seconds.
+
+        Failures here are logged and swallowed. Every one of these is retried
+        lazily on the request path anyway, so a store that happens to be
+        unreachable at boot should cost a slow first request, not a process that
+        refuses to start.
+        """
+        ltm = self._conf.episodic_memory.long_term_memory
+        warmers: list[tuple[str, Callable[[], Awaitable[object]]]] = [
+            ("episode storage", self._resources.get_episode_storage),
+            ("episodic memory manager", self._resources.get_episodic_memory_manager),
+        ]
+        # The long-term-memory config is polymorphic over the backend, so read
+        # the resource names defensively rather than assuming a concrete class.
+        for label, getter, name in (
+            ("embedder", self._resources.get_embedder, getattr(ltm, "embedder", None)),
+            ("reranker", self._resources.get_reranker, getattr(ltm, "reranker", None)),
+            (
+                "vector store",
+                self._resources.get_vector_store,
+                getattr(ltm, "vector_store", None),
+            ),
+            (
+                "segment store",
+                self._resources.get_segment_store,
+                getattr(ltm, "segment_store", None),
+            ),
+        ):
+            if name:
+                warmers.append((label, partial(getter, name)))
+
+        for label, warm in warmers:
+            try:
+                await warm()
+            except Exception:
+                logger.warning(
+                    "Could not warm %s at startup; the first request will pay for it",
+                    label,
+                    exc_info=True,
+                )
 
     async def stop(self) -> None:
         """
