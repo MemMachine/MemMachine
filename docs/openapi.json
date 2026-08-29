@@ -1143,7 +1143,7 @@
           "Resources"
         ],
         "summary": "Add Language Model Endpoint",
-        "description": "Add a new language model configuration at runtime.\n\n    Creates a new language model with the specified configuration and attempts\n    to initialize it immediately. This allows adding models without restarting\n    the server. The configuration is persisted to the configuration file.\n\n    **Security Warning**: API keys and credentials are stored in plain text in\n    the configuration file. Only use this API in protected environments. To\n    avoid storing secrets in plain text, use environment variable references\n    (e.g., `\"api_key\": \"$OPENAI_API_KEY\"`) which will be resolved at runtime.\n\n    Supported providers:\n    - `openai-responses`: OpenAI models using the Responses API (requires api_key, model)\n    - `openai-chat-completions`: OpenAI models using Chat Completions API (requires api_key, model)\n    - `amazon-bedrock`: AWS Bedrock models (requires region, model_id)\n\n    The response indicates whether the model was successfully initialized:\n    - `success: true, status: ready`: Model is available for use\n    - `success: false, status: failed`: Initialization failed (check error field)\n\n    If initialization fails, the model configuration is still stored and can\n    be retried later using the retry endpoint when the underlying service\n    becomes available.\n\n    Returns 422 if the provider type or configuration is invalid.",
+        "description": "Add a new language model configuration at runtime.\n\n    Creates a new language model with the specified configuration and attempts\n    to initialize it immediately. This allows adding models without restarting\n    the server. The configuration is persisted to the configuration file.\n\n    **Security Warning**: API keys and credentials are stored in plain text in\n    the configuration file. Only use this API in protected environments. To\n    avoid storing secrets in plain text, use environment variable references\n    (e.g., `\"api_key\": \"$OPENAI_API_KEY\"`) which will be resolved at runtime.\n\n    Supported providers:\n    - `openai-responses`: OpenAI models using the Responses API (requires api_key, model)\n    - `openai-chat-completions`: OpenAI models using Chat Completions API (requires api_key, model)\n    - `amazon-bedrock`: AWS Bedrock models (requires region, model_id)\n    - `orcarouter`: OrcaRouter models (requires api_key, model)\n\n    The response indicates whether the model was successfully initialized:\n    - `success: true, status: ready`: Model is available for use\n    - `success: false, status: failed`: Initialization failed (check error field)\n\n    If initialization fails, the model configuration is still stored and can\n    be retried later using the retry endpoint when the underlying service\n    becomes available.\n\n    Returns 422 if the provider type or configuration is invalid.",
         "operationId": "add_language_model",
         "requestBody": {
           "content": {
@@ -2243,10 +2243,11 @@
             "enum": [
               "openai-responses",
               "openai-chat-completions",
-              "amazon-bedrock"
+              "amazon-bedrock",
+              "orcarouter"
             ],
             "title": "Provider",
-            "description": "\n    The language model provider type (e.g., 'openai-responses', 'openai-chat-completions', 'amazon-bedrock')."
+            "description": "\n    The language model provider type (e.g., 'openai-responses', 'openai-chat-completions', 'amazon-bedrock', 'orcarouter')."
           },
           "config": {
             "additionalProperties": true,

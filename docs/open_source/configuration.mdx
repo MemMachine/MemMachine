@@ -500,6 +500,11 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             model: "llama3"
             api_key: "EMPTY"
             base_url: "http://host.docker.internal:11434/v1"
+        orcarouter_model:
+          provider: orcarouter
+          config:
+            model: "orcarouter/auto"
+            api_key: <ORCAROUTER_API_KEY>
     ```
 </Tab>
 <Tab title="With Comments">
@@ -525,16 +530,21 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             model: "llama3" # Model name
             api_key: "EMPTY" # API key for OpenAI. for Ollama, this is always "EMPTY"
             base_url: "http://host.docker.internal:11434/v1" # The base URL for the model
+        orcarouter_model: # Language Model ID
+          provider: orcarouter # The language model provider type
+          config: # A dictionary containing provider-specific configuration
+            model: "orcarouter/auto" # Model name (or an OrcaRouter router id)
+            api_key: <ORCAROUTER_API_KEY> # API key for OrcaRouter.
     ```
 </Tab>
 </Tabs>
     **Parameters for each language model ID (`openai_model`, `aws_model`, `ollama_model`):**
     | Parameter         | Description                                                          | Default                  |
     |-------------------|----------------------------------------------------------------------|--------------------------|
-    | `provider`        | The language model provider type: `openai-responses`, `openai-chat-completions`, `amazon-bedrock`. | *Required*               |
+    | `provider`        | The language model provider type: `openai-responses`, `openai-chat-completions`, `amazon-bedrock`, `orcarouter`. | *Required*               |
     | `config`          | A dictionary containing provider-specific configuration.             | *Required*               |
-    | `config.model`    | Model name (e.g., `gpt-4o-mini` for OpenAI).                         | Depends on provider      |
-    | `config.api_key`  | API key for OpenAI.                                                  | *Required for OpenAI*    |
+    | `config.model`    | Model name (e.g., `gpt-4o-mini` for OpenAI, `orcarouter/auto` for OrcaRouter). | Depends on provider      |
+    | `config.api_key`  | API key for OpenAI/OrcaRouter.                                       | *Required for OpenAI/OrcaRouter* |
     | `config.base_url`  | The base URL for the model                                          | Depends on provider      |
     | `config.region`   | AWS region for Bedrock.                                              | *Required for Bedrock*   |
     | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
