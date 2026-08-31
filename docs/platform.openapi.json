@@ -1066,33 +1066,6 @@
         }
       }
     },
-    "/v2/metrics": {
-      "get": {
-        "description": "Expose Prometheus metrics.",
-        "operationId": "Metrics",
-        "responses": {
-          "200": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Prometheus metrics"
-          },
-          "default": {
-            "$ref": "#/components/responses/UnexpectedError"
-          }
-        },
-        "security": [],
-        "summary": "Metrics",
-        "tags": [
-          "Metrics"
-        ],
-        "x-internal": true
-      }
-    },
     "/v2/projects": {
       "post": {
         "description": "Create a new project.\n\nThis endpoint creates a new project with the given identifier and\nconfiguration. The `project_id` follows the rules: no slashes; only\nletters, numbers, underscores, hyphens, colon, and Unicode characters.\n\nEach project acts as an isolated memory namespace. All memories (episodes)\ninserted into a project belong exclusively to that project. Queries,\nlistings, and any background operations such as memory summarization or\nknowledge extraction only access data within the same project. No\ncross-project memory access is allowed.\n\nIf a project with the same ID already exists, the request will fail\nwith an error.\n\nReturns the fully resolved project record, including configuration defaults\napplied by the system.\n",
