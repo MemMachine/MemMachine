@@ -12,6 +12,12 @@ on:
         description: "The git tag to build (e.g., v0.1.1)"
         required: true
         type: string
+      variant:
+        description: "Which image to build"
+        required: false
+        default: both
+        type: choice
+        options: [both, cpu, gpu]
 
 env:
   # Docker image name to publish
@@ -31,6 +37,7 @@ jobs:
     name: Build and Push CPU Image
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.variant != 'gpu'
     steps:
       # Step 0: Free Disk Space (Manual)
       - name: Free Disk Space (Manual)
@@ -88,7 +95,10 @@ jobs:
             latest=false
           tags: |
             # For Manual (workflow_dispatch) runs
-            type=semver,pattern=v{{version}}-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            # semver drops the pattern for a pre-release input, so v0.3.9-post1
+            # yields the bare 0.3.9-post1 for *both* jobs and the GPU build
+            # silently overwrites the CPU one. raw always carries the suffix.
+            type=raw,value=${{ inputs.tag }}-cpu,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern=latest-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
             type=semver,pattern=latest,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
 
@@ -135,6 +145,13 @@ jobs:
     needs: build-cpu
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
+    # always() is needed because a deliberately skipped CPU build would
+    # otherwise skip this job with it; the result check still stops a *failed*
+    # CPU build from letting the GPU one through.
+    if: >-
+      always()
+      && (needs.build-cpu.result == 'success' || needs.build-cpu.result == 'skipped')
+      && (github.event_name != 'workflow_dispatch' || inputs.variant != 'cpu')
     steps:
       # Step 0: Free Disk Space (Manual)
       - name: Free Disk Space (Manual)
@@ -190,7 +207,8 @@ jobs:
             latest=false
           tags: |
             # For Manual (workflow_dispatch) runs
-            type=semver,pattern=v{{version}}-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            # See the CPU build: raw keeps the two jobs on distinct tags.
+            type=raw,value=${{ inputs.tag }}-gpu,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern=latest-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
 
             # For Release events
