@@ -112,9 +112,13 @@ jobs:
           file: ./Dockerfile
           push: true
           # FIXED: Explicitly disable GPU here to ensure 'latest' is the CPU version
+          # qdrant-client is an optional extra. An image built without it starts
+          # cleanly and then raises ModuleNotFoundError on every request that
+          # uses the event backend, so the published image has to carry it.
           build-args: |
             GPU=false
             SCM_VERSION=${{ steps.scm.outputs.version }}
+            EXTRAS=--extra qdrant
           tags: ${{ steps.meta-cpu.outputs.tags }}
           labels: ${{ steps.meta-cpu.outputs.labels }}
           platforms: linux/amd64,linux/arm64
@@ -207,9 +211,11 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
+          # EXTRAS carries qdrant-client; see the CPU build for why.
           build-args: |
             GPU=true
             SCM_VERSION=${{ steps.scm.outputs.version }}
+            EXTRAS=--extra qdrant
           tags: ${{ steps.meta-gpu.outputs.tags }}
           labels: ${{ steps.meta-gpu.outputs.labels }}
           platforms: linux/amd64,linux/arm64
