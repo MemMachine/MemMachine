@@ -45,6 +45,9 @@ from memmachine_server.server.middleware import (
 
 logger = logging.getLogger(__name__)
 
+# Longer than any client idle-connection timeout we front this server with.
+KEEP_ALIVE_SECONDS = int(os.getenv("MEMMACHINE_KEEP_ALIVE_SECONDS", "120"))
+
 
 class MemMachineAPI(FastAPI):
     """MemMachine API wrapper."""
@@ -125,6 +128,18 @@ def start_http() -> None:
         access_log=True,
         log_level=str(config.logging.level).lower(),
         ws="websockets-sansio",
+        # Set explicitly rather than inheriting uvicorn's 5s, which is shorter
+        # than the idle timeout of every client that fronts this server: Go's
+        # transport pools connections for 90s, httpx for 5s. A server
+        # keep-alive shorter than its clients' is a known hazard - a client can
+        # reuse a connection the server has just closed, and since POST is not
+        # idempotent it will not retry, so it waits out its own timeout.
+        #
+        # This does not resolve the 30s stalls seen on this deployment.
+        # Raising it removed them from one load arm and not from another on the
+        # same image, so their cause is still unknown; do not read this setting
+        # as a fix for them.
+        timeout_keep_alive=KEEP_ALIVE_SECONDS,
     )
 
 
