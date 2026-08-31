@@ -85,7 +85,7 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
-from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
+from memmachine_server.main.memmachine import MemoryType
 from memmachine_server.server.api_v2.config_router import config_router
 from memmachine_server.server.api_v2.exceptions import RestError
 from memmachine_server.server.api_v2.service import (
@@ -294,8 +294,7 @@ async def add_memories(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> AddMemoriesResponse:
     """Add memories to a project."""
-    # Use types from spec if provided, otherwise use all memory types
-    target_memories = spec.types or ALL_MEMORY_TYPES
+    target_memories = spec.types or [MemoryType.Episodic]
     results = await _add_messages_to(
         target_memories=target_memories, spec=spec, memmachine=memmachine
     )
@@ -313,7 +312,7 @@ async def search_memories(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> SearchResult:
     """Search memories in a project."""
-    target_memories = spec.types or ALL_MEMORY_TYPES
+    target_memories = spec.types or [MemoryType.Episodic]
     try:
         return await _search_target_memories(
             target_memories=target_memories, spec=spec, memmachine=memmachine
@@ -337,7 +336,7 @@ async def list_memories(
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> ListResult:
     """List memories in a project."""
-    target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
+    target_memories = [spec.type] if spec.type is not None else [MemoryType.Episodic]
     return await _list_target_memories(
         target_memories=target_memories, spec=spec, memmachine=memmachine
     )

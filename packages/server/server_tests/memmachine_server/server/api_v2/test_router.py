@@ -18,7 +18,7 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
-from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
+from memmachine_server.main.memmachine import MemoryType
 from memmachine_server.server.api_v2.router import RestError, get_memmachine
 from memmachine_server.server.api_v2.service import _SessionData
 from memmachine_server.server.app import MemMachineAPI
@@ -351,7 +351,7 @@ def test_add_memories(client, mock_memmachine):
         assert response.json() == {"results": [{"uid": "123"}]}
         mock_add_messages.assert_awaited_once()
         call_args = mock_add_messages.call_args[1]
-        assert call_args["target_memories"] == ALL_MEMORY_TYPES
+        assert call_args["target_memories"] == [MemoryType.Episodic]
 
         # Episodic add
         mock_add_messages.reset_mock()
@@ -392,7 +392,7 @@ def test_add_memories_episode_type_forwarded(client, mock_memmachine):
 
     mock_memmachine.add_episodes.assert_awaited_once()
     call_kwargs = mock_memmachine.add_episodes.call_args[1]
-    assert call_kwargs["target_memories"] == ALL_MEMORY_TYPES
+    assert call_kwargs["target_memories"] == [MemoryType.Episodic]
 
     episode_entries = call_kwargs["episode_entries"]
     assert len(episode_entries) == 2
@@ -447,6 +447,7 @@ def test_search_memories(client, mock_memmachine):
         await_args = mock_search.await_args
         assert await_args is not None
         search_call = cast(dict[str, Any], await_args.kwargs)
+        assert search_call["target_memories"] == [MemoryType.Episodic]
         assert search_call["spec"].query == "hello"
         assert search_call["spec"].agent_mode is True
 
@@ -556,6 +557,7 @@ def test_list_memories_with_set_metadata(client, mock_memmachine):
 
     mock_memmachine.list_search.assert_awaited_once()
     call_kwargs = mock_memmachine.list_search.call_args[1]
+    assert call_kwargs["target_memories"] == [MemoryType.Episodic]
     assert call_kwargs["set_metadata"] == {"user_id": "user456", "region": "us-east"}
 
 
