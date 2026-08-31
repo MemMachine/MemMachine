@@ -1,5 +1,6 @@
 """Tests for QdrantVectorStore."""
 
+import asyncio
 import math
 from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import MagicMock
@@ -7,7 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from qdrant_client import AsyncQdrantClient
+from qdrant_client import AsyncQdrantClient, models
 
 from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
@@ -26,6 +27,7 @@ from memmachine_server.common.vector_store.data_types import (
     VectorStoreCollectionConfigMismatchError,
 )
 from memmachine_server.common.vector_store.qdrant_vector_store import (
+    _PAYLOAD_PARTITION_KEY,
     QdrantVectorStore,
     QdrantVectorStoreCollection,
     QdrantVectorStoreParams,
@@ -1253,3 +1255,126 @@ class TestDistributedSharding:
         await store.delete_collection(namespace=ns, name=name)
         # Second delete should not raise.
         await store.delete_collection(namespace=ns, name=name)
+
+
+@pytest.mark.integration
+class TestCollectionLifecycleAcrossWorkers:
+    """Collection creation has to survive more than one creator.
+
+    The store serialises creation with an asyncio.Lock keyed on the client
+    object, which serialises callers inside one process and nothing else. Run
+    the server with MEMMACHINE_WORKERS above 1 and each worker gets its own
+    client, its own lock, and no mutual exclusion - so two workers can decide to
+    create the same collection at the same moment.
+
+    These need a real server: payload indexes have no effect in local-mode
+    Qdrant, so the thing under test is invisible there.
+    """
+
+    @staticmethod
+    def _config() -> VectorStoreCollectionConfig:
+        return VectorStoreCollectionConfig(
+            vector_dimensions=VECTOR_DIM,
+            similarity_metric=SimilarityMetric.COSINE,
+            indexed_properties_schema={"name": str},
+        )
+
+    @pytest.mark.asyncio
+    async def test_indexes_are_created_when_the_collection_already_exists(
+        self, qdrant_client
+    ):
+        """A collection that exists without its indexes must still get them.
+
+        _create_native_collection creates the collection and its payload indexes
+        in one try block and swallows "already exists" for the whole block. So a
+        second creator - another worker, or a retry after one died between the
+        two calls - takes the exception path and never creates an index. Its
+        docstring claims it creates both idempotently; this pins that claim.
+
+        The partition key is declared is_tenant. Verified against Qdrant 1.19:
+        filtering stays correct without the index - a filtered query on an
+        unindexed collection returns only the matching tenant's points - so what
+        is lost is the multitenant storage layout and query speed, not
+        isolation.
+        """
+        namespace, name = "raced_ns", "raced_name"
+        config = self._config()
+        native = QdrantVectorStore._build_native_collection_name(namespace, config)
+
+        # Stand in for a creator that got as far as the collection and no further.
+        await qdrant_client.create_collection(
+            collection_name=native,
+            vectors_config=models.VectorParams(
+                size=VECTOR_DIM, distance=models.Distance.COSINE
+            ),
+        )
+
+        store = QdrantVectorStore(QdrantVectorStoreParams(client=qdrant_client))
+        await store.startup()
+        try:
+            await store.open_or_create_collection(
+                namespace=namespace, name=name, config=config
+            )
+            info = await qdrant_client.get_collection(native)
+            indexed = set(info.payload_schema or {})
+            assert _PAYLOAD_PARTITION_KEY in indexed, (
+                "the tenant partition index is missing: a collection that already "
+                "existed never had its payload indexes created, so tenant "
+                f"filtering is unindexed. present: {sorted(indexed)}"
+            )
+            assert "name" in indexed, (
+                f"declared property index absent. present: {sorted(indexed)}"
+            )
+        finally:
+            await store.delete_collection(namespace=namespace, name=name)
+
+    @pytest.mark.asyncio
+    async def test_two_workers_creating_at_once_both_succeed_and_index(
+        self, qdrant_container
+    ):
+        """Two clients, no shared lock - the multi-worker shape, in one process.
+
+        The lock is keyed on the client object, so two stores holding separate
+        clients are exactly two workers as far as mutual exclusion goes. Both
+        calls must return a usable handle, and the collection they agree on must
+        end up indexed.
+        """
+        client_a = qdrant_container.get_async_client()
+        client_b = qdrant_container.get_async_client()
+        namespace, name = "race_two_ns", "race_two_name"
+        config = self._config()
+        native = QdrantVectorStore._build_native_collection_name(namespace, config)
+
+        store_a = QdrantVectorStore(QdrantVectorStoreParams(client=client_a))
+        store_b = QdrantVectorStore(QdrantVectorStoreParams(client=client_b))
+        await store_a.startup()
+        await store_b.startup()
+
+        assert (
+            store_a._client_name_locks is not store_b._client_name_locks
+        ), "separate clients must not share a lock, or this does not test anything"
+
+        try:
+            results = await asyncio.gather(
+                store_a.open_or_create_collection(
+                    namespace=namespace, name=name, config=config
+                ),
+                store_b.open_or_create_collection(
+                    namespace=namespace, name=name, config=config
+                ),
+                return_exceptions=True,
+            )
+            failures = [r for r in results if isinstance(r, BaseException)]
+            assert not failures, f"a concurrent creator raised: {failures!r}"
+
+            info = await client_a.get_collection(native)
+            indexed = set(info.payload_schema or {})
+            assert _PAYLOAD_PARTITION_KEY in indexed, (
+                "two workers raced and the tenant partition index was lost: the "
+                "loser skips index creation entirely. present: "
+                f"{sorted(indexed)}"
+            )
+        finally:
+            await store_a.delete_collection(namespace=namespace, name=name)
+            await client_a.close()
+            await client_b.close()
