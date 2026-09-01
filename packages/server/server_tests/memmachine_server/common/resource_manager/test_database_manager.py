@@ -709,7 +709,11 @@ def _sqlite_vector_store_only_conf(**vs_overrides) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_sqlite_vector_store_creates_store_and_engine():
-    """async_get_sqlite_vector_store builds an engine, store, and starts it up."""
+    """async_get_sqlite_vector_store builds an engine, store, and starts it up.
+
+    Foreign-key enforcement is registered on the engine at creation, before
+    the store exists, so no connection can be pooled without it.
+    """
     conf = _sqlite_vector_store_only_conf(
         sqlite_vector_store_confs={
             "vs1": SQLiteVectorStoreConf(
@@ -723,6 +727,7 @@ async def test_sqlite_vector_store_creates_store_and_engine():
 
     mock_engine = MagicMock(spec=AsyncEngine)
     mock_engine.dispose = AsyncMock()
+    ordered_calls = MagicMock()
 
     with (
         patch(
@@ -730,12 +735,19 @@ async def test_sqlite_vector_store_creates_store_and_engine():
             return_value=mock_engine,
         ) as mock_create,
         patch(
+            "memmachine_server.common.resource_manager.database_manager.enable_sqlite_foreign_keys",
+        ) as mock_enable_foreign_keys,
+        patch(
             "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
         ) as mock_params_cls,
         patch(
             "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
+        ordered_calls.attach_mock(
+            mock_enable_foreign_keys, "enable_sqlite_foreign_keys"
+        )
+        ordered_calls.attach_mock(mock_store_cls, "SQLiteVectorStore")
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
@@ -745,6 +757,12 @@ async def test_sqlite_vector_store_creates_store_and_engine():
     mock_create.assert_called_once()
     create_args = mock_create.call_args
     assert create_args.args[0] == "sqlite+aiosqlite:///vs.db"
+
+    mock_enable_foreign_keys.assert_called_once_with(mock_engine)
+    call_names = [name for name, _args, _kwargs in ordered_calls.mock_calls]
+    assert call_names.index("enable_sqlite_foreign_keys") < call_names.index(
+        "SQLiteVectorStore"
+    )
 
     params_kwargs = mock_params_cls.call_args.kwargs
     assert params_kwargs["sqlalchemy_engine"] is mock_engine
@@ -880,13 +898,18 @@ async def test_sqlite_vector_store_unknown_name_raises():
 
 @pytest.mark.asyncio
 async def test_sqlite_vec_vector_store_creates_store_and_engine():
-    """async_get_sqlite_vec_vector_store builds an engine, store, and starts it up."""
+    """async_get_sqlite_vec_vector_store builds an engine, store, and starts it up.
+
+    The sqlite-vec loader is registered on the engine at creation, before
+    the store exists, so no connection can be pooled without the extension.
+    """
     conf = _sqlite_vector_store_only_conf(
         sqlite_vec_vector_store_confs={"vec1": SQLiteVecVectorStoreConf(path="vec.db")}
     )
 
     mock_engine = MagicMock(spec=AsyncEngine)
     mock_engine.dispose = AsyncMock()
+    ordered_calls = MagicMock()
 
     with (
         patch(
@@ -894,12 +917,17 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
             return_value=mock_engine,
         ) as mock_create,
         patch(
+            "memmachine_server.common.vector_store.sqlite_vec_vector_store.load_sqlite_vec_extension",
+        ) as mock_load_extension,
+        patch(
             "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStoreParams",
         ) as mock_params_cls,
         patch(
             "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
         ) as mock_store_cls,
     ):
+        ordered_calls.attach_mock(mock_load_extension, "load_sqlite_vec_extension")
+        ordered_calls.attach_mock(mock_store_cls, "SQLiteVecVectorStore")
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
@@ -908,6 +936,12 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
     assert store is mock_store_cls.return_value
     create_args = mock_create.call_args
     assert create_args.args[0] == "sqlite+aiosqlite:///vec.db"
+
+    mock_load_extension.assert_called_once_with(mock_engine)
+    call_names = [name for name, _args, _kwargs in ordered_calls.mock_calls]
+    assert call_names.index("load_sqlite_vec_extension") < call_names.index(
+        "SQLiteVecVectorStore"
+    )
 
     params_kwargs = mock_params_cls.call_args.kwargs
     assert params_kwargs["engine"] is mock_engine
@@ -949,6 +983,9 @@ async def test_get_vector_store_dispatches_to_sqlite_backends():
         patch(
             "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_vs_cls,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vec_vector_store.load_sqlite_vec_extension",
+        ),
         patch(
             "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStoreParams",
         ),
