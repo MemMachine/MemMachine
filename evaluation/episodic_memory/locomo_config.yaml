@@ -6,6 +6,10 @@ episode_store:
   database: db_sqlite
 
 episodic_memory:
+  # Stated rather than inherited: short-term memory used to be on by default and
+  # this evaluation ran with it. The default is now off, so leaving it unset here
+  # would quietly change what this measures.
+  short_term_memory_enabled: true
   long_term_memory:
     embedder: my_embedder_id
     reranker: my_reranker_id

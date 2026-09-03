@@ -267,6 +267,134 @@ def test_old_param_data_without_backend_loads_as_declarative():
     assert conf.long_term_memory.vector_graph_store == "my_storage_id"
 
 
+def test_short_term_memory_is_off_unless_asked_for():
+    """A config that configures short-term memory does not thereby enable it.
+
+    The merge used to read True whenever a short_term_memory section existed,
+    which meant the field default never applied to any real config. Configuring
+    the block and enabling it are now separate statements.
+    """
+    partial = EpisodicMemoryConfPartial.model_validate(
+        {
+            "session_key": "s",
+            "short_term_memory": _ltm_minimal_short_term_block(),
+            "long_term_memory": {
+                "session_id": "s",
+                "embedder": "e",
+                "reranker": "r",
+                "vector_graph_store": "g",
+            },
+        }
+    )
+    conf = partial.merge(EpisodicMemoryConfPartial())
+    assert conf.short_term_memory_enabled is False
+
+
+def test_short_term_memory_honours_an_explicit_true():
+    partial = EpisodicMemoryConfPartial.model_validate(
+        {
+            "session_key": "s",
+            "short_term_memory": _ltm_minimal_short_term_block(),
+            "short_term_memory_enabled": True,
+            "long_term_memory": {
+                "session_id": "s",
+                "embedder": "e",
+                "reranker": "r",
+                "vector_graph_store": "g",
+            },
+        }
+    )
+    conf = partial.merge(EpisodicMemoryConfPartial())
+    assert conf.short_term_memory_enabled is True
+
+
+def test_semantic_memory_is_off_by_default():
+    """Off even when fully configured, which is the only case the default decides.
+
+    An incomplete config is already forced off by _auto_disable_when_incomplete,
+    so asserting against a bare instance would pass whatever the default is.
+    Every required field is supplied here so that nothing but the default is
+    left to determine the answer.
+    """
+    from memmachine_server.common.configuration import SemanticMemoryConf
+
+    conf = SemanticMemoryConf(
+        config_database="db",
+        database="db",
+        llm_model="my_llm",
+        embedding_model="my_embedder",
+    )
+    assert conf.enabled is False
+
+
+def test_semantic_memory_honours_an_explicit_true():
+    from memmachine_server.common.configuration import SemanticMemoryConf
+
+    conf = SemanticMemoryConf(
+        enabled=True,
+        config_database="db",
+        database="db",
+        llm_model="my_llm",
+        embedding_model="my_embedder",
+    )
+    assert conf.enabled is True
+
+
+def test_backend_inferred_as_event_from_a_vector_store():
+    """Naming an event-only field is an unambiguous request for event memory.
+
+    The two backends share no field names, so a config pointing at a
+    `vector_store` cannot mean the declarative backend - it has no such field.
+    This is what makes event memory reachable without a `backend` key while
+    leaving pre-discriminator configs, which name a `vector_graph_store`, alone.
+    """
+    partial = LongTermMemoryConfPartial.model_validate(
+        {
+            "session_id": "s",
+            "embedder": "e",
+            "vector_store": "my_qdrant",
+            "segment_store": "my_sql",
+        }
+    )
+    merged = partial.merge(LongTermMemoryConfPartial())
+    assert merged.backend == "event"
+
+
+def test_backend_inferred_as_declarative_from_a_vector_graph_store():
+    partial = LongTermMemoryConfPartial.model_validate(
+        {
+            "session_id": "s",
+            "embedder": "e",
+            "reranker": "r",
+            "vector_graph_store": "my_neo4j",
+        }
+    )
+    merged = partial.merge(LongTermMemoryConfPartial())
+    assert merged.backend == "declarative"
+
+
+def test_explicit_backend_beats_inference():
+    """An explicit discriminator is a decision; inference is only a fallback."""
+    partial = LongTermMemoryConfPartial.model_validate(
+        {
+            "session_id": "s",
+            "embedder": "e",
+            "reranker": "r",
+            "backend": "declarative",
+            "vector_graph_store": "n",
+        }
+    )
+    assert partial.merge(LongTermMemoryConfPartial()).backend == "declarative"
+
+
+def test_backend_falls_back_to_declarative_when_no_store_is_named():
+    """Nothing to infer from, so the legacy reading stands."""
+    partial = LongTermMemoryConfPartial.model_validate(
+        {"session_id": "s", "embedder": "e", "reranker": "r", "vector_graph_store": "g"}
+    )
+    assert partial.merge(LongTermMemoryConfPartial()).backend == "declarative"
+
+
 def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
     data = {
         "session_key": "s",

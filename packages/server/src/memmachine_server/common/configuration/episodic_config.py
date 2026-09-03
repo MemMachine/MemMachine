@@ -316,19 +316,46 @@ class LongTermMemoryConfPartial(BaseModel):
         description="ID of the Reranker instance for reranking search results",
     )
 
+    @staticmethod
+    def _infer_backend(
+        primary: "LongTermMemoryConfPartial",
+        fallback: "LongTermMemoryConfPartial",
+    ) -> Literal["declarative", "event"]:
+        """Guess the backend from which side's fields a config filled in.
+
+        The two backends share no field names, so naming one of them is an
+        unambiguous statement of intent - a config pointing at a `vector_store`
+        cannot mean the declarative backend, which has no such field. Inferring
+        rather than defaulting is what lets event memory be reachable without a
+        `backend` key while leaving every pre-discriminator config alone: those
+        name a `vector_graph_store`, and resolve as they always did.
+
+        Declarative wins a config that somehow names both, since that is the
+        legacy reading and the safer one to be wrong about: it points at the
+        store the data is already in.
+        """
+        for side in (primary, fallback):
+            if side.vector_graph_store is not None:
+                return "declarative"
+            if side.vector_store is not None or side.segment_store is not None:
+                return "event"
+        return "declarative"
+
     def merge(self, other: Self) -> LongTermMemoryConf:
         """Merge with another partial into a complete long-term config.
 
         Resolution rule for the backend discriminator:
         - if either side sets `backend` explicitly, that value wins (primary first).
-        - if neither side sets `backend`, default to `declarative` (the legacy
-          shape, for backwards compatibility with pre-discriminator configs).
-          Callers that want event-memory should set `backend="event"`
-          explicitly at creation time (e.g. wizard, project-creation API).
+        - otherwise infer it from which backend's fields are present: the two
+          share no field names, so a config that names a `vector_store` wants
+          event memory and one that names a `vector_graph_store` wants
+          declarative, whether or not it knows the discriminator exists.
+        - if neither side names a store, fall back to `declarative`, the legacy
+          shape, so that pre-discriminator configs keep resolving as they did.
         """
         backend = self.backend if self.backend is not None else other.backend
         if backend is None:
-            backend = "declarative"
+            backend = LongTermMemoryConfPartial._infer_backend(self, other)
 
         if backend == "declarative":
             return merge_partial_configs(self, other, DeclarativeLongTermMemoryConf)
@@ -376,8 +403,12 @@ class EpisodicMemoryConf(MetricsFactoryIdMixin, YamlSerializableMixin):
         description="Whether the long-term memory is enabled",
     )
     short_term_memory_enabled: bool = Field(
-        default=True,
-        description="Whether the short-term memory is enabled",
+        default=False,
+        description=(
+            "Whether the short-term memory is enabled. Off by default: each save "
+            "costs an LLM round trip, and a deployment that only wants retrieval "
+            "should not pay for it without asking."
+        ),
     )
     enabled: bool = Field(
         default=True,
@@ -452,8 +483,13 @@ class EpisodicMemoryConfPartial(YamlSerializableMixin):
             long_term_memory_enabled=True
             if merged.long_term_memory_enabled is None and ltm_merged is not None
             else merged.long_term_memory_enabled,
-            short_term_memory_enabled=True
-            if merged.short_term_memory_enabled is None and stm_merged is not None
-            else merged.short_term_memory_enabled,
+            # Off unless asked for. This previously read True whenever a
+            # short_term_memory section existed, which meant the field default
+            # above never applied to any real config.
+            short_term_memory_enabled=(
+                merged.short_term_memory_enabled
+                if merged.short_term_memory_enabled is not None
+                else False
+            ),
             enabled=True if merged.enabled is None else merged.enabled,
         )

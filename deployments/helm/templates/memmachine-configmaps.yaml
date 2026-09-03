@@ -32,11 +32,17 @@ data:
         embedder: default_embedder
         reranker: my_reranker_id
         vector_graph_store: db_neo4j
+      # Stated rather than inherited: the default is now off, and this chart
+      # configures short-term memory, so leaving it unset would ship a chart
+      # whose llm_model and message_capacity were never used.
+      short_term_memory_enabled: true
       short_term_memory:
         llm_model: default_model
         message_capacity: 500
 
     semantic_memory:
+      # Likewise: this chart configures semantic memory, so it must now say so.
+      enabled: true
       llm_model: default_model
       embedding_model: default_embedder
       database: db_postgres
