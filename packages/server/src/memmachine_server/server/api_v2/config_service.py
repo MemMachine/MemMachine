@@ -43,6 +43,7 @@ from memmachine_server.common.configuration.language_model_conf import (
     LanguageModelsConf,
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
+    OrcaRouterLanguageModelConf,
 )
 from memmachine_server.common.configuration.reranker_conf import RerankersConf
 from memmachine_server.common.resource_manager.resource_manager import (
@@ -103,6 +104,8 @@ def _get_language_model_provider(manager_conf: LanguageModelsConf, name: str) ->
         return "openai-chat-completions"
     if name in manager_conf.amazon_bedrock_language_model_confs:
         return "amazon-bedrock"
+    if name in manager_conf.orcarouter_language_model_confs:
+        return "orcarouter"
     return "unknown"
 
 
@@ -151,6 +154,7 @@ def _create_language_model_config(
     OpenAIResponsesLanguageModelConf
     | OpenAIChatCompletionsLanguageModelConf
     | AmazonBedrockLanguageModelConf
+    | OrcaRouterLanguageModelConf
 ):
     """Create a language model configuration object from provider and config dict."""
     if provider == "openai-responses":
@@ -169,6 +173,11 @@ def _create_language_model_config(
             if key in config and config[key] is not None:
                 config[key] = SecretStr(config[key])
         return AmazonBedrockLanguageModelConf(**config)
+    if provider == "orcarouter":
+        # Convert api_key to SecretStr
+        if "api_key" in config:
+            config["api_key"] = SecretStr(config["api_key"])
+        return OrcaRouterLanguageModelConf(**config)
     raise ValueError(f"Unknown language model provider: {provider}")
 
 
