@@ -46,7 +46,7 @@ pip install memmachine-client
 ```
 
 ```python
-from memmachine_client import import MemMachineClient
+from memmachine_client import MemMachineClient
 
 # Initialize the client
 client = MemMachineClient(base_url="http://localhost:8080")
