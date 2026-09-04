@@ -1,6 +1,7 @@
 """Segment store data models and interfaces."""
 
 from .data_types import (
+    EventHeader,
     SegmentStoreAttemptsExhaustedError,
     SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
@@ -13,6 +14,7 @@ from .segment_store import (
 )
 
 __all__ = [
+    "EventHeader",
     "SegmentStore",
     "SegmentStoreAttemptsExhaustedError",
     "SegmentStorePartition",

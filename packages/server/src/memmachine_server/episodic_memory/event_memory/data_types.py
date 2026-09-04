@@ -201,6 +201,13 @@ class FormatOptions(BaseModel):
     time_style: DateTimeStyle | None = "long"
     locale: str = "en_US"
     timezone: InstanceOf[tzinfo] | None = None
+    # Written between two segments of the SAME event when segments between them are
+    # missing, so a partial event cannot be read as a whole one. It is emitted
+    # OUTSIDE the quoted payload, never inside it, which is what makes it impossible
+    # to mistake for something the speaker said. Bracketed for the reason the
+    # scholarly convention brackets an editorial elision: chat text genuinely
+    # contains a bare "..." where someone trailed off. None elides silently.
+    gap_marker: str | None = "[...]"
 
 
 # QueryResult: the result of a memory query.

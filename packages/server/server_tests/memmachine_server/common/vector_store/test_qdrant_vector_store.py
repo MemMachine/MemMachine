@@ -1350,9 +1350,9 @@ class TestCollectionLifecycleAcrossWorkers:
         await store_a.startup()
         await store_b.startup()
 
-        assert (
-            store_a._client_name_locks is not store_b._client_name_locks
-        ), "separate clients must not share a lock, or this does not test anything"
+        assert store_a._client_name_locks is not store_b._client_name_locks, (
+            "separate clients must not share a lock, or this does not test anything"
+        )
 
         try:
             results = await asyncio.gather(

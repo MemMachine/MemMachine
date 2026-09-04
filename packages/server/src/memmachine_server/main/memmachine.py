@@ -4,7 +4,14 @@ import asyncio
 import contextlib
 import logging
 from asyncio import Task
-from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
+from collections.abc import (
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Iterable,
+    Mapping,
+)
 from functools import partial
 from typing import Any, Final, Protocol
 
@@ -48,6 +55,9 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.long_term_memory.long_term_memory import (
+    LongTermMemory,
+)
 from memmachine_server.retrieval_agent import create_retrieval_agent
 from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
@@ -793,6 +803,48 @@ class MemMachine:
 
         episodic_memory: EpisodicMemory.QueryResponse | None = None
         semantic_memory: list[SemanticFeature] | None = None
+
+    @contextlib.asynccontextmanager
+    async def open_timeline(
+        self,
+        session_data: InstanceOf[SessionData],
+    ) -> AsyncIterator[LongTermMemory]:
+        """Open a session's long-term memory for timeline access.
+
+        Search and add speak in episodes, and each has a facade method here
+        that shapes one call. The timeline is read instead by several calls
+        that navigate from one address to the next -- search, then expand
+        around a hit, then outline the conversation it came from -- and
+        wrapping each of those separately would reopen the session every time
+        and still not let a caller thread an address through. Handing back the
+        memory for the duration of a request keeps the session open once and
+        leaves the navigation to the caller.
+
+        Args:
+            session_data: Session context used to select the memory.
+
+        Yields:
+            The session's long-term memory.
+
+        Raises:
+            ValueError: If long-term memory is disabled for this session.
+
+        """
+        episodic_memory_manager = await self._resources.get_episodic_memory_manager()
+        async with episodic_memory_manager.open_or_create_episodic_memory(
+            session_key=session_data.session_key,
+            description="",
+            episodic_memory_config=self._with_default_episodic_memory_conf(
+                session_key=session_data.session_key
+            ),
+            metadata={},
+        ) as episodic_session:
+            if episodic_session.long_term_memory is None:
+                raise ValueError(
+                    "Timeline access requires long-term memory, which is "
+                    f"disabled for session {session_data.session_key!r}."
+                )
+            yield episodic_session.long_term_memory
 
     async def _search_episodic_memory(
         self,

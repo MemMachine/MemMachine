@@ -2,6 +2,8 @@
 
 import json
 from collections.abc import Mapping
+from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, field_validator
 
@@ -44,6 +46,31 @@ class SegmentStorePartitionConfig(BaseModel):
         except TypeError as err:
             raise ValueError("payload_codec_config must be JSON-serializable") from err
         return value
+
+
+class EventHeader(BaseModel):
+    """One event's place and size on the timeline, without its content.
+
+    What a caller needs to lay out or measure events -- where each sits,
+    how big it is, and which segment to address it by -- with none of the
+    text. Reading the shape of a long conversation, or deciding whether an
+    event is small enough to show whole, otherwise means fetching and
+    decoding every block only to discard it.
+    """
+
+    event_uuid: UUID = Field(description="The event these segments belong to.")
+    timestamp: datetime = Field(description="The event's position on the timeline.")
+    first_segment_uuid: UUID = Field(
+        description="The event's opening segment, which addresses the event."
+    )
+    segment_count: int = Field(description="How many segments the event holds.")
+    encoded_length: int = Field(
+        description=(
+            "Total encoded size, in bytes, of the event's stored blocks. A size "
+            "proxy that costs no decoding: exact character counts need the "
+            "payload codec, which the store applies per segment on read."
+        )
+    )
 
 
 class SegmentStorePartitionConfigMismatchError(Exception):

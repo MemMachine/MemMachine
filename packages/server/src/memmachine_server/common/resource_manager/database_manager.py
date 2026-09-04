@@ -787,6 +787,21 @@ class DatabaseManager:
                     )
 
                 return hnswlib_factory
+            case SQLiteVectorStoreEngine.TURBOVEC:
+                from memmachine_server.common.vector_store.vector_search_engine.turbovec_engine import (
+                    TurboVecVectorSearchEngine,
+                )
+
+                def turbovec_factory(
+                    num_dimensions: int, similarity_metric: SimilarityMetric
+                ) -> VectorSearchEngine:
+                    return TurboVecVectorSearchEngine(
+                        num_dimensions=num_dimensions,
+                        similarity_metric=similarity_metric,
+                        bit_width=conf.quantization_bit_width,
+                    )
+
+                return turbovec_factory
 
     async def async_get_sqlite_vector_store(self, name: str) -> VectorStore:
         """Return a SQLiteVectorStore, creating it if necessary (lazy)."""

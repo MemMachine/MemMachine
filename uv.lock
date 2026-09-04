@@ -2218,6 +2218,7 @@ dependencies = [
     { name = "memmachine-common" },
     { name = "neo4j" },
     { name = "nltk" },
+    { name = "numpy" },
     { name = "openai" },
     { name = "pgvector" },
     { name = "prometheus-client" },
@@ -2253,6 +2254,9 @@ nebula = [
 qdrant = [
     { name = "qdrant-client" },
 ]
+turbovec = [
+    { name = "turbovec" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2278,6 +2282,7 @@ requires-dist = [
     { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1" },
     { name = "neo4j", specifier = ">=5.28.2" },
     { name = "nltk", specifier = ">=3.9.4" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "openai", specifier = ">=2.21.0" },
     { name = "pgvector", specifier = ">=0.4.2" },
     { name = "prometheus-client", specifier = ">=0.22.1" },
@@ -2291,11 +2296,12 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'gpu'", specifier = ">=5.1.0" },
     { name = "sqlalchemy", specifier = ">=2.0.43" },
     { name = "sqlite-vec", specifier = ">=0.1.9" },
+    { name = "turbovec", marker = "extra == 'turbovec'", specifier = ">=1.0.0" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "usearch", specifier = ">=2.25.1" },
     { name = "uvicorn", specifier = ">=0.35.0" },
 ]
-provides-extras = ["gpu", "hnswlib", "nebula", "qdrant", "milvus", "litellm"]
+provides-extras = ["gpu", "hnswlib", "nebula", "qdrant", "milvus", "litellm", "turbovec"]
 
 [[package]]
 name = "milvus-lite"
@@ -4637,6 +4643,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/09/5683146fda6a2b569deb78ccfd8fbfea8bfe55f726b081c0a6bb18dd6f28/triton-3.7.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2020153b08280415ec0da6607834e79166442147e78e144df06b508c75b186d2", size = 197729537, upload-time = "2026-06-17T19:53:35.516Z" },
     { url = "https://files.pythonhosted.org/packages/e9/f8/448220c3092019f9fdfab39ec47985968181d67da34b44f6a7f6280a5cbb/triton-3.7.1-cp314-cp314t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c58e4c61f0c73b5dba3b5d19b4a7093c32f90dc18b2a7f121a7c16ccd31107b7", size = 184814760, upload-time = "2026-06-17T20:04:04.984Z" },
     { url = "https://files.pythonhosted.org/packages/f0/ac/229b7d4589d2e5937310e72c6d46e89599d16a4a12b479ffa1499fee8eb8/triton-3.7.1-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:10ba85fa2cca4a2fbdeb36bf1cb082f2c252bda55bf9fccd74f65ec5bc647e68", size = 197824404, upload-time = "2026-06-17T19:53:42.772Z" },
+]
+
+[[package]]
+name = "turbovec"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/45/d2/00c981bd1a6be5b6a875435bf678e627f191e3daf47ea70e1b5ee3109c36/turbovec-1.0.0.tar.gz", hash = "sha256:4ceb3c4ad08e48c6b3483b88aca63d81a06449f90d5fbc1b162dd11df10b8fb2", size = 702952, upload-time = "2026-08-18T20:43:31.249Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/53/e0/d759918244236356199b0f4d868ee331d0440a9824f147780aaefa8fe1af/turbovec-1.0.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:a69e8e2e26ba943f31fba546ab595b60e9b4c25087ed905c3e6ceb0d297ee234", size = 668359, upload-time = "2026-08-18T20:43:25.45Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/e9/8de1e7d2636a8f5c73d39c64ec6fb4bd20180d8c966962d919356d06e175/turbovec-1.0.0-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:09aa495e802701f139820e21700dc947ea21734446112afefb4e480a8f65fa90", size = 700020, upload-time = "2026-08-18T20:43:27.028Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/6d/c1acf31a1ef381b588de86ebebb32c3ca7d310cbb84279ac1f65c3a3e854/turbovec-1.0.0-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:c810f50b967c2163b78d1e27d29e153ab5e8820de23921ad959227acca8bb06a", size = 719275, upload-time = "2026-08-18T20:43:28.402Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/7d/e0c14b09f6dfb7ff156d1f884119daebc5c8bf9f5b8fc72ada26c2674256/turbovec-1.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:cd855e0b318a57dc57c733f9a62ae98de5192f4f6c2c760e305523e8ceb1b090", size = 611788, upload-time = "2026-08-18T20:43:29.854Z" },
 ]
 
 [[package]]

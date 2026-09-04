@@ -62,6 +62,21 @@ def _get_op(op: str) -> Callable[[ColumnElement, object], ColumnElement[bool]]:
     return op_fn
 
 
+def _normalize_column_value(value: PropertyValue) -> PropertyValue:
+    """Put a datetime in UTC before it is compared against a stored column.
+
+    Timestamp columns hold the UTC instant, because SQLite's DateTime does not
+    persist tzinfo and a non-UTC value written verbatim comes back shifted. The
+    comparison side has to agree: an aware bound bound as-is is compared on its
+    WALL CLOCK, so `<= 09:00-07:00` excludes a row stored at 13:59 UTC even
+    though that instant is three hours earlier. Same normalization the write path
+    and the typed-JSON path already do.
+    """
+    if isinstance(value, datetime):
+        return ensure_tz_aware(value).astimezone(UTC)
+    return value
+
+
 def _compile_column_leaf(
     expr: IsNull | In | Comparison,
     column: ColumnElement,
@@ -71,8 +86,8 @@ def _compile_column_leaf(
     if isinstance(expr, In):
         if not expr.values:
             return false()
-        return column.in_(expr.values)
-    return _get_op(expr.op)(column, expr.value)
+        return column.in_([_normalize_column_value(v) for v in expr.values])
+    return _get_op(expr.op)(column, _normalize_column_value(expr.value))
 
 
 def _cast_json_value(

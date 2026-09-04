@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Self, cast
+from typing import Any, Literal, Self, cast
 
 from fastapi import FastAPI
 from fastmcp import FastMCP
@@ -17,10 +17,16 @@ from memmachine_common.api.spec import (
     AddMemoriesSpec,
     DeleteMemoriesSpec,
     EpisodeIdT,
+    ExpandTimelineResponse,
+    ExpandTimelineSpec,
     FeatureIdT,
     MemoryMessage,
+    OutlineTimelineResponse,
+    OutlineTimelineSpec,
     SearchMemoriesSpec,
     SearchResult,
+    SearchTimelineResponse,
+    SearchTimelineSpec,
 )
 from pydantic import BaseModel, Field, model_validator
 from starlette import status
@@ -37,6 +43,12 @@ from memmachine_server.server.api_v2.service import (
     _delete_memories,
     _search_target_memories,
     _session_key_to_session_data,
+)
+from memmachine_server.server.api_v2.timeline_service import (
+    TimelineAddressError,
+    _expand_timeline,
+    _outline_timeline,
+    _search_timeline,
 )
 from memmachine_server.server.diagnostics import dump_traceback, install_sigusr1_handler
 
@@ -234,6 +246,63 @@ class Params(BaseModel):
             set_metadata=None,
             types=ALL_MEMORY_TYPES,
             agent_mode=agent_mode,
+        )
+
+    def to_search_timeline_spec(
+        self,
+        query: str,
+        limit: int,
+        *,
+        search_filter: str = "",
+    ) -> SearchTimelineSpec:
+        """Convert to SearchTimelineSpec."""
+        return SearchTimelineSpec(
+            org_id=self.org_id,
+            project_id=self.proj_id,
+            query=query,
+            limit=limit,
+            filter=search_filter,
+            expand_context=0,
+            score_threshold=None,
+            query_vector=None,
+        )
+
+    def to_expand_timeline_spec(
+        self,
+        handle: str,
+        before: int,
+        after: int,
+        unit: Literal["segments", "events"],
+        *,
+        search_filter: str = "",
+    ) -> ExpandTimelineSpec:
+        """Convert to ExpandTimelineSpec."""
+        return ExpandTimelineSpec(
+            org_id=self.org_id,
+            project_id=self.proj_id,
+            handle=handle,
+            before=before,
+            after=after,
+            unit=unit,
+            filter=search_filter,
+        )
+
+    def to_outline_timeline_spec(
+        self,
+        handle: str | None,
+        before: int,
+        after: int,
+        *,
+        search_filter: str = "",
+    ) -> OutlineTimelineSpec:
+        """Convert to OutlineTimelineSpec."""
+        return OutlineTimelineSpec(
+            org_id=self.org_id,
+            project_id=self.proj_id,
+            handle=handle,
+            before=before,
+            after=after,
+            filter=search_filter,
         )
 
     def to_delete_memories_spec(
@@ -579,3 +648,189 @@ async def mcp_delete_memory(
         return McpResponse(status=status_code, message=str(e))
     else:
         return MCP_SUCCESS
+
+
+@mcp.tool(
+    name="search_timeline",
+    description=(
+        "Find where something was said, and get an address you can read around. "
+        "Use this instead of search_memory when the next thing you want is the "
+        "surrounding conversation -- what led up to a decision, what was tried "
+        "before, how something was actually done -- rather than a standalone "
+        "fact.\n\n"
+        "Give a cue with enough context to pin a specific moment. A bare entity "
+        "is too diffuse; an event description ('the user asked why the deploy "
+        "failed') or a verbatim line with its speaker works far better. The "
+        "user's own wording is often a good cue.\n\n"
+        "Each result carries a short address. Pass it to expand_timeline to read "
+        "the conversation around it, or to outline_timeline to see the shape of "
+        "the conversation it came from. Following a lead is just another search "
+        "with the new cue; stop when results stop being the kind of thing you "
+        "asked for."
+    ),
+)
+async def mcp_search_timeline(
+    cue: str,
+    org_id: str = "",
+    proj_id: str = "",
+    user_id: str = "",
+    limit: int = 8,
+    filter: str = "",  # noqa: A002 - the tool's parameter name is part of its contract
+) -> McpResponse | SearchTimelineResponse:
+    """
+    Search the timeline for moments related to a cue.
+
+    Args:
+        cue: A context-bearing description of the moment to find.
+        org_id: The organization ID (optional).
+        proj_id: The project ID (optional).
+        user_id: The unique identifier of the user.
+        limit: The maximum number of moments to return.
+        filter: An optional filter expression narrowing the search.
+
+    Returns:
+        McpResponse on failure, or SearchTimelineResponse on success.
+
+    """
+    global mem_machine
+    if mem_machine is None:
+        return McpResponse(
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            message="MemMachine is not initialized",
+        )
+    try:
+        param = Params(org_id=org_id, proj_id=proj_id, user_id=user_id)
+        return await _search_timeline(
+            spec=param.to_search_timeline_spec(cue, limit, search_filter=filter),
+            memmachine=mem_machine,
+        )
+    except Exception as e:
+        logger.exception("Failed to search timeline")
+        return McpResponse(status=status.HTTP_422_UNPROCESSABLE_CONTENT, message=str(e))
+
+
+@mcp.tool(
+    name="expand_timeline",
+    description=(
+        "Read the conversation around an address you already have. This reaches "
+        "what a search cannot, because it does not rank: everything stored "
+        "around that point comes back in order, including the steps that were "
+        "taken and what they returned. Use it to replay how something was done, "
+        "not just that it was mentioned.\n\n"
+        "The addressed moment is always shown, so you can see where you "
+        "anchored. `unit` chooses what `before` and `after` count: 'segments' "
+        "is a flat budget and the way to read inside one long entry; 'events' "
+        "counts whole turns, for when you want a fixed number of exchanges "
+        "either side and the length of what is in the way should not decide how "
+        "far you get.\n\n"
+        "`filter` selects what to spend the window on -- useful in a stretch "
+        "full of long output -- and never hides the moment you asked for."
+    ),
+)
+async def mcp_expand_timeline(
+    handle: str,
+    org_id: str = "",
+    proj_id: str = "",
+    user_id: str = "",
+    before: int = 5,
+    after: int = 5,
+    unit: Literal["segments", "events"] = "segments",
+    filter: str = "",  # noqa: A002 - the tool's parameter name is part of its contract
+) -> McpResponse | ExpandTimelineResponse:
+    """
+    Read the timeline around an addressed moment.
+
+    Args:
+        handle: An address from search_timeline, outline_timeline, or an earlier expand.
+        org_id: The organization ID (optional).
+        proj_id: The project ID (optional).
+        user_id: The unique identifier of the user.
+        before: How much to read before the address, in the chosen unit.
+        after: How much to read after the address, in the chosen unit.
+        unit: Whether before/after count segments or whole events.
+        filter: An optional filter over the surrounding material.
+
+    Returns:
+        McpResponse on failure, or ExpandTimelineResponse on success.
+
+    """
+    global mem_machine
+    if mem_machine is None:
+        return McpResponse(
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            message="MemMachine is not initialized",
+        )
+    try:
+        return await _expand_timeline(
+            spec=Params(
+                org_id=org_id, proj_id=proj_id, user_id=user_id
+            ).to_expand_timeline_spec(
+                handle, before, after, unit, search_filter=filter
+            ),
+            memmachine=mem_machine,
+        )
+    except TimelineAddressError as e:
+        return McpResponse(status=status.HTTP_404_NOT_FOUND, message=str(e))
+    except Exception as e:
+        logger.exception("Failed to expand timeline")
+        return McpResponse(status=status.HTTP_422_UNPROCESSABLE_CONTENT, message=str(e))
+
+
+@mcp.tool(
+    name="outline_timeline",
+    description=(
+        "See the shape of a conversation: its events in order, with how large "
+        "each one is. Use this when the question is *where* something happened "
+        "rather than *what* was said -- 'where did we leave this', 'what did "
+        "that session actually do', 'we changed our minds somewhere'.\n\n"
+        "search_timeline finds a moment and expand_timeline reads around one; "
+        "neither shows structure, and asking for a huge expansion window to get "
+        "it is the wrong tool. Pick an entry from the outline, then expand its "
+        "address.\n\n"
+        "Size is the signal: one large event is where the work happened, a run "
+        "of small ones is a conversation that kept changing direction."
+    ),
+)
+async def mcp_outline_timeline(
+    org_id: str = "",
+    proj_id: str = "",
+    user_id: str = "",
+    handle: str | None = None,
+    before: int = 20,
+    after: int = 20,
+    filter: str = "",  # noqa: A002 - the tool's parameter name is part of its contract
+) -> McpResponse | OutlineTimelineResponse:
+    """
+    Read the shape of the timeline.
+
+    Args:
+        org_id: The organization ID (optional).
+        proj_id: The project ID (optional).
+        user_id: The unique identifier of the user.
+        handle: An address to centre the outline on; omit to start at the beginning.
+        before: How many events to show before the addressed one.
+        after: How many events to show after it.
+        filter: An optional filter selecting which events to list.
+
+    Returns:
+        McpResponse on failure, or OutlineTimelineResponse on success.
+
+    """
+    global mem_machine
+    if mem_machine is None:
+        return McpResponse(
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            message="MemMachine is not initialized",
+        )
+    try:
+        return await _outline_timeline(
+            spec=Params(
+                org_id=org_id, proj_id=proj_id, user_id=user_id
+            ).to_outline_timeline_spec(handle, before, after, search_filter=filter),
+            memmachine=mem_machine,
+        )
+    except TimelineAddressError as e:
+        return McpResponse(status=status.HTTP_404_NOT_FOUND, message=str(e))
+    except Exception as e:
+        logger.exception("Failed to outline timeline")
+        return McpResponse(status=status.HTTP_422_UNPROCESSABLE_CONTENT, message=str(e))

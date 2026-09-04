@@ -554,6 +554,226 @@ class AddMemoriesResponse(BaseModel):
     ]
 
 
+class TimelineSegment(BaseModel):
+    """One addressable point on the timeline."""
+
+    handle: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_HANDLE),
+    ]
+    segment_uid: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_SEGMENT_UID),
+    ]
+    event_uid: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_EVENT_UID),
+    ]
+    timestamp: Annotated[
+        AwareDatetime,
+        Field(..., description=SpecDoc.EPISODE_CREATED_AT),
+    ]
+    producer: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.EPISODE_PRODUCER_ID),
+    ]
+
+
+class TimelineMatch(BaseModel):
+    """A scored point on the timeline, with the window that was read."""
+
+    score: Annotated[
+        float,
+        Field(..., description=SpecDoc.EPISODE_SCORE),
+    ]
+    seed: Annotated[
+        TimelineSegment,
+        Field(..., description="The segment that matched."),
+    ]
+    rendered: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_RENDERED),
+    ]
+
+
+class TimelineEvent(BaseModel):
+    """One event's place and size, without its content."""
+
+    handle: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_HANDLE),
+    ]
+    event_uid: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_EVENT_UID),
+    ]
+    timestamp: Annotated[
+        AwareDatetime,
+        Field(..., description=SpecDoc.EPISODE_CREATED_AT),
+    ]
+    segment_count: Annotated[
+        int,
+        Field(..., description=SpecDoc.TIMELINE_SEGMENT_COUNT),
+    ]
+    encoded_length: Annotated[
+        int,
+        Field(..., description=SpecDoc.TIMELINE_ENCODED_LENGTH),
+    ]
+
+
+class SearchTimelineSpec(_WithOrgAndProj):
+    """Specification model for searching the timeline."""
+
+    query: Annotated[
+        str,
+        Field(..., description=SpecDoc.QUERY, examples=Examples.QUERY),
+    ]
+    limit: Annotated[
+        int,
+        Field(default=10, description=SpecDoc.TIMELINE_LIMIT),
+    ]
+    filter: Annotated[
+        str,
+        Field(
+            default="",
+            description=SpecDoc.FILTER_MEM,
+            examples=Examples.FILTER_MEM,
+        ),
+    ]
+    expand_context: Annotated[
+        int,
+        Field(default=0, description=SpecDoc.EXPAND_CONTEXT),
+    ]
+    score_threshold: Annotated[
+        float | None,
+        Field(default=None, description=SpecDoc.SCORE_THRESHOLD),
+    ]
+    query_vector: Annotated[
+        list[float] | None,
+        Field(default=None, description=SpecDoc.TIMELINE_QUERY_VECTOR),
+    ]
+
+
+class SearchTimelineResponse(BaseModel):
+    """Payload returned by `/memories/timeline/search`."""
+
+    matches: Annotated[
+        list[TimelineMatch],
+        Field(default_factory=list, description="Scored matches, best first."),
+    ]
+
+
+class ExpandTimelineSpec(_WithOrgAndProj):
+    """Specification model for reading the timeline around a segment."""
+
+    handle: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_HANDLE),
+    ]
+    before: Annotated[
+        int,
+        Field(default=5, ge=0, description=SpecDoc.TIMELINE_BEFORE),
+    ]
+    after: Annotated[
+        int,
+        Field(default=5, ge=0, description=SpecDoc.TIMELINE_AFTER),
+    ]
+    unit: Annotated[
+        Literal["segments", "events"],
+        Field(default="segments", description=SpecDoc.TIMELINE_UNIT),
+    ]
+    filter: Annotated[
+        str,
+        Field(
+            default="",
+            description=SpecDoc.FILTER_MEM,
+            examples=Examples.FILTER_MEM,
+        ),
+    ]
+
+
+class ExpandTimelineResponse(BaseModel):
+    """Payload returned by `/memories/timeline/expand`."""
+
+    seed: Annotated[
+        TimelineSegment,
+        Field(..., description="The segment the window was read around."),
+    ]
+    rendered: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_RENDERED),
+    ]
+
+
+class OutlineTimelineSpec(_WithOrgAndProj):
+    """Specification model for reading the timeline's shape."""
+
+    handle: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "An address to centre the outline on. The window is counted "
+                "from the event this segment belongs to. Omit to start from "
+                "the beginning of the timeline."
+            ),
+        ),
+    ]
+    before: Annotated[
+        int,
+        Field(default=20, ge=0, description=SpecDoc.TIMELINE_BEFORE),
+    ]
+    after: Annotated[
+        int,
+        Field(default=20, ge=0, description=SpecDoc.TIMELINE_AFTER),
+    ]
+    filter: Annotated[
+        str,
+        Field(
+            default="",
+            description=SpecDoc.FILTER_MEM,
+            examples=Examples.FILTER_MEM,
+        ),
+    ]
+
+
+class OutlineTimelineResponse(BaseModel):
+    """Payload returned by `/memories/timeline/outline`."""
+
+    events: Annotated[
+        list[TimelineEvent],
+        Field(default_factory=list, description="Matching events, in order."),
+    ]
+
+
+class ResolveTimelineAddressSpec(_WithOrgAndProj):
+    """Specification model for resolving an abbreviated segment address."""
+
+    handle: Annotated[
+        str,
+        Field(..., description=SpecDoc.TIMELINE_HANDLE),
+    ]
+
+
+class ResolveTimelineAddressResponse(BaseModel):
+    """Payload returned by `/memories/timeline/resolve`."""
+
+    segment_uid: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "The segment the address names, or null when it names none or "
+                "more than one."
+            ),
+        ),
+    ]
+    candidates: Annotated[
+        list[str],
+        Field(default_factory=list, description=SpecDoc.TIMELINE_CANDIDATES),
+    ]
+
+
 class SearchMemoriesSpec(_WithOrgAndProj):
     """Specification model for searching memories."""
 

@@ -339,6 +339,7 @@ class SQLiteVectorStoreEngine(StrEnum):
 
     USEARCH = "usearch"
     HNSWLIB = "hnswlib"
+    TURBOVEC = "turbovec"
 
 
 class SQLiteVectorStoreConf(YamlSerializableMixin):
@@ -364,6 +365,14 @@ class SQLiteVectorStoreConf(YamlSerializableMixin):
         description=(
             "Number of search-engine operations before the index is auto-saved "
             "to `index_directory`. Only relevant when `index_directory` is set."
+        ),
+    )
+    quantization_bit_width: int = Field(
+        default=4,
+        description=(
+            "Bits per vector component in the quantized index. Only read by the "
+            "`turbovec` engine, which trades exactness for a resident index "
+            "roughly 32/`quantization_bit_width` times smaller than float32."
         ),
     )
 

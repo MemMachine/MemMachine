@@ -232,6 +232,70 @@ class SpecDoc:
     fields are prefixed with 'metadata.' to distinguish them from other fields.
     """
 
+    TIMELINE_HANDLE = """
+    A segment address: the full 32-character hexadecimal segment id, or any
+    prefix of one that names exactly one stored segment. Every timeline
+    response reports the shortest prefix that was unambiguous when it was
+    rendered, which is what to pass back here.
+    """
+
+    TIMELINE_LIMIT = """
+    The maximum number of results to return.
+    """
+
+    TIMELINE_BEFORE = """
+    How much of the timeline to read before the addressed segment, counted in
+    the requested unit.
+    """
+
+    TIMELINE_AFTER = """
+    How much of the timeline to read after the addressed segment, counted in
+    the requested unit.
+    """
+
+    TIMELINE_UNIT = """
+    What `before` and `after` count. 'segments' is a flat budget -- every call
+    costs about the same, and it is the only way to read inside one long event.
+    'events' counts whole events, for when the length of what lies in between
+    should not decide how far the window reaches.
+    """
+
+    TIMELINE_QUERY_VECTOR = """
+    An optional precomputed query embedding, used for the vector search in
+    place of embedding `query`. The query string is still used for reranking.
+    Its length must match the collection's configured dimensionality.
+    """
+
+    TIMELINE_SEGMENT_UID = """
+    The segment's full 32-character hexadecimal id.
+    """
+
+    TIMELINE_EVENT_UID = """
+    The id of the event this segment is part of.
+    """
+
+    TIMELINE_RENDERED = """
+    The window of timeline this result covers, formatted for reading: one
+    entry per contiguous run of segments, each headed by its timestamp and
+    producer. A run with a hole in it carries a gap marker, so a partial event
+    cannot be read as a whole one.
+    """
+
+    TIMELINE_SEGMENT_COUNT = """
+    How many segments the event holds. Where a filter applied, only the
+    matching segments are counted.
+    """
+
+    TIMELINE_ENCODED_LENGTH = """
+    The event's total stored size in bytes. A size proxy, not a character
+    count: it is read without decoding the event's content.
+    """
+
+    TIMELINE_CANDIDATES = """
+    The segment ids an ambiguous address could have named, in ascending order.
+    Empty when the address named exactly one segment or none at all.
+    """
+
     MEMORY_TYPES = """
     A list of memory types to include in the search (e.g., episodic, semantic).
     If empty, all available types are searched.
@@ -737,6 +801,64 @@ class RouterDoc:
     provide context for the memory and if provided should be user-friendly names.
 
     The endpoint accepts a batch of messages to be added in a single request.
+    """
+
+    SEARCH_TIMELINE = """
+    Search a project's timeline, returning addressable segments.
+
+    Where `/memories/search` returns whole episodes ranked by relevance, this
+    returns the *points* that matched: each result carries an address, the
+    segment's place on the timeline, and the surrounding window formatted for
+    reading. Use it when the next thing you want to do is read around a hit
+    rather than consume the hit alone.
+
+    Addresses are reported abbreviated to the shortest prefix that was
+    unambiguous when the response was built, and every timeline endpoint
+    accepts them in that form.
+
+    The filter field accepts the structured filter expression language, the
+    same one `/memories/search` uses.
+    """
+
+    EXPAND_TIMELINE = """
+    Read the timeline around an addressed segment.
+
+    Walks the stored conversation on either side of a point and returns it
+    formatted for reading, with the addressed segment shown in place -- a
+    window whose centre is missing cannot be read as a timeline. This reaches
+    what a search cannot, because it does not rank: everything stored around
+    that point is reachable, in order.
+
+    `unit` chooses what `before` and `after` count. 'segments' is a flat
+    budget and the only way to read inside one long event; 'events' counts
+    whole events, for when the length of what lies in between should not
+    decide how far the window reaches.
+
+    The filter selects which surrounding segments to spend the window on. It
+    is pushed into the walk rather than applied to its result, so the budget
+    is not spent on segments that are then discarded. It never hides the
+    addressed segment itself.
+    """
+
+    OUTLINE_TIMELINE = """
+    Read the shape of a project's timeline, without its content.
+
+    One entry per event: its address, when it happened, how many segments it
+    holds, and how large it is. It answers *where* something happened, which
+    neither search nor expand does -- search finds a moment and expand reads
+    around one, and getting structure out of them means a large window spent
+    on text nobody wanted.
+
+    Give an address to centre the window on the event that segment belongs to;
+    omit it to start from the beginning of the timeline.
+    """
+
+    RESOLVE_TIMELINE_ADDRESS = """
+    Report which segment an abbreviated address names.
+
+    Returns the segment id when the address names exactly one, and otherwise
+    the candidates it could have named, so a caller holding an address that
+    has become ambiguous can lengthen it rather than guess.
     """
 
     SEARCH_MEMORIES = """

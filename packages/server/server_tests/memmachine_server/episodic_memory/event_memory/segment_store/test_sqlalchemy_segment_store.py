@@ -2641,3 +2641,290 @@ def test_empty_partition_key_is_named_as_empty() -> None:
     """An empty key is reported as empty, not as containing invalid characters."""
     with pytest.raises(ValueError, match="must not be empty"):
         validate_partition_key("")
+
+
+# ===================================================================
+# get_neighbor_segments / get_neighbor_events
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_neighbor_segments_omits_the_seed(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    event_uuid = uuid4()
+    segments = [
+        _seg(event_uuid=event_uuid, index=i, ts_offset_seconds=0, text=f"s{i}")
+        for i in range(5)
+    ]
+    await partition.add_segments(_links(*segments))
+
+    result = await partition.get_neighbor_segments(
+        [segments[2].uuid],
+        max_backward_segments=2,
+        max_forward_segments=2,
+    )
+
+    returned = [segment.uuid for segment in result[segments[2].uuid]]
+    assert segments[2].uuid not in returned
+    assert returned == [
+        segments[0].uuid,
+        segments[1].uuid,
+        segments[3].uuid,
+        segments[4].uuid,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_neighbor_segments_locates_a_seed_the_filter_excludes(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    # The seed is an address, not a result: a filter that would reject it must
+    # still leave it usable as the point to read around.
+    event_uuid = uuid4()
+    before = _seg(event_uuid=event_uuid, index=0, properties={"kind": "keep"})
+    seed = _seg(event_uuid=event_uuid, index=1, properties={"kind": "drop"})
+    after = _seg(event_uuid=event_uuid, index=2, properties={"kind": "keep"})
+    await partition.add_segments(_links(before, seed, after))
+
+    result = await partition.get_neighbor_segments(
+        [seed.uuid],
+        max_backward_segments=5,
+        max_forward_segments=5,
+        property_filter=parse_filter("m.kind = 'keep'"),
+    )
+
+    assert [segment.uuid for segment in result[seed.uuid]] == [
+        before.uuid,
+        after.uuid,
+    ]
+
+    # get_segment_contexts, by contrast, applies the filter to the seed, so the
+    # same filter leaves it with nothing to anchor.
+    assert (
+        await partition.get_segment_contexts(
+            [seed.uuid],
+            max_backward_segments=5,
+            max_forward_segments=5,
+            property_filter=parse_filter("m.kind = 'keep'"),
+        )
+        == {}
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_neighbor_segments_keeps_the_seeds_other_segments(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    event_uuid = uuid4()
+    same_event = [_seg(event_uuid=event_uuid, index=i) for i in range(3)]
+    await partition.add_segments(_links(*same_event))
+
+    result = await partition.get_neighbor_segments(
+        [same_event[1].uuid],
+        max_backward_segments=1,
+        max_forward_segments=1,
+    )
+
+    assert [segment.uuid for segment in result[same_event[1].uuid]] == [
+        same_event[0].uuid,
+        same_event[2].uuid,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_neighbor_segments_absent_when_there_are_none(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    only = _seg()
+    await partition.add_segments(_links(only))
+
+    result = await partition.get_neighbor_segments(
+        [only.uuid],
+        max_backward_segments=3,
+        max_forward_segments=3,
+    )
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_get_neighbor_events_excludes_the_whole_seed_event(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    events = [uuid4() for _ in range(5)]
+    segments = [
+        _seg(event_uuid=event_uuid, index=chunk, ts_offset_seconds=position, text="x")
+        for position, event_uuid in enumerate(events)
+        for chunk in range(2)
+    ]
+    await partition.add_segments(_links(*segments))
+    seed = next(segment for segment in segments if segment.event_uuid == events[2])
+
+    result = await partition.get_neighbor_events(
+        [seed.uuid],
+        max_backward_events=1,
+        max_forward_events=1,
+    )
+
+    returned_events = [segment.event_uuid for segment in result[seed.uuid]]
+    assert events[2] not in returned_events
+    # One whole event either side: both of each event's segments.
+    assert returned_events == [events[1], events[1], events[3], events[3]]
+
+
+@pytest.mark.asyncio
+async def test_get_neighbor_events_counts_events_not_segments(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    # A long event in the way must not consume the budget: that is the whole
+    # difference from counting segments.
+    long_event = uuid4()
+    seed_event = uuid4()
+    far_event = uuid4()
+    segments = [
+        *(_seg(event_uuid=long_event, index=i, ts_offset_seconds=0) for i in range(20)),
+        _seg(event_uuid=seed_event, ts_offset_seconds=1),
+        _seg(event_uuid=far_event, ts_offset_seconds=2),
+    ]
+    await partition.add_segments(_links(*segments))
+    seed = next(s for s in segments if s.event_uuid == seed_event)
+
+    by_events = await partition.get_neighbor_events(
+        [seed.uuid], max_backward_events=1, max_forward_events=0
+    )
+    assert len(by_events[seed.uuid]) == 20
+
+    by_segments = await partition.get_neighbor_segments(
+        [seed.uuid], max_backward_segments=1, max_forward_segments=0
+    )
+    assert len(by_segments[seed.uuid]) == 1
+
+
+# ===================================================================
+# Segment addressing: prefixes, adjacency, event headers
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_find_segment_uuids_by_prefix(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    segments = [_seg(text=f"s{i}") for i in range(6)]
+    await partition.add_segments(_links(*segments))
+    target = segments[0]
+
+    assert await partition.find_segment_uuids_by_prefix(target.uuid.hex, limit=5) == [
+        target.uuid
+    ]
+    # Every segment shares the empty prefix.
+    assert set(await partition.find_segment_uuids_by_prefix("", limit=100)) == {
+        segment.uuid for segment in segments
+    }
+
+
+@pytest.mark.asyncio
+async def test_find_segment_uuids_by_prefix_rejects_impossible_prefixes(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    await partition.add_segments(_links(_seg()))
+
+    # Neither can begin a UUID, so neither is a query that merely misses.
+    assert await partition.find_segment_uuids_by_prefix("zz", limit=5) == []
+    assert await partition.find_segment_uuids_by_prefix("0" * 33, limit=5) == []
+
+
+@pytest.mark.asyncio
+async def test_get_adjacent_segment_uuids_brackets_the_target(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    segments = [_seg(text=f"s{i}") for i in range(6)]
+    await partition.add_segments(_links(*segments))
+    ordered = sorted(segment.uuid for segment in segments)
+
+    adjacent = await partition.get_adjacent_segment_uuids(
+        [ordered[0], ordered[3], ordered[-1]]
+    )
+
+    assert adjacent[ordered[0]] == (None, ordered[1])
+    assert adjacent[ordered[3]] == (ordered[2], ordered[4])
+    assert adjacent[ordered[-1]] == (ordered[-2], None)
+
+
+@pytest.mark.asyncio
+async def test_get_adjacent_segment_uuids_answers_for_an_absent_uuid(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    low = _seg()
+    high = _seg()
+    await partition.add_segments(_links(low, high))
+    lower, higher = sorted([low.uuid, high.uuid])
+    between = UUID(int=(lower.int + higher.int) // 2)
+
+    adjacent = await partition.get_adjacent_segment_uuids([between])
+
+    below, above = adjacent[between]
+    assert below is None or below <= between
+    assert above is None or above >= between
+
+
+@pytest.mark.asyncio
+async def test_list_event_headers_measures_events_without_their_text(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    first = uuid4()
+    second = uuid4()
+    segments = [
+        _seg(event_uuid=first, index=0, ts_offset_seconds=0, text="hello"),
+        _seg(event_uuid=first, index=1, ts_offset_seconds=0, text="world"),
+        _seg(event_uuid=second, index=0, ts_offset_seconds=1, text="later"),
+    ]
+    await partition.add_segments(_links(*segments))
+
+    headers = await partition.list_event_headers()
+
+    assert [header.event_uuid for header in headers] == [first, second]
+    assert [header.segment_count for header in headers] == [2, 1]
+    assert headers[0].first_segment_uuid == segments[0].uuid
+    assert all(header.encoded_length > 0 for header in headers)
+
+
+@pytest.mark.asyncio
+async def test_list_event_headers_windows_and_orders(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    events = [uuid4() for _ in range(5)]
+    segments = [
+        _seg(event_uuid=event_uuid, ts_offset_seconds=position)
+        for position, event_uuid in enumerate(events)
+    ]
+    await partition.add_segments(_links(*segments))
+
+    latest_two = await partition.list_event_headers(limit=2, descending=True)
+    assert [header.event_uuid for header in latest_two] == events[3:]
+
+    earliest_two = await partition.list_event_headers(limit=2)
+    assert [header.event_uuid for header in earliest_two] == events[:2]
+
+    middle = await partition.list_event_headers(
+        start=(segments[1].timestamp, events[1]),
+        end=(segments[3].timestamp, events[3]),
+    )
+    assert [header.event_uuid for header in middle] == events[1:4]
+
+
+@pytest.mark.asyncio
+async def test_list_event_headers_counts_only_matching_segments(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    event_uuid = uuid4()
+    kept = _seg(event_uuid=event_uuid, index=0, properties={"kind": "keep"})
+    dropped = _seg(event_uuid=event_uuid, index=1, properties={"kind": "drop"})
+    await partition.add_segments(_links(kept, dropped))
+
+    [header] = await partition.list_event_headers(
+        property_filter=parse_filter("m.kind = 'keep'")
+    )
+
+    assert header.segment_count == 1
+    assert header.first_segment_uuid == kept.uuid

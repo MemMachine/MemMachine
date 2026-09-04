@@ -4,6 +4,23 @@ Vector store backed by SQLite + pluggable vector search engine.
 Each logical collection gets its own records table and vector search engine.
 A pending operations table tracks search engine operations for crash recovery:
 on startup, unfinalized operations are replayed.
+
+What survives a crash
+---------------------
+
+`upsert` and `delete` commit to SQLite before they return, so a process crash
+loses nothing: the pending log carries every operation the search engine has
+not been checkpointed with, and startup replays it.
+
+A power failure is only as strong as the engine's publication. turbovec commits
+its checkpoint durably and survives one; the engines that publish by atomic
+rename (see `vector_search_engine.index_persistence`) do not, and a power
+failure can revert their last publication while the records table -- and the
+trim that ran behind that publication -- stay committed. The result is records
+whose vectors are missing from the index: `get` still returns them, `query`
+cannot find them, and re-upserting them is the repair. Callers on such an engine
+that need every record searchable after a power failure must be able to
+re-ingest; nothing here detects the gap for them.
 """
 
 import logging
@@ -132,6 +149,11 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     applied: MappedColumn[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+def _remove_index_artifact(path: Path) -> None:
+    """Remove an on-disk index. Every engine here publishes a single file."""
+    path.unlink(missing_ok=True)
+
+
 async def _save_collection_index(
     *,
     create_session: async_sessionmaker[AsyncSession],
@@ -140,7 +162,16 @@ async def _save_collection_index(
     search_engine: VectorSearchEngine,
     path: str,
 ) -> None:
-    """Save a collection's index to disk."""
+    """Publish a collection's index to disk and trim the operations it holds.
+
+    The order is the whole protocol. The pending log is the only other copy of
+    these vectors -- the records table has no vector column -- so an applied row
+    may be deleted only once the index that holds it has been published.
+    `save` returning is that statement, and no more than the engine's own
+    publication promises: an engine that publishes by rename can have that
+    publication reverted by a power failure after this trim has committed. See
+    the module docstring for what that leaves behind.
+    """
     # Write index to path.
     await search_engine.save(path)
 
@@ -954,8 +985,8 @@ class SQLiteVectorStore(VectorStore):
         # If unlink fails, the orphan is harmless.
         # _clear_search_engine_state will clean it up if a new collection with the same name is created.
         index_path = self._index_path(namespace, name)
-        if index_path is not None and index_path.exists():
-            index_path.unlink()
+        if index_path is not None:
+            _remove_index_artifact(index_path)
         self._search_engines.pop((namespace, name), None)
 
     # Helpers.
@@ -974,6 +1005,11 @@ class SQLiteVectorStore(VectorStore):
             Column("uuid", Uuid, nullable=False, unique=True),
             Column("properties", JSON, nullable=False, default=dict),
             extend_existing=True,
+            # AUTOINCREMENT so row_ids are never reused. Writes commit their
+            # SQL transaction before awaiting the search engine apply, so a
+            # reused row_id lets a suspended delete() erase the vector of a
+            # concurrently upserted record.
+            sqlite_autoincrement=True,
         )
 
     def _index_path(self, namespace: str, name: str) -> Path | None:
@@ -986,8 +1022,8 @@ class SQLiteVectorStore(VectorStore):
         """Remove any in-memory engine and on-disk index for a collection."""
         self._search_engines.pop((namespace, name), None)
         index_path = self._index_path(namespace, name)
-        if index_path is not None and index_path.exists():
-            index_path.unlink()
+        if index_path is not None:
+            _remove_index_artifact(index_path)
 
     async def _get_stored_config(
         self,

@@ -21,6 +21,7 @@ dependencies = [
     "langchain-aws>=0.2.33",
     "neo4j>=5.28.2",
     "nltk>=3.9.4",
+    "numpy>=1.26",
     "openai>=2.21.0",
     "pgvector>=0.4.2",
     "prometheus-client>=0.22.1",
@@ -73,6 +74,9 @@ milvus = [
 ]
 litellm = [
     "litellm>=1.63.0,<1.86",
+]
+turbovec = [
+    "turbovec>=1.0.0",
 ]
 
 [project.scripts]

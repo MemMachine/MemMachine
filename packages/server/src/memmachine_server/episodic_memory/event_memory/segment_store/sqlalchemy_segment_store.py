@@ -4,7 +4,7 @@ import json
 import logging
 import sqlite3
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta, timezone
 from typing import override
 from uuid import UUID, uuid4
@@ -87,6 +87,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     encode_context,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
+    EventHeader,
     SegmentStoreAttemptsExhaustedError,
     SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
@@ -238,6 +239,30 @@ class PurgeQueueRow(BaseSegmentStore):
     )
 
     __table_args__ = (Index("segment_store_gc__ea", "enqueued_at"),)
+
+
+def _uuid_prefix_bounds(uuid_prefix: str) -> tuple[UUID, UUID] | None:
+    """The inclusive UUID range every UUID with this hex prefix falls in.
+
+    A range rather than a LIKE, because a range is what the UUID index can
+    seek: the prefix padded with zeros is the least such UUID and padded with
+    `f` the greatest, and nothing outside lies between them. Compared as UUIDs
+    rather than as text so the bound means the same thing on a backend with a
+    native UUID type as on one storing hex.
+
+    None when the prefix cannot begin any UUID at all -- non-hex characters, or
+    more digits than a UUID has -- which is a caller's typo rather than a query
+    that returns nothing.
+    """
+    normalized = uuid_prefix.replace("-", "").lower()
+    if len(normalized) > 32 or any(
+        character not in "0123456789abcdef" for character in normalized
+    ):
+        return None
+    return (
+        UUID(hex=normalized.ljust(32, "0")),
+        UUID(hex=normalized.ljust(32, "f")),
+    )
 
 
 class SQLAlchemySegmentStorePartition(SegmentStorePartition):
@@ -485,6 +510,424 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 ]
 
             return segments_by_seed
+
+    @override
+    async def get_neighbor_segments(
+        self,
+        seed_segment_uuids: Iterable[UUID],
+        *,
+        max_backward_segments: int = 0,
+        max_forward_segments: int = 0,
+        property_filter: FilterExpr | None = None,
+    ) -> dict[UUID, list[Segment]]:
+        seed_segment_uuids = set(seed_segment_uuids)
+        if not seed_segment_uuids or (
+            max_backward_segments <= 0 and max_forward_segments <= 0
+        ):
+            return {}
+
+        async with (
+            self._tracker("get_neighbor_segments"),
+            self._create_session() as session,
+        ):
+            # Unfiltered: the seed is an address, and its own row is never part of
+            # the answer, so a filter has nothing to say about it.
+            seed_rows_by_uuid = {
+                row.uuid: row
+                for row in (
+                    await session.execute(
+                        select(SegmentRow).where(
+                            SegmentRow.uuid.in_(seed_segment_uuids),
+                            SegmentRow.incarnation == self._incarnation,
+                            self._registry_row_query().exists(),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            }
+            if not seed_rows_by_uuid:
+                await self._ensure_partition_live(session)
+                return {}
+
+            # The directional walks already return strictly-before and
+            # strictly-after rows -- get_segment_contexts splices the seed in
+            # afterwards. Not splicing it in is the whole difference, so this
+            # shares their cost exactly.
+            if not self._is_sqlite:
+                context_rows_by_seed = await self._get_context_rows_lateral(
+                    session,
+                    seed_rows_by_uuid,
+                    max_backward_segments,
+                    max_forward_segments,
+                    property_filter,
+                )
+            else:
+                context_rows_by_seed = await self._get_context_rows_loop(
+                    session,
+                    seed_rows_by_uuid,
+                    max_backward_segments,
+                    max_forward_segments,
+                    property_filter,
+                )
+
+            # Same window as get_segment_contexts: the seeds and the neighbours
+            # were read under separate snapshots, so a deletion committing between
+            # them would otherwise read as a seed that simply has no neighbours.
+            await self._ensure_partition_live(session)
+
+            neighbors: dict[UUID, list[Segment]] = {}
+            for seed_uuid in seed_rows_by_uuid:
+                backward_rows, forward_rows = context_rows_by_seed.get(
+                    seed_uuid, ([], [])
+                )
+                rows = [*reversed(backward_rows), *forward_rows]
+                if rows:
+                    neighbors[seed_uuid] = [
+                        self._segment_from_segment_row(row) for row in rows
+                    ]
+            return neighbors
+
+    @override
+    async def get_neighbor_events(
+        self,
+        seed_segment_uuids: Iterable[UUID],
+        *,
+        max_backward_events: int = 0,
+        max_forward_events: int = 0,
+        property_filter: FilterExpr | None = None,
+    ) -> dict[UUID, list[Segment]]:
+        seed_segment_uuids = set(seed_segment_uuids)
+        if not seed_segment_uuids or (
+            max_backward_events <= 0 and max_forward_events <= 0
+        ):
+            return {}
+
+        async with (
+            self._tracker("get_neighbor_events"),
+            self._create_session() as session,
+        ):
+            compiled_property_filter = (
+                compile_sql_filter(
+                    property_filter,
+                    SQLAlchemySegmentStorePartition._resolve_segment_field,
+                )
+                if property_filter is not None
+                else None
+            )
+            seed_rows = (
+                (
+                    await session.execute(
+                        select(SegmentRow).where(
+                            SegmentRow.uuid.in_(seed_segment_uuids),
+                            SegmentRow.incarnation == self._incarnation,
+                            self._registry_row_query().exists(),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not seed_rows:
+                await self._ensure_partition_live(session)
+                return {}
+
+            neighbors: dict[UUID, list[Segment]] = {}
+            for seed_row in seed_rows:
+                rows = await self._neighbor_event_rows(
+                    session,
+                    seed_row,
+                    max_backward_events,
+                    max_forward_events,
+                    compiled_property_filter,
+                )
+                if rows:
+                    neighbors[seed_row.uuid] = [
+                        self._segment_from_segment_row(row) for row in rows
+                    ]
+
+            await self._ensure_partition_live(session)
+            return neighbors
+
+    async def _neighbor_event_rows(
+        self,
+        session: AsyncSession,
+        seed_row: SegmentRow,
+        max_backward_events: int,
+        max_forward_events: int,
+        compiled_property_filter: ColumnElement[bool] | None,
+    ) -> list[SegmentRow]:
+        """Every segment of the events around the seed's own, in timeline order.
+
+        Three index operations, whatever the backend. Two boundary queries group by
+        (timestamp, event_uuid) -- the leading columns of the ordering index -- and
+        stop after N groups, so they walk index entries and read no segment bodies;
+        one range query then reads exactly what lies between them. The alternative
+        is guessing a segment count generous enough to cover N events, fetching it
+        and discarding the overshoot, which reads bodies it throws away and cannot
+        be made exact, because how many segments N events occupy is not knowable
+        before looking.
+        """
+        event_columns = tuple_(SegmentRow.timestamp, SegmentRow.event_uuid)
+        seed_event = tuple_(literal(seed_row.timestamp), literal(seed_row.event_uuid))
+
+        low = await self._event_boundary(
+            session, seed_row, max_backward_events, True, compiled_property_filter
+        )
+        high = await self._event_boundary(
+            session, seed_row, max_forward_events, False, compiled_property_filter
+        )
+        if low is None and high is None:
+            return []
+
+        low_bound = low or (seed_row.timestamp, seed_row.event_uuid)
+        high_bound = high or (seed_row.timestamp, seed_row.event_uuid)
+        query = select(SegmentRow).where(
+            SegmentRow.incarnation == self._incarnation,
+            event_columns >= tuple_(literal(low_bound[0]), literal(low_bound[1])),
+            event_columns <= tuple_(literal(high_bound[0]), literal(high_bound[1])),
+            # The seed's own event is the anchor, not a neighbour.
+            event_columns != seed_event,
+        )
+        if compiled_property_filter is not None:
+            query = query.where(compiled_property_filter)
+        query = query.order_by(
+            SegmentRow.timestamp,
+            SegmentRow.event_uuid,
+            SegmentRow.index,
+            SegmentRow.offset,
+        )
+        return list((await session.execute(query)).scalars().all())
+
+    async def _event_boundary(
+        self,
+        session: AsyncSession,
+        seed_row: SegmentRow,
+        count: int,
+        backward: bool,
+        compiled_property_filter: ColumnElement[bool] | None,
+    ) -> tuple[datetime, UUID] | None:
+        """Where the ``count``-th event away from the seed's own event begins.
+
+        None when nothing lies that way, or when no events were asked for on that
+        side -- either way there is no range to read in that direction.
+        """
+        if count <= 0:
+            return None
+        event_columns = tuple_(SegmentRow.timestamp, SegmentRow.event_uuid)
+        seed_event = tuple_(literal(seed_row.timestamp), literal(seed_row.event_uuid))
+        query = (
+            select(SegmentRow.timestamp, SegmentRow.event_uuid)
+            .where(
+                SegmentRow.incarnation == self._incarnation,
+                event_columns < seed_event if backward else event_columns > seed_event,
+            )
+            .group_by(SegmentRow.timestamp, SegmentRow.event_uuid)
+            .limit(count)
+        )
+        if compiled_property_filter is not None:
+            query = query.where(compiled_property_filter)
+        query = query.order_by(
+            *(
+                (SegmentRow.timestamp.desc(), SegmentRow.event_uuid.desc())
+                if backward
+                else (SegmentRow.timestamp, SegmentRow.event_uuid)
+            )
+        )
+        rows = (await session.execute(query)).all()
+        return (rows[-1][0], rows[-1][1]) if rows else None
+
+    @override
+    async def find_segment_uuids_by_prefix(
+        self,
+        uuid_prefix: str,
+        *,
+        limit: int,
+    ) -> list[UUID]:
+        bounds = _uuid_prefix_bounds(uuid_prefix)
+        if bounds is None:
+            return []
+        low, high = bounds
+        async with (
+            self._tracker("find_segment_uuids_by_prefix"),
+            self._create_session() as session,
+        ):
+            rows = (
+                await session.execute(
+                    select(SegmentRow.uuid)
+                    .where(
+                        SegmentRow.incarnation == self._incarnation,
+                        SegmentRow.uuid >= low,
+                        SegmentRow.uuid <= high,
+                        self._registry_row_query().exists(),
+                    )
+                    .order_by(SegmentRow.uuid)
+                    .limit(limit)
+                )
+            ).all()
+            if not rows:
+                await self._ensure_partition_live(session)
+            return [row[0] for row in rows]
+
+    @override
+    async def get_adjacent_segment_uuids(
+        self,
+        segment_uuids: Iterable[UUID],
+    ) -> dict[UUID, tuple[UUID | None, UUID | None]]:
+        segment_uuids = list(dict.fromkeys(segment_uuids))
+        if not segment_uuids:
+            return {}
+
+        async with (
+            self._tracker("get_adjacent_segment_uuids"),
+            self._create_session() as session,
+        ):
+
+            async def nearest(target: UUID, *, below: bool) -> UUID | None:
+                query = (
+                    select(SegmentRow.uuid)
+                    .where(
+                        SegmentRow.incarnation == self._incarnation,
+                        SegmentRow.uuid < target if below else SegmentRow.uuid > target,
+                        self._registry_row_query().exists(),
+                    )
+                    .order_by(
+                        SegmentRow.uuid.desc() if below else SegmentRow.uuid.asc()
+                    )
+                    .limit(1)
+                )
+                return (await session.execute(query)).scalar_one_or_none()
+
+            adjacent = {
+                segment_uuid: (
+                    await nearest(segment_uuid, below=True),
+                    await nearest(segment_uuid, below=False),
+                )
+                for segment_uuid in segment_uuids
+            }
+            if all(
+                below is None and above is None for below, above in adjacent.values()
+            ):
+                # Every side empty is what a stale handle looks like from here,
+                # and also what a genuinely empty partition looks like.
+                await self._ensure_partition_live(session)
+            return adjacent
+
+    @override
+    async def list_event_headers(
+        self,
+        *,
+        property_filter: FilterExpr | None = None,
+        start: tuple[datetime, UUID] | None = None,
+        end: tuple[datetime, UUID] | None = None,
+        limit: int | None = None,
+        descending: bool = False,
+    ) -> list[EventHeader]:
+        event_columns = tuple_(SegmentRow.timestamp, SegmentRow.event_uuid)
+        conditions: list[ColumnElement[bool]] = [
+            SegmentRow.incarnation == self._incarnation,
+            self._registry_row_query().exists(),
+        ]
+        if start is not None:
+            conditions.append(
+                event_columns >= tuple_(literal(start[0]), literal(start[1]))
+            )
+        if end is not None:
+            conditions.append(event_columns <= tuple_(literal(end[0]), literal(end[1])))
+        if property_filter is not None:
+            conditions.append(
+                compile_sql_filter(
+                    property_filter,
+                    SQLAlchemySegmentStorePartition._resolve_segment_field,
+                )
+            )
+
+        query = (
+            select(
+                SegmentRow.event_uuid,
+                SegmentRow.timestamp,
+                func.count().label("segment_count"),
+                func.coalesce(func.sum(func.length(SegmentRow.block)), 0).label(
+                    "encoded_length"
+                ),
+            )
+            .where(*conditions)
+            .group_by(SegmentRow.timestamp, SegmentRow.event_uuid)
+            .order_by(
+                *(
+                    (SegmentRow.timestamp.desc(), SegmentRow.event_uuid.desc())
+                    if descending
+                    else (SegmentRow.timestamp, SegmentRow.event_uuid)
+                )
+            )
+        )
+        if limit is not None:
+            query = query.limit(limit)
+
+        async with (
+            self._tracker("list_event_headers"),
+            self._create_session() as session,
+        ):
+            rows = (await session.execute(query)).all()
+            if not rows:
+                await self._ensure_partition_live(session)
+                return []
+
+            openings = await self._opening_segment_uuids(
+                session,
+                [row.event_uuid for row in rows],
+                conditions,
+            )
+            headers = [
+                EventHeader(
+                    event_uuid=row.event_uuid,
+                    timestamp=row.timestamp,
+                    first_segment_uuid=openings[row.event_uuid],
+                    segment_count=row.segment_count,
+                    encoded_length=row.encoded_length,
+                )
+                for row in rows
+                if row.event_uuid in openings
+            ]
+            headers.sort(key=lambda header: (header.timestamp, header.event_uuid))
+            return headers
+
+    async def _opening_segment_uuids(
+        self,
+        session: AsyncSession,
+        event_uuids: Sequence[UUID],
+        conditions: Sequence[ColumnElement[bool]],
+    ) -> dict[UUID, UUID]:
+        """The lowest-ordered matching segment UUID of each named event.
+
+        "Opening" is the least (index, offset) among the segments that matched,
+        which is the order the timeline is read in -- not (0, 0), which a
+        property filter can exclude. Ranking in one windowed pass keeps this to
+        a single statement over the (incarnation, event_uuid) index instead of
+        a query per event or a fetch of every segment to pick one.
+        """
+        if not event_uuids:
+            return {}
+        ranked = (
+            select(
+                SegmentRow.event_uuid.label("event_uuid"),
+                SegmentRow.uuid.label("uuid"),
+                func.row_number()
+                .over(
+                    partition_by=SegmentRow.event_uuid,
+                    order_by=(SegmentRow.index, SegmentRow.offset),
+                )
+                .label("rank"),
+            )
+            .where(*conditions, SegmentRow.event_uuid.in_(event_uuids))
+            .subquery()
+        )
+        rows = (
+            await session.execute(
+                select(ranked.c.event_uuid, ranked.c.uuid).where(ranked.c.rank == 1)
+            )
+        ).all()
+        return {row.event_uuid: row.uuid for row in rows}
 
     async def _get_context_rows_lateral(
         self,

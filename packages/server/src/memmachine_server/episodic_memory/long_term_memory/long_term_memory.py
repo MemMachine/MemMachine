@@ -2,7 +2,7 @@
 
 import datetime
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4, uuid5
 
@@ -41,9 +41,11 @@ from memmachine_server.episodic_memory.declarative_memory.data_types import (
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
+    FormatOptions,
     NullContext,
     ProducerContext,
     QueryResult,
+    Segment,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
@@ -52,6 +54,7 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemoryParams,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
+    EventHeader,
     SegmentStore,
     SegmentStorePartition,
 )
@@ -174,6 +177,23 @@ LongTermMemoryParams = Annotated[
 ]
 
 
+def _shortest_distinguishing_length(value: str, others: Iterable[str]) -> int:
+    """How many leading characters of `value` no string in `others` shares.
+
+    At least one, so an address is never rendered as the empty string, and at
+    most the whole value, which by construction distinguishes it.
+    """
+    longest_shared = 0
+    for other in others:
+        shared = 0
+        for character, other_character in zip(value, other, strict=False):
+            if character != other_character:
+                break
+            shared += 1
+        longest_shared = max(longest_shared, shared)
+    return min(max(longest_shared + 1, 1), len(value))
+
+
 class LongTermMemory:
     """Long-term memory facade dispatching to a declarative or event backend."""
 
@@ -190,6 +210,7 @@ class LongTermMemory:
         self._vector_store: VectorStore | None = None
         self._vector_store_namespace: str | None = None
         self._segment_store: SegmentStore | None = None
+        self._segment_store_partition: SegmentStorePartition | None = None
         self._partition_key: str | None = None
         self._episode_storage: EpisodeStorage | None = None
         # Event backend only: whether scores from `EventMemory.query` are
@@ -232,6 +253,7 @@ class LongTermMemory:
                 self._vector_store = params.vector_store
                 self._vector_store_namespace = params.vector_store_collection_namespace
                 self._segment_store = params.segment_store
+                self._segment_store_partition = params.segment_store_partition
                 self._partition_key = params.partition_key
                 self._episode_storage = params.episode_storage
                 self._score_higher_is_better = (
@@ -472,6 +494,170 @@ class LongTermMemory:
         if self._score_higher_is_better:
             return score >= score_threshold
         return score <= score_threshold
+
+    # --- Timeline access (event backend only) ---
+    #
+    # Episodes are the unit the rest of this class speaks in, and for search
+    # results that is the right unit. Reading a stored conversation is a
+    # different question: what happened around this point, and in what order.
+    # That is a question about segments -- an episode's content can be
+    # thousands of them, and the useful window is often *inside* one -- so
+    # these methods address segments directly and return them as the store
+    # holds them, ordered, rather than folded back into episodes.
+
+    def _require_timeline_partition(self) -> SegmentStorePartition:
+        """Return the segment store partition, or say why there isn't one."""
+        if self._backend != "event":
+            raise ValueError(
+                "Timeline access requires the event backend: the declarative "
+                "backend stores episodes without an ordered segment timeline."
+            )
+        self._require_event_backend_live()
+        assert self._segment_store_partition is not None
+        return self._segment_store_partition
+
+    async def search_timeline(
+        self,
+        query: str,
+        *,
+        limit: int,
+        expand_context: int = 0,
+        property_filter: FilterExpr | None = None,
+        score_threshold: float | None = None,
+        query_vector: Sequence[float] | None = None,
+        format_options: FormatOptions | None = None,
+    ) -> QueryResult:
+        """Search the timeline, returning scored segment windows unfolded."""
+        event_memory = self._require_event_backend_live()
+        self._validate_event_backend_filter(property_filter)
+        result = await event_memory.query(
+            query,
+            vector_search_limit=limit,
+            expand_context=expand_context,
+            property_filter=property_filter,
+            format_options=format_options,
+            query_vector=query_vector,
+        )
+        if score_threshold is None:
+            return result
+        keep = (
+            (lambda score: score >= score_threshold)
+            if self._score_higher_is_better
+            else (lambda score: score <= score_threshold)
+        )
+        return QueryResult(
+            scored_segment_contexts=[
+                scored
+                for scored in result.scored_segment_contexts
+                if keep(scored.score)
+            ]
+        )
+
+    async def expand_timeline(
+        self,
+        seed_segment_uuid: UUID,
+        *,
+        before: int,
+        after: int,
+        unit: Literal["segments", "events"] = "segments",
+        property_filter: FilterExpr | None = None,
+    ) -> list[Segment]:
+        """Read the timeline around a segment, excluding the segment itself.
+
+        The seed is an address rather than a result, so it is returned by the
+        caller's own lookup and not spliced in here: a caller that wants it
+        shown knows where it goes, and one that only wants the surroundings
+        does not have to filter it back out.
+        """
+        partition = self._require_timeline_partition()
+        self._validate_event_backend_filter(property_filter)
+        neighbors = (
+            await partition.get_neighbor_segments(
+                [seed_segment_uuid],
+                max_backward_segments=before,
+                max_forward_segments=after,
+                property_filter=property_filter,
+            )
+            if unit == "segments"
+            else await partition.get_neighbor_events(
+                [seed_segment_uuid],
+                max_backward_events=before,
+                max_forward_events=after,
+                property_filter=property_filter,
+            )
+        )
+        return neighbors.get(seed_segment_uuid, [])
+
+    async def get_timeline_segments(
+        self,
+        segment_uuids: Iterable[UUID],
+    ) -> dict[UUID, Segment]:
+        """Look up segments by address, without any surrounding context."""
+        partition = self._require_timeline_partition()
+        contexts = await partition.get_segment_contexts(segment_uuids)
+        return {
+            seed_uuid: segments[0]
+            for seed_uuid, segments in contexts.items()
+            if segments
+        }
+
+    async def outline_timeline(
+        self,
+        *,
+        property_filter: FilterExpr | None = None,
+        start: tuple[datetime.datetime, UUID] | None = None,
+        end: tuple[datetime.datetime, UUID] | None = None,
+        limit: int | None = None,
+        descending: bool = False,
+    ) -> list[EventHeader]:
+        """List events by position and size, without their content."""
+        partition = self._require_timeline_partition()
+        self._validate_event_backend_filter(property_filter)
+        return await partition.list_event_headers(
+            property_filter=property_filter,
+            start=start,
+            end=end,
+            limit=limit,
+            descending=descending,
+        )
+
+    async def resolve_segment_address(
+        self,
+        uuid_prefix: str,
+        *,
+        limit: int,
+    ) -> list[UUID]:
+        """Get the segment UUIDs an abbreviated address could name."""
+        partition = self._require_timeline_partition()
+        return await partition.find_segment_uuids_by_prefix(uuid_prefix, limit=limit)
+
+    async def abbreviate_segment_addresses(
+        self,
+        segment_uuids: Iterable[UUID],
+    ) -> dict[UUID, str]:
+        """Render each address as the shortest prefix no other segment shares.
+
+        The length comes from each UUID's immediate neighbours in sorted
+        order: whatever separates it from those two separates it from every
+        stored segment, because anything sharing more would have sorted
+        between them.
+        """
+        partition = self._require_timeline_partition()
+        segment_uuids = list(dict.fromkeys(segment_uuids))
+        adjacent = await partition.get_adjacent_segment_uuids(segment_uuids)
+        return {
+            segment_uuid: segment_uuid.hex[
+                : _shortest_distinguishing_length(
+                    segment_uuid.hex,
+                    [
+                        neighbour.hex
+                        for neighbour in adjacent.get(segment_uuid, (None, None))
+                        if neighbour is not None
+                    ],
+                )
+            ]
+            for segment_uuid in segment_uuids
+        }
 
     def _require_event_backend_live(self) -> EventMemory:
         """Return the EventMemory or raise if the instance was dropped."""

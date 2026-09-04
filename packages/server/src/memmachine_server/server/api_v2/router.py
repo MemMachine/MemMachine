@@ -32,6 +32,8 @@ from memmachine_common.api.spec import (
     DisableSemanticCategorySpec,
     EpisodeCountResponse,
     EpisodicMemoryConfigEntry,
+    ExpandTimelineResponse,
+    ExpandTimelineSpec,
     GetEpisodicMemoryConfigSpec,
     GetFeatureSpec,
     GetLongTermMemoryConfigSpec,
@@ -51,10 +53,16 @@ from memmachine_common.api.spec import (
     ListSemanticSetTypesResponse,
     ListSemanticSetTypesSpec,
     LongTermMemoryConfigEntry,
+    OutlineTimelineResponse,
+    OutlineTimelineSpec,
     ProjectConfig,
     ProjectResponse,
+    ResolveTimelineAddressResponse,
+    ResolveTimelineAddressSpec,
     SearchMemoriesSpec,
     SearchResult,
+    SearchTimelineResponse,
+    SearchTimelineSpec,
     SemanticCategoryEntry,
     SemanticCategoryTemplateEntry,
     SemanticFeature,
@@ -94,6 +102,13 @@ from memmachine_server.server.api_v2.service import (
     _search_target_memories,
     _SessionData,
     get_memmachine,
+)
+from memmachine_server.server.api_v2.timeline_service import (
+    TimelineAddressError,
+    _expand_timeline,
+    _outline_timeline,
+    _resolve_timeline_address,
+    _search_timeline,
 )
 
 logger = logging.getLogger(__name__)
@@ -1100,6 +1115,74 @@ async def health_check() -> dict[str, str]:
         "service": "memmachine",
         "version": get_version().server_version,
     }
+
+
+@router.post(
+    "/memories/timeline/search",
+    description=RouterDoc.SEARCH_TIMELINE,
+    tags=["Timeline"],
+)
+async def search_timeline(
+    spec: SearchTimelineSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> SearchTimelineResponse:
+    """Search a project's timeline, returning addressable segments."""
+    try:
+        return await _search_timeline(spec=spec, memmachine=memmachine)
+    except ValueError as e:
+        raise RestError(code=422, message="invalid argument", ex=e) from e
+
+
+@router.post(
+    "/memories/timeline/expand",
+    description=RouterDoc.EXPAND_TIMELINE,
+    tags=["Timeline"],
+)
+async def expand_timeline(
+    spec: ExpandTimelineSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> ExpandTimelineResponse:
+    """Read the timeline around an addressed segment."""
+    try:
+        return await _expand_timeline(spec=spec, memmachine=memmachine)
+    except TimelineAddressError as e:
+        raise RestError(code=404, message="address not found", ex=e) from e
+    except ValueError as e:
+        raise RestError(code=422, message="invalid argument", ex=e) from e
+
+
+@router.post(
+    "/memories/timeline/outline",
+    description=RouterDoc.OUTLINE_TIMELINE,
+    tags=["Timeline"],
+)
+async def outline_timeline(
+    spec: OutlineTimelineSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> OutlineTimelineResponse:
+    """Read the shape of a project's timeline, without its content."""
+    try:
+        return await _outline_timeline(spec=spec, memmachine=memmachine)
+    except TimelineAddressError as e:
+        raise RestError(code=404, message="address not found", ex=e) from e
+    except ValueError as e:
+        raise RestError(code=422, message="invalid argument", ex=e) from e
+
+
+@router.post(
+    "/memories/timeline/resolve",
+    description=RouterDoc.RESOLVE_TIMELINE_ADDRESS,
+    tags=["Timeline"],
+)
+async def resolve_timeline_address(
+    spec: ResolveTimelineAddressSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> ResolveTimelineAddressResponse:
+    """Report which segment an abbreviated address names, if exactly one does."""
+    try:
+        return await _resolve_timeline_address(spec=spec, memmachine=memmachine)
+    except ValueError as e:
+        raise RestError(code=422, message="invalid argument", ex=e) from e
 
 
 def load_v2_api_router(app: FastAPI, *, with_config_api: bool = False) -> APIRouter:
