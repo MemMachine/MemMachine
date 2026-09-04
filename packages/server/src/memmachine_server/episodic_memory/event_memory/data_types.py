@@ -23,6 +23,7 @@ from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
 )
+from memmachine_server.temporal.time_range import TimeRange
 
 # Block: leaf content type.
 #
@@ -46,6 +47,12 @@ Block = Annotated[
 ]
 
 
+class NullContext(BaseModel):
+    """No context is attached."""
+
+    context_type: Literal["null"] = "null"
+
+
 class ProducerContext(BaseModel):
     """The content is produced by a producer."""
 
@@ -53,21 +60,44 @@ class ProducerContext(BaseModel):
     producer: str
 
 
-class NullContext(BaseModel):
-    """No context is attached."""
+class TimeRangesContext(BaseModel):
+    """Time ranges associated with the content."""
 
-    context_type: Literal["null"] = "null"
+    context_type: Literal["time_ranges"] = "time_ranges"
+    time_ranges: list[TimeRange] = Field(default_factory=list)
 
 
-ContextUnion = ProducerContext | NullContext
+class CompositeContext(BaseModel):
+    """A sequence of contexts applied to the same content, in order."""
+
+    context_type: Literal["composite"] = "composite"
+    contexts: list["Context"] = Field(default_factory=list)
+
 
 Context = Annotated[
-    ContextUnion,
+    NullContext | ProducerContext | TimeRangesContext | CompositeContext,
     Field(discriminator="context_type"),
 ]
 
+# Resolve forward reference to Context.
+CompositeContext.model_rebuild()
+
 _CONTEXT_ADAPTER = TypeAdapter(Context | None)
 _BLOCK_ADAPTER = TypeAdapter(Block)
+
+
+def find_contexts[ContextT: Context](
+    context: Context | None,
+    context_type: type[ContextT],
+) -> list[ContextT]:
+    """Return every context of the given type, in depth-first order."""
+    if isinstance(context, CompositeContext):
+        return [
+            found
+            for member in context.contexts
+            for found in find_contexts(member, context_type)
+        ]
+    return [context] if isinstance(context, context_type) else []
 
 
 def encode_context(context: Context | None) -> dict[str, JsonValue] | None:

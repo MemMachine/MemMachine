@@ -16,10 +16,13 @@ from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    CompositeContext,
+    Context,
     NullContext,
     ProducerContext,
     Segment,
     TextBlock,
+    TimeRangesContext,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartitionAlreadyExistsError,
@@ -32,6 +35,7 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
     SQLAlchemySegmentStoreParams,
     SQLAlchemySegmentStorePartition,
 )
+from memmachine_server.temporal.time_range import TimeInterval, TimeRange
 
 PARTITION_KEY = "test_partition"
 BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
@@ -50,7 +54,7 @@ def _seg(
     offset: int = 0,
     ts_offset_seconds: int = 0,
     text: str = "hello",
-    context: ProducerContext | NullContext = _NULL_CONTEXT,
+    context: Context = _NULL_CONTEXT,
     properties: dict | None = None,
 ) -> Segment:
     return Segment(
@@ -173,6 +177,109 @@ async def test_add_segments_with_producer_context(
         ).scalar_one()
     assert json.loads(row.context) == {"context_type": "producer", "producer": "User"}
     assert json.loads(row.block) == {"block_type": "text", "text": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_add_segments_with_time_range_context(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    ctx = TimeRangesContext(
+        time_ranges=[
+            # One reference with an internal gap (two intervals).
+            TimeRange(
+                intervals=[
+                    TimeInterval(
+                        start=datetime(2024, 1, 1, tzinfo=UTC),
+                        end=datetime(2024, 6, 1, tzinfo=UTC),
+                    ),
+                    TimeInterval(
+                        start=datetime(2024, 9, 1, tzinfo=UTC),
+                        end=datetime(2025, 1, 1, tzinfo=UTC),
+                    ),
+                ]
+            ),
+            # One reference, single open-ended interval.
+            TimeRange(
+                intervals=[
+                    TimeInterval(start=datetime(2024, 3, 1, tzinfo=UTC), end=None)
+                ]
+            ),
+        ]
+    )
+    seg = _seg(context=ctx)
+    await partition.add_segments(_links(seg))
+
+    result = await partition.get_segment_contexts([seg.uuid])
+    assert result[seg.uuid][0].context == ctx
+
+    async with partition._create_session() as session:
+        row = (
+            await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
+        ).scalar_one()
+    assert json.loads(row.context) == {
+        "context_type": "time_ranges",
+        "time_ranges": [
+            {
+                "intervals": [
+                    {"start": "2024-01-01T00:00:00Z", "end": "2024-06-01T00:00:00Z"},
+                    {"start": "2024-09-01T00:00:00Z", "end": "2025-01-01T00:00:00Z"},
+                ]
+            },
+            {"intervals": [{"start": "2024-03-01T00:00:00Z", "end": None}]},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_add_segments_with_composed_context(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    ctx = CompositeContext(
+        contexts=[
+            ProducerContext(producer="Alice"),
+            TimeRangesContext(
+                time_ranges=[
+                    TimeRange(
+                        intervals=[
+                            TimeInterval(
+                                start=datetime(2024, 1, 1, tzinfo=UTC),
+                                end=datetime(2024, 1, 2, tzinfo=UTC),
+                            )
+                        ]
+                    )
+                ]
+            ),
+        ]
+    )
+    seg = _seg(context=ctx)
+    await partition.add_segments(_links(seg))
+
+    result = await partition.get_segment_contexts([seg.uuid])
+    assert result[seg.uuid][0].context == ctx
+
+    async with partition._create_session() as session:
+        row = (
+            await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
+        ).scalar_one()
+    assert json.loads(row.context) == {
+        "context_type": "composite",
+        "contexts": [
+            {"context_type": "producer", "producer": "Alice"},
+            {
+                "context_type": "time_ranges",
+                "time_ranges": [
+                    {
+                        "intervals": [
+                            {
+                                "start": "2024-01-01T00:00:00Z",
+                                "end": "2024-01-02T00:00:00Z",
+                            }
+                        ]
+                    }
+                ],
+            },
+        ],
+    }
 
 
 @pytest.mark.asyncio

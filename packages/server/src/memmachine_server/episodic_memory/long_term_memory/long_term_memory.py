@@ -2,7 +2,7 @@
 
 import datetime
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4, uuid5
 
@@ -42,6 +42,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
     NullContext,
     ProducerContext,
+    ScoredSegmentContext,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
@@ -54,6 +55,11 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartition,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
+from memmachine_server.episodic_memory.event_memory.temporal_ranking import (
+    temporal_anchors_from_segments,
+)
+from memmachine_server.temporal.query_planner import TemporalQueryPlanner
+from memmachine_server.temporal.scoring import document_temporal_match_score
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +163,28 @@ class EventBackendParams(BaseModel):
             "accepted)."
         ),
     )
+    # Query-side temporal overfetch selection. `temporal_query_planner=None`
+    # (default) disables it; the remaining knobs are unused while disabled.
+    temporal_query_planner: InstanceOf[TemporalQueryPlanner] | None = Field(
+        default=None,
+        description="Planner resolving the query's target time ranges (None=off)",
+    )
+    temporal_overfetch_multiplier: int = Field(
+        default=_EVENT_BACKEND_DEDUP_OVERFETCH,
+        ge=1,
+        description="Vector pool size as a multiple of the requested result count",
+    )
+    temporal_fraction: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of top-k reserved for temporally-matching results",
+    )
+    temporal_match_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="A candidate matches when its temporal score exceeds this",
+    )
 
 
 LongTermMemoryParams = Annotated[
@@ -196,6 +224,12 @@ class LongTermMemory:
         # ValueError at the LongTermMemory layer.
         self._user_property_keys: frozenset[str] = frozenset()
         self._session_id: str = params.session_id
+        # Event backend only: query-side temporal overfetch selection. None
+        # planner means the feature is off and the search path is unchanged.
+        self._temporal_query_planner: TemporalQueryPlanner | None = None
+        self._temporal_overfetch_multiplier: int = _EVENT_BACKEND_DEDUP_OVERFETCH
+        self._temporal_fraction: float = 0.0
+        self._temporal_match_threshold: float = 0.0
 
         match params:
             case DeclarativeBackendParams():
@@ -229,6 +263,12 @@ class LongTermMemory:
                     or params.vector_store_collection.config.similarity_metric.higher_is_better
                 )
                 self._user_property_keys = params.user_property_keys
+                self._temporal_query_planner = params.temporal_query_planner
+                self._temporal_overfetch_multiplier = (
+                    params.temporal_overfetch_multiplier
+                )
+                self._temporal_fraction = params.temporal_fraction
+                self._temporal_match_threshold = params.temporal_match_threshold
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
@@ -318,12 +358,14 @@ class LongTermMemory:
         self._validate_event_backend_filter(property_filter)
         # Over-fetch from EventMemory: the per-segment results can have many
         # segments per episode under non-passthrough segmenters, and we dedup
-        # them by `_episode_uid` below. Without headroom, the dedup loop can
-        # return fewer than `num_episodes_limit` distinct episodes.
-        vector_search_limit = max(
-            num_episodes_limit * _EVENT_BACKEND_DEDUP_OVERFETCH,
-            num_episodes_limit,
-        )
+        # them by `_episode_uid` below. Without headroom, dedup can return fewer
+        # than `num_episodes_limit` distinct episodes. When temporal retrieval is
+        # on, widen the pool further so temporally-relevant candidates below the
+        # top cosine band are available to promote.
+        overfetch = _EVENT_BACKEND_DEDUP_OVERFETCH
+        if self._temporal_query_planner is not None:
+            overfetch = max(overfetch, self._temporal_overfetch_multiplier)
+        vector_search_limit = max(num_episodes_limit * overfetch, num_episodes_limit)
         result = await event_memory.query(
             query,
             vector_search_limit=vector_search_limit,
@@ -332,24 +374,26 @@ class LongTermMemory:
         )
 
         # Map seed segment -> _episode_uid (system field already lives on
-        # event/segment.properties under the underscore-prefixed key). Keep
-        # first-seen score per episode_uid; preserve query result ordering.
+        # event/segment.properties under the underscore-prefixed key). Keep the
+        # first-seen context per episode_uid, in query-result (best-first) order.
         # The threshold comparison direction depends on the scoring metric:
         # higher-is-better (cosine + any reranker) → drop scores BELOW threshold;
         # lower-is-better (raw euclidean without a reranker) → drop scores
         # ABOVE threshold.
-        ordered_uids: list[str] = []
-        scores_by_uid: dict[str, float] = {}
+        deduped: list[tuple[str, ScoredSegmentContext]] = []
+        seen: set[str] = set()
         for scored_context in result.scored_segment_contexts:
             if not self._score_passes_threshold(scored_context.score, score_threshold):
                 continue
             episode_uid = LongTermMemory._scored_context_episode_uid(scored_context)
-            if episode_uid is None or episode_uid in scores_by_uid:
+            if episode_uid is None or episode_uid in seen:
                 continue
-            scores_by_uid[episode_uid] = scored_context.score
-            ordered_uids.append(episode_uid)
-            if len(ordered_uids) >= num_episodes_limit:
-                break
+            seen.add(episode_uid)
+            deduped.append((episode_uid, scored_context))
+
+        chosen = await self._select_event_episodes(query, deduped, num_episodes_limit)
+        ordered_uids = [uid for uid, _ in chosen]
+        scores_by_uid = {uid: context.score for uid, context in chosen}
 
         if not ordered_uids:
             return []
@@ -376,6 +420,94 @@ class LongTermMemory:
             for uid in ordered_uids
             if uid in episodes_by_uid
         ]
+
+    async def _select_event_episodes(
+        self,
+        query: str,
+        deduped: list[tuple[str, ScoredSegmentContext]],
+        num_episodes_limit: int,
+    ) -> list[tuple[str, ScoredSegmentContext]]:
+        """Pick the final episodes from the deduped, best-first candidate pool.
+
+        With no temporal planner this is just the top-`num_episodes_limit` by
+        cosine. With one, the query's target time ranges are planned and the
+        pool is filled by the temporal overfetch recipe (k1 cosine + k2 cosine
+        among temporally-matching, cosine backfill), keeping cosine ordering.
+        """
+        if self._temporal_query_planner is None or not deduped:
+            return deduped[:num_episodes_limit]
+
+        plan = await self._temporal_query_planner.plan(query)
+        match_scores = [
+            document_temporal_match_score(
+                plan.targets, temporal_anchors_from_segments(context.segments)
+            )
+            for _, context in deduped
+        ]
+        selected_indices = LongTermMemory._select_temporal_overfetch_indices(
+            match_scores,
+            limit=num_episodes_limit,
+            temporal_fraction=self._temporal_fraction,
+            match_threshold=self._temporal_match_threshold,
+        )
+        return [deduped[i] for i in selected_indices]
+
+    @staticmethod
+    def _select_temporal_overfetch_indices(
+        temporal_match_scores: Sequence[float],
+        *,
+        limit: int,
+        temporal_fraction: float,
+        match_threshold: float,
+    ) -> list[int]:
+        """Pick which candidates fill the final top-k under temporal overfetch.
+
+        Candidates must be supplied best-first by base (cosine) score, so a
+        candidate's index encodes its cosine rank. The final
+        ``k = min(limit, n)`` slots are filled with:
+
+        - ``k1 = k - k2`` candidates by base score alone (the strongest cosine
+          hits, taken unconditionally);
+        - ``k2 = round(k * temporal_fraction)`` further candidates that ALSO
+          clear the temporal match gate (match strictly greater than
+          ``match_threshold``), taken in base-score order;
+        - cosine backfill when fewer than ``k2`` candidates clear the gate.
+
+        Returns the selected indices in base-score order: overfetch changes only
+        WHICH candidates make the cut, not their relative ordering. A query with
+        no temporal targets yields all-zero match scores, so nothing clears the
+        gate and the result collapses to the top-k by cosine (a transparent
+        no-op).
+        """
+        n = len(temporal_match_scores)
+        k = min(limit, n)
+        if k <= 0:
+            return []
+        k2 = round(k * temporal_fraction)
+        k1 = k - k2
+
+        selected: set[int] = set()
+        # k1 strongest cosine hits, unconditionally.
+        for i in range(n):
+            if len(selected) >= k1:
+                break
+            selected.add(i)
+        # k2 further hits that also clear the temporal match gate.
+        gated = 0
+        for i in range(n):
+            if gated >= k2:
+                break
+            if i in selected:
+                continue
+            if temporal_match_scores[i] > match_threshold:
+                selected.add(i)
+                gated += 1
+        # Backfill by cosine to reach k when too few candidates cleared the gate.
+        for i in range(n):
+            if len(selected) >= k:
+                break
+            selected.add(i)
+        return sorted(selected)
 
     async def delete_episodes(self, uids: Iterable[str]) -> None:
         uids = list(uids)
