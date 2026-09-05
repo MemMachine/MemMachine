@@ -1165,19 +1165,6 @@ class MemMachine:
         tasks.append(semantic_service.delete_history(episode_ids))
         await asyncio.gather(*tasks)
 
-    async def _cleanup_semantic_history(self, episode_ids: list[str]) -> None:
-        """Delete semantic history entries for the given episode IDs.
-
-        Args:
-            episode_ids: IDs of episodes whose semantic history should be removed.
-
-        Returns:
-            None.
-
-        """
-        semantic_service = await self._resources.get_semantic_service()
-        await semantic_service.delete_history(episode_ids)
-
     async def delete_features(
         self,
         feature_ids: list[FeatureIdT],
