@@ -36,6 +36,7 @@ from memmachine_common.api.spec import (
     DeleteSemanticTagSpec,
     DisableSemanticCategorySpec,
     EpisodicMemoryConfigEntry,
+    FtsMode,
     GetEpisodicMemoryConfigSpec,
     GetFeatureSpec,
     GetSemanticCategorySetIdsResponse,
@@ -370,6 +371,8 @@ class Memory:
         filter: str | None = None,  # noqa: A002 — matches API field name in `SearchMemoriesSpec.filter`
         set_metadata: dict[str, JsonValue] | None = None,
         agent_mode: bool = False,
+        use_fts: FtsMode = False,
+        append_n: int = 10,
     ) -> SearchResult:
         """
         Search for memories.
@@ -401,6 +404,10 @@ class Memory:
                     `filter_dict` filters, all filters are combined with AND.
             set_metadata: Optional metadata key-value pairs used to select semantic sets.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
+            use_fts: Full-Text Search (keyword) mode combined with Vector Search.
+                    False: vector only; True or 'rrf': RRF fusion; 'append':
+                    append FTS results after vector results.
+            append_n: Number of FTS results to append (only used when use_fts='append').
 
         Returns:
             SearchResult object containing search results from both episodic and semantic memory
@@ -444,6 +451,8 @@ class Memory:
             filter=filter_str,
             set_metadata=set_metadata,
             types=[MemoryType.Episodic, MemoryType.Semantic],  # Search both types
+            use_fts=use_fts,
+            append_n=append_n,
         )
         v2_search_data = spec.model_dump(mode="json", exclude_none=True)
 

@@ -16,8 +16,10 @@ from fastmcp.server.http import StarletteWithLifespan
 from memmachine_common.api.spec import (
     AddMemoriesSpec,
     DeleteMemoriesSpec,
+    EnableFtsIndexResponse,
     EpisodeIdT,
     FeatureIdT,
+    FtsMode,
     MemoryMessage,
     SearchMemoriesSpec,
     SearchResult,
@@ -37,6 +39,7 @@ from memmachine_server.server.api_v2.service import (
     _delete_memories,
     _search_target_memories,
     _session_key_to_session_data,
+    enable_fts_index,
 )
 from memmachine_server.server.diagnostics import dump_traceback, install_sigusr1_handler
 
@@ -221,6 +224,8 @@ class Params(BaseModel):
         expand_context: int = 0,
         score_threshold: float | None = None,
         agent_mode: bool = False,
+        use_fts: FtsMode = False,
+        append_n: int = 10,
     ) -> SearchMemoriesSpec:
         """Convert to SearchMemoriesParam."""
         return SearchMemoriesSpec(
@@ -234,6 +239,8 @@ class Params(BaseModel):
             set_metadata=None,
             types=ALL_MEMORY_TYPES,
             agent_mode=agent_mode,
+            use_fts=use_fts,
+            append_n=append_n,
         )
 
     def to_delete_memories_spec(
@@ -492,6 +499,8 @@ async def mcp_search_memory(
     proj_id: str = "",
     user_id: str = "",
     top_k: int = 20,
+    use_fts: FtsMode = False,
+    append_n: int = 10,
 ) -> McpResponse | SearchResult:
     """
     Search memory for the specified user.
@@ -506,6 +515,10 @@ async def mcp_search_memory(
         user_id: The unique identifier of the user (flat style).
         query: The current user message or topic of discussion (flat style).
         top_k: The maximum number of memory entries to retrieve (flat style). Defaults to 5.
+        use_fts: Full-Text Search (keyword) mode combined with Vector Search
+            (flat style). False: vector only; True or 'rrf': RRF fusion;
+            'append': append FTS results after vector results.
+        append_n: Number of FTS results to append (only used when use_fts='append').
 
     Returns:
         McpResponse on failure, or SearchResult on success
@@ -523,13 +536,63 @@ async def mcp_search_memory(
             proj_id=proj_id,
             user_id=user_id,
         )
-        spec = param.to_search_memories_spec(query, top_k)
+        spec = param.to_search_memories_spec(
+            query,
+            top_k,
+            use_fts=use_fts,
+            append_n=append_n,
+        )
         return await _search_target_memories(
             target_memories=ALL_MEMORY_TYPES, spec=spec, memmachine=mem_machine
         )
     except Exception as e:
         status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
         logger.exception("Failed to search memory")
+        return McpResponse(status=status_code, message=str(e))
+
+
+@mcp.tool(
+    name="enable_fts_index",
+    description=(
+        "Create the Neo4j Full-Text Search (FTS) index for a project's "
+        "long-term memory on demand. The FTS index is normally auto-created "
+        "when a session starts, so this is only needed when FTS was disabled "
+        "at creation time or when an existing Neo4j-backed project should "
+        "gain keyword (FTS) search without re-ingesting data. Returns "
+        "status='created' on success, or 'unsupported' when the backend has "
+        "no FTS (e.g. Nebula or the event backend). "
+        "\n\n**Parameters**: Supports flat style with org_id and proj_id."
+    ),
+)
+async def mcp_enable_fts_index(
+    org_id: str = "",
+    proj_id: str = "",
+) -> McpResponse | EnableFtsIndexResponse:
+    """Create the FTS index for the specified project.
+
+    Args:
+        org_id: The organization ID (optional, flat style).
+        proj_id: The project ID (optional, flat style).
+
+    Returns:
+        McpResponse on failure, or EnableFtsIndexResponse on success.
+
+    """
+    global mem_machine
+    if mem_machine is None:
+        return McpResponse(
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            message="MemMachine is not initialized",
+        )
+    try:
+        return await enable_fts_index(
+            spec_org_id=org_id,
+            spec_project_id=proj_id,
+            memmachine=mem_machine,
+        )
+    except Exception as e:
+        status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+        logger.exception("Failed to create FTS index")
         return McpResponse(status=status_code, message=str(e))
 
 

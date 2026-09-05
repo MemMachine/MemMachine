@@ -8,6 +8,7 @@ from collections.abc import Callable, Coroutine, Iterable, Mapping
 from typing import Any, Final, Protocol
 
 from memmachine_common.api import MemoryType
+from memmachine_common.api.spec import FtsMode
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
 
 from memmachine_server.common.configuration import Configuration
@@ -679,6 +680,36 @@ class MemMachine:
             return left
         return FilterAnd(left=left, right=right)
 
+    async def create_fts_index(
+        self,
+        session_data: InstanceOf[SessionData],
+    ) -> tuple[str, str | None]:
+        """Manually create the FTS index for a session's long-term memory.
+
+        Opens (or creates) the session's episodic memory and delegates to
+        `EpisodicMemory.create_fts_index`. Useful when FTS was disabled at
+        session creation or when an existing Neo4j vector store should gain
+        FTS without re-ingesting.
+
+        Args:
+            session_data: Session context identifying the target project.
+
+        Returns:
+            A `(status, index_name)` tuple where `status` is ``"created"`` or
+            ``"unsupported"`` (see `LongTermMemory.create_fts_index`).
+
+        """
+        episodic_memory_manager = await self._resources.get_episodic_memory_manager()
+        async with episodic_memory_manager.open_or_create_episodic_memory(
+            session_key=session_data.session_key,
+            description="",
+            episodic_memory_config=self._with_default_episodic_memory_conf(
+                session_key=session_data.session_key
+            ),
+            metadata={},
+        ) as episodic_session:
+            return await episodic_session.create_fts_index()
+
     async def add_episodes(
         self,
         session_data: InstanceOf[SessionData],
@@ -751,6 +782,8 @@ class MemMachine:
         score_threshold: float = -float("inf"),
         search_filter: FilterExpr | None = None,
         retrieval_agent: AgentToolBase | None = None,
+        use_fts: FtsMode = False,  # Full-Text Search flag for hybrid search
+        append_n: int = 10,  # Number of FTS results to append (append mode)
     ) -> EpisodicMemory.QueryResponse | None:
         """
         Query episodic memory for relevant episodes.
@@ -763,6 +796,8 @@ class MemMachine:
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
             retrieval_agent: Optional top-level retrieval agent for long-term search.
+            use_fts: Full-Text Search flag for hybrid search
+            append_n: Number of FTS results to append (only used in 'append' mode)
 
         Returns:
             Episodic memory query response, if episodic memory is enabled.
@@ -785,6 +820,8 @@ class MemMachine:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=search_filter,
+                    use_fts=use_fts,  # Full-Text Search flag for hybrid search
+                    append_n=append_n,  # Number of FTS results to append (append mode)
                 )
             else:
                 response = await self._query_episodic_with_retrieval_agent(
@@ -959,6 +996,8 @@ class MemMachine:
         score_threshold: float = -float("inf"),
         search_filter: str | None = None,
         agent_mode: bool = False,
+        use_fts: FtsMode = False,  # Full-Text Search flag for hybrid search
+        append_n: int = 10,  # Number of FTS results to append (append mode)
     ) -> SearchResponse:
         """
         Search across enabled memory types using a query string.
@@ -973,6 +1012,8 @@ class MemMachine:
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
+            use_fts: Full-Text Search flag for hybrid search
+            append_n: Number of FTS results to append (only used in 'append' mode)
 
         Returns:
             Aggregated search results across memory types.
@@ -993,6 +1034,8 @@ class MemMachine:
                     score_threshold=score_threshold,
                     search_filter=property_filter,
                     retrieval_agent=retrieval_agent,
+                    use_fts=use_fts,  # Full-Text Search flag for hybrid search
+                    append_n=append_n,  # Number of FTS results to append (append mode)
                 )
             )
 
