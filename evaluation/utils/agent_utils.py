@@ -18,8 +18,8 @@ from memmachine_server.episodic_memory.episodic_memory import (
     EpisodicMemoryParams,
 )
 from memmachine_server.episodic_memory.long_term_memory import (
+    DeclarativeBackendParams,
     LongTermMemory,
-    LongTermMemoryParams,
 )
 from memmachine_server.retrieval_agent.agents import (
     ChainOfQueryAgent,
@@ -475,7 +475,8 @@ async def init_memmachine_params(
     normalized_session_id = session_id or "evaluation_session"
 
     long_term_memory = LongTermMemory(
-        LongTermMemoryParams(
+        DeclarativeBackendParams(
+            backend="declarative",
             session_id=normalized_session_id,
             vector_graph_store=vector_graph_store,
             embedder=embedder,

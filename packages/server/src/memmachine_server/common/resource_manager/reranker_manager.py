@@ -220,13 +220,21 @@ class RerankerManager(BaseResourceManager[Reranker]):
                 return None
             return secret.get_secret_value()
 
-        client = boto3.client(
-            "bedrock-agent-runtime",
-            region_name=conf.region,
-            aws_access_key_id=_get_secret_value(conf.aws_access_key_id),
-            aws_secret_access_key=_get_secret_value(conf.aws_secret_access_key),
-            aws_session_token=_get_secret_value(conf.aws_session_token),
-        )
+        # Only pass explicit credentials if they are set; otherwise let boto3
+        # use the default credential chain (~/.aws/credentials, config, SSO, etc.)
+        boto3_kwargs: dict[str, str | None] = {
+            "region_name": conf.region,
+        }
+        access_key = _get_secret_value(conf.aws_access_key_id)
+        secret_key = _get_secret_value(conf.aws_secret_access_key)
+        session_token = _get_secret_value(conf.aws_session_token)
+        if access_key and secret_key:
+            boto3_kwargs["aws_access_key_id"] = access_key
+            boto3_kwargs["aws_secret_access_key"] = secret_key
+            if session_token:
+                boto3_kwargs["aws_session_token"] = session_token
+
+        client = boto3.client("bedrock-agent-runtime", **boto3_kwargs)
         params = AmazonBedrockRerankerParams(
             client=client,
             region=conf.region,

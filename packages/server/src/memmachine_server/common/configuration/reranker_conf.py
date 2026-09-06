@@ -7,6 +7,7 @@ import yaml
 from pydantic import BaseModel, Field, PrivateAttr, SecretStr, field_validator
 
 from memmachine_server.common.configuration.mixin_confs import (
+    AWSCredentialsMixin,
     MetricsFactoryIdMixin,
     YamlSerializableMixin,
 )
@@ -28,25 +29,13 @@ class BM25RerankerConf(YamlSerializableMixin):
     )
 
 
-class AmazonBedrockRerankerConf(MetricsFactoryIdMixin, YamlSerializableMixin):
+class AmazonBedrockRerankerConf(MetricsFactoryIdMixin, YamlSerializableMixin, AWSCredentialsMixin):
     """Parameters for AmazonBedrockReranker."""
 
     model_id: str = Field(..., description="The Bedrock model ID to use for reranking")
     region: str = Field(
         ...,
         description="The AWS region of the Bedrock service",
-    )
-    aws_access_key_id: SecretStr | None = Field(
-        ...,
-        description="AWS access key ID for authentication.",
-    )
-    aws_secret_access_key: SecretStr | None = Field(
-        ...,
-        description="AWS secret access key for authentication.",
-    )
-    aws_session_token: SecretStr | None = Field(
-        default=None,
-        description="AWS session token for authentication.",
     )
     additional_model_request_fields: dict = Field(
         default_factory=dict,
