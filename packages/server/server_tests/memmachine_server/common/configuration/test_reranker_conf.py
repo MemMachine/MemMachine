@@ -1,5 +1,3 @@
-from typing import Any
-
 import pytest
 import yaml
 from pydantic import SecretStr, ValidationError
@@ -136,6 +134,40 @@ def test_valid_amazon_bedrock_reranker_conf(amazon_bedrock_reranker_conf):
     assert conf.model_id == "amazon.rerank-v1:0"
 
 
+def test_valid_amazon_bedrock_reranker_conf_without_explicit_credentials(
+    monkeypatch,
+):
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+
+    conf = AmazonBedrockRerankerConf(
+        region="us-west-2",
+        model_id="amazon.rerank-v1:0",
+    )
+
+    assert conf.region == "us-west-2"
+    assert conf.aws_access_key_id is None
+    assert conf.aws_secret_access_key is None
+    assert conf.aws_session_token is None
+    assert conf.model_id == "amazon.rerank-v1:0"
+
+
+def test_valid_amazon_bedrock_reranker_conf_uses_env_credentials(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "env-key-id")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "env-secret-key")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "env-session-token")
+
+    conf = AmazonBedrockRerankerConf(
+        region="us-west-2",
+        model_id="amazon.rerank-v1:0",
+    )
+
+    assert conf.aws_access_key_id == SecretStr("env-key-id")
+    assert conf.aws_secret_access_key == SecretStr("env-secret-key")
+    assert conf.aws_session_token == SecretStr("env-session-token")
+
+
 def test_valid_cohere_reranker_conf(cohere_reranker_conf):
     conf = CohereRerankerConf(**cohere_reranker_conf["config"])
     assert conf.cohere_key == SecretStr("test-cohere-key")
@@ -193,19 +225,6 @@ def test_serialize_deserialize_reranker_conf(full_reranker_input):
     serialized = conf.to_yaml()
     conf_cp = RerankersConf.parse(yaml.safe_load(serialized))
     assert conf == conf_cp
-
-
-def test_missing_required_field_in_bedrock_reranker():
-    config: dict[str, Any] = {
-        "region": "us-west-2",
-        "aws_access_key_id": "key-id",
-        # Missing aws_secret_access_key
-        "model_id": "amazon.rerank-v1:0",
-    }
-    with pytest.raises(ValidationError) as exc_info:
-        AmazonBedrockRerankerConf(**config)
-    assert "missing" in str(exc_info.value)
-    assert "aws_secret_access_key" in str(exc_info.value)
 
 
 def test_invalid_cohere_base_url():
