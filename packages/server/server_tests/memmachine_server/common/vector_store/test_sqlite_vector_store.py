@@ -1,5 +1,6 @@
 """Tests for SQLiteVectorStore."""
 
+import asyncio
 import math
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
@@ -34,6 +35,9 @@ from memmachine_server.common.vector_store.sqlite_vector_store import (
 from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
     USearchVectorSearchEngine,
 )
+from memmachine_server.common.vector_store.vector_search_engine.vector_search_engine import (
+    VectorSearchEngine,
+)
 
 NAMESPACE = "test_namespace"
 NAME = "test_name"
@@ -56,6 +60,35 @@ def _make_record(
         vector=vector,
         properties=properties,
     )
+
+
+_RACE_WINDOW_SECONDS = 2.0
+
+
+async def _wait_for(condition) -> None:
+    """Poll `condition` until it holds, and give up quietly if it never does.
+
+    Both outcomes are expected in the concurrency tests below. The interleaving
+    each one sets up is what unfixed code does while another write is parked;
+    once writes are serialized the second write cannot start at all, so the
+    wait simply expires. The assertions are what tell the two cases apart.
+    """
+    # Polling, because what is being waited on is what another task has
+    # committed to the database, which no in-process event tracks. The deadline
+    # sits between polls rather than in a timeout around them: cancelling a
+    # query mid-flight returns its connection to the pool without resetting it,
+    # and the read transaction left open there blocks the next commit.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _RACE_WINDOW_SECONDS
+    while loop.time() < deadline:
+        if await condition():
+            return
+        await asyncio.sleep(0.01)
+
+
+async def _record_exists(collection, record_uuid) -> bool:
+    """Whether a concurrent upsert's transaction has committed yet."""
+    return bool(await collection.get(record_uuids=[record_uuid]))
 
 
 @pytest_asyncio.fixture
@@ -1074,6 +1107,150 @@ class TestConcurrentAsync:
         await asyncio.gather(query_loop(), upsert_more())
 
 
+# ── row_id reuse (issue #1468) ──
+
+
+class _GatedSearchEngine(VectorSearchEngine):
+    """Delegates to a real engine; the next search() waits after scoring.
+
+    query() scores keys in the engine and then resolves the winners to record
+    rows in a separate step, holding nothing in between -- readers do not
+    serialize with writers. The gate parks in that gap, which is where a write
+    can retire the row a returned key referred to.
+    """
+
+    def __init__(self, inner: VectorSearchEngine) -> None:
+        self.inner = inner
+        self.gate: asyncio.Event | None = None
+        self.gate_reached = asyncio.Event()
+
+    async def add(self, vectors):
+        await self.inner.add(vectors)
+
+    async def remove(self, keys):
+        await self.inner.remove(keys)
+
+    async def search(self, vectors, *, limit, allowed_keys=None):
+        results = await self.inner.search(
+            vectors, limit=limit, allowed_keys=allowed_keys
+        )
+        if self.gate is not None:
+            gate, self.gate = self.gate, None
+            self.gate_reached.set()
+            await gate.wait()
+        return results
+
+    async def get_vectors(self, keys):
+        return await self.inner.get_vectors(keys)
+
+    async def save(self, path):
+        await self.inner.save(path)
+
+    async def load(self, path):
+        await self.inner.load(path)
+
+
+class TestRowIdReuse:
+    """Regression tests for row_id reuse (issue #1468).
+
+    Without AUTOINCREMENT, SQLite assigns max(rowid) + 1, so deleting the
+    record holding the maximum row_id frees that id for the very next insert,
+    and a record can inherit the id another was being served under.
+
+    Serializing writes closes that on the write path but not on the read one:
+    a query scores keys in the engine and resolves them to rows afterwards,
+    holding nothing in between, so what these tests pin is the id policy
+    itself.
+    """
+
+    async def _row_id_of(self, collection, record_uuid):
+        async with collection._create_session() as session:
+            return (
+                await session.execute(
+                    select(collection._records_table.c.row_id).where(
+                        collection._records_table.c.uuid == record_uuid
+                    )
+                )
+            ).scalar_one()
+
+    @pytest.mark.asyncio
+    async def test_row_ids_are_never_reused(self, collection):
+        """A new record must not be assigned a previously deleted row_id."""
+        record_a = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await collection.upsert(records=[record_a])
+        row_id_a = await self._row_id_of(collection, record_a.uuid)
+
+        await collection.delete(record_uuids=[record_a.uuid])
+
+        record_b = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        await collection.upsert(records=[record_b])
+        row_id_b = await self._row_id_of(collection, record_b.uuid)
+
+        assert row_id_b != row_id_a
+
+    @pytest.mark.asyncio
+    async def test_a_query_cannot_return_a_record_it_never_scored(self, tmp_path):
+        """A key the engine scored must never resolve to a later record.
+
+        query() scores keys and then looks the winners up by row_id. Writes
+        run freely in between, so a reused row_id would let a record that was
+        never scored come back wearing the score of the record that was --
+        here, a match orthogonal to the query returned as a perfect hit. With
+        ids never reused the stale key matches no row and is simply dropped.
+        """
+        db_path = tmp_path / "test.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        gated_engines: list[_GatedSearchEngine] = []
+
+        def factory(ndim, metric):
+            gated = _GatedSearchEngine(
+                USearchVectorSearchEngine(num_dimensions=ndim, similarity_metric=metric)
+            )
+            gated_engines.append(gated)
+            return gated
+
+        store = SQLiteVectorStore(
+            SQLiteVectorStoreParams(
+                sqlalchemy_engine=engine,
+                vector_search_engine_factory=factory,
+            )
+        )
+        await store.startup()
+        try:
+            collection = await store.open_or_create_collection(
+                namespace=NAMESPACE,
+                name=NAME,
+                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+            )
+            (gated_engine,) = gated_engines
+
+            scored = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            await collection.upsert(records=[scored])
+
+            # The query parks holding the key it scored, which is the highest
+            # row_id in the table and so the one a reused id would hand out.
+            gate = asyncio.Event()
+            gated_engine.gate = gate
+            query_task = asyncio.create_task(
+                collection.query(query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1)
+            )
+            await gated_engine.gate_reached.wait()
+
+            await collection.delete(record_uuids=[scored.uuid])
+            successor = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+            await collection.upsert(records=[successor])
+
+            gate.set()
+            results = await query_task
+
+            assert [match.record.uuid for match in results[0].matches] == [], (
+                "a record the engine never scored was returned"
+            )
+        finally:
+            await store.shutdown()
+            await engine.dispose()
+
+
 # ── Crash recovery & pending operations ──
 
 
@@ -1321,6 +1498,336 @@ class TestCrashRecovery:
             await store.delete_collection(namespace=NAMESPACE, name=NAME)
 
         await engine.dispose()
+
+
+# ── Concurrent write ordering (issue #1468) ──
+
+
+class _GatedRemoveEngine(VectorSearchEngine):
+    """Delegates to a real engine; the next remove() waits on `gate` first.
+
+    delete() already suspends at its engine remove() (an await point after
+    the SQL commit); the gate only widens that window so the interleaving
+    with a concurrent upsert() is deterministic.
+    """
+
+    def __init__(self, inner: VectorSearchEngine) -> None:
+        self.inner = inner
+        self.gate: asyncio.Event | None = None
+        self.gate_reached = asyncio.Event()
+
+    async def add(self, vectors):
+        await self.inner.add(vectors)
+
+    async def remove(self, keys):
+        if self.gate is not None:
+            gate, self.gate = self.gate, None
+            self.gate_reached.set()
+            await gate.wait()
+        await self.inner.remove(keys)
+
+    async def search(self, vectors, *, limit, allowed_keys=None):
+        return await self.inner.search(vectors, limit=limit, allowed_keys=allowed_keys)
+
+    async def get_vectors(self, keys):
+        return await self.inner.get_vectors(keys)
+
+    async def save(self, path):
+        await self.inner.save(path)
+
+    async def load(self, path):
+        await self.inner.load(path)
+
+
+class _GatedSaveEngine(VectorSearchEngine):
+    """Delegates to a real engine; the first save waits after writing the index.
+
+    A save writes the index and then trims the pending operations the index now
+    holds. Parking between the two widens the window in which another write can
+    apply to the engine: too late to be in the file just written, early enough
+    for the trim to delete the log row that was its only other copy.
+
+    Saves after that one park before writing, so a test can reach the crash it
+    is about without a later save publishing what it is trying to observe.
+    """
+
+    def __init__(self, inner: VectorSearchEngine) -> None:
+        self.inner = inner
+        self.gate: asyncio.Event | None = None
+        self.gate_reached = asyncio.Event()
+        self.saves_blocked = False
+        self.blocked_save_reached = asyncio.Event()
+
+    async def add(self, vectors):
+        await self.inner.add(vectors)
+
+    async def remove(self, keys):
+        await self.inner.remove(keys)
+
+    async def search(self, vectors, *, limit, allowed_keys=None):
+        return await self.inner.search(vectors, limit=limit, allowed_keys=allowed_keys)
+
+    async def get_vectors(self, keys):
+        return await self.inner.get_vectors(keys)
+
+    async def save(self, path):
+        if self.gate is None:
+            if self.saves_blocked:
+                self.blocked_save_reached.set()
+                await asyncio.Event().wait()
+            await self.inner.save(path)
+            return
+
+        gate, self.gate = self.gate, None
+        self.saves_blocked = True
+        await self.inner.save(path)
+        self.gate_reached.set()
+        await gate.wait()
+
+    async def load(self, path):
+        await self.inner.load(path)
+
+
+async def _wrapped_engine_store(db_path, tmp_path, wrap, *, save_threshold=1000):
+    """Create a store whose engines are wrapped by `wrap`, and collect them."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    wrapped: list = []
+
+    def factory(ndim, metric):
+        gated = wrap(_engine_factory(ndim, metric))
+        wrapped.append(gated)
+        return gated
+
+    store = SQLiteVectorStore(
+        SQLiteVectorStoreParams(
+            sqlalchemy_engine=engine,
+            vector_search_engine_factory=factory,
+            index_directory=str(tmp_path / "indexes"),
+            save_threshold=save_threshold,
+        )
+    )
+    await store.startup()
+    return store, engine, wrapped
+
+
+async def _a_delete_has_been_applied(engine) -> bool:
+    """Whether a concurrent delete has reached the search engine.
+
+    Its pending row is marked applied last, so this is true only once the
+    delete has committed and its engine removal has finished -- the whole of
+    the operation the upsert parked behind it has to overtake.
+    """
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        applied_deletes = (
+            await session.execute(
+                select(func.count())
+                .select_from(_PendingOperationRow)
+                .where(
+                    _PendingOperationRow.operation_type == "delete",
+                    _PendingOperationRow.applied.is_(True),
+                )
+            )
+        ).scalar_one()
+    return applied_deletes > 0
+
+
+async def _both_writes_applied(engine) -> bool:
+    """Whether a second write has reached the engine behind a parked save."""
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        applied = (
+            await session.execute(
+                select(func.count())
+                .select_from(_PendingOperationRow)
+                .where(_PendingOperationRow.applied.is_(True))
+            )
+        ).scalar_one()
+    return applied == 2
+
+
+class TestConcurrentWriteOrdering:
+    """The engine must see a collection's writes in the order SQLite committed.
+
+    Every write commits its SQL transaction before applying to the search
+    engine, so two writers that overlap can reach the engine in the opposite
+    order to the one they committed in. Never reusing a row_id (the fix above)
+    does not help here: both writes address one uuid, and an upsert of an
+    existing uuid keeps its row_id by design.
+    """
+
+    @pytest.mark.asyncio
+    async def test_an_upsert_survives_a_delete_of_another_record(self, tmp_path):
+        """A delete must not carry an unrelated concurrent upsert with it.
+
+        Interleaving: delete(A) commits and parks at its engine removal;
+        upsert(B) lands in that window; delete(A) resumes and removes the
+        row_id it was given. B has to still be searchable -- which it is
+        because it was never given A's row_id, and, now, because it cannot
+        run inside that window in the first place.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _GatedRemoveEngine
+        )
+        try:
+            coll = await store.open_or_create_collection(
+                namespace=NAMESPACE, name=NAME, config=CONFIG
+            )
+            (gated_engine,) = wrapped
+
+            deleted = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            await coll.upsert(records=[deleted])
+
+            gate = asyncio.Event()
+            gated_engine.gate = gate
+            delete_task = asyncio.create_task(coll.delete(record_uuids=[deleted.uuid]))
+            await gated_engine.gate_reached.wait()
+
+            # A task, not an await: unfixed code runs this to completion
+            # inside the window above, serialized writes make it wait for the
+            # delete, and awaiting it here would wait forever.
+            upserted = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+            upsert_task = asyncio.create_task(coll.upsert(records=[upserted]))
+            await _wait_for(lambda: _record_exists(coll, upserted.uuid))
+
+            gate.set()
+            await asyncio.gather(delete_task, upsert_task)
+
+            results = await coll.query(
+                query_vectors=[_normalize([0.0, 1.0, 0.0])], limit=5
+            )
+            assert upserted.uuid in {
+                match.record.uuid for match in results[0].matches
+            }, "upserted record lost from the search engine"
+        finally:
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_an_upsert_cannot_overtake_a_delete_of_the_same_uuid(self, tmp_path):
+        """A vector re-added after its record is deleted belongs to nothing.
+
+        Interleaving: upsert(U) commits and parks at its engine apply;
+        delete(U) commits and applies inside that window; upsert(U) resumes and
+        adds its vector back. SQLite says the record is gone, so the vector
+        left in the engine resolves to no row: it is dropped from every result
+        it wins -- costing exactly the slots it takes -- and the next save
+        publishes it into the index for good.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _GatedRemoveEngine
+        )
+        try:
+            coll = await store.open_or_create_collection(
+                namespace=NAMESPACE, name=NAME, config=CONFIG
+            )
+            (gated_engine,) = wrapped
+
+            # The record the query should return once the racers are done.
+            decoy = _make_record(vector=_normalize([1.0, 1.0, 0.0]))
+            racer = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+            await coll.upsert(records=[decoy, racer])
+
+            # upsert(racer) commits, then parks at its engine apply.
+            gate = asyncio.Event()
+            gated_engine.gate = gate
+            upsert_task = asyncio.create_task(
+                coll.upsert(
+                    records=[
+                        _make_record(
+                            uuid=racer.uuid, vector=_normalize([1.0, 0.0, 0.0])
+                        )
+                    ]
+                )
+            )
+            await gated_engine.gate_reached.wait()
+
+            # delete(racer) commits and applies while the upsert is parked.
+            delete_task = asyncio.create_task(coll.delete(record_uuids=[racer.uuid]))
+            await _wait_for(lambda: _a_delete_has_been_applied(engine))
+
+            gate.set()
+            await asyncio.gather(upsert_task, delete_task)
+
+            # The racer's vector scores 1.0 against this query, so if it is
+            # still in the engine it takes the only slot and resolves to
+            # nothing, leaving no matches at all.
+            results = await coll.query(
+                query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1
+            )
+            assert [match.record.uuid for match in results[0].matches] == [decoy.uuid]
+        finally:
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_save_cannot_trim_a_write_it_did_not_publish(self, tmp_path):
+        """A write applied behind a save must not be trimmed by that save.
+
+        The pending log holds the only other copy of a vector, so its row may
+        be deleted once the index that holds it is published. A write that
+        applies to the engine after the index is written but before the trim
+        satisfies neither: not in the file, and no longer in the log. It is
+        live in memory and gone from disk -- a committed write lost to a
+        process crash, which is the one failure this store rules out.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _GatedSaveEngine, save_threshold=1
+        )
+        coll = await store.open_or_create_collection(
+            namespace=NAMESPACE, name=NAME, config=CONFIG
+        )
+        (gated_engine,) = wrapped
+
+        # This write's own save parks with the index written and the trim
+        # still to come.
+        gate = asyncio.Event()
+        gated_engine.gate = gate
+        published = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        publish_task = asyncio.create_task(coll.upsert(records=[published]))
+        await gated_engine.gate_reached.wait()
+
+        # A second write lands in that window: applied to the engine and
+        # marked applied, but absent from the index just written.
+        behind = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        behind_task = asyncio.create_task(coll.upsert(records=[behind]))
+        await _wait_for(lambda: _both_writes_applied(engine))
+
+        gate.set()
+        await publish_task
+
+        # The second write ends up parked in its own save, which never writes:
+        # through the window above on unfixed code, by waiting its turn once
+        # writes are serialized. Either way it has committed, applied, and been
+        # marked applied, and nothing else can publish behind it.
+        async with asyncio.timeout(_RACE_WINDOW_SECONDS):
+            await gated_engine.blocked_save_reached.wait()
+
+        # Crash.
+        behind_task.cancel()
+        await asyncio.gather(behind_task, return_exceptions=True)
+        await engine.dispose()
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        try:
+            coll2 = await store2.open_collection(namespace=NAMESPACE, name=NAME)
+            assert coll2 is not None
+
+            fetched = await coll2.get(record_uuids=[behind.uuid])
+            assert [record.uuid for record in fetched] == [behind.uuid]
+
+            results = await coll2.query(
+                query_vectors=[_normalize([0.0, 1.0, 0.0])], limit=5
+            )
+            assert behind.uuid in {match.record.uuid for match in results[0].matches}, (
+                "a committed write was trimmed by a save that never published it"
+            )
+        finally:
+            await store2.shutdown()
+            await engine2.dispose()
 
 
 # ── Index file durability contract ──
