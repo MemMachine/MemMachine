@@ -748,7 +748,7 @@ class MemMachine:
         query: str,
         limit: int | None = None,
         expand_context: int = 0,
-        score_threshold: float = -float("inf"),
+        score_threshold: float | None = None,
         search_filter: FilterExpr | None = None,
         retrieval_agent: AgentToolBase | None = None,
     ) -> EpisodicMemory.QueryResponse | None:
@@ -762,6 +762,7 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
             score_threshold: Optional minimum score threshold for results.
+                ``None`` means no threshold.
             retrieval_agent: Optional top-level retrieval agent for long-term search.
 
         Returns:
@@ -807,7 +808,7 @@ class MemMachine:
         query: str,
         limit: int | None,
         expand_context: int,
-        score_threshold: float,
+        score_threshold: float | None,
         search_filter: FilterExpr | None,
     ) -> EpisodicMemory.QueryResponse | None:
         """Build episodic query response using retrieval-agent long-term search."""
@@ -867,7 +868,7 @@ class MemMachine:
         query: str,
         limit: int,
         expand_context: int,
-        score_threshold: float,
+        score_threshold: float | None,
         search_filter: FilterExpr | None,
     ) -> list[Episode]:
         if episodic_session.long_term_memory is None:
@@ -901,7 +902,7 @@ class MemMachine:
         query: str,
         limit: int,
         expand_context: int,
-        score_threshold: float,
+        score_threshold: float | None,
         search_filter: FilterExpr | None,
     ) -> EpisodicMemory.QueryResponse.ShortTermMemoryResponse:
         if episodic_session.short_term_memory is None:
@@ -930,12 +931,12 @@ class MemMachine:
         *,
         normalized_long_episodes: list[Episode],
         short_response: EpisodicMemory.QueryResponse.ShortTermMemoryResponse,
-        score_threshold: float,
+        score_threshold: float | None,
     ) -> list[tuple[float, Episode]]:
         scored_long_episodes = [
             (1.0, episode)
             for episode in normalized_long_episodes
-            if score_threshold <= 1.0
+            if score_threshold is None or score_threshold <= 1.0
         ]
         episode_uid_set = {episode.uid for episode in short_response.episodes}
         unique_scored_long_episodes: list[tuple[float, Episode]] = []
@@ -956,7 +957,7 @@ class MemMachine:
         limit: int
         | None = None,  # TODO: Define if limit is per memory or is global limit
         expand_context: int = 0,
-        score_threshold: float = -float("inf"),
+        score_threshold: float | None = None,
         search_filter: str | None = None,
         agent_mode: bool = False,
     ) -> SearchResponse:
@@ -972,6 +973,8 @@ class MemMachine:
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional filter string applied to each memory query.
             score_threshold: Optional minimum score threshold for results.
+                ``None`` means no threshold. Do not pass ``-inf``: under
+                lower-is-better metrics that sentinel drops every hit.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.
 
         Returns:

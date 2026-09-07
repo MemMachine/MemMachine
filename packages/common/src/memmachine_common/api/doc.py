@@ -217,7 +217,8 @@ class SpecDoc:
 
     SCORE_THRESHOLD = """
     The minimum score for a memory to be included in the search results. Defaults
-    to -inf (no threshold) represented as None. Meaningful only for certain ranking methods.
+    to None (no threshold). Meaningful only for certain ranking methods. Do not
+    send -inf: under lower-is-better metrics that sentinel drops every hit.
     """
 
     QUERY = """
