@@ -7,8 +7,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import ConnectionPoolEntry
 
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
@@ -43,6 +45,28 @@ if TYPE_CHECKING:
     from qdrant_client import AsyncQdrantClient
 
 logger = logging.getLogger(__name__)
+
+
+def enable_sqlite_foreign_keys(engine: AsyncEngine) -> None:
+    """Enforce foreign keys on every connection of a SQLite engine.
+
+    SQLite defaults foreign_keys to OFF, per connection. Registering the
+    pragma at engine creation, before any connection is pooled, is the
+    only placement that covers every connection: a listener added later
+    misses already-pooled connections, and mutating a live pool's
+    listeners races its event dispatch. No-op for other dialects.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_foreign_keys(
+        dbapi_connection: DBAPIConnection,
+        _connection_record: ConnectionPoolEntry,
+    ) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 class DatabaseManager:
@@ -765,6 +789,7 @@ class DatabaseManager:
             )
 
             engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+            enable_sqlite_foreign_keys(engine)
             self.vector_store_sql_engines[name] = engine
 
             try:
@@ -806,9 +831,11 @@ class DatabaseManager:
             from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
                 SQLiteVecVectorStore,
                 SQLiteVecVectorStoreParams,
+                load_sqlite_vec_extension,
             )
 
             engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+            load_sqlite_vec_extension(engine)
             self.vector_store_sql_engines[name] = engine
 
             try:
