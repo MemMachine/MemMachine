@@ -1,10 +1,8 @@
 """Cohere reranker implementation."""
 
-import asyncio
 import logging
 from typing import Any
 
-import cohere
 from pydantic import BaseModel, Field
 
 from memmachine_server.common.data_types import ExternalServiceAPIError
@@ -19,7 +17,7 @@ class CohereRerankerParams(BaseModel):
 
     client: Any = Field(
         ...,
-        description="Cohere client instance for making API calls",
+        description="Async Cohere client instance for making API calls",
     )
     model: str = Field(
         "rerank-english-v3.0",
@@ -46,16 +44,12 @@ class CohereReranker(Reranker):
         if all(not candidate.strip() for candidate in candidates):
             return [0.0] * len(candidates)
 
-        # Build request parameters
-        def _call_rerank() -> cohere.RerankResponse:
-            return self._client.rerank(
+        try:
+            response = await self._client.rerank(
                 model=self._model,
                 query=query,
                 documents=candidates,
             )
-
-        try:
-            response = await asyncio.to_thread(_call_rerank)
         except Exception as e:
             error_message = (
                 f"Failed to score candidates with Cohere model {self._model} "
