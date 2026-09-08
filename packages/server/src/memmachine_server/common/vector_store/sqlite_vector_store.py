@@ -4,6 +4,23 @@ Vector store backed by SQLite + pluggable vector search engine.
 Each logical collection gets its own records table and vector search engine.
 A pending operations table tracks search engine operations for crash recovery:
 on startup, unfinalized operations are replayed.
+
+What survives a crash
+---------------------
+
+`upsert` and `delete` commit to SQLite before they return, so a process crash
+loses nothing: the pending log carries every operation the search engine has
+not been checkpointed with, and startup replays it.
+
+A power failure is weaker, and callers should size their expectations to it.
+The index is published atomically but not durably (see
+`vector_search_engine.index_persistence`), so a power failure can revert the
+last publication while the records table -- and the trim that ran behind that
+publication -- stay committed. The result is records whose vectors are missing
+from the index: `get` still returns them, `query` cannot find them, and
+re-upserting them is the repair. Callers that need every record searchable
+after a power failure must be able to re-ingest; nothing here detects the gap
+for them.
 """
 
 import logging
@@ -140,7 +157,15 @@ async def _save_collection_index(
     search_engine: VectorSearchEngine,
     path: str,
 ) -> None:
-    """Save a collection's index to disk."""
+    """Publish a collection's index to disk and trim the operations it holds.
+
+    The order is the whole protocol. The pending log is the only other copy of
+    these vectors -- the records table has no vector column -- so an applied row
+    may be deleted only once the index that holds it has been published.
+    `save` returning is that statement, and no more than that: publication is
+    atomic, not durable, so a power failure can revert it after this trim has
+    committed. See the module docstring for what that leaves behind.
+    """
     # Write index to path.
     await search_engine.save(path)
 
