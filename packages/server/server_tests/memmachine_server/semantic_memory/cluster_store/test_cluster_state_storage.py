@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -110,6 +110,33 @@ async def test_round_trip_state(
     await cluster_state_storage.save_state(set_id="set-a", state=state)
 
     loaded = await cluster_state_storage.get_state(set_id="set-a")
+
+    assert loaded is not None
+    assert loaded == state
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tz",
+    [
+        timezone(timedelta(hours=-8)),
+        timezone(timedelta(hours=5, minutes=30)),
+    ],
+)
+async def test_round_trip_state_non_utc_timezone(
+    cluster_state_storage: ClusterStateStorage,
+    tz: timezone,
+) -> None:
+    """Non-UTC aware timestamps round-trip to the same instant.
+
+    SQLite's DateTime(timezone=True) discards tzinfo, so timestamps must be
+    normalized to UTC before writing or they come back shifted by their offset.
+    """
+    now = datetime(2024, 1, 1, 13, 30, 45, tzinfo=tz)
+    state = _sample_state(now)
+    await cluster_state_storage.save_state(set_id="set-tz", state=state)
+
+    loaded = await cluster_state_storage.get_state(set_id="set-tz")
 
     assert loaded is not None
     assert loaded == state

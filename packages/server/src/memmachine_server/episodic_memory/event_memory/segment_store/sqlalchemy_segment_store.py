@@ -5,7 +5,7 @@ import logging
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import override
 from uuid import UUID
 
@@ -261,7 +261,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 "event_uuid": segment.event_uuid,
                 "index": segment.index,
                 "offset": segment.offset,
-                "timestamp": ensure_tz_aware(segment.timestamp),
+                # Store the UTC instant; SQLite does not persist tzinfo, so the
+                # original offset is recorded separately and reapplied on read.
+                "timestamp": ensure_tz_aware(segment.timestamp).astimezone(UTC),
                 "timestamp_timezone_offset": utc_offset_seconds(segment.timestamp),
                 "context": self._payload_codec.encode(
                     json.dumps(encode_context(segment.context)).encode("utf-8")
