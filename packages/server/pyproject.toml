@@ -74,6 +74,9 @@ milvus = [
 litellm = [
     "litellm>=1.63.0,<1.86",
 ]
+turbovec = [
+    "turbovec>=1.0.0",
+]
 
 [project.scripts]
 memmachine-server = "memmachine_server.server.app:main"
