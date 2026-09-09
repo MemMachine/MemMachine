@@ -1013,6 +1013,14 @@ async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
     return store, engine
 
 
+async def _stored_record_uuids(engine, store) -> set[UUID]:
+    """The uuids the test partition's records table holds."""
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        rows = (await session.execute(select(store._records_table(NAME).c.uuid))).all()
+    return {row.uuid for row in rows}
+
+
 async def _pending_operation_count(engine) -> int:
     """Count all rows in the pending operations table."""
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -1358,6 +1366,56 @@ class TestIndexFileDurability:
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
         )
         assert len(results[0].matches) == 2
+
+        await store2.shutdown()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_reverted_publication_costs_search_not_records(self, tmp_path):
+        """A publication lost to power failure leaves records unsearchable.
+
+        The swap is atomic, not durable, so a power failure can revert the last
+        publication after the trim behind it has committed. Restoring the
+        previous index bytes reconstructs exactly that state, deterministically
+        rather than by pulling a plug, and pins the direction it fails in: the
+        row survives, and only search loses the record, until it is upserted
+        again. The collection contract has no read that can show the survivor --
+        `query` is the only read and it goes through the index that lost it --
+        so this looks at the row directly.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1)
+
+        coll = await store1.open_or_create_partition(NAME)
+        r1 = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await coll.upsert(records=[r1])
+
+        index_dir = tmp_path / "indexes"
+        idx_files = list(index_dir.glob("*.idx"))
+        assert len(idx_files) == 1
+        published_without_r2 = idx_files[0].read_bytes()
+
+        # Publishes an index holding both, then trims r2's only other copy.
+        r2 = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        await coll.upsert(records=[r2])
+        assert await _pending_operation_count(engine1) == 0
+
+        await store1.shutdown()
+        await engine1.dispose()
+
+        # Power failure: the publication that held r2 never reached the disk.
+        idx_files[0].write_bytes(published_without_r2)
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        coll2 = await store2.open_partition(NAME)
+        assert coll2 is not None
+
+        # The record is still a row.
+        assert await _stored_record_uuids(engine2, store2) == {r1.uuid, r2.uuid}
+
+        # The index just cannot find it any more.
+        results = await coll2.query(query_vectors=[r2.vector], limit=10)
+        assert [match.record_uuid for match in results[0].matches] == [r1.uuid]
 
         await store2.shutdown()
         await engine2.dispose()
