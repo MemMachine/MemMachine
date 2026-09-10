@@ -1,7 +1,7 @@
 """Abstract base class for a vector search engine."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Container, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 
@@ -65,7 +65,7 @@ class VectorSearchEngine(ABC):
         vectors: Iterable[Sequence[float]],
         *,
         limit: int,
-        allowed_keys: Container[int] | None = None,
+        allowlist: Collection[int] | None = None,
     ) -> list[SearchResult]:
         """
         Search for vectors similar to the query vectors.
@@ -77,10 +77,9 @@ class VectorSearchEngine(ABC):
                 Query vectors.
             limit (int):
                 Maximum number of results per query.
-            allowed_keys (Container[int] | None):
-                If provided, only return results whose keys
-                are in this container. The container's ``__contains__``
-                is called synchronously per candidate during search
+            allowlist (Collection[int] | None):
+                If provided, restrict results to these keys.
+                Keys that do not exist are ignored
                 (default: None).
 
         Returns:

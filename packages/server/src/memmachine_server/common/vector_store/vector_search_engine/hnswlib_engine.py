@@ -2,15 +2,17 @@
 
 import asyncio
 import contextlib
-from collections.abc import Callable, Container, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import ClassVar, override
 
 import hnswlib  # ty: ignore[unresolved-import]  # C extension, no py.typed
 import numpy as np
+import numpy.typing as npt
 
 from memmachine_server.common.rw_locks import AsyncRWLock
 
 from .index_persistence import atomic_index_write, clear_stale_index_temp
+from .utils import top_k_matches, unit_normalize
 from .vector_search_engine import SearchMatch, SearchResult, VectorSearchEngine
 
 
@@ -143,46 +145,65 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         vectors: Iterable[Sequence[float]],
         *,
         limit: int,
-        allowed_keys: Container[int] | None = None,
+        allowlist: Collection[int] | None = None,
     ) -> list[SearchResult]:
         vectors = list(vectors)
-        if self._index.element_count == 0 or not vectors:
+        if (
+            self._index.element_count == 0
+            or not vectors
+            or (allowlist is not None and not allowlist)
+        ):
             return [SearchResult(matches=[]) for _ in vectors]
 
         async with self._lock.read_lock():
-            return await asyncio.to_thread(
-                self._sync_search, vectors, limit, allowed_keys
-            )
+            return await asyncio.to_thread(self._sync_search, vectors, limit, allowlist)
 
     def _sync_search(
         self,
-        vectors: Iterable[Sequence[float]],
+        vectors: Sequence[Sequence[float]],
         limit: int,
-        allowed_keys: Container[int] | None,
+        allowlist: Collection[int] | None,
     ) -> list[SearchResult]:
-        vectors = list(vectors)
-        if not vectors:
-            return []
+        # hnswlib normalizes what it stores under the cosine space, so a
+        # gathered vector is already unit; only the query is left to scale.
+        query = unit_normalize(np.array(vectors, dtype=np.float32))
 
-        query = np.array(vectors, dtype=np.float32)
+        if allowlist is not None:
+            return self._sync_search_allowlist(query, limit, allowlist)
 
         effective_limit = min(limit, self._index.element_count)
         if effective_limit <= 0:
             return [SearchResult(matches=[]) for _ in vectors]
 
-        filter_fn = (
-            (lambda idx: idx in allowed_keys) if allowed_keys is not None else None
-        )
-        return self._binary_search_query(query, effective_limit, filter_fn)
+        return self._binary_search_query(query, effective_limit)
+
+    def _sync_search_allowlist(
+        self,
+        unit_queries: npt.NDArray[np.float32],
+        limit: int,
+        allowlist: Collection[int],
+    ) -> list[SearchResult]:
+        """Exact: gather the allowed vectors and score them directly.
+
+        Both sides are unit vectors by now, so the inner product
+        `top_k_matches` ranks by is the cosine similarity.
+        """
+        present_keys, matrix = self._sync_gather_vectors(allowlist)
+        if not present_keys:
+            return [SearchResult(matches=[]) for _ in unit_queries]
+
+        return [
+            SearchResult(matches=top_k_matches(query, present_keys, matrix, limit))
+            for query in unit_queries
+        ]
 
     def _binary_search_query(
         self,
         query: np.ndarray,
         k: int,
-        filter_fn: Callable[[int], bool] | None,
     ) -> list[SearchResult]:
         # Fast path: hnswlib filled k for the entire batch in one call.
-        result = self._try_knn_query(query, k, filter_fn)
+        result = self._try_knn_query(query, k)
         if result is not None:
             return self._build_search_results_from_knn(result)
 
@@ -193,13 +214,11 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         results: list[SearchResult] = []
         for query_vector in query:
             single = query_vector[np.newaxis, :]
-            single_result = self._try_knn_query(single, k, filter_fn)
+            single_result = self._try_knn_query(single, k)
 
             if single_result is None:
                 # k is already known to fail for this query, so search strictly below it.
-                single_result = self._largest_fillable_knn_query(
-                    single, k - 1, filter_fn
-                )
+                single_result = self._largest_fillable_knn_query(single, k - 1)
                 if single_result is None:
                     results.append(SearchResult(matches=[]))
                     continue
@@ -212,14 +231,10 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         self,
         query: np.ndarray,
         k: int,
-        filter_fn: Callable[[int], bool] | None,
     ) -> tuple[np.ndarray, np.ndarray] | None:
         """Run knn_query, returning None if hnswlib raises."""
         try:
-            kwargs: dict = {"k": k, "num_threads": 1}
-            if filter_fn is not None:
-                kwargs["filter"] = filter_fn
-            return self._index.knn_query(query, **kwargs)
+            return self._index.knn_query(query, k=k, num_threads=1)
         except RuntimeError:
             return None
 
@@ -233,7 +248,9 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
             matches = [
                 SearchMatch(
                     key=int(label),
-                    cosine_similarity=self._distance_to_cosine_similarity(float(dist)),
+                    cosine_similarity=HnswlibVectorSearchEngine._distance_to_cosine_similarity(
+                        float(dist)
+                    ),
                 )
                 for label, dist in zip(labels, distances, strict=True)
                 if int(label) >= 0
@@ -245,7 +262,6 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         self,
         query: np.ndarray,
         limit: int,
-        filter_fn: Callable[[int], bool] | None,
     ) -> tuple[np.ndarray, np.ndarray] | None:
         """
         Binary search for the largest k in [1, limit] that hnswlib can fill, for a single query.
@@ -256,7 +272,7 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         best: tuple[np.ndarray, np.ndarray] | None = None
         while low <= high:
             mid = (low + high) // 2
-            result = self._try_knn_query(query, mid, filter_fn)
+            result = self._try_knn_query(query, mid)
             if result is not None:
                 best = result
                 low = mid + 1
@@ -264,6 +280,36 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
                 high = mid - 1
 
         return best
+
+    def _sync_gather_vectors(
+        self, keys: Iterable[int]
+    ) -> tuple[list[int], npt.NDArray[np.float32]]:
+        """Gather stored vectors by key as a float32 matrix; missing keys drop."""
+        keys = list(set(keys))
+        empty = np.empty((0, self._num_dimensions), dtype=np.float32)
+        if not keys:
+            return [], empty
+
+        try:
+            return keys, np.asarray(
+                self._index.get_items(keys, return_type="numpy"), dtype=np.float32
+            )
+        except RuntimeError:
+            # Fallback: a missing key was requested. Fetch one by one.
+            present_keys: list[int] = []
+            rows: list[np.ndarray] = []
+            for key in keys:
+                with contextlib.suppress(RuntimeError):
+                    rows.append(
+                        np.asarray(
+                            self._index.get_items([key], return_type="numpy"),
+                            dtype=np.float32,
+                        )[0]
+                    )
+                    present_keys.append(key)
+            if not present_keys:
+                return [], empty
+            return present_keys, np.vstack(rows)
 
     @override
     async def remove(self, keys: Iterable[int]) -> None:

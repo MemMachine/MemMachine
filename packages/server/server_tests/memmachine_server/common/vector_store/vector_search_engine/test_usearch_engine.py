@@ -109,6 +109,107 @@ class TestRemove:
 # -- Search: Cosine --
 
 
+# -- Search: non-unit input --
+
+
+class TestNonUnitVectors:
+    """Vectors are scaled to unit length on the way in, so scores are cosines.
+
+    Every other test here passes unit vectors, under which the scaling is a
+    no-op. These pass magnitudes and pin that the score is the cosine of the
+    originals rather than their raw inner product.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stored_magnitude_does_not_reach_the_score(self):
+        engine = USearchVectorSearchEngine(num_dimensions=NDIM)
+        await engine.add({1: [3.0, 4.0, 0.0]})
+
+        result = await _search_one(engine, [1.0, 0.0, 0.0], limit=1)
+        # Raw inner product would be 3.0; the cosine is 0.6.
+        assert result.matches[0].cosine_similarity == pytest.approx(0.6, abs=1e-3)
+
+    @pytest.mark.asyncio
+    async def test_query_magnitude_does_not_reach_the_score(self):
+        engine = USearchVectorSearchEngine(num_dimensions=NDIM)
+        await engine.add({1: _normalize([1.0, 0.0, 0.0])})
+
+        result = await _search_one(engine, [50.0, 0.0, 0.0], limit=1)
+        assert result.matches[0].cosine_similarity == pytest.approx(1.0, abs=1e-3)
+
+    @pytest.mark.asyncio
+    async def test_allowlist_scores_are_cosines(self):
+        engine = USearchVectorSearchEngine(num_dimensions=NDIM)
+        await engine.add({1: [3.0, 4.0, 0.0], 2: [0.0, 0.0, 9.0]})
+
+        result = await _search_one(engine, [2.0, 0.0, 0.0], limit=2, allowlist=[1, 2])
+        scores = {m.key: m.cosine_similarity for m in result.matches}
+        assert scores[1] == pytest.approx(0.6, abs=1e-3)
+        assert scores[2] == pytest.approx(0.0, abs=1e-3)
+
+    @pytest.mark.asyncio
+    async def test_scores_stay_within_the_cosine_range(self):
+        engine = USearchVectorSearchEngine(num_dimensions=NDIM)
+        await engine.add({key: _normalize([1.0, 0.0, 0.0]) for key in range(20)})
+
+        result = await _search_one(
+            engine, _normalize([1.0, 0.0, 0.0]), limit=20, allowlist=list(range(20))
+        )
+        assert all(-1.0 <= m.cosine_similarity <= 1.0 for m in result.matches)
+
+
+# -- Search: allowlist --
+
+
+class TestSearchAllowlist:
+    @pytest.mark.asyncio
+    async def test_allowlist_restricts_results(self):
+        engine = USearchVectorSearchEngine(num_dimensions=NDIM)
+        await engine.add(
+            {
+                1: _normalize([1, 0, 0]),
+                2: _normalize([0, 1, 0]),
+                3: _normalize([0, 0, 1]),
+            }
+        )
+        result = await _search_one(
+            engine, _normalize([1, 0, 0]), limit=3, allowlist=[2, 3]
+        )
+        assert {m.key for m in result.matches} == {2, 3}
+
+    @pytest.mark.asyncio
+    async def test_allowlist_excludes_best_match(self):
+        engine = USearchVectorSearchEngine(num_dimensions=NDIM)
+        await engine.add(
+            {
+                1: _normalize([1, 0, 0]),
+                2: _normalize([0, 1, 0]),
+                3: _normalize([0, 0, 1]),
+            }
+        )
+        result = await _search_one(
+            engine, _normalize([1, 0, 0]), limit=1, allowlist=[2, 3]
+        )
+        assert len(result.matches) == 1
+        assert result.matches[0].key in {2, 3}
+
+    @pytest.mark.asyncio
+    async def test_empty_allowlist_returns_nothing(self):
+        engine = USearchVectorSearchEngine(num_dimensions=NDIM)
+        await engine.add({1: _normalize([1, 0, 0])})
+        result = await _search_one(engine, _normalize([1, 0, 0]), limit=1, allowlist=[])
+        assert result.matches == []
+
+    @pytest.mark.asyncio
+    async def test_missing_allowlist_keys_ignored(self):
+        engine = USearchVectorSearchEngine(num_dimensions=NDIM)
+        await engine.add({1: _normalize([1, 0, 0])})
+        result = await _search_one(
+            engine, _normalize([1, 0, 0]), limit=2, allowlist=[1, 99]
+        )
+        assert [m.key for m in result.matches] == [1]
+
+
 class TestSearchCosine:
     @pytest.mark.asyncio
     async def test_basic_knn(self):

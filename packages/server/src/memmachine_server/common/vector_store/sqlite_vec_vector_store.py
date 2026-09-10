@@ -241,7 +241,9 @@ class SQLiteVecVectorStoreCollection(VectorStoreCollection):
             if distance is None:
                 continue
 
-            cosine_similarity = self._distance_to_cosine_similarity(distance)
+            cosine_similarity = (
+                SQLiteVecVectorStoreCollection._distance_to_cosine_similarity(distance)
+            )
             if (
                 min_cosine_similarity is not None
                 and cosine_similarity < min_cosine_similarity

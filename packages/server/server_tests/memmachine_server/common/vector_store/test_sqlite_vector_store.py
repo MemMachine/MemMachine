@@ -1435,3 +1435,167 @@ class TestIndexFileDurability:
 
         await store2.shutdown()
         await engine2.dispose()
+
+
+# ── Filter routing ──
+
+
+class TestFilterRouting:
+    """
+    Property filters route by selectivity.
+
+    A LIMIT probe resolves the filter to an allowlist when it matches few
+    records (pre-filter, scored directly); otherwise the search runs
+    unrestricted and results are post-filtered with bounded widening.
+    """
+
+    async def _seed(self, collection):
+        vectors = [_normalize([1.0, float(index) * 0.01, 0.0]) for index in range(8)]
+        records = [
+            _make_record(
+                vector=vector,
+                properties={"name": "even" if index % 2 == 0 else "odd", "age": index},
+            )
+            for index, vector in enumerate(vectors)
+        ]
+        await collection.upsert(records=records)
+        return records, vectors
+
+    async def _broad_store(self, tmp_path, **params_overrides):
+        db_path = tmp_path / "broad.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        params = SQLiteVectorStoreParams(
+            sqlalchemy_engine=engine,
+            vector_search_engine_factory=lambda ndim: USearchVectorSearchEngine(
+                num_dimensions=ndim
+            ),
+            selective_filter_limit=0,
+            **params_overrides,
+        )
+        vector_store = SQLiteVectorStore(params)
+        await vector_store.startup()
+        return vector_store, engine
+
+    @pytest_asyncio.fixture
+    async def broad_collection(self, tmp_path):
+        vector_store, engine = await self._broad_store(tmp_path)
+        coll = await vector_store.open_or_create_collection(
+            namespace=NAMESPACE,
+            name=NAME,
+            config=VectorStoreCollectionConfig(
+                vector_dimensions=VECTOR_DIM,
+                indexed_properties_schema={"name": str, "age": int},
+            ),
+        )
+        yield coll
+        await vector_store.shutdown()
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_broad_path_filters_and_ranks(self, broad_collection):
+        records, vectors = await self._seed(broad_collection)
+
+        results = await broad_collection.query(
+            query_vectors=[vectors[0]],
+            limit=3,
+            property_filter=Comparison(field="name", op="=", value="odd"),
+        )
+        matches = results[0].matches
+        assert len(matches) == 3
+        odd_uuids = {r.uuid for i, r in enumerate(records) if i % 2 == 1}
+        assert {m.record_uuid for m in matches} <= odd_uuids
+        assert all(
+            matches[i].cosine_similarity >= matches[i + 1].cosine_similarity
+            for i in range(len(matches) - 1)
+        )
+
+    @pytest.mark.asyncio
+    async def test_broad_path_exhausts_on_sparse_filter(self, broad_collection):
+        records, vectors = await self._seed(broad_collection)
+
+        results = await broad_collection.query(
+            query_vectors=[vectors[0]],
+            limit=10,
+            property_filter=Comparison(field="age", op="=", value=7),
+        )
+        assert [m.record_uuid for m in results[0].matches] == [records[7].uuid]
+
+    @pytest.mark.asyncio
+    async def test_broad_path_widens_until_filled(self, broad_collection):
+        vectors = [_normalize([1.0, float(index) * 0.05, 0.0]) for index in range(40)]
+        records = [
+            _make_record(vector=vector, properties={"age": index})
+            for index, vector in enumerate(vectors)
+        ]
+        await broad_collection.upsert(records=records)
+
+        # Matches only ranks 30..39 for a query at rank 0: the first fetch
+        # (limit * 4 = 20) holds no survivors, forcing a widening round.
+        results = await broad_collection.query(
+            query_vectors=[vectors[0]],
+            limit=5,
+            property_filter=Comparison(field="age", op=">=", value=30),
+        )
+        matches = results[0].matches
+        assert len(matches) == 5
+        assert {m.record_uuid for m in matches} == {r.uuid for r in records[30:35]}
+
+    @pytest.mark.asyncio
+    async def test_broad_path_caps_widening(self, tmp_path):
+        vector_store, engine = await self._broad_store(tmp_path, max_overfetch_factor=2)
+        try:
+            coll = await vector_store.open_or_create_collection(
+                namespace=NAMESPACE,
+                name=NAME,
+                config=VectorStoreCollectionConfig(
+                    vector_dimensions=VECTOR_DIM,
+                    indexed_properties_schema={"age": int},
+                ),
+            )
+            vectors = [
+                _normalize([1.0, float(index) * 0.05, 0.0]) for index in range(40)
+            ]
+            records = [
+                _make_record(vector=vector, properties={"age": index})
+                for index, vector in enumerate(vectors)
+            ]
+            await coll.upsert(records=records)
+
+            # Survivors rank below the capped fetch (limit * 2 = 10), so the
+            # query returns fewer than `limit` rather than widening further.
+            results = await coll.query(
+                query_vectors=[vectors[0]],
+                limit=5,
+                property_filter=Comparison(field="age", op=">=", value=30),
+            )
+            assert results[0].matches == []
+        finally:
+            await vector_store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_selective_and_broad_agree(self, collection, broad_collection):
+        records, vectors = await self._seed(collection)
+        await broad_collection.upsert(records=records)
+
+        property_filter = Comparison(field="name", op="=", value="even")
+        [selective_result] = await collection.query(
+            query_vectors=[vectors[1]],
+            limit=3,
+            property_filter=property_filter,
+        )
+        [broad_result] = await broad_collection.query(
+            query_vectors=[vectors[1]],
+            limit=3,
+            property_filter=property_filter,
+        )
+
+        assert [m.record_uuid for m in selective_result.matches] == [
+            m.record_uuid for m in broad_result.matches
+        ]
+        for selective_match, broad_match in zip(
+            selective_result.matches, broad_result.matches, strict=True
+        ):
+            assert selective_match.cosine_similarity == pytest.approx(
+                broad_match.cosine_similarity, abs=1e-4
+            )
