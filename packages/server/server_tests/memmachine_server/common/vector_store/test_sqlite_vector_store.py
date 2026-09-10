@@ -1,5 +1,6 @@
 """Tests for SQLiteVectorStore."""
 
+import asyncio
 import math
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -36,6 +37,9 @@ from memmachine_server.common.vector_store.sqlite_vector_store import (
 )
 from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
     USearchVectorSearchEngine,
+)
+from memmachine_server.common.vector_store.vector_search_engine.vector_search_engine import (
+    VectorSearchEngine,
 )
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
@@ -950,8 +954,6 @@ class TestConcurrentAsync:
     @pytest.mark.asyncio
     async def test_concurrent_upserts(self, collection):
         """Multiple concurrent upserts should not error and all records should be persisted."""
-        import asyncio
-
         all_uuids: list[UUID] = []
 
         async def upsert_batch(start: int) -> None:
@@ -974,8 +976,6 @@ class TestConcurrentAsync:
     @pytest.mark.asyncio
     async def test_concurrent_upsert_and_query(self, collection):
         """Query during upsert should not error (eventual consistency)."""
-        import asyncio
-
         records = [
             _make_record(vector=_normalize([float(i), 1.0, 0.0])) for i in range(20)
         ]
@@ -995,6 +995,129 @@ class TestConcurrentAsync:
             await collection.upsert(records=more_records)
 
         await asyncio.gather(query_loop(), upsert_more())
+
+
+# ── row_id reuse (issue #1468) ──
+
+
+class _GatedSearchEngine(VectorSearchEngine):
+    """Delegates to a real engine; the next search() parks after scoring.
+
+    query() scores keys and then resolves them to rows without a lock, so a
+    write can retire a scored row in the gap. The gate parks in that gap.
+    """
+
+    def __init__(self, inner: VectorSearchEngine) -> None:
+        self.inner = inner
+        self.gate: asyncio.Event | None = None
+        self.gate_reached = asyncio.Event()
+
+    async def add(self, vectors):
+        await self.inner.add(vectors)
+
+    async def remove(self, keys):
+        await self.inner.remove(keys)
+
+    async def search(self, vectors, *, limit, allowed_keys=None):
+        results = await self.inner.search(
+            vectors, limit=limit, allowed_keys=allowed_keys
+        )
+        if self.gate is not None:
+            gate, self.gate = self.gate, None
+            self.gate_reached.set()
+            await gate.wait()
+        return results
+
+    async def save(self, path):
+        await self.inner.save(path)
+
+    async def load(self, path):
+        await self.inner.load(path)
+
+
+class TestRowIdReuse:
+    """Regression tests for row_id reuse (issue #1468).
+
+    Without AUTOINCREMENT, SQLite assigns max(rowid) + 1, so a deleted record's
+    id can go to the next insert. Serialized writes do not cover the read path,
+    which resolves scored keys to rows without a lock, so these tests pin the
+    id policy itself.
+    """
+
+    async def _row_id_of(self, collection, record_uuid):
+        async with collection._create_session() as session:
+            return (
+                await session.execute(
+                    select(collection._records_table.c.row_id).where(
+                        collection._records_table.c.uuid == record_uuid
+                    )
+                )
+            ).scalar_one()
+
+    @pytest.mark.asyncio
+    async def test_row_ids_are_never_reused(self, collection):
+        """A new record must not be assigned a previously deleted row_id."""
+        record_a = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await collection.upsert(records=[record_a])
+        row_id_a = await self._row_id_of(collection, record_a.uuid)
+
+        await collection.delete(record_uuids=[record_a.uuid])
+
+        record_b = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        await collection.upsert(records=[record_b])
+        row_id_b = await self._row_id_of(collection, record_b.uuid)
+
+        assert row_id_b != row_id_a
+
+    @pytest.mark.asyncio
+    async def test_a_query_cannot_return_a_record_it_never_scored(self, tmp_path):
+        """A key the engine scored must never resolve to a later record.
+
+        Writes run freely between scoring and row lookup, so a reused row_id
+        would return a never-scored record with another's score: here, a
+        record orthogonal to the query as a perfect hit. With ids never reused
+        the stale key matches no row and is dropped.
+        """
+        db_path = tmp_path / "test.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        gated_engines: list[_GatedSearchEngine] = []
+
+        def factory(ndim):
+            gated = _GatedSearchEngine(USearchVectorSearchEngine(num_dimensions=ndim))
+            gated_engines.append(gated)
+            return gated
+
+        store = SQLiteVectorStore(_params(engine, vector_search_engine_factory=factory))
+        await store.startup()
+        try:
+            collection = await store.open_or_create_partition(NAME)
+            (gated_engine,) = gated_engines
+
+            scored = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            await collection.upsert(records=[scored])
+
+            # The query parks holding the scored key: the highest row_id, and
+            # so the one a reused id would hand out next.
+            gate = asyncio.Event()
+            gated_engine.gate = gate
+            query_task = asyncio.create_task(
+                collection.query(query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1)
+            )
+            await gated_engine.gate_reached.wait()
+
+            await collection.delete(record_uuids=[scored.uuid])
+            successor = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+            await collection.upsert(records=[successor])
+
+            gate.set()
+            results = await query_task
+
+            assert [match.record_uuid for match in results[0].matches] == [], (
+                "a record the engine never scored was returned"
+            )
+        finally:
+            await store.shutdown()
+            await engine.dispose()
 
 
 # ── Crash recovery & pending operations ──

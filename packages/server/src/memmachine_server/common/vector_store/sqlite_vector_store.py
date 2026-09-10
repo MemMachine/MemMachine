@@ -1003,6 +1003,10 @@ class SQLiteVectorStore(VectorStore):
             Column("uuid", Uuid, nullable=False, unique=True),
             *property_columns(self._indexed_properties),
             extend_existing=True,
+            # A plain rowid is reused once the highest row is deleted. query()
+            # resolves scored keys to rows without a lock, so a scored key could
+            # resolve to a record other than the one the engine scored.
+            sqlite_autoincrement=True,
         )
         property_indexes(records_table, self._indexed_properties)
         return records_table
