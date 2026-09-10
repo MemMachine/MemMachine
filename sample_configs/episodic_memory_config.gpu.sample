@@ -100,7 +100,13 @@ resources:
         grpc_port: 6334
         prefer_grpc: false
         https: false
+        request_timeout: 30              # seconds; required, bounds every request
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
+        # Property keys every collection indexes and filters on, with their
+        # types (str, int, float, bool, datetime). The service's own system
+        # keys are added; any other key is rejected by the store.
+        # indexed_properties:
+        #   category: str
     # VectorStore for vector-backed semantic memory.
     # Wire it via `semantic_memory.vector_collection`.
     semantic_vector_store:
@@ -111,7 +117,13 @@ resources:
         grpc_port: 6334
         prefer_grpc: false
         https: false
+        request_timeout: 30              # seconds; required, bounds every request
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
+        # Property keys every collection indexes and filters on, with their
+        # types (str, int, float, bool, datetime). The service's own system
+        # keys are added; any other key is rejected by the store.
+        # indexed_properties:
+        #   category: str
     #
     # Alternative: Milvus. The local .db URI uses Milvus Lite; replace it with
     # http(s)://... plus token/db_name for Milvus server or Zilliz Cloud.
@@ -122,6 +134,9 @@ resources:
     #     # token: $MILVUS_TOKEN
     #     # db_name: default
     #     consistency_level: Session       # Strong, Session, Bounded, Eventually
+    #     request_timeout: 30              # seconds; required
+    #     # indexed_properties:
+    #     #   category: str
     # semantic_vector_store:
     #   provider: milvus
     #   config:
@@ -129,6 +144,7 @@ resources:
     #     # token: $MILVUS_TOKEN
     #     # db_name: default
     #     consistency_level: Session
+    #     request_timeout: 30              # seconds; required
     #
     # Alternative: a local file-backed SQLite vector store. Single-writer; OK
     # for embedded/dev use, not recommended for multi-process server deploys.
@@ -142,6 +158,8 @@ resources:
     #     # table on every restart — fine for tests, not for production.
     #     index_directory: event_vector_indexes
     #     save_threshold: 1000             # ops before auto-saving
+    #     # indexed_properties:
+    #     #   category: str
   embedders:
     openai_embedder:
       provider: openai

@@ -7,13 +7,13 @@ from uuid import uuid4
 
 from memmachine_server.common.utils import extract_sentences
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
     Context,
     Derivative,
     FormatOptions,
-    NullContext,
-    ProducerContext,
     Segment,
     TextBlock,
+    get_part,
 )
 from memmachine_server.episodic_memory.event_memory.deriver.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.formatting import (
@@ -23,15 +23,10 @@ from memmachine_server.episodic_memory.event_memory.formatting import (
 
 def _format_with_context(context: Context, text: str) -> str:
     """Format text within its context."""
-    match context:
-        case ProducerContext(producer=producer):
-            return f"{producer}: {text}"
-        case NullContext():
-            return text
-        case _:
-            raise NotImplementedError(
-                f"Unsupported context type: {type(context).__name__}"
-            )
+    author = get_part(context, Author)
+    if author is None:
+        return text
+    return f"{author.name}: {text}"
 
 
 def _format_for_embedding(
@@ -42,7 +37,7 @@ def _format_for_embedding(
     """Format a segment's text as an embedding anchor."""
     # Mirror the query result formatters: the message text is JSON-dumped
     # (ensure_ascii=False) so it is a single escaped token, while the
-    # producer prefix stays outside the quotes.
+    # author prefix stays outside the quotes.
     body = _format_with_context(segment.context, json.dumps(text, ensure_ascii=False))
     if format_options is None:
         format_options = FormatOptions(time_style=None)
@@ -60,6 +55,8 @@ def _build_text_derivatives(segment: Segment, texts: Iterable[str]) -> list[Deri
             uuid=uuid4(),
             segment_uuid=segment.uuid,
             timestamp=segment.timestamp,
+            session_id=segment.session_id,
+            source_id=segment.source_id,
             context=segment.context,
             block=TextBlock(text=text),
             properties=segment.properties,
@@ -86,7 +83,7 @@ class WholeTextDeriver(Deriver):
                 )
             case _:
                 raise NotImplementedError(
-                    f"Unsupported block type: {type(segment.block).__name__}"
+                    f"Unsupported block kind: {segment.block.kind!r}"
                 )
 
 
@@ -111,5 +108,5 @@ class SentenceTextDeriver(Deriver):
                 )
             case _:
                 raise NotImplementedError(
-                    f"Unsupported block type: {type(segment.block).__name__}"
+                    f"Unsupported block kind: {segment.block.kind!r}"
                 )

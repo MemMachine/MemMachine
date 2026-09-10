@@ -4,7 +4,9 @@ import pytest
 
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import InvalidSetIdConfigurationError
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (

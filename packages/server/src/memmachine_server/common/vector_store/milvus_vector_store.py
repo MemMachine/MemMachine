@@ -14,35 +14,24 @@ from pydantic import BaseModel, Field, InstanceOf
 from pymilvus import DataType, MilvusClient
 from pymilvus.exceptions import MilvusException
 
-from memmachine_server.common.data_types import PropertyValue
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.data_types import PropertyType, PropertyValue
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsMissing,
+    Not,
+    NotEquals,
+    Or,
+    Ordering,
+    OrderingOp,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
-from memmachine_server.common.properties_json import (
-    encode_properties,
-)
 from memmachine_server.common.utils import compute_cosine_similarity, ensure_tz_aware
 
 from .data_types import (
+    IndexedProperties,
     QueryMatch,
     QueryResult,
     Record,
@@ -50,21 +39,27 @@ from .data_types import (
     VectorStoreCollectionConfig,
     VectorStoreCollectionConfigMismatchError,
 )
-from .utils import validate_filter, validate_identifier
+from .declared_properties import require_declared_properties, require_supported_filter
+from .utils import validate_identifier
 from .vector_store import VectorStore, VectorStoreCollection
 
 _ID_FIELD = "id"
 _RECORD_UUID_FIELD = "record_uuid"
 _PARTITION_KEY_FIELD = "partition_key"
 _VECTOR_FIELD = "vector"
-_PROPERTIES_FIELD = "properties"
 _PROPERTY_FILTER_PREFIX = "_p_"
+
+_INVERSE_ORDERING: dict[OrderingOp, OrderingOp] = {
+    ">": "<=",
+    ">=": "<",
+    "<": ">=",
+    "<=": ">",
+}
 
 _MAX_UUID_LENGTH = 36
 _MAX_PRIMARY_ID_LENGTH = 128
 _MAX_PARTITION_KEY_LENGTH = 32
 _REGISTRY_VECTOR_DIMENSION = 2
-_FALSE_EXPR = f'{_ID_FIELD} == "__memmachine_no_match__"'
 
 
 def _expr_string(value: str) -> str:
@@ -98,41 +93,73 @@ def _normalize_property_filter_value(value: PropertyValue) -> PropertyValue:
 class MilvusVectorStoreCollection(VectorStoreCollection):
     """A logical collection backed by Milvus."""
 
-    _RANGE_OPERATORS: ClassVar[set[str]] = {">", ">=", "<", "<="}
+    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
+        {Equals, NotEquals, Ordering, In, IsMissing, And, Or, Not}
+    )
 
     @staticmethod
     def _build_milvus_filter(expr: FilterExpr) -> str:
         """Convert a FilterExpr tree into a Milvus filter expression."""
-        if isinstance(expr, FilterComparison):
-            return MilvusVectorStoreCollection._build_milvus_comparison(expr)
-        if isinstance(expr, FilterIn):
-            if not expr.values:
-                return _FALSE_EXPR
-            values = ", ".join(_literal(value) for value in expr.values)
-            return f"{_property_field(expr.field)} in [{values}]"
-        if isinstance(expr, FilterIsNull):
-            return f"{_property_field(expr.field)} is null"
-        if isinstance(expr, FilterNot):
-            return (
-                f"not ({MilvusVectorStoreCollection._build_milvus_filter(expr.expr)})"
-            )
-        if isinstance(expr, FilterAnd):
-            left = MilvusVectorStoreCollection._build_milvus_filter(expr.left)
-            right = MilvusVectorStoreCollection._build_milvus_filter(expr.right)
-            return f"({left}) && ({right})"
-        if isinstance(expr, FilterOr):
-            left = MilvusVectorStoreCollection._build_milvus_filter(expr.left)
-            right = MilvusVectorStoreCollection._build_milvus_filter(expr.right)
-            return f"({left}) || ({right})"
-        message = f"Unsupported filter expression type: {type(expr)}"
-        raise TypeError(message)
+        build = MilvusVectorStoreCollection._build_milvus_filter
+        match expr:
+            case Equals(field, value):
+                return f"{_property_field(field)} == {_literal(value)}"
+            case NotEquals(field, value):
+                return f"{_property_field(field)} != {_literal(value)}"
+            case Ordering(field, op, value):
+                return f"{_property_field(field)} {op} {_literal(value)}"
+            case In(field, values):
+                literals = ", ".join(_literal(value) for value in values)
+                return f"{_property_field(field)} in [{literals}]"
+            case IsMissing(field):
+                return f"{_property_field(field)} is null"
+            case Not(operand):
+                return MilvusVectorStoreCollection._negated(operand)
+            case And(operands):
+                return " && ".join(f"({build(o)})" for o in operands)
+            case Or(operands):
+                return " || ".join(f"({build(o)})" for o in operands)
 
     @staticmethod
-    def _build_milvus_comparison(comparison: FilterComparison) -> str:
-        """Convert a Comparison into a Milvus filter expression."""
-        field = _property_field(comparison.field)
-        operator = "==" if comparison.op == "=" else comparison.op
-        return f"{field} {operator} {_literal(comparison.value)}"
+    def _negated(expr: FilterExpr) -> str:
+        """The complement of a tree as a Milvus expression, pushed to the leaves.
+
+        Milvus's own `not` does not admit entities lacking the field, so a
+        negated predicate is rendered as the inverse predicate or the field's
+        absence, which is the complement the filter language defines.
+        """
+        build = MilvusVectorStoreCollection._build_milvus_filter
+        negated = MilvusVectorStoreCollection._negated
+        match expr:
+            case Equals(field, value):
+                return (
+                    f"({_property_field(field)} != {_literal(value)}) || "
+                    f"({_property_field(field)} is null)"
+                )
+            case NotEquals(field, value):
+                return (
+                    f"({_property_field(field)} == {_literal(value)}) || "
+                    f"({_property_field(field)} is null)"
+                )
+            case Ordering(field, op, value):
+                return (
+                    f"({_property_field(field)} {_INVERSE_ORDERING[op]} {_literal(value)}) || "
+                    f"({_property_field(field)} is null)"
+                )
+            case In(field, values):
+                literals = ", ".join(_literal(value) for value in values)
+                return (
+                    f"({_property_field(field)} not in [{literals}]) || "
+                    f"({_property_field(field)} is null)"
+                )
+            case IsMissing(field):
+                return f"{_property_field(field)} is not null"
+            case Not(operand):
+                return build(operand)
+            case And(operands):
+                return " || ".join(f"({negated(o)})" for o in operands)
+            case Or(operands):
+                return " && ".join(f"({negated(o)})" for o in operands)
 
     @staticmethod
     def _primary_id(partition_key: str, record_uuid: UUID) -> str:
@@ -146,6 +173,7 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
         collection_name: str,
         partition_key: str,
         config: VectorStoreCollectionConfig,
+        indexed_properties: Mapping[str, PropertyType],
         tracker: OperationTracker,
     ) -> None:
         """Initialize with a Milvus client and collection name."""
@@ -153,6 +181,7 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
         self._collection_name = collection_name
         self._partition_key = partition_key
         self._config = config
+        self._indexed_properties = dict(indexed_properties)
         self._tracker = tracker
 
     @property
@@ -161,20 +190,28 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
         """The configuration for this collection."""
         return self._config
 
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
+
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return MilvusVectorStoreCollection._SUPPORTED_FILTER_NODES
+
     def _build_entity(self, record: Record) -> dict[str, Any]:
         """Build a Milvus entity from a vector store record."""
-        properties = record.properties if record.properties is not None else {}
         entity: dict[str, Any] = {
             _ID_FIELD: self._primary_id(self._partition_key, record.uuid),
             _RECORD_UUID_FIELD: str(record.uuid),
             _PARTITION_KEY_FIELD: self._partition_key,
             _VECTOR_FIELD: record.vector,
-            _PROPERTIES_FIELD: encode_properties(properties),
         }
         # Explicit nulls clear stale dynamic fields during native Milvus upserts.
-        for key in self._config.indexed_properties_schema:
+        for key in self._indexed_properties:
             entity[_property_field(key)] = None
-        for key, value in properties.items():
+        for key, value in record.properties.items():
             entity[_property_field(key)] = _normalize_property_filter_value(value)
         return entity
 
@@ -210,6 +247,8 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
             if not records:
                 return
 
+            for record in records:
+                require_declared_properties(record.properties, self._indexed_properties)
             entities = [self._build_entity(record) for record in records]
 
             def _upsert() -> None:
@@ -239,8 +278,11 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
 
             filter_expr = self._partition_filter()
             if property_filter is not None:
-                if not validate_filter(property_filter):
-                    raise ValueError("Filter contains an invalid property key")
+                require_supported_filter(
+                    property_filter,
+                    self._indexed_properties,
+                    MilvusVectorStoreCollection._SUPPORTED_FILTER_NODES,
+                )
                 property_expr = self._build_milvus_filter(property_filter)
                 filter_expr = f"({filter_expr}) && ({property_expr})"
 
@@ -314,6 +356,10 @@ class MilvusVectorStoreParams(BaseModel):
     Attributes:
         client (MilvusClient): Milvus client instance.
         consistency_level (str): Collection consistency level for newly created collections.
+        indexed_properties (IndexedProperties):
+            The declared schema every collection of this store carries: each
+            key is a dynamic field a search filters on, and a record or a
+            filter naming any other key is rejected.
         metrics_factory (MetricsFactory | None): Metrics factory for collecting usage metrics.
     """
 
@@ -324,6 +370,10 @@ class MilvusVectorStoreParams(BaseModel):
     consistency_level: str = Field(
         default="Session",
         description="Milvus consistency level for newly created collections",
+    )
+    indexed_properties: IndexedProperties = Field(
+        ...,
+        description="The declared schema every collection of this store carries",
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
@@ -338,7 +388,6 @@ class MilvusVectorStore(VectorStore):
 
     _REGISTRY_SUFFIX: ClassVar[str] = "__registry"
     _REGISTRY_VECTOR_DIMENSIONS: ClassVar[str] = "vector_dimensions"
-    _REGISTRY_INDEXED_PROPERTIES_SCHEMA: ClassVar[str] = "indexed_properties_schema"
     _REGISTRY_CONFIG: ClassVar[str] = "config"
 
     _name_locks: ClassVar[
@@ -378,6 +427,7 @@ class MilvusVectorStore(VectorStore):
         super().__init__()
         self._client = params.client
         self._consistency_level = params.consistency_level
+        self._indexed_properties = params.indexed_properties
         self._tracker = OperationTracker(
             params.metrics_factory,
             prefix="vector_store_milvus",
@@ -385,6 +435,11 @@ class MilvusVectorStore(VectorStore):
         self._client_name_locks = MilvusVectorStore._name_locks.setdefault(
             self._client, defaultdict(asyncio.Lock)
         )
+
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
 
     @override
     async def startup(self) -> None:
@@ -497,9 +552,6 @@ class MilvusVectorStore(VectorStore):
         """Parse a VectorStoreCollectionConfig from a registry entry."""
         return VectorStoreCollectionConfig(
             vector_dimensions=entry[MilvusVectorStore._REGISTRY_VECTOR_DIMENSIONS],
-            indexed_properties_schema=entry[
-                MilvusVectorStore._REGISTRY_INDEXED_PROPERTIES_SCHEMA
-            ],
         )
 
     def _build_collection_handle(
@@ -513,6 +565,7 @@ class MilvusVectorStore(VectorStore):
             ),
             partition_key=name,
             config=config,
+            indexed_properties=self._indexed_properties,
             tracker=self._tracker,
         )
 
@@ -553,10 +606,6 @@ class MilvusVectorStore(VectorStore):
                 datatype=DataType.FLOAT_VECTOR,
                 dim=config.vector_dimensions,
             )
-            schema.add_field(
-                field_name=_PROPERTIES_FIELD,
-                datatype=DataType.JSON,
-            )
 
             index_params = self._client.prepare_index_params()
             index_params.add_index(
@@ -592,9 +641,6 @@ class MilvusVectorStore(VectorStore):
                     _VECTOR_FIELD: [0.0] * _REGISTRY_VECTOR_DIMENSION,
                     self._REGISTRY_CONFIG: {
                         self._REGISTRY_VECTOR_DIMENSIONS: config.vector_dimensions,
-                        self._REGISTRY_INDEXED_PROPERTIES_SCHEMA: config.model_dump(
-                            mode="json"
-                        )["indexed_properties_schema"],
                     },
                 }
             ],

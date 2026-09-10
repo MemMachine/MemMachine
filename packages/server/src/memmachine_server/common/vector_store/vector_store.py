@@ -5,12 +5,11 @@ Defines the interface for adding, querying, and deleting records.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from uuid import UUID
 
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-)
+from memmachine_server.common.data_types import PropertyType
+from memmachine_server.common.filter import FilterExpr
 
 from .data_types import (
     QueryResult,
@@ -26,17 +25,35 @@ class VectorStoreCollection(ABC):
     Identified by a (namespace, name) pair.
     All data operations are scoped to this logical collection.
 
-    Implementations must support storing and filtering on record properties
-    not declared in the configured indexed properties schema.
-
-    The schema exists to support indexing on fixed-type record properties.
-    Record properties not declared in the schema may have mixed-type values.
+    A collection stores the properties its store declares
+    (`indexed_properties`), typed and indexed for filtering during a
+    search, and no others: a record or a filter naming an undeclared key is
+    rejected, so an undeclared key never exists in the store, neither
+    stored write-only nor scanned for.
     """
 
     @property
     @abstractmethod
     def config(self) -> VectorStoreCollectionConfig:
         """The configuration for this collection."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        """The declared schema: every key this collection stores and filters on."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def supported_filter_nodes(self) -> frozenset[type]:
+        """
+        The filter node classes the backend evaluates during a search.
+
+        A `query` whose filter uses any other node raises
+        `UnsupportedFilterError`; a caller routes such a predicate to a store
+        that evaluates it afterward.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -54,9 +71,14 @@ class VectorStoreCollection(ABC):
         Args:
             records (Iterable[Record]):
                 Iterable of records to upsert.
-                Records containing properties
-                not in the indexed properties schema
-                are allowed.
+
+        Raises:
+            UndeclaredPropertyKeyError:
+                If a record carries a key the store has not declared;
+                raised before anything is sent.
+            PropertyTypeMismatchError:
+                If a record's value is not of its key's declared type;
+                raised before anything is sent.
         """
         raise NotImplementedError
 
@@ -83,19 +105,27 @@ class VectorStoreCollection(ABC):
                 The vectors to compare against.
             limit (int):
                 Maximum number of matching records to return per query vector.
+                A filtered search returns fewer when the filter admits fewer.
             min_cosine_similarity (float | None):
                 If provided, only return matches whose cosine similarity
                 is greater than or equal to this value
                 (default: None).
             property_filter (FilterExpr | None):
-                Filter expression tree.
-                If None or empty, no property filtering is applied
+                Filter expression tree over declared keys, evaluated during
+                the search.
+                If None, no property filtering is applied
                 (default: None).
 
         Returns:
             list[QueryResult]:
                 Results for each query vector,
                 ordered as in the input iterable.
+
+        Raises:
+            UndeclaredPropertyKeyError:
+                If the filter names a key the store has not declared.
+            UnsupportedFilterError:
+                If the filter uses a node outside `supported_filter_nodes`.
         """
         raise NotImplementedError
 
@@ -124,14 +154,25 @@ class VectorStore(ABC):
     The consumer is responsible for sharding names across processes.
 
     Different namespaces are fully independent (separate native collections).
-    Multiple logical collections with the same (namespace, vector dimensions, indexed properties schema)
+    Multiple logical collections with the same (namespace, vector dimensions)
     may share a native collection to reduce overhead.
+
+    A store declares one indexed-property schema for every collection it
+    holds, from deployment configuration merged with the system keys of the
+    consumer it is built for; the schema is fixed for the life of the
+    store's data, and changing it is a migration.
 
     Naming constraints:
         - Namespaces, names, and property keys must match `[a-z0-9_]+`
           (lowercase alphanumeric and underscores only).
         - Each identifier must be at most 32 bytes.
     """
+
+    @property
+    @abstractmethod
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        """The declared schema every collection of this store carries."""
+        raise NotImplementedError
 
     @abstractmethod
     async def startup(self) -> None:
@@ -155,7 +196,7 @@ class VectorStore(ABC):
         Create a logical collection in the vector store and return a handle to it.
 
         A (namespace, name) pair uniquely identifies a collection.
-        The configuration (dimensions, schema) is fixed at creation time.
+        The configuration (dimensions) is fixed at creation time.
 
         Args:
             namespace (str):

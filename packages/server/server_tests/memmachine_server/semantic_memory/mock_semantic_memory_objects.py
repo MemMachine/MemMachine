@@ -8,7 +8,9 @@ from pydantic import InstanceOf
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeIdT
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import (
+    FilterExpr,
+)
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
     Resources,

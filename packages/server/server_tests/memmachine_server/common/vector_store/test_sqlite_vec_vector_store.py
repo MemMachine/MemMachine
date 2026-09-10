@@ -10,14 +10,17 @@ import pytest_asyncio
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     In,
     Not,
     Or,
+    Ordering,
 )
 from memmachine_server.common.vector_store.data_types import (
+    IndexedPropertiesMismatchError,
     Record,
     VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
@@ -28,6 +31,10 @@ from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
     SQLiteVecVectorStoreCollection,
     SQLiteVecVectorStoreParams,
 )
+from server_tests.memmachine_server.common.filter.nodes import comparison
+from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
+    DeclaredSchemaContract,
+)
 
 pytestmark = pytest.mark.skipif(
     not hasattr(sqlite3.Connection, "enable_load_extension"),
@@ -37,6 +44,14 @@ pytestmark = pytest.mark.skipif(
 NAMESPACE = "test_namespace"
 NAME = "test_name"
 VECTOR_DIM = 3
+
+INDEXED_PROPERTIES: dict[str, type[PropertyValue]] = {
+    "name": str,
+    "age": int,
+    "score": float,
+    "active": bool,
+    "created_at": datetime,
+}
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -81,7 +96,9 @@ def _make_record(
 async def store(tmp_path):
     db_path = tmp_path / "test.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-    params = SQLiteVecVectorStoreParams(engine=engine)
+    params = SQLiteVecVectorStoreParams(
+        indexed_properties=INDEXED_PROPERTIES, engine=engine
+    )
     vector_store = SQLiteVecVectorStore(params)
     await vector_store.startup()
     yield vector_store
@@ -96,13 +113,6 @@ async def collection(store):
         name=NAME,
         config=VectorStoreCollectionConfig(
             vector_dimensions=VECTOR_DIM,
-            indexed_properties_schema={
-                "name": str,
-                "age": int,
-                "score": float,
-                "active": bool,
-                "created_at": datetime,
-            },
         ),
     )
     coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
@@ -139,13 +149,6 @@ class TestCollectionLifecycle:
                 name=NAME,
                 config=VectorStoreCollectionConfig(
                     vector_dimensions=VECTOR_DIM,
-                    indexed_properties_schema={
-                        "name": str,
-                        "age": int,
-                        "score": float,
-                        "active": bool,
-                        "created_at": datetime,
-                    },
                 ),
             )
 
@@ -257,7 +260,7 @@ class TestUpsertAndQuery:
         [result] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="name", op="=", value="updated"),
+            property_filter=Equals(field="name", value="updated"),
         )
         assert [m.record_uuid for m in result.matches] == [record.uuid]
 
@@ -334,6 +337,10 @@ class TestUpsertAndQuery:
 # ── Filters ──
 
 
+class TestDeclaredSchema(DeclaredSchemaContract):
+    """The declared-schema contract, against this store."""
+
+
 class TestFilters:
     async def _setup(self, collection):
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -387,7 +394,7 @@ class TestFilters:
         all_results = await collection.query(
             query_vectors=[query_vector],
             limit=10,
-            property_filter=Comparison(field=field, op=op, value=value),
+            property_filter=comparison(field, op, value),
         )
         return {match.record_uuid for match in all_results[0].matches}
 
@@ -495,7 +502,7 @@ class TestFilters:
         [result] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="created_at", op="=", value=dt),
+            property_filter=Equals(field="created_at", value=dt),
         )
         assert [m.record_uuid for m in result.matches] == [r1.uuid]
 
@@ -560,9 +567,7 @@ class TestFilters:
         [result] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(
-                field="created_at", op="=", value=dt.astimezone(UTC)
-            ),
+            property_filter=Equals(field="created_at", value=dt.astimezone(UTC)),
         )
         assert [m.record_uuid for m in result.matches] == [r1.uuid]
 
@@ -574,7 +579,7 @@ class TestFilters:
         query_results = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=In(field="name", values=["alice", "carol"]),
+            property_filter=In(field="name", values=("alice", "carol")),
         )
         uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
@@ -588,8 +593,10 @@ class TestFilters:
             query_vectors=[v1],
             limit=10,
             property_filter=And(
-                left=Comparison(field="active", op="=", value=True),
-                right=Comparison(field="age", op=">", value=30),
+                (
+                    Equals(field="active", value=True),
+                    Ordering(field="age", op=">", value=30),
+                )
             ),
         )
         matches = query_results[0].matches
@@ -603,8 +610,10 @@ class TestFilters:
             query_vectors=[v1],
             limit=10,
             property_filter=Or(
-                left=Comparison(field="name", op="=", value="alice"),
-                right=Comparison(field="name", op="=", value="carol"),
+                (
+                    Equals(field="name", value="alice"),
+                    Equals(field="name", value="carol"),
+                )
             ),
         )
         uuids = {match.record_uuid for match in query_results[0].matches}
@@ -618,7 +627,7 @@ class TestFilters:
         query_results = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Not(expr=Comparison(field="age", op=">", value=30)),
+            property_filter=Not(Ordering(field="age", op=">", value=30)),
         )
         uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
@@ -890,7 +899,7 @@ class TestUpsertBehavior:
         [named_bob] = await collection.query(
             query_vectors=[v2],
             limit=10,
-            property_filter=Comparison(field="name", op="=", value="bob"),
+            property_filter=Equals(field="name", value="bob"),
         )
         assert [m.record_uuid for m in named_bob.matches] == [record_uuid]
 
@@ -916,11 +925,43 @@ class TestFilterEdgeCases:
             query_vectors=[v1],
             limit=10,
             property_filter=Or(
-                left=Comparison(field="name", op="=", value="alice"),
-                right=Comparison(field="name", op="=", value="carol"),
+                (
+                    Equals(field="name", value="alice"),
+                    Equals(field="name", value="carol"),
+                )
             ),
         )
         uuids = {m.record_uuid for m in results[0].matches}
         assert r1.uuid in uuids
         assert r3.uuid in uuids
         assert r2.uuid not in uuids
+
+
+class TestDeclaredSchemaIsFixed:
+    @pytest.mark.asyncio
+    async def test_a_store_with_another_schema_cannot_open_the_collection(
+        self, tmp_path
+    ):
+        db_path = tmp_path / "fixed.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        first = SQLiteVecVectorStore(
+            SQLiteVecVectorStoreParams(
+                indexed_properties=INDEXED_PROPERTIES, engine=engine
+            )
+        )
+        await first.startup()
+        await first.create_collection(
+            namespace=NAMESPACE,
+            name="fixed",
+            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+        )
+        await first.shutdown()
+
+        second = SQLiteVecVectorStore(
+            SQLiteVecVectorStoreParams(indexed_properties={"name": str}, engine=engine)
+        )
+        await second.startup()
+        with pytest.raises(IndexedPropertiesMismatchError, match="fixed"):
+            await second.open_collection(namespace=NAMESPACE, name="fixed")
+        await second.shutdown()
+        await engine.dispose()

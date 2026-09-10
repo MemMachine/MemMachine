@@ -3,10 +3,11 @@
 import asyncio
 import logging
 from asyncio import Lock
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import event, text
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -14,10 +15,17 @@ from sqlalchemy.pool import ConnectionPoolEntry
 
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
+    MilvusConf,
     Neo4jConf,
+    QdrantConf,
     SqlAlchemyConf,
     SQLiteVectorStoreConf,
     SQLiteVectorStoreEngine,
+    SQLiteVecVectorStoreConf,
+)
+from memmachine_server.common.data_types import (
+    PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
+    PropertyType,
 )
 from memmachine_server.common.errors import (
     MilvusConfigurationError,
@@ -31,7 +39,7 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
 )
-from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store import IndexedProperties, VectorStore
 from memmachine_server.common.vector_store.vector_search_engine import (
     VectorSearchEngine,
 )
@@ -45,6 +53,8 @@ if TYPE_CHECKING:
     from qdrant_client import AsyncQdrantClient
 
 logger = logging.getLogger(__name__)
+
+_INDEXED_PROPERTIES = TypeAdapter(IndexedProperties)
 
 
 def enable_sqlite_foreign_keys(engine: AsyncEngine) -> None:
@@ -147,23 +157,9 @@ class DatabaseManager:
             self.async_get_milvus_client(name, validate=validate)
             for name in self.conf.milvus_confs
         ]
-        sqlite_vs_tasks = [
-            self.async_get_sqlite_vector_store(name)
-            for name in self.conf.sqlite_vector_store_confs
-        ]
-        sqlite_vec_vs_tasks = [
-            self.async_get_sqlite_vec_vector_store(name)
-            for name in self.conf.sqlite_vec_vector_store_confs
-        ]
         # Lazy build will occur in get_* calls, but build_all can trigger them
         tasks = (
-            neo4j_tasks
-            + relation_db_tasks
-            + nebula_tasks
-            + qdrant_tasks
-            + milvus_tasks
-            + sqlite_vs_tasks
-            + sqlite_vec_vs_tasks
+            neo4j_tasks + relation_db_tasks + nebula_tasks + qdrant_tasks + milvus_tasks
         )
         await asyncio.gather(*tasks)
 
@@ -576,6 +572,98 @@ class DatabaseManager:
         for name, client in self.nebula_clients.items():
             await self.validate_nebula_client(name, client)
 
+    # --- Vector stores ---
+
+    async def get_vector_store(
+        self, name: str, *, indexed_properties: Mapping[str, PropertyType]
+    ) -> VectorStore:
+        """Return a vector store by name, built for the service declaring these keys.
+
+        The schema a store is built with is its configured user keys plus the
+        system keys of the one service that uses it, merged here on first
+        use. Services do not share a vector store: a later request whose keys
+        the store does not declare raises `VectorStoreConfigurationError`.
+        """
+        if name not in self._vector_store_locks:
+            async with self._lock:
+                self._vector_store_locks.setdefault(name, Lock())
+
+        async with self._vector_store_locks[name]:
+            store = self.vector_stores.get(name)
+            if store is None:
+                store = await self._build_vector_store(name, indexed_properties)
+                self.vector_stores[name] = store
+                return store
+            for key, property_type in indexed_properties.items():
+                if store.indexed_properties.get(key) is not property_type:
+                    raise VectorStoreConfigurationError(
+                        f"VectorStore '{name}' was built for another service and does "
+                        f"not declare {key!r} as "
+                        f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[property_type]}; "
+                        "services do not share a vector store, so give each its own."
+                    )
+            return store
+
+    async def _build_vector_store(
+        self, name: str, system_properties: Mapping[str, PropertyType]
+    ) -> VectorStore:
+        if name in self.conf.qdrant_confs:
+            conf = self.conf.qdrant_confs[name]
+            return await self._build_qdrant_store(
+                name, conf, self._declared_properties(name, conf, system_properties)
+            )
+        if name in self.conf.milvus_confs:
+            conf = self.conf.milvus_confs[name]
+            return await self._build_milvus_store(
+                name, conf, self._declared_properties(name, conf, system_properties)
+            )
+        if name in self.conf.sqlite_vector_store_confs:
+            conf = self.conf.sqlite_vector_store_confs[name]
+            return await self._build_sqlite_vector_store(
+                name, conf, self._declared_properties(name, conf, system_properties)
+            )
+        if name in self.conf.sqlite_vec_vector_store_confs:
+            conf = self.conf.sqlite_vec_vector_store_confs[name]
+            return await self._build_sqlite_vec_vector_store(
+                name, conf, self._declared_properties(name, conf, system_properties)
+            )
+        raise ValueError(f"VectorStore '{name}' not found")
+
+    @staticmethod
+    def _declared_properties(
+        name: str,
+        conf: QdrantConf
+        | MilvusConf
+        | SQLiteVectorStoreConf
+        | SQLiteVecVectorStoreConf,
+        system_properties: Mapping[str, PropertyType],
+    ) -> dict[str, PropertyType]:
+        """The configured user keys plus the service's system keys, typed."""
+        try:
+            declared = _INDEXED_PROPERTIES.validate_python(conf.indexed_properties)
+        except ValidationError as e:
+            raise VectorStoreConfigurationError(
+                f"VectorStore '{name}' has invalid indexed_properties: {e}"
+            ) from e
+        for key, property_type in system_properties.items():
+            configured = declared.get(key)
+            if configured is not None and configured is not property_type:
+                raise VectorStoreConfigurationError(
+                    f"VectorStore '{name}' configures {key!r} as "
+                    f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[configured]}, but the "
+                    f"service writes it as "
+                    f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[property_type]}."
+                )
+            declared[key] = property_type
+        return declared
+
+    @staticmethod
+    async def _shutdown_vector_store(name: str, vector_store: VectorStore) -> None:
+        try:
+            await vector_store.shutdown()
+        except Exception as ex:
+            logger.warning("Error shutting down VectorStore '%s': %s", name, ex)
+
     # --- Qdrant ---
 
     @staticmethod
@@ -611,6 +699,7 @@ class DatabaseManager:
                 "grpc_port": conf.grpc_port,
                 "prefer_grpc": conf.prefer_grpc,
                 "https": conf.https,
+                "timeout": conf.request_timeout,
             }
             if conf.api_key.get_secret_value():
                 client_kwargs["api_key"] = conf.api_key.get_secret_value()
@@ -620,28 +709,45 @@ class DatabaseManager:
             if validate:
                 await self.validate_qdrant_client(name, client)
 
-            from memmachine_server.common.vector_store.qdrant_vector_store import (
-                QdrantVectorStore,
-                QdrantVectorStoreParams,
-            )
-
-            params = QdrantVectorStoreParams(
-                client=client,
-                is_distributed=conf.is_distributed,
-                registry_replication_factor=conf.registry_replication_factor,
-                metrics_factory=conf.get_metrics_factory(),
-            )
-            try:
-                store = QdrantVectorStore(params)
-                await store.startup()
-            except Exception:
-                await client.close()
-                raise
-
             self.qdrant_clients[name] = client
-            self.vector_stores[name] = store
-
             return client
+
+    async def _build_qdrant_store(
+        self,
+        name: str,
+        conf: QdrantConf,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> VectorStore:
+        client = await self.async_get_qdrant_client(name, validate=True)
+
+        from memmachine_server.common.vector_store.qdrant_vector_store import (
+            QdrantVectorStore,
+            QdrantVectorStoreParams,
+        )
+
+        # QdrantConf carries the native index and quantization settings as
+        # plain mappings, so qdrant-client stays optional for config parsing;
+        # the params model validates them against qdrant's own models.
+        try:
+            params = QdrantVectorStoreParams.model_validate(
+                {
+                    "client": client,
+                    "is_distributed": conf.is_distributed,
+                    "registry_replication_factor": conf.registry_replication_factor,
+                    "indexed_properties": indexed_properties,
+                    "hnsw_config": conf.hnsw_config,
+                    "optimizers_config": conf.optimizers_config,
+                    "quantization_config": conf.quantization_config,
+                    "metrics_factory": conf.get_metrics_factory(),
+                }
+            )
+        except ValidationError as e:
+            raise QdrantConfigurationError(
+                f"Qdrant config '{name}' is invalid: {e}"
+            ) from e
+        store = QdrantVectorStore(params)
+        await store.startup()
+        return store
 
     @staticmethod
     async def validate_qdrant_client(name: str, client: "AsyncQdrantClient") -> None:
@@ -688,7 +794,10 @@ class DatabaseManager:
 
             from pymilvus import MilvusClient
 
-            client_kwargs: dict[str, Any] = {"uri": conf.uri}
+            client_kwargs: dict[str, Any] = {
+                "uri": conf.uri,
+                "timeout": conf.request_timeout,
+            }
             token = conf.token.get_secret_value()
             if token:
                 client_kwargs["token"] = token
@@ -700,26 +809,30 @@ class DatabaseManager:
             if validate:
                 await self.validate_milvus_client(name, client)
 
-            from memmachine_server.common.vector_store.milvus_vector_store import (
-                MilvusVectorStore,
-                MilvusVectorStoreParams,
-            )
-
-            params = MilvusVectorStoreParams(
-                client=client,
-                consistency_level=conf.consistency_level,
-            )
-            try:
-                store = MilvusVectorStore(params)
-                await store.startup()
-            except Exception:
-                await asyncio.to_thread(client.close)
-                raise
-
             self.milvus_clients[name] = client
-            self.vector_stores[name] = store
-
             return client
+
+    async def _build_milvus_store(
+        self,
+        name: str,
+        conf: MilvusConf,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> VectorStore:
+        client = await self.async_get_milvus_client(name, validate=True)
+
+        from memmachine_server.common.vector_store.milvus_vector_store import (
+            MilvusVectorStore,
+            MilvusVectorStoreParams,
+        )
+
+        params = MilvusVectorStoreParams(
+            client=client,
+            consistency_level=conf.consistency_level,
+            indexed_properties=indexed_properties,
+        )
+        store = MilvusVectorStore(params)
+        await store.startup()
+        return store
 
     @staticmethod
     async def validate_milvus_client(name: str, client: "MilvusClient") -> None:
@@ -740,13 +853,6 @@ class DatabaseManager:
             await self.validate_milvus_client(name, client)
 
     # --- SQLite-backed VectorStores ---
-
-    @staticmethod
-    async def _shutdown_vector_store(name: str, vector_store: VectorStore) -> None:
-        try:
-            await vector_store.shutdown()
-        except Exception as ex:
-            logger.warning("Error shutting down VectorStore '%s': %s", name, ex)
 
     @staticmethod
     def _make_sqlite_search_engine_factory(
@@ -777,96 +883,66 @@ class DatabaseManager:
 
                 return hnswlib_factory
 
-    async def async_get_sqlite_vector_store(self, name: str) -> VectorStore:
-        """Return a SQLiteVectorStore, creating it if necessary (lazy)."""
-        if name not in self._vector_store_locks:
-            async with self._lock:
-                self._vector_store_locks.setdefault(name, Lock())
+    async def _build_sqlite_vector_store(
+        self,
+        name: str,
+        conf: SQLiteVectorStoreConf,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> VectorStore:
+        from memmachine_server.common.vector_store.sqlite_vector_store import (
+            SQLiteVectorStore,
+            SQLiteVectorStoreParams,
+        )
 
-        async with self._vector_store_locks[name]:
-            if name in self.vector_stores:
-                return self.vector_stores[name]
+        engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+        self.vector_store_sql_engines[name] = engine
 
-            conf = self.conf.sqlite_vector_store_confs.get(name)
-            if not conf:
-                raise ValueError(f"SQLiteVectorStore config '{name}' not found.")
-
-            from memmachine_server.common.vector_store.sqlite_vector_store import (
-                SQLiteVectorStore,
-                SQLiteVectorStoreParams,
-            )
-
-            engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
-            self.vector_store_sql_engines[name] = engine
-
-            try:
-                store = SQLiteVectorStore(
-                    SQLiteVectorStoreParams(
-                        sqlalchemy_engine=engine,
-                        vector_search_engine_factory=self._make_sqlite_search_engine_factory(
-                            conf
-                        ),
-                        index_directory=conf.index_directory,
-                        save_threshold=conf.save_threshold,
-                    )
+        try:
+            store = SQLiteVectorStore(
+                SQLiteVectorStoreParams(
+                    sqlalchemy_engine=engine,
+                    vector_search_engine_factory=self._make_sqlite_search_engine_factory(
+                        conf
+                    ),
+                    index_directory=conf.index_directory,
+                    save_threshold=conf.save_threshold,
+                    indexed_properties=indexed_properties,
                 )
-                await store.startup()
-            except Exception as e:
-                await engine.dispose()
-                self.vector_store_sql_engines.pop(name, None)
-                raise VectorStoreConfigurationError(
-                    f"SQLiteVectorStore '{name}' failed to start: {e}",
-                ) from e
-
-            self.vector_stores[name] = store
-            return store
-
-    async def async_get_sqlite_vec_vector_store(self, name: str) -> VectorStore:
-        """Return a SQLiteVecVectorStore, creating it if necessary (lazy)."""
-        if name not in self._vector_store_locks:
-            async with self._lock:
-                self._vector_store_locks.setdefault(name, Lock())
-
-        async with self._vector_store_locks[name]:
-            if name in self.vector_stores:
-                return self.vector_stores[name]
-
-            conf = self.conf.sqlite_vec_vector_store_confs.get(name)
-            if not conf:
-                raise ValueError(f"SQLiteVecVectorStore config '{name}' not found.")
-
-            from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
-                SQLiteVecVectorStore,
-                SQLiteVecVectorStoreParams,
             )
+            await store.startup()
+        except Exception as e:
+            await engine.dispose()
+            self.vector_store_sql_engines.pop(name, None)
+            raise VectorStoreConfigurationError(
+                f"SQLiteVectorStore '{name}' failed to start: {e}",
+            ) from e
+        return store
 
-            engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
-            self.vector_store_sql_engines[name] = engine
+    async def _build_sqlite_vec_vector_store(
+        self,
+        name: str,
+        conf: SQLiteVecVectorStoreConf,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> VectorStore:
+        from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
+            SQLiteVecVectorStore,
+            SQLiteVecVectorStoreParams,
+        )
 
-            try:
-                store = SQLiteVecVectorStore(SQLiteVecVectorStoreParams(engine=engine))
-                await store.startup()
-            except Exception as e:
-                await engine.dispose()
-                self.vector_store_sql_engines.pop(name, None)
-                raise VectorStoreConfigurationError(
-                    f"SQLiteVecVectorStore '{name}' failed to start: {e}",
-                ) from e
+        engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+        self.vector_store_sql_engines[name] = engine
 
-            self.vector_stores[name] = store
-            return store
-
-    async def get_vector_store(self, name: str) -> VectorStore:
-        """Return a vector store by name, auto-detecting the backend."""
-        if name in self.conf.qdrant_confs:
-            await self.async_get_qdrant_client(name, validate=True)
-            return self.vector_stores[name]
-        if name in self.conf.milvus_confs:
-            await self.async_get_milvus_client(name, validate=True)
-            return self.vector_stores[name]
-        if name in self.conf.sqlite_vector_store_confs:
-            return await self.async_get_sqlite_vector_store(name)
-        if name in self.conf.sqlite_vec_vector_store_confs:
-            return await self.async_get_sqlite_vec_vector_store(name)
-
-        raise ValueError(f"VectorStore '{name}' not found")
+        try:
+            store = SQLiteVecVectorStore(
+                SQLiteVecVectorStoreParams(
+                    engine=engine, indexed_properties=indexed_properties
+                )
+            )
+            await store.startup()
+        except Exception as e:
+            await engine.dispose()
+            self.vector_store_sql_engines.pop(name, None)
+            raise VectorStoreConfigurationError(
+                f"SQLiteVecVectorStore '{name}' failed to start: {e}",
+            ) from e
+        return store

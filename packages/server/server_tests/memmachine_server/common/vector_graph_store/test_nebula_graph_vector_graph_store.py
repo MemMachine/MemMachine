@@ -9,17 +9,12 @@ import pytest_asyncio
 # Skip all tests if nebulagraph_python is not installed
 pytest.importorskip("nebulagraph_python")
 
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    IsMissing,
+    Or,
+    Ordering,
 )
 from memmachine_server.common.metrics_factory.prometheus_metrics_factory import (
     PrometheusMetricsFactory,
@@ -339,7 +334,7 @@ async def test_search_similar_nodes_with_filter(vector_graph_store):
 
     # Search with filter
     query_vec = [1.0, 0.0, 0.0]
-    filter_expr = FilterComparison(field="category", op="=", value="tech")
+    filter_expr = Equals(field="category", value="tech")
 
     results = await vector_graph_store.search_similar_nodes(
         collection=collection,
@@ -463,7 +458,7 @@ async def test_search_related_nodes(vector_graph_store):
         this_node_uid=bob.uid,
         find_targets=True,
         find_sources=False,
-        node_property_filter=FilterComparison(field="industry", op="=", value="tech"),
+        node_property_filter=Equals(field="industry", value="tech"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Acme"
@@ -476,7 +471,7 @@ async def test_search_related_nodes(vector_graph_store):
         this_node_uid=bob.uid,
         find_targets=True,
         find_sources=False,
-        edge_property_filter=FilterComparison(field="seniority", op="=", value=2),
+        edge_property_filter=Equals(field="seniority", value=2),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Acme"
@@ -594,7 +589,7 @@ async def test_search_directional_nodes(vector_graph_store):
         order_ascending=[True],
         include_equal_start=False,
         limit=10,
-        property_filter=FilterComparison(field="tagged", op="=", value="yes"),
+        property_filter=Equals(field="tagged", value="yes"),
     )
     assert len(results) == 2
     assert all(r.properties["tagged"] == "yes" for r in results)
@@ -648,16 +643,18 @@ async def test_search_matching_nodes(vector_graph_store):
     # is_null filter: nodes with no "price" property
     results = await vector_graph_store.search_matching_nodes(
         collection=collection,
-        property_filter=FilterIsNull(field="price"),
+        property_filter=IsMissing(field="price"),
         limit=10,
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Desk"
 
     # AND filter: electronics AND price < 100
-    filter_expr = FilterAnd(
-        left=FilterComparison(field="category", op="=", value="electronics"),
-        right=FilterComparison(field="price", op="<", value=100),
+    filter_expr = And(
+        (
+            Equals(field="category", value="electronics"),
+            Ordering(field="price", op="<", value=100),
+        )
     )
     results = await vector_graph_store.search_matching_nodes(
         collection=collection,
@@ -821,12 +818,16 @@ async def test_complex_filters(vector_graph_store):
     await vector_graph_store.add_nodes(collection=collection, nodes=nodes)
 
     # Complex filter: (category == electronics AND price < 100) OR (category == furniture)
-    filter_expr = FilterOr(
-        left=FilterAnd(
-            left=FilterComparison(field="category", op="=", value="electronics"),
-            right=FilterComparison(field="price", op="<", value=100),
-        ),
-        right=FilterComparison(field="category", op="=", value="furniture"),
+    filter_expr = Or(
+        (
+            And(
+                (
+                    Equals(field="category", value="electronics"),
+                    Ordering(field="price", op="<", value=100),
+                )
+            ),
+            Equals(field="category", value="furniture"),
+        )
     )
 
     results = await vector_graph_store.search_matching_nodes(
@@ -1165,7 +1166,7 @@ async def test_property_names_with_special_characters(vector_graph_store):
     # Filtering by special-char property names works
     filtered = await vector_graph_store.search_matching_nodes(
         collection=collection,
-        property_filter=FilterComparison(field="my-field", op="=", value="hyphen"),
+        property_filter=Equals(field="my-field", value="hyphen"),
         limit=10,
     )
     assert len(filtered) == 1

@@ -30,14 +30,8 @@ from memmachine_server.common.errors import (
     ResourceNotReadyError,
     SessionNotFoundError,
 )
+from memmachine_server.common.filter import And, Equals, FilterExpr
 from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
     parse_filter,
     to_property_filter,
 )
@@ -48,6 +42,9 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    event_backend_indexed_properties,
+)
 from memmachine_server.retrieval_agent import create_retrieval_agent
 from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
@@ -369,11 +366,7 @@ class MemMachine:
 
     async def _delete_session_episode_store(self, session_key: str) -> None:
         episode_store = await self._resources.get_episode_storage()
-        session_filter = FilterComparison(
-            field="session_key",
-            op="=",
-            value=session_key,
-        )
+        session_filter = Equals(field="session_key", value=session_key)
         while True:
             episode_ids = await episode_store.get_episode_ids(
                 filter_expr=session_filter,
@@ -452,7 +445,10 @@ class MemMachine:
             ("reranker", self._resources.get_reranker, getattr(ltm, "reranker", None)),
             (
                 "vector store",
-                self._resources.get_vector_store,
+                partial(
+                    self._resources.get_vector_store,
+                    indexed_properties=event_backend_indexed_properties(),
+                ),
                 getattr(ltm, "vector_store", None),
             ),
             (
@@ -730,7 +726,7 @@ class MemMachine:
             return right
         if right is None:
             return left
-        return FilterAnd(left=left, right=right)
+        return And((left, right))
 
     async def add_episodes(
         self,
@@ -1109,11 +1105,7 @@ class MemMachine:
 
         if MemoryType.Episodic in target_memories:
             episode_storage = await self._resources.get_episode_storage()
-            session_filter = FilterComparison(
-                field="session_key",
-                op="=",
-                value=session_data.session_key,
-            )
+            session_filter = Equals(field="session_key", value=session_data.session_key)
             combined_filter = self._merge_filter_exprs(
                 session_filter,
                 search_filter_expr,
@@ -1170,11 +1162,7 @@ class MemMachine:
         """
         episode_storage = await self._resources.get_episode_storage()
 
-        session_filter = FilterComparison(
-            field="session_key",
-            op="=",
-            value=session_data.session_key,
-        )
+        session_filter = Equals(field="session_key", value=session_data.session_key)
 
         search_filter_expr = parse_filter(search_filter) if search_filter else None
         combined_filter = self._merge_filter_exprs(session_filter, search_filter_expr)

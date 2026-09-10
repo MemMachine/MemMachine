@@ -85,6 +85,8 @@ class TextSegmenter(Segmenter):
                             index=index,
                             offset=offset,
                             timestamp=event.timestamp,
+                            session_id=event.session_id,
+                            source_id=event.source_id,
                             block=TextBlock(text=chunk),
                             context=event.context,
                             properties=event.properties,
@@ -92,7 +94,5 @@ class TextSegmenter(Segmenter):
                         for offset, chunk in enumerate(chunks)
                     )
                 case _:
-                    raise NotImplementedError(
-                        f"Unsupported block type: {type(block).__name__}"
-                    )
+                    raise NotImplementedError(f"Unsupported block kind: {block.kind!r}")
         return segments

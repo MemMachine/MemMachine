@@ -2,19 +2,24 @@
 
 import math
 import operator
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
+from typing import override
 from uuid import UUID
 
-from memmachine_server.common.data_types import PropertyValue
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.data_types import PropertyType, PropertyValue
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
-    IsNull,
+    IsMissing,
     Not,
+    NotEquals,
     Or,
+    Ordering,
 )
+from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store import VectorStoreCollection
 from memmachine_server.common.vector_store.data_types import (
     QueryMatch,
@@ -22,14 +27,16 @@ from memmachine_server.common.vector_store.data_types import (
     Record,
     VectorStoreCollectionConfig,
 )
+from memmachine_server.common.vector_store.declared_properties import (
+    require_declared_properties,
+    require_supported_filter,
+)
 
 # ---------------------------------------------------------------------------
 # Filter evaluation
 # ---------------------------------------------------------------------------
 
-_COMPARISON_OPS = {
-    "=": operator.eq,
-    "!=": operator.ne,
+_ORDERING_OPS = {
     ">": operator.gt,
     "<": operator.lt,
     ">=": operator.ge,
@@ -37,37 +44,49 @@ _COMPARISON_OPS = {
 }
 
 
-def _evaluate_comparison(prop: PropertyValue, op: str, value: PropertyValue) -> bool:
-    fn = _COMPARISON_OPS.get(op)
-    if fn is None:
-        raise ValueError(f"Unknown comparison op: {op!r}")
-    return bool(fn(prop, value))
+def _comparable(value: PropertyValue) -> PropertyValue:
+    return ensure_tz_aware(value) if isinstance(value, datetime) else value
 
 
-def evaluate_filter(expr: FilterExpr, properties: dict[str, PropertyValue]) -> bool:
-    """Evaluate a FilterExpr against a properties dict."""
+def _same_type(held: PropertyValue, value: PropertyValue) -> bool:
+    # A predicate matches only a value of the compared type; `bool` is an
+    # `int` at runtime and its own type here.
+    return type(held) is type(value)
+
+
+def evaluate_filter(expr: FilterExpr, properties: Mapping[str, PropertyValue]) -> bool:
+    """Evaluate a FilterExpr against a properties mapping, by the language's semantics."""
     match expr:
-        case Comparison(field=field, op=op, value=value):
-            prop = properties.get(field)
-            if prop is None:
+        case Equals(field, value):
+            held = properties.get(field)
+            return (
+                held is not None
+                and _same_type(held, value)
+                and _comparable(held) == _comparable(value)
+            )
+        case NotEquals(field, value):
+            held = properties.get(field)
+            return (
+                held is not None
+                and _same_type(held, value)
+                and _comparable(held) != _comparable(value)
+            )
+        case Ordering(field, op, value):
+            held = properties.get(field)
+            if held is None or not _same_type(held, value):
                 return False
-            return _evaluate_comparison(prop, op, value)
-        case In(field=field, values=values):
-            return properties.get(field) in values
-        case IsNull(field=field):
+            return bool(_ORDERING_OPS[op](_comparable(held), _comparable(value)))
+        case In(field, values):
+            held = properties.get(field)
+            return held is not None and _same_type(held, values[0]) and held in values
+        case IsMissing(field):
             return field not in properties
-        case And(left=left, right=right):
-            return evaluate_filter(left, properties) and evaluate_filter(
-                right, properties
-            )
-        case Or(left=left, right=right):
-            return evaluate_filter(left, properties) or evaluate_filter(
-                right, properties
-            )
-        case Not(expr=inner):
-            return not evaluate_filter(inner, properties)
-        case _:
-            raise TypeError(f"Unknown filter expression type: {type(expr)}")
+        case And(operands):
+            return all(evaluate_filter(o, properties) for o in operands)
+        case Or(operands):
+            return any(evaluate_filter(o, properties) for o in operands)
+        case Not(operand):
+            return not evaluate_filter(operand, properties)
 
 
 # ---------------------------------------------------------------------------
@@ -96,42 +115,80 @@ def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
 class InMemoryVectorStoreCollection(VectorStoreCollection):
     """In-memory VectorStoreCollection for testing.
 
-    Scores by cosine similarity and evaluates FilterExpr on record properties.
+    Scores by cosine similarity, evaluates FilterExpr on record properties,
+    and enforces the declared schema the way a real store does.
     """
 
-    def __init__(self, collection_config: VectorStoreCollectionConfig) -> None:
+    _SUPPORTED_FILTER_NODES = frozenset(
+        {Equals, NotEquals, Ordering, In, IsMissing, And, Or, Not}
+    )
+
+    def __init__(
+        self,
+        collection_config: VectorStoreCollectionConfig,
+        indexed_properties: Mapping[str, PropertyType],
+        *,
+        supported_filter_nodes: Iterable[type] | None = None,
+    ) -> None:
         self.collection_config = collection_config
+        self._indexed_properties = dict(indexed_properties)
+        self._supported_filter_nodes = (
+            frozenset(supported_filter_nodes)
+            if supported_filter_nodes is not None
+            else InMemoryVectorStoreCollection._SUPPORTED_FILTER_NODES
+        )
         self.records: dict[UUID, Record] = {}
+        self.queries: list[FilterExpr | None] = []
+        """The property filter of each query, in order, for tests that assert routing."""
 
     @property
+    @override
     def config(self) -> VectorStoreCollectionConfig:
         return self.collection_config
 
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
+
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return self._supported_filter_nodes
+
+    @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
+        records = list(records)
+        for record in records:
+            require_declared_properties(record.properties, self._indexed_properties)
         for record in records:
             self.records[record.uuid] = Record(
                 uuid=record.uuid,
-                vector=list(record.vector) if record.vector is not None else None,
-                properties=dict(record.properties) if record.properties else {},
+                vector=list(record.vector),
+                properties=dict(record.properties),
             )
 
+    @override
     async def query(
         self,
         *,
         query_vectors: Iterable[Sequence[float]],
+        limit: int,
         min_cosine_similarity: float | None = None,
-        limit: int | None = None,
         property_filter: FilterExpr | None = None,
     ) -> list[QueryResult]:
+        if property_filter is not None:
+            require_supported_filter(
+                property_filter, self._indexed_properties, self._supported_filter_nodes
+            )
+        self.queries.append(property_filter)
         results: list[QueryResult] = []
         for query_vector in query_vectors:
             qv = list(query_vector)
             matches: list[QueryMatch] = []
             for record in self.records.values():
-                if record.vector is None:
-                    continue
                 if property_filter is not None and not evaluate_filter(
-                    property_filter, record.properties or {}
+                    property_filter, record.properties
                 ):
                     continue
                 cosine_similarity = _cosine_similarity(qv, record.vector)
@@ -147,11 +204,10 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
                     )
                 )
             matches.sort(key=lambda m: m.cosine_similarity, reverse=True)
-            if limit is not None:
-                matches = matches[:limit]
-            results.append(QueryResult(matches=matches))
+            results.append(QueryResult(matches=matches[:limit]))
         return results
 
+    @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         for uid in record_uuids:
             self.records.pop(uid, None)

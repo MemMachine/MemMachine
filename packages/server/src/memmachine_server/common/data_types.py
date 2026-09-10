@@ -18,6 +18,9 @@ PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE: Final[dict[str, type[PropertyValue]]] = {
     v: k for k, v in PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME.items()
 }
 
+PropertyType = type[PropertyValue]
+"""The type of a property value: one of the scalar set."""
+
 FilterValue = bool | int | float | str | datetime | list[int] | list[str]
 """Type for filter expression values (includes list types for IN clauses)."""
 

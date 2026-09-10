@@ -12,28 +12,20 @@ from pydantic import InstanceOf
 
 from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.errors import InvalidArgumentError
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    FilterExpr,
+    In,
+    IsMissing,
+    Not,
+    NotEquals,
+    Or,
+    Ordering,
+)
 from memmachine_server.common.filter.filter_parser import (
     USER_METADATA_STORAGE_PREFIX,
-    FilterExpr,
     normalize_filter_field,
-)
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
 )
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
@@ -664,48 +656,35 @@ class InMemorySemanticStorage(SemanticStorage):
         entry: _FeatureEntry,
         expr: FilterExpr,
     ) -> bool:
-        if isinstance(expr, FilterIsNull):
-            value, _ = self._resolve_entry_field(entry, expr.field)
-            return value is None
-        if isinstance(expr, FilterIn):
-            value, _ = self._resolve_entry_field(entry, expr.field)
-            return value in expr.values
-        if isinstance(expr, FilterComparison):
-            return self._evaluate_comparison(entry, expr)
-        if isinstance(expr, FilterAnd):
-            return self._evaluate_filter_expr(
-                entry, expr.left
-            ) and self._evaluate_filter_expr(entry, expr.right)
-        if isinstance(expr, FilterOr):
-            return self._evaluate_filter_expr(
-                entry, expr.left
-            ) or self._evaluate_filter_expr(entry, expr.right)
-        if isinstance(expr, FilterNot):
-            return not self._evaluate_filter_expr(entry, expr.expr)
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+        match expr:
+            case IsMissing(field):
+                value, _ = self._resolve_entry_field(entry, field)
+                return value is None
+            case In(field, values):
+                value, _ = self._resolve_entry_field(entry, field)
+                return value in values
+            case Equals(field, expected):
+                value, _ = self._resolve_entry_field(entry, field)
+                return value == expected
+            case NotEquals(field, expected):
+                value, _ = self._resolve_entry_field(entry, field)
+                return value is not None and value != expected
+            case Ordering(field, op, expected):
+                value, _ = self._resolve_entry_field(entry, field)
+                return value is not None and self._COMPARE_OPS[op](value, expected)
+            case And(operands):
+                return all(self._evaluate_filter_expr(entry, o) for o in operands)
+            case Or(operands):
+                return any(self._evaluate_filter_expr(entry, o) for o in operands)
+            case Not(operand):
+                return not self._evaluate_filter_expr(entry, operand)
 
     _COMPARE_OPS: ClassVar[dict[str, Callable[[Any, Any], bool]]] = {
-        "=": lambda lhs, rhs: lhs == rhs,
-        "!=": lambda lhs, rhs: lhs != rhs,
         ">": lambda lhs, rhs: lhs > rhs,
         "<": lambda lhs, rhs: lhs < rhs,
         ">=": lambda lhs, rhs: lhs >= rhs,
         "<=": lambda lhs, rhs: lhs <= rhs,
     }
-
-    def _evaluate_comparison(
-        self,
-        entry: _FeatureEntry,
-        comparison: FilterComparison,
-    ) -> bool:
-        value, _ = self._resolve_entry_field(entry, comparison.field)
-        expected: Any = comparison.value
-        if comparison.op != "=" and value is None:
-            return False
-        op_fn = self._COMPARE_OPS.get(comparison.op)
-        if op_fn is None:
-            raise ValueError(f"Unsupported operator: {comparison.op}")
-        return op_fn(value, expected)
 
     def _resolve_entry_field(
         self,

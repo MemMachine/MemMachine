@@ -3,21 +3,23 @@
 import asyncio
 import math
 from datetime import UTC, datetime, timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from pydantic import ValidationError
 from qdrant_client import AsyncQdrantClient, models
 
 from memmachine_server.common.data_types import PropertyValue
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     In,
-    IsNull,
+    IsMissing,
     Not,
     Or,
+    Ordering,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.vector_store.data_types import (
@@ -32,10 +34,22 @@ from memmachine_server.common.vector_store.qdrant_vector_store import (
     QdrantVectorStoreCollection,
     QdrantVectorStoreParams,
 )
+from server_tests.memmachine_server.common.filter.nodes import comparison
+from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
+    DeclaredSchemaContract,
+)
 
 NAMESPACE = "test_namespace"
 NAME = "test_name"
 VECTOR_DIM = 3
+
+INDEXED_PROPERTIES: dict[str, type[PropertyValue]] = {
+    "name": str,
+    "age": int,
+    "score": float,
+    "active": bool,
+    "created_at": datetime,
+}
 
 
 @pytest.fixture
@@ -56,7 +70,9 @@ def any_qdrant_client(request):
 
 @pytest_asyncio.fixture
 async def store(any_qdrant_client):
-    params = QdrantVectorStoreParams(client=any_qdrant_client)
+    params = QdrantVectorStoreParams(
+        indexed_properties=INDEXED_PROPERTIES, client=any_qdrant_client
+    )
     s = QdrantVectorStore(params)
     await s.startup()
     yield s
@@ -69,13 +85,6 @@ async def collection(store):
         name=NAME,
         config=VectorStoreCollectionConfig(
             vector_dimensions=VECTOR_DIM,
-            indexed_properties_schema={
-                "name": str,
-                "age": int,
-                "score": float,
-                "active": bool,
-                "created_at": datetime,
-            },
         ),
     )
     coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
@@ -150,13 +159,6 @@ class TestCollectionLifecycle:
                 name=NAME,
                 config=VectorStoreCollectionConfig(
                     vector_dimensions=VECTOR_DIM,
-                    indexed_properties_schema={
-                        "name": str,
-                        "age": int,
-                        "score": float,
-                        "active": bool,
-                        "created_at": datetime,
-                    },
                 ),
             )
 
@@ -203,10 +205,8 @@ class TestCollectionLifecycle:
     @pytest.mark.asyncio
     async def test_same_config_shares_native_collection(self, store):
         """Two logical collections with the same config share one native collection."""
-        schema: dict[str, type[PropertyValue]] = {"name": str}
         config = VectorStoreCollectionConfig(
             vector_dimensions=VECTOR_DIM,
-            indexed_properties_schema=schema,
         )
         await store.create_collection(namespace=NAMESPACE, name="coll_a", config=config)
         await store.create_collection(namespace=NAMESPACE, name="coll_b", config=config)
@@ -323,6 +323,10 @@ class TestUpsertAndQuery:
 # ── Filters ──
 
 
+class TestDeclaredSchema(DeclaredSchemaContract):
+    """The declared-schema contract, against this store."""
+
+
 class TestFilters:
     # alice=30/9.5/True, bob=25/7.0/False, carol=35/8.0/True
     async def _setup(self, collection):
@@ -377,7 +381,7 @@ class TestFilters:
             await collection.query(
                 query_vectors=[query_vec],
                 limit=10,
-                property_filter=Comparison(field=field, op=op, value=value),
+                property_filter=comparison(field, op, value),
             )
         )
         return {m.record_uuid for m in all_results[0].matches}
@@ -391,7 +395,7 @@ class TestFilters:
             await collection.query(
                 query_vectors=[v1],
                 limit=10,
-                property_filter=Comparison(field="name", op="=", value="alice"),
+                property_filter=Equals(field="name", value="alice"),
             )
         )
         matches = query_results[0].matches
@@ -413,7 +417,7 @@ class TestFilters:
             await collection.query(
                 query_vectors=[v1],
                 limit=10,
-                property_filter=Comparison(field="age", op=">", value=30),
+                property_filter=Ordering(field="age", op=">", value=30),
             )
         )
         matches = query_results[0].matches
@@ -435,7 +439,7 @@ class TestFilters:
             await collection.query(
                 query_vectors=[v1],
                 limit=10,
-                property_filter=Comparison(field="age", op="<", value=30),
+                property_filter=Ordering(field="age", op="<", value=30),
             )
         )
         matches = query_results[0].matches
@@ -593,7 +597,7 @@ class TestFilters:
         [result] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="created_at", op="=", value=dt),
+            property_filter=Equals(field="created_at", value=dt),
         )
         assert [m.record_uuid for m in result.matches] == [r1.uuid]
 
@@ -610,7 +614,7 @@ class TestFilters:
         [result] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="created_at", op="=", value=dt),
+            property_filter=Equals(field="created_at", value=dt),
         )
         assert [m.record_uuid for m in result.matches] == [r1.uuid]
 
@@ -754,10 +758,8 @@ class TestFilters:
         [result] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(
-                field="created_at",
-                op="=",
-                value=datetime(2024, 6, 15, 12, 30, 0, tzinfo=UTC),
+            property_filter=Equals(
+                field="created_at", value=datetime(2024, 6, 15, 12, 30, 0, tzinfo=UTC)
             ),
         )
         assert [m.record_uuid for m in result.matches] == [r1.uuid]
@@ -821,7 +823,7 @@ class TestFilters:
         assert r1.uuid in uuids
         assert r2.uuid not in uuids
 
-    # ── IsNull ──
+    # ── IsMissing ──
 
     @pytest.mark.asyncio
     async def test_is_null(self, collection):
@@ -841,7 +843,7 @@ class TestFilters:
             await collection.query(
                 query_vectors=[v1],
                 limit=10,
-                property_filter=IsNull(field="name"),
+                property_filter=IsMissing(field="name"),
             )
         )
         uuids = {m.record_uuid for m in query_results[0].matches}
@@ -868,7 +870,7 @@ class TestFilters:
             await collection.query(
                 query_vectors=[v1],
                 limit=10,
-                property_filter=Not(expr=IsNull(field="name")),
+                property_filter=Not(IsMissing(field="name")),
             )
         )
         uuids = {m.record_uuid for m in query_results[0].matches}
@@ -886,7 +888,7 @@ class TestFilters:
             await collection.query(
                 query_vectors=[v1],
                 limit=10,
-                property_filter=In(field="name", values=["alice", "carol"]),
+                property_filter=In(field="name", values=("alice", "carol")),
             )
         )
         matches = query_results[0].matches
@@ -903,8 +905,10 @@ class TestFilters:
                 query_vectors=[v1],
                 limit=10,
                 property_filter=And(
-                    left=Comparison(field="active", op="=", value=True),
-                    right=Comparison(field="age", op=">", value=30),
+                    (
+                        Equals(field="active", value=True),
+                        Ordering(field="age", op=">", value=30),
+                    )
                 ),
             )
         )
@@ -920,8 +924,10 @@ class TestFilters:
                 query_vectors=[v1],
                 limit=10,
                 property_filter=Or(
-                    left=Comparison(field="name", op="=", value="alice"),
-                    right=Comparison(field="name", op="=", value="carol"),
+                    (
+                        Equals(field="name", value="alice"),
+                        Equals(field="name", value="carol"),
+                    )
                 ),
             )
         )
@@ -938,7 +944,7 @@ class TestFilters:
             await collection.query(
                 query_vectors=[v1],
                 limit=10,
-                property_filter=Not(expr=Comparison(field="age", op=">", value=30)),
+                property_filter=Not(Ordering(field="age", op=">", value=30)),
             )
         )
         matches = query_results[0].matches
@@ -1085,6 +1091,7 @@ class TestMetrics:
         mock_factory.get_histogram.return_value = mock_histogram
 
         params = QdrantVectorStoreParams(
+            indexed_properties=INDEXED_PROPERTIES,
             client=qdrant_client,
             metrics_factory=mock_factory,
         )
@@ -1124,7 +1131,9 @@ class TestMetrics:
 @pytest_asyncio.fixture
 async def distributed_store(distributed_qdrant_client):
     params = QdrantVectorStoreParams(
-        client=distributed_qdrant_client, is_distributed=True
+        indexed_properties=INDEXED_PROPERTIES,
+        client=distributed_qdrant_client,
+        is_distributed=True,
     )
     s = QdrantVectorStore(params)
     await s.startup()
@@ -1146,7 +1155,6 @@ class TestDistributedSharding:
             name=name,
             config=VectorStoreCollectionConfig(
                 vector_dimensions=VECTOR_DIM,
-                indexed_properties_schema={"name": str},
             ),
         )
         coll = await store.open_collection(namespace=ns, name=name)
@@ -1229,7 +1237,6 @@ class TestCollectionLifecycleAcrossWorkers:
     def _config() -> VectorStoreCollectionConfig:
         return VectorStoreCollectionConfig(
             vector_dimensions=VECTOR_DIM,
-            indexed_properties_schema={"name": str},
         )
 
     @pytest.mark.asyncio
@@ -1262,7 +1269,11 @@ class TestCollectionLifecycleAcrossWorkers:
             ),
         )
 
-        store = QdrantVectorStore(QdrantVectorStoreParams(client=qdrant_client))
+        store = QdrantVectorStore(
+            QdrantVectorStoreParams(
+                indexed_properties=INDEXED_PROPERTIES, client=qdrant_client
+            )
+        )
         await store.startup()
         try:
             await store.open_or_create_collection(
@@ -1298,8 +1309,16 @@ class TestCollectionLifecycleAcrossWorkers:
         config = self._config()
         native = QdrantVectorStore._build_native_collection_name(namespace, config)
 
-        store_a = QdrantVectorStore(QdrantVectorStoreParams(client=client_a))
-        store_b = QdrantVectorStore(QdrantVectorStoreParams(client=client_b))
+        store_a = QdrantVectorStore(
+            QdrantVectorStoreParams(
+                indexed_properties=INDEXED_PROPERTIES, client=client_a
+            )
+        )
+        store_b = QdrantVectorStore(
+            QdrantVectorStoreParams(
+                indexed_properties=INDEXED_PROPERTIES, client=client_b
+            )
+        )
         await store_a.startup()
         await store_b.startup()
 
@@ -1331,3 +1350,155 @@ class TestCollectionLifecycleAcrossWorkers:
             await store_a.delete_collection(namespace=namespace, name=name)
             await client_a.close()
             await client_b.close()
+
+
+# ── Index / quantization configuration ──
+
+
+class TestIndexAndQuantizationParams:
+    """Native-collection HNSW, quantization, and optimizer configuration."""
+
+    def test_dict_configs_are_coerced_to_qdrant_models(self, in_memory_qdrant_client):
+        """Plain dicts (the YAML form) coerce into qdrant's own model types."""
+        params = QdrantVectorStoreParams.model_validate(
+            {
+                "client": in_memory_qdrant_client,
+                "indexed_properties": {"name": "str", "created_at": "datetime"},
+                "hnsw_config": {"ef_construct": 256, "payload_m": 32},
+                "optimizers_config": {"default_segment_number": 4},
+                "quantization_config": {"turbo": {"always_ram": True, "bits": "bits2"}},
+            }
+        )
+        assert params.indexed_properties == {"name": str, "created_at": datetime}
+        assert isinstance(params.hnsw_config, models.HnswConfigDiff)
+        assert params.hnsw_config.ef_construct == 256
+        assert isinstance(params.optimizers_config, models.OptimizersConfigDiff)
+        assert params.optimizers_config.default_segment_number == 4
+        assert isinstance(params.quantization_config, models.TurboQuantization)
+        assert params.quantization_config.turbo.bits == models.TurboQuantBitSize.BITS2
+
+    @pytest.mark.parametrize("m", [None, 0])
+    def test_hnsw_config_zero_or_unset_m_accepted(self, in_memory_qdrant_client, m):
+        params = QdrantVectorStoreParams(
+            indexed_properties=INDEXED_PROPERTIES,
+            client=in_memory_qdrant_client,
+            hnsw_config=models.HnswConfigDiff(m=m, ef_construct=200),
+        )
+        assert isinstance(params.hnsw_config, models.HnswConfigDiff)
+        assert params.hnsw_config.m == m
+
+    def test_hnsw_config_nonzero_m_rejected(self, in_memory_qdrant_client):
+        """Native collections require m=0; a positive global m is rejected."""
+        with pytest.raises(ValidationError, match="payload_m"):
+            QdrantVectorStoreParams(
+                indexed_properties=INDEXED_PROPERTIES,
+                client=in_memory_qdrant_client,
+                hnsw_config=models.HnswConfigDiff(m=16),
+            )
+
+    def test_native_hnsw_config_defaults_to_tenant_indexing(
+        self, in_memory_qdrant_client
+    ):
+        """With no override, the native graph is disabled with a default payload_m."""
+        store = QdrantVectorStore(
+            QdrantVectorStoreParams(
+                indexed_properties=INDEXED_PROPERTIES, client=in_memory_qdrant_client
+            )
+        )
+        cfg = store._native_hnsw_config()
+        assert cfg.m == 0
+        assert cfg.payload_m == QdrantVectorStore._DEFAULT_NATIVE_PAYLOAD_M
+
+    def test_native_hnsw_config_merges_overrides_but_pins_m(
+        self, in_memory_qdrant_client
+    ):
+        """Caller fields layer on top, but m stays pinned at 0 for tenant isolation."""
+        store = QdrantVectorStore(
+            QdrantVectorStoreParams(
+                indexed_properties=INDEXED_PROPERTIES,
+                client=in_memory_qdrant_client,
+                hnsw_config=models.HnswConfigDiff(ef_construct=222, payload_m=32),
+            )
+        )
+        cfg = store._native_hnsw_config()
+        assert cfg.m == 0
+        assert cfg.payload_m == 32
+        assert cfg.ef_construct == 222
+
+    @pytest.mark.asyncio
+    async def test_native_collection_creation_forwards_configs(
+        self, in_memory_qdrant_client
+    ):
+        """The native (not registry) create_collection call carries the configs."""
+        opt = models.OptimizersConfigDiff(default_segment_number=3)
+        quant = models.TurboQuantization(
+            turbo=models.TurboQuantQuantizationConfig(
+                always_ram=True, bits=models.TurboQuantBitSize.BITS2
+            )
+        )
+        params = QdrantVectorStoreParams(
+            indexed_properties=INDEXED_PROPERTIES,
+            client=in_memory_qdrant_client,
+            hnsw_config=models.HnswConfigDiff(ef_construct=222, payload_m=32),
+            optimizers_config=opt,
+            quantization_config=quant,
+        )
+        store = QdrantVectorStore(params)
+        await store.startup()
+
+        spy = AsyncMock(wraps=in_memory_qdrant_client.create_collection)
+        with patch.object(in_memory_qdrant_client, "create_collection", new=spy):
+            await store.create_collection(
+                namespace=NAMESPACE,
+                name="quant_test",
+                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+            )
+
+        # The registry collection is created without quantization; the native
+        # (data) collection is the one carrying the new settings.
+        native_calls = [
+            c
+            for c in spy.call_args_list
+            if c.kwargs.get("quantization_config") is not None
+        ]
+        assert len(native_calls) == 1
+        kwargs = native_calls[0].kwargs
+        assert kwargs["hnsw_config"].m == 0
+        assert kwargs["hnsw_config"].payload_m == 32
+        assert kwargs["hnsw_config"].ef_construct == 222
+        assert kwargs["optimizers_config"] == opt
+        assert kwargs["quantization_config"] == quant
+
+        await store.delete_collection(namespace=NAMESPACE, name="quant_test")
+
+
+@pytest.mark.integration
+class TestDeclaredPayloadIndexes:
+    """Local mode accepts payload indexes but reports no schema, so this needs a server."""
+
+    @pytest.mark.asyncio
+    async def test_every_declared_key_gets_a_payload_index(self, qdrant_client):
+        store = QdrantVectorStore(
+            QdrantVectorStoreParams(
+                indexed_properties=INDEXED_PROPERTIES, client=qdrant_client
+            )
+        )
+        await store.startup()
+        await store.create_collection(
+            namespace=NAMESPACE,
+            name="declared_indexes",
+            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+        )
+        collection = await store.open_collection(
+            namespace=NAMESPACE, name="declared_indexes"
+        )
+        assert collection is not None
+        info = await store._client.get_collection(collection._collection_name)
+        indexed = set(info.payload_schema or {})
+        assert set(INDEXED_PROPERTIES) <= indexed
+        assert (
+            info.payload_schema["created_at"].data_type
+            == models.PayloadSchemaType.DATETIME
+        )
+        assert info.payload_schema["age"].data_type == models.PayloadSchemaType.INTEGER
+        await store.delete_collection(namespace=NAMESPACE, name="declared_indexes")

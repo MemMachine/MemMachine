@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import Episode, EpisodeIdT, EpisodeStorage
-from memmachine_server.common.filter.filter_parser import And, Comparison
+from memmachine_server.common.filter import And, Equals
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.semantic_memory.semantic_llm import (
     LLMReducedFeature,
@@ -197,10 +197,10 @@ class IngestionService:
                     )
 
                 filter_expr = And(
-                    left=Comparison(field="set_id", op="=", value=set_id),
-                    right=Comparison(
-                        field="category", op="=", value=semantic_category.name
-                    ),
+                    (
+                        Equals(field="set_id", value=set_id),
+                        Equals(field="category", value=semantic_category.name),
+                    )
                 )
 
                 features = [
@@ -305,18 +305,12 @@ class IngestionService:
 
                 case SemanticCommandType.DELETE:
                     filter_expr = And(
-                        left=And(
-                            left=Comparison(field="set_id", op="=", value=set_id),
-                            right=Comparison(
-                                field="category_name", op="=", value=category_name
-                            ),
-                        ),
-                        right=And(
-                            left=Comparison(
-                                field="feature", op="=", value=command.feature
-                            ),
-                            right=Comparison(field="tag", op="=", value=command.tag),
-                        ),
+                        (
+                            Equals(field="set_id", value=set_id),
+                            Equals(field="category_name", value=category_name),
+                            Equals(field="feature", value=command.feature),
+                            Equals(field="tag", value=command.tag),
+                        )
                     )
 
                     await self._semantic_storage.delete_feature_set(
@@ -335,13 +329,11 @@ class IngestionService:
         async def _consolidate_type(
             semantic_category: InstanceOf[SemanticCategory],
         ) -> None:
-            from memmachine_server.common.filter.filter_parser import And, Comparison
-
             filter_expr = And(
-                left=Comparison(field="set_id", op="=", value=set_id),
-                right=Comparison(
-                    field="category_name", op="=", value=semantic_category.name
-                ),
+                (
+                    Equals(field="set_id", value=set_id),
+                    Equals(field="category_name", value=semantic_category.name),
+                )
             )
 
             features = [

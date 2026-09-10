@@ -26,14 +26,18 @@ from memmachine_server.common.data_types import (
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.errors import ShortTermMemoryClosedError
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
-    IsNull,
+    IsMissing,
     Not,
+    NotEquals,
     Or,
+    Ordering,
+)
+from memmachine_server.common.filter.filter_parser import (
     demangle_user_metadata_key,
     normalize_filter_field,
 )
@@ -319,26 +323,24 @@ class ShortTermMemory:
         """Check if an episode matches the given filter expression."""
         if expr is None:
             return True
-        if isinstance(expr, Comparison):
-            value = self._resolve_field(episode, expr.field)
-            return self._compare(value, expr.op, expr.value)
-        if isinstance(expr, In):
-            value = self._resolve_field(episode, expr.field)
-            return value in expr.values
-        if isinstance(expr, IsNull):
-            value = self._resolve_field(episode, expr.field)
-            return value is None
-        if isinstance(expr, And):
-            return self._check_filter(episode, expr.left) and self._check_filter(
-                episode, expr.right
-            )
-        if isinstance(expr, Or):
-            return self._check_filter(episode, expr.left) or self._check_filter(
-                episode, expr.right
-            )
-        if isinstance(expr, Not):
-            return not self._check_filter(episode, expr.expr)
-        raise TypeError(f"Unsupported filter type: {type(expr)!r}")
+        match expr:
+            case Equals(field, value):
+                return self._compare(self._resolve_field(episode, field), "=", value)
+            case NotEquals(field, value):
+                resolved = self._resolve_field(episode, field)
+                return resolved is not None and self._compare(resolved, "!=", value)
+            case Ordering(field, op, value):
+                return self._compare(self._resolve_field(episode, field), op, value)
+            case In(field, values):
+                return self._resolve_field(episode, field) in values
+            case IsMissing(field):
+                return self._resolve_field(episode, field) is None
+            case And(operands):
+                return all(self._check_filter(episode, o) for o in operands)
+            case Or(operands):
+                return any(self._check_filter(episode, o) for o in operands)
+            case Not(operand):
+                return not self._check_filter(episode, operand)
 
     def _resolve_field(self, episode: Episode, field: str) -> PropertyValue | None:
         """Resolve a field name to its value from an episode."""

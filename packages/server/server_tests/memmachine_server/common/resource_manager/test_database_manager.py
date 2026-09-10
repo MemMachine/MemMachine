@@ -1,4 +1,5 @@
 import importlib.util
+from datetime import datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -296,7 +297,7 @@ def _qdrant_only_conf() -> MagicMock:
     conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {
-        "qdrant1": QdrantConf(host="localhost", port=6333),
+        "qdrant1": QdrantConf(request_timeout=30.0, host="localhost", port=6333),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -308,6 +309,7 @@ async def test_qdrant_client_kwargs_forwarded():
     """host, port, grpc_port, prefer_grpc, and https are forwarded to AsyncQdrantClient."""
     conf = _qdrant_only_conf()
     conf.qdrant_confs["qdrant1"] = QdrantConf(
+        request_timeout=30.0,
         host="qdrant.example.com",
         port=7333,
         grpc_port=7334,
@@ -342,6 +344,7 @@ async def test_qdrant_client_kwargs_forwarded():
     assert call_kwargs["grpc_port"] == 7334
     assert call_kwargs["prefer_grpc"] is True
     assert call_kwargs["https"] is True
+    assert call_kwargs["timeout"] == 30.0
     assert call_kwargs["api_key"] == "secret-key"
 
 
@@ -375,11 +378,14 @@ async def test_qdrant_api_key_omitted_when_empty():
 
 @pytest.mark.asyncio
 async def test_qdrant_creates_vector_store():
-    """async_get_qdrant_client creates a QdrantVectorStore and stores it."""
+    """get_vector_store creates a QdrantVectorStore built for the service's keys."""
     conf = _qdrant_only_conf()
     conf.qdrant_confs["qdrant1"] = QdrantConf(
+        request_timeout=30.0,
         is_distributed=True,
         registry_replication_factor=3,
+        indexed_properties={"category": "str"},
+        hnsw_config={"ef_construct": 256, "payload_m": 32},
     )
 
     mock_client = AsyncMock()
@@ -399,18 +405,28 @@ async def test_qdrant_creates_vector_store():
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_qdrant_client("qdrant1")
+        await builder.get_vector_store(
+            "qdrant1", indexed_properties={"memmachine_event_session": str}
+        )
 
-    mock_params_cls.assert_called_once()
-    kwargs = mock_params_cls.call_args.kwargs
+    mock_params_cls.model_validate.assert_called_once()
+    kwargs = mock_params_cls.model_validate.call_args.args[0]
     assert kwargs["client"] is mock_client
     assert kwargs["is_distributed"] is True
     assert kwargs["registry_replication_factor"] == 3
+    # The configured user keys, typed, plus the service's system keys.
+    assert kwargs["indexed_properties"] == {
+        "category": str,
+        "memmachine_event_session": str,
+    }
+    assert kwargs["hnsw_config"] == {"ef_construct": 256, "payload_m": 32}
+    assert kwargs["optimizers_config"] is None
+    assert kwargs["quantization_config"] is None
     # Asserted as "not None" rather than pinned to a value: OperationTracker
     # accepts None and then discards every timing without error, so passing the
     # keyword is not the property that matters - passing a factory is.
     assert kwargs["metrics_factory"] is not None
-    mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
+    mock_store_cls.assert_called_once_with(mock_params_cls.model_validate.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
     assert "qdrant1" in builder.vector_stores
 
@@ -438,7 +454,7 @@ async def test_get_vector_store_qdrant():
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
-        store = await builder.get_vector_store("qdrant1")
+        store = await builder.get_vector_store("qdrant1", indexed_properties={})
 
     assert store is mock_store_cls.return_value
 
@@ -489,7 +505,7 @@ async def test_qdrant_close():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_qdrant_client("qdrant1")
+        await builder.get_vector_store("qdrant1", indexed_properties={})
 
     assert "qdrant1" in builder.qdrant_clients
     assert "qdrant1" in builder.vector_stores
@@ -512,7 +528,7 @@ def _milvus_only_conf() -> MagicMock:
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {}
     conf.milvus_confs = {
-        "milvus1": MilvusConf(uri="./milvus.db"),
+        "milvus1": MilvusConf(request_timeout=30.0, uri="./milvus.db"),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -525,6 +541,7 @@ async def test_milvus_client_kwargs_forwarded():
     """uri, token, and db_name are forwarded to MilvusClient."""
     conf = _milvus_only_conf()
     conf.milvus_confs["milvus1"] = MilvusConf(
+        request_timeout=30.0,
         uri="https://example.zillizcloud.com",
         token=SecretStr("secret-token"),
         db_name="memory",
@@ -552,6 +569,7 @@ async def test_milvus_client_kwargs_forwarded():
     assert call_kwargs["uri"] == "https://example.zillizcloud.com"
     assert call_kwargs["token"] == "secret-token"
     assert call_kwargs["db_name"] == "memory"
+    assert call_kwargs["timeout"] == 30.0
 
 
 @pytest.mark.asyncio
@@ -576,15 +594,19 @@ async def test_milvus_token_and_db_name_omitted_when_empty():
         builder = DatabaseManager(conf)
         await builder.async_get_milvus_client("milvus1")
 
-    assert mock_cls.call_args.kwargs == {"uri": "./milvus.db"}
+    assert mock_cls.call_args.kwargs == {"uri": "./milvus.db", "timeout": 30.0}
 
 
 @pytest.mark.asyncio
 @requires_pymilvus
 async def test_milvus_creates_vector_store():
-    """async_get_milvus_client creates a MilvusVectorStore and stores it."""
+    """get_vector_store creates a MilvusVectorStore built for the service's keys."""
     conf = _milvus_only_conf()
-    conf.milvus_confs["milvus1"] = MilvusConf(consistency_level="Strong")
+    conf.milvus_confs["milvus1"] = MilvusConf(
+        request_timeout=30.0,
+        consistency_level="Strong",
+        indexed_properties={"category": "str"},
+    )
 
     mock_client = MagicMock()
     mock_client.close = MagicMock()
@@ -600,11 +622,14 @@ async def test_milvus_creates_vector_store():
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_milvus_client("milvus1")
+        await builder.get_vector_store(
+            "milvus1", indexed_properties={"memmachine_event_session": str}
+        )
 
     mock_params_cls.assert_called_once_with(
         client=mock_client,
         consistency_level="Strong",
+        indexed_properties={"category": str, "memmachine_event_session": str},
     )
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
@@ -632,7 +657,7 @@ async def test_get_vector_store_milvus():
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
-        store = await builder.get_vector_store("milvus1")
+        store = await builder.get_vector_store("milvus1", indexed_properties={})
 
     assert store is mock_store_cls.return_value
 
@@ -681,7 +706,7 @@ async def test_milvus_close():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_milvus_client("milvus1")
+        await builder.get_vector_store("milvus1", indexed_properties={})
 
     assert "milvus1" in builder.milvus_clients
     assert "milvus1" in builder.vector_stores
@@ -713,7 +738,7 @@ def _sqlite_vector_store_only_conf(**vs_overrides) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_sqlite_vector_store_creates_store_and_engine():
-    """async_get_sqlite_vector_store builds an engine, store, and starts it up."""
+    """get_vector_store builds an engine and a SQLiteVectorStore, and starts it up."""
     conf = _sqlite_vector_store_only_conf(
         sqlite_vector_store_confs={
             "vs1": SQLiteVectorStoreConf(
@@ -743,7 +768,7 @@ async def test_sqlite_vector_store_creates_store_and_engine():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        store = await builder.async_get_sqlite_vector_store("vs1")
+        store = await builder.get_vector_store("vs1", indexed_properties={})
 
     assert store is mock_store_cls.return_value
     mock_create.assert_called_once()
@@ -754,6 +779,7 @@ async def test_sqlite_vector_store_creates_store_and_engine():
     assert params_kwargs["sqlalchemy_engine"] is mock_engine
     assert params_kwargs["index_directory"] == "/tmp/vs"
     assert params_kwargs["save_threshold"] == 200
+    assert params_kwargs["indexed_properties"] == {}
     assert callable(params_kwargs["vector_search_engine_factory"])
 
     mock_store_cls.return_value.startup.assert_awaited_once()
@@ -793,7 +819,7 @@ async def test_sqlite_vector_store_default_engine_is_usearch():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_sqlite_vector_store("vs1")
+        await builder.get_vector_store("vs1", indexed_properties={})
 
         # Invoke the factory the manager passed into params and confirm it
         # routes to the USearch engine.
@@ -828,8 +854,8 @@ async def test_sqlite_vector_store_caches_after_first_call():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        first = await builder.async_get_sqlite_vector_store("vs1")
-        second = await builder.async_get_sqlite_vector_store("vs1")
+        first = await builder.get_vector_store("vs1", indexed_properties={})
+        second = await builder.get_vector_store("vs1", indexed_properties={})
 
     assert first is second
     assert mock_create.call_count == 1
@@ -863,7 +889,7 @@ async def test_sqlite_vector_store_startup_failure_disposes_engine():
         )
         builder = DatabaseManager(conf)
         with pytest.raises(VectorStoreConfigurationError, match="failed to start"):
-            await builder.async_get_sqlite_vector_store("vs1")
+            await builder.get_vector_store("vs1", indexed_properties={})
 
     mock_engine.dispose.assert_awaited_once()
     assert "vs1" not in builder.vector_stores
@@ -874,15 +900,13 @@ async def test_sqlite_vector_store_startup_failure_disposes_engine():
 async def test_sqlite_vector_store_unknown_name_raises():
     conf = _sqlite_vector_store_only_conf()
     builder = DatabaseManager(conf)
-    with pytest.raises(
-        ValueError, match="SQLiteVectorStore config 'missing' not found"
-    ):
-        await builder.async_get_sqlite_vector_store("missing")
+    with pytest.raises(ValueError, match="VectorStore 'missing' not found"):
+        await builder.get_vector_store("missing", indexed_properties={})
 
 
 @pytest.mark.asyncio
 async def test_sqlite_vec_vector_store_creates_store_and_engine():
-    """async_get_sqlite_vec_vector_store builds an engine, store, and starts it up."""
+    """get_vector_store builds an engine and a SQLiteVecVectorStore, and starts it up."""
     conf = _sqlite_vector_store_only_conf(
         sqlite_vec_vector_store_confs={"vec1": SQLiteVecVectorStoreConf(path="vec.db")}
     )
@@ -905,7 +929,7 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        store = await builder.async_get_sqlite_vec_vector_store("vec1")
+        store = await builder.get_vector_store("vec1", indexed_properties={})
 
     assert store is mock_store_cls.return_value
     create_args = mock_create.call_args
@@ -913,6 +937,7 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
 
     params_kwargs = mock_params_cls.call_args.kwargs
     assert params_kwargs["engine"] is mock_engine
+    assert params_kwargs["indexed_properties"] == {}
 
     mock_store_cls.return_value.startup.assert_awaited_once()
     assert "vec1" in builder.vector_stores
@@ -923,10 +948,8 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
 async def test_sqlite_vec_vector_store_unknown_name_raises():
     conf = _sqlite_vector_store_only_conf()
     builder = DatabaseManager(conf)
-    with pytest.raises(
-        ValueError, match="SQLiteVecVectorStore config 'missing' not found"
-    ):
-        await builder.async_get_sqlite_vec_vector_store("missing")
+    with pytest.raises(ValueError, match="VectorStore 'missing' not found"):
+        await builder.get_vector_store("missing", indexed_properties={})
 
 
 @pytest.mark.asyncio
@@ -963,8 +986,8 @@ async def test_get_vector_store_dispatches_to_sqlite_backends():
         mock_vec_cls.return_value.startup = AsyncMock()
         mock_vec_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        vs = await builder.get_vector_store("vs1")
-        vec = await builder.get_vector_store("vec1")
+        vs = await builder.get_vector_store("vs1", indexed_properties={})
+        vec = await builder.get_vector_store("vec1", indexed_properties={})
 
     assert vs is mock_vs_cls.return_value
     assert vec is mock_vec_cls.return_value
@@ -975,7 +998,7 @@ async def test_get_vector_store_unknown_name_raises():
     conf = _sqlite_vector_store_only_conf()
     builder = DatabaseManager(conf)
     with pytest.raises(ValueError, match="VectorStore 'missing' not found"):
-        await builder.get_vector_store("missing")
+        await builder.get_vector_store("missing", indexed_properties={})
 
 
 @pytest.mark.asyncio
@@ -1003,7 +1026,7 @@ async def test_close_disposes_vector_store_engines_and_shuts_down_stores():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_sqlite_vector_store("vs1")
+        await builder.get_vector_store("vs1", indexed_properties={})
 
         assert "vs1" in builder.vector_stores
         assert "vs1" in builder.vector_store_sql_engines
@@ -1014,3 +1037,98 @@ async def test_close_disposes_vector_store_engines_and_shuts_down_stores():
     assert builder.vector_store_sql_engines == {}
     mock_store_cls.return_value.shutdown.assert_awaited_once()
     mock_engine.dispose.assert_awaited()
+
+
+def _sqlite_conf_with_properties(indexed_properties: dict[str, str]) -> MagicMock:
+    return _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={
+            "vs1": SQLiteVectorStoreConf(
+                path="vs.db", indexed_properties=indexed_properties
+            )
+        }
+    )
+
+
+def _patched_sqlite_store():
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+    return (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_merges_configured_and_system_keys():
+    """The store is built with the configured user keys plus the service's system keys."""
+    conf = _sqlite_conf_with_properties({"category": "str", "score": "float"})
+    engine_patch, params_patch, store_patch = _patched_sqlite_store()
+    with engine_patch, params_patch as mock_params_cls, store_patch as mock_store_cls:
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.get_vector_store(
+            "vs1", indexed_properties={"memmachine_event_timestamp": datetime}
+        )
+    assert mock_params_cls.call_args.kwargs["indexed_properties"] == {
+        "category": str,
+        "score": float,
+        "memmachine_event_timestamp": datetime,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_rejects_a_configured_key_of_another_type():
+    """A configured key the service writes with another type is a configuration error."""
+    conf = _sqlite_conf_with_properties({"memmachine_event_timestamp": "str"})
+    engine_patch, params_patch, store_patch = _patched_sqlite_store()
+    with engine_patch, params_patch, store_patch as mock_store_cls:
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        with pytest.raises(VectorStoreConfigurationError, match="configures"):
+            await builder.get_vector_store(
+                "vs1", indexed_properties={"memmachine_event_timestamp": datetime}
+            )
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_rejects_an_invalid_configured_key():
+    conf = _sqlite_conf_with_properties({"Bad Key": "str"})
+    engine_patch, params_patch, store_patch = _patched_sqlite_store()
+    with engine_patch, params_patch, store_patch as mock_store_cls:
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        with pytest.raises(VectorStoreConfigurationError, match="indexed_properties"):
+            await builder.get_vector_store("vs1", indexed_properties={})
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_is_not_shared_between_services():
+    """A second service whose keys the built store does not declare is refused."""
+    conf = _sqlite_conf_with_properties({})
+    engine_patch, params_patch, store_patch = _patched_sqlite_store()
+    with engine_patch, params_patch, store_patch as mock_store_cls:
+        mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.indexed_properties = {
+            "memmachine_event_session": str
+        }
+        builder = DatabaseManager(conf)
+        first = await builder.get_vector_store(
+            "vs1", indexed_properties={"memmachine_event_session": str}
+        )
+        # The same service, or one declaring a subset, gets the same store.
+        assert (
+            await builder.get_vector_store(
+                "vs1", indexed_properties={"memmachine_event_session": str}
+            )
+            is first
+        )
+        with pytest.raises(VectorStoreConfigurationError, match="another service"):
+            await builder.get_vector_store("vs1", indexed_properties={"set_id": str})

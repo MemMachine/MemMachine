@@ -266,6 +266,54 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
             "is set to match so all replicas confirm writes."
         ),
     )
+    request_timeout: float = Field(
+        ...,
+        description=(
+            "Seconds a request to Qdrant may take before the client gives up. "
+            "Required: every remote write is bounded by it."
+        ),
+    )
+    indexed_properties: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "The property keys every collection of this store indexes and filters "
+            "on, each with its type name (str, int, float, bool, datetime). The "
+            "system keys of the service using the store are added to these. A "
+            "record or a filter naming any other key is rejected."
+        ),
+    )
+    # The following mirror qdrant_client.models config objects as plain mappings
+    # (their natural serialized form) so qdrant-client stays an optional
+    # dependency here. They are validated against the real qdrant models when
+    # passed to QdrantVectorStoreParams. All apply only to native (data)
+    # collections, never the internal registry collections.
+    hnsw_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "HNSW index tuning for native (data) collections, mirroring "
+            "qdrant_client.models.HnswConfigDiff (e.g. ef_construct, payload_m). "
+            "'m' must be 0 or omitted because native collections are "
+            "multi-tenant and rely on per-tenant payload indexing."
+        ),
+    )
+    optimizers_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optimizer tuning for native (data) collections, mirroring "
+            "qdrant_client.models.OptimizersConfigDiff "
+            "(e.g. indexing_threshold, default_segment_number)."
+        ),
+    )
+    quantization_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Quantization for native (data) collections, mirroring "
+            "qdrant_client.models.QuantizationConfig. Provide a single-key map "
+            "selecting the method, e.g. "
+            "{'turbo': {'always_ram': true, 'bits': 'bits2'}} for TurboQuant, "
+            "or a 'scalar' / 'product' / 'binary' map."
+        ),
+    )
 
 
 class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
@@ -294,6 +342,22 @@ class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
         description=(
             "Milvus consistency level for newly created collections. "
             "Supported values: Strong, Session, Bounded, Eventually."
+        ),
+    )
+    request_timeout: float = Field(
+        ...,
+        description=(
+            "Seconds a request to Milvus may take before the client gives up. "
+            "Required: every remote write is bounded by it."
+        ),
+    )
+    indexed_properties: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "The property keys every collection of this store indexes and filters "
+            "on, each with its type name (str, int, float, bool, datetime). The "
+            "system keys of the service using the store are added to these. A "
+            "record or a filter naming any other key is rejected."
         ),
     )
 
@@ -366,6 +430,15 @@ class SQLiteVectorStoreConf(YamlSerializableMixin):
             "to `index_directory`. Only relevant when `index_directory` is set."
         ),
     )
+    indexed_properties: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "The property keys every collection of this store indexes and filters "
+            "on, each with its type name (str, int, float, bool, datetime). The "
+            "system keys of the service using the store are added to these. A "
+            "record or a filter naming any other key is rejected."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_path(self) -> Self:
@@ -380,6 +453,15 @@ class SQLiteVecVectorStoreConf(YamlSerializableMixin):
     path: str = Field(
         ...,
         description="SQLite database file path (used as sqlite+aiosqlite:///<path>)",
+    )
+    indexed_properties: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "The property keys every collection of this store indexes and filters "
+            "on, each with its type name (str, int, float, bool, datetime). The "
+            "system keys of the service using the store are added to these. A "
+            "record or a filter naming any other key is rejected."
+        ),
     )
 
     @model_validator(mode="after")

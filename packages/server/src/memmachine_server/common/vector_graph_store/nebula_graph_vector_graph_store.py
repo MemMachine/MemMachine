@@ -23,14 +23,16 @@ from typing import TYPE_CHECKING, Any
 from nebulagraph_python.py_data_types import NVector
 
 from memmachine_server.common.data_types import OrderedValue
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
-    IsNull,
+    IsMissing,
     Not,
+    NotEquals,
     Or,
+    Ordering,
 )
 
 from .data_types import (
@@ -1396,67 +1398,28 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if filter_expr is None:
             return ""
 
+        def prop_ref(field: str) -> str:
+            return f"{node_alias}.{self._sanitize_name(mangle_property_name(field))}"
+
         def render(expr: FilterExpr) -> str:
-            if isinstance(expr, Comparison):
-                prop_name = mangle_property_name(expr.field)
-                sanitized_prop = self._sanitize_name(prop_name)
-                prop_ref = f"{node_alias}.{sanitized_prop}"
-
-                if expr.op in ("=", "=="):
-                    value_str = self._format_value(expr.value)
-                    return f"{prop_ref} = {value_str}"
-                if expr.op == "!=":
-                    value_str = self._format_value(expr.value)
-                    return f"{prop_ref} <> {value_str}"
-                if expr.op == ">":
-                    value_str = self._format_value(expr.value)
-                    return f"{prop_ref} > {value_str}"
-                if expr.op == ">=":
-                    value_str = self._format_value(expr.value)
-                    return f"{prop_ref} >= {value_str}"
-                if expr.op == "<":
-                    value_str = self._format_value(expr.value)
-                    return f"{prop_ref} < {value_str}"
-                if expr.op == "<=":
-                    value_str = self._format_value(expr.value)
-                    return f"{prop_ref} <= {value_str}"
-                if expr.op == "in":
-                    if not isinstance(expr.value, list):
-                        raise ValueError("'in' operator requires list value")
-                    value_strs = [self._format_value(v) for v in expr.value]
-                    values_list = ", ".join(value_strs)
-                    return f"{prop_ref} IN [{values_list}]"
-                raise ValueError(f"Unsupported operator: {expr.op}")
-
-            if isinstance(expr, In):
-                prop_name = mangle_property_name(expr.field)
-                sanitized_prop = self._sanitize_name(prop_name)
-                prop_ref = f"{node_alias}.{sanitized_prop}"
-                value_strs = [self._format_value(v) for v in expr.values]
-                values_list = ", ".join(value_strs)
-                return f"{prop_ref} IN [{values_list}]"
-
-            if isinstance(expr, IsNull):
-                prop_name = mangle_property_name(expr.field)
-                sanitized_prop = self._sanitize_name(prop_name)
-                prop_ref = f"{node_alias}.{sanitized_prop}"
-                return f"{prop_ref} IS NULL"
-
-            if isinstance(expr, Not):
-                inner_clause = render(expr.expr)
-                return f"NOT ({inner_clause})"
-
-            if isinstance(expr, And):
-                left_clause = render(expr.left)
-                right_clause = render(expr.right)
-                return f"({left_clause}) AND ({right_clause})"
-
-            if isinstance(expr, Or):
-                left_clause = render(expr.left)
-                right_clause = render(expr.right)
-                return f"({left_clause}) OR ({right_clause})"
-
-            raise ValueError(f"Unsupported filter expression type: {type(expr)}")
+            match expr:
+                case Equals(field, value):
+                    return f"{prop_ref(field)} = {self._format_value(value)}"
+                case NotEquals(field, value):
+                    return f"{prop_ref(field)} <> {self._format_value(value)}"
+                case Ordering(field, op, value):
+                    return f"{prop_ref(field)} {op} {self._format_value(value)}"
+                case In(field, values):
+                    values_list = ", ".join(self._format_value(v) for v in values)
+                    return f"{prop_ref(field)} IN [{values_list}]"
+                case IsMissing(field):
+                    return f"{prop_ref(field)} IS NULL"
+                case Not(operand):
+                    return f"NOT ({render(operand)})"
+                case And(operands):
+                    return " AND ".join(f"({render(o)})" for o in operands)
+                case Or(operands):
+                    return " OR ".join(f"({render(o)})" for o in operands)
 
         where_clause = render(filter_expr)
         return where_clause

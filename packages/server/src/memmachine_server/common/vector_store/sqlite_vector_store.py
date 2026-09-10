@@ -27,7 +27,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import override
+from typing import ClassVar, override
 from uuid import UUID
 
 import numpy as np
@@ -58,25 +58,45 @@ from sqlalchemy.orm import DeclarativeBase, MappedColumn, Session, mapped_column
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.filter.sql_filter_util import compile_sql_filter
-from memmachine_server.common.properties_json import (
-    encode_properties,
+from memmachine_server.common.data_types import PropertyType
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    FilterExpr,
+    In,
+    IsMissing,
+    Not,
+    NotEquals,
+    Or,
+    Ordering,
 )
 
 from .data_types import (
+    IndexedProperties,
+    IndexedPropertiesMismatchError,
     QueryMatch,
     QueryResult,
     Record,
     VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
     VectorStoreCollectionConfigMismatchError,
+    indexed_property_names,
 )
-from .utils import validate_filter, validate_identifier
+from .declared_properties import require_declared_properties, require_supported_filter
+from .sql_columns import (
+    compile_property_filter,
+    property_column_name,
+    property_column_values,
+    property_columns,
+    property_indexes,
+)
+from .utils import validate_identifier
 from .vector_search_engine import VectorSearchEngine
 from .vector_store import VectorStore, VectorStoreCollection
 
 logger = logging.getLogger(__name__)
+
+_INDEXED_PROPERTIES_KEY = "indexed_properties"
 
 
 class IndexLoadError(RuntimeError):
@@ -102,6 +122,9 @@ class _CollectionRow(BaseSQLiteVectorStore):
 
     namespace: MappedColumn[str] = mapped_column(String(255), primary_key=True)
     name: MappedColumn[str] = mapped_column(String(255), primary_key=True)
+    # The collection config plus the declared schema it was created under,
+    # so a store built with another schema fails loudly instead of reading
+    # columns that are not there.
     config_json: MappedColumn[dict[str, JsonValue]] = mapped_column(
         JSON, nullable=False
     )
@@ -247,6 +270,7 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         namespace: str,
         name: str,
         config: VectorStoreCollectionConfig,
+        indexed_properties: Mapping[str, PropertyType],
         index_path: str | None,
         save_threshold: int,
     ) -> None:
@@ -260,14 +284,29 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         self._name = name
 
         self._config = config
+        self._indexed_properties = dict(indexed_properties)
 
         self._index_path = index_path
         self._save_threshold = save_threshold
+
+    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
+        {Equals, NotEquals, Ordering, In, IsMissing, And, Or, Not}
+    )
 
     @property
     @override
     def config(self) -> VectorStoreCollectionConfig:
         return self._config
+
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
+
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return SQLiteVectorStoreCollection._SUPPORTED_FILTER_NODES
 
     async def _maybe_save_index(self) -> None:
         """Save the index to disk if applied pending operations exceed the threshold."""
@@ -299,27 +338,33 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         records = list(records)
         if not records:
             return
+        for record in records:
+            require_declared_properties(record.properties, self._indexed_properties)
+
+        property_column_names = [
+            property_column_name(key) for key in self._indexed_properties
+        ]
+        insert_records = sqlite_insert(self._records_table)
+        upsert_records = insert_records.on_conflict_do_update(
+            index_elements=[self._records_table.c.uuid],
+            # With no declared column the update is a no-op that still
+            # returns the existing row, which `RETURNING` needs.
+            set_={
+                name: insert_records.excluded[name]
+                for name in (property_column_names or ["uuid"])
+            },
+        ).returning(self._records_table.c.uuid, self._records_table.c.row_id)
 
         async with self._create_session() as session, session.begin():
-            upsert_records = (
-                sqlite_insert(self._records_table)
-                .on_conflict_do_update(
-                    index_elements=[self._records_table.c.uuid],
-                    set_={
-                        "properties": sqlite_insert(
-                            self._records_table
-                        ).excluded.properties,
-                    },
-                )
-                .returning(self._records_table.c.uuid, self._records_table.c.row_id)
-            )
             rows = (
                 await session.execute(
                     upsert_records,
                     [
                         {
                             "uuid": record.uuid,
-                            "properties": encode_properties(record.properties),
+                            **property_column_values(
+                                record.properties, self._indexed_properties
+                            ),
                         }
                         for record in records
                     ],
@@ -402,8 +447,12 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         if limit <= 0:
             return [QueryResult(matches=[]) for _ in query_vectors]
 
-        if property_filter is not None and not validate_filter(property_filter):
-            raise ValueError("Filter contains invalid field names")
+        if property_filter is not None:
+            require_supported_filter(
+                property_filter,
+                self._indexed_properties,
+                SQLiteVectorStoreCollection._SUPPORTED_FILTER_NODES,
+            )
 
         key_filter = self._build_key_filter(property_filter)
 
@@ -435,12 +484,8 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         return SQLiteVectorStoreCollection._KeyFilter(
             sync_sqlalchemy_engine=self._sync_sqlalchemy_engine,
             records_table=self._records_table,
-            filter_expression=compile_sql_filter(
-                property_filter,
-                lambda field: (
-                    self._records_table.c.properties[field],
-                    "properties_json",
-                ),
+            filter_expression=compile_property_filter(
+                property_filter, self._records_table, self._indexed_properties
             ),
         )
 
@@ -566,6 +611,10 @@ class SQLiteVectorStoreParams(BaseModel):
             Number of engine operations before auto-saving the index to disk.
             Only applies when index_directory is set
             (default: 1000).
+        indexed_properties (IndexedProperties):
+            The declared schema every collection of this store carries: each
+            key is a typed, indexed column of the collection's records table,
+            and a record or a filter naming any other key is rejected.
     """
 
     sqlalchemy_engine: InstanceOf[AsyncEngine] = Field(
@@ -590,6 +639,10 @@ class SQLiteVectorStoreParams(BaseModel):
             "Number of engine operations before auto-saving the index to disk. "
             "Only applies when index_directory is set"
         ),
+    )
+    indexed_properties: IndexedProperties = Field(
+        ...,
+        description="The declared schema every collection of this store carries",
     )
 
     @field_validator("sqlalchemy_engine")
@@ -624,6 +677,7 @@ class SQLiteVectorStore(VectorStore):
             Path(params.index_directory) if params.index_directory else None
         )
         self._save_threshold = params.save_threshold
+        self._indexed_properties = params.indexed_properties
 
         self._create_session = async_sessionmaker(
             self._sqlalchemy_engine, expire_on_commit=False
@@ -646,6 +700,11 @@ class SQLiteVectorStore(VectorStore):
             cursor.close()
 
         self._started = False
+
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
 
     def _require_started(self) -> None:
         if not self._started:
@@ -767,13 +826,7 @@ class SQLiteVectorStore(VectorStore):
 
             self._clear_search_engine_state(namespace, name)
             await self._ensure_collection_resources(session, namespace, name, config)
-            session.add(
-                _CollectionRow(
-                    namespace=namespace,
-                    name=name,
-                    config_json=config.model_dump(mode="json"),
-                )
-            )
+            session.add(self._collection_row(namespace, name, config))
 
     @override
     async def open_or_create_collection(
@@ -807,6 +860,7 @@ class SQLiteVectorStore(VectorStore):
                     namespace=namespace,
                     name=name,
                     config=existing_config,
+                    indexed_properties=self._indexed_properties,
                     index_path=str(index_path) if index_path is not None else None,
                     save_threshold=self._save_threshold,
                 )
@@ -815,13 +869,7 @@ class SQLiteVectorStore(VectorStore):
             records_table, search_engine = await self._ensure_collection_resources(
                 session, namespace, name, config
             )
-            session.add(
-                _CollectionRow(
-                    namespace=namespace,
-                    name=name,
-                    config_json=config.model_dump(mode="json"),
-                )
-            )
+            session.add(self._collection_row(namespace, name, config))
 
         return SQLiteVectorStoreCollection(
             create_session=self._create_session,
@@ -831,6 +879,7 @@ class SQLiteVectorStore(VectorStore):
             namespace=namespace,
             name=name,
             config=config,
+            indexed_properties=self._indexed_properties,
             index_path=str(index_path) if index_path is not None else None,
             save_threshold=self._save_threshold,
         )
@@ -865,6 +914,7 @@ class SQLiteVectorStore(VectorStore):
             namespace=namespace,
             name=name,
             config=existing,
+            indexed_properties=self._indexed_properties,
             index_path=str(index_path) if index_path is not None else None,
             save_threshold=self._save_threshold,
         )
@@ -916,13 +966,30 @@ class SQLiteVectorStore(VectorStore):
 
     def _records_table(self, namespace: str, name: str) -> Table:
         """Get or create a SQLAlchemy Table for a per-collection records table."""
-        return Table(
+        records_table = Table(
             f"{self._collection_prefix(namespace, name)}_rc",
             self._sa_metadata,
             Column("row_id", Integer, primary_key=True, autoincrement=True),
             Column("uuid", Uuid, nullable=False, unique=True),
-            Column("properties", JSON, nullable=False, default=dict),
+            *property_columns(self._indexed_properties),
             extend_existing=True,
+        )
+        if not records_table.indexes:
+            property_indexes(records_table, self._indexed_properties)
+        return records_table
+
+    def _collection_row(
+        self, namespace: str, name: str, config: VectorStoreCollectionConfig
+    ) -> _CollectionRow:
+        return _CollectionRow(
+            namespace=namespace,
+            name=name,
+            config_json={
+                **config.model_dump(mode="json"),
+                _INDEXED_PROPERTIES_KEY: indexed_property_names(
+                    self._indexed_properties
+                ),
+            },
         )
 
     def _index_path(self, namespace: str, name: str) -> Path | None:
@@ -944,7 +1011,8 @@ class SQLiteVectorStore(VectorStore):
         namespace: str,
         name: str,
     ) -> VectorStoreCollectionConfig | None:
-        row = (
+        """The collection's config; raises if it was created under another schema."""
+        stored = (
             await session.execute(
                 select(_CollectionRow.config_json).where(
                     _CollectionRow.namespace == namespace,
@@ -952,9 +1020,24 @@ class SQLiteVectorStore(VectorStore):
                 )
             )
         ).scalar_one_or_none()
-        if row is None:
+        if stored is None:
             return None
-        return VectorStoreCollectionConfig.model_validate(row)
+        stored_properties = stored.get(_INDEXED_PROPERTIES_KEY)
+        declared_properties = indexed_property_names(self._indexed_properties)
+        if stored_properties != declared_properties:
+            raise IndexedPropertiesMismatchError(
+                namespace,
+                name,
+                stored_properties if isinstance(stored_properties, dict) else {},
+                declared_properties,
+            )
+        return VectorStoreCollectionConfig.model_validate(
+            {
+                key: value
+                for key, value in stored.items()
+                if key != _INDEXED_PROPERTIES_KEY
+            }
+        )
 
     async def _get_or_create_vector_search_engine(
         self,

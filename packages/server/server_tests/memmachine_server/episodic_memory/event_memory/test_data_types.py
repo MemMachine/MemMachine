@@ -7,15 +7,20 @@ import pytest
 from pydantic import ValidationError
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
     Derivative,
     Event,
-    ProducerContext,
+    FormatOptions,
     Segment,
     TextBlock,
+    UnknownPart,
     decode_block,
     decode_context,
     encode_block,
     encode_context,
+    get_part,
+    with_part,
+    without_part,
 )
 
 SAMPLE_PROPERTIES = {
@@ -74,12 +79,36 @@ class TestSegmentRoundTrip:
             index=0,
             offset=0,
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            context=ProducerContext(producer="user"),
+            context=with_part({}, Author(name="user")),
             block=TextBlock(text="hello"),
         )
         seg2 = Segment.model_validate(seg.model_dump(mode="json"))
-        assert isinstance(seg2.context, ProducerContext)
-        assert seg2.context.producer == "user"
+        assert get_part(seg2.context, Author) == Author(name="user")
+
+    def test_session_and_source_round_trip(self):
+        seg = Segment(
+            uuid=uuid4(),
+            event_uuid=uuid4(),
+            index=0,
+            offset=0,
+            timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+            session_id="s1",
+            source_id="alice",
+            block=TextBlock(text="hello"),
+        )
+        seg2 = Segment.model_validate(seg.model_dump(mode="json"))
+        assert (seg2.session_id, seg2.source_id) == ("s1", "alice")
+
+    def test_session_and_source_default_to_none(self):
+        seg = Segment(
+            uuid=uuid4(),
+            event_uuid=uuid4(),
+            index=0,
+            offset=0,
+            timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+            block=TextBlock(text="hello"),
+        )
+        assert (seg.session_id, seg.source_id, seg.context) == (None, None, {})
 
 
 class TestEventRoundTrip:
@@ -120,7 +149,7 @@ class TestDeserializationErrors:
             "index": 0,
             "offset": 0,
             "timestamp": "2026-01-15T10:30:00Z",
-            "block": {"block_type": "text", "text": "hi"},
+            "block": {"kind": "text", "text": "hi"},
             "properties": {"key": {"not_tagged": "value"}},
         }
         with pytest.raises(ValidationError):
@@ -133,7 +162,7 @@ class TestDeserializationErrors:
             "index": 0,
             "offset": 0,
             "timestamp": "2026-01-15T10:30:00Z",
-            "block": {"block_type": "text", "text": "hi"},
+            "block": {"kind": "text", "text": "hi"},
             "properties": {"n": {"t": "int", "v": 42, "extra": "junk"}},
         }
         with pytest.raises(ValidationError):
@@ -146,7 +175,7 @@ class TestDeserializationErrors:
             "index": 0,
             "offset": 0,
             "timestamp": "2026-01-15T10:30:00Z",
-            "block": {"block_type": "text", "text": "hi"},
+            "block": {"kind": "text", "text": "hi"},
             "properties": {
                 "dt": {"t": "datetime", "v": "2026-01-15T00:00:00+00:00"},
             },
@@ -155,22 +184,73 @@ class TestDeserializationErrors:
             Segment.model_validate(data)
 
 
-class TestContextModels:
+class TestContextParts:
     def test_context_models_do_not_declare_index_hints(self):
-        assert not hasattr(ProducerContext, "indexed_properties")
+        assert not hasattr(Author, "indexed_properties")
+
+    def test_get_part_of_an_absent_kind_is_none(self):
+        assert get_part({}, Author) is None
+
+    def test_with_part_replaces_the_part_of_that_kind(self):
+        context = with_part({}, Author(name="user"))
+        replaced = with_part(context, Author(name="other"))
+        assert get_part(context, Author) == Author(name="user")
+        assert get_part(replaced, Author) == Author(name="other")
+        assert list(replaced) == ["author"]
+
+    def test_without_part_removes_the_kind(self):
+        context = with_part({}, Author(name="user"))
+        assert without_part(context, Author) == {}
+        assert context == {"author": Author(name="user")}
+
+    def test_author_renders_its_name_and_unknown_renders_nothing(self):
+        unknown = UnknownPart(kind_name="plugin", data={"x": 1})
+        assert Author(name="user").render(FormatOptions()) == "user"
+        assert unknown.render(FormatOptions()) is None
 
 
 class TestContextAndBlockSerialization:
     def test_context_round_trip(self):
-        context = ProducerContext(producer="user")
+        context = with_part({}, Author(name="user"))
 
         serialized = encode_context(context)
         deserialized = decode_context(serialized)
 
+        assert serialized == {"author": {"name": "user"}}
         assert deserialized == context
 
-    def test_context_none_round_trip(self):
-        assert decode_context(encode_context(None)) is None
+    def test_empty_context_round_trip(self):
+        assert encode_context({}) == {}
+        assert decode_context({}) == {}
+
+    def test_unregistered_kind_round_trips_unchanged(self):
+        encoded = {"author": {"name": "user"}, "plugin": {"x": 1, "y": "z"}}
+
+        decoded = decode_context(encoded)
+
+        assert decoded["plugin"] == UnknownPart(
+            kind_name="plugin", data={"x": 1, "y": "z"}
+        )
+        assert get_part(decoded, Author) == Author(name="user")
+        assert encode_context(decoded) == encoded
+
+    def test_part_that_is_not_an_object_is_rejected(self):
+        with pytest.raises(TypeError, match="object"):
+            decode_context({"author": "user"})
+
+    def test_model_dump_encodes_parts_by_kind(self):
+        seg = Segment(
+            uuid=uuid4(),
+            event_uuid=uuid4(),
+            index=0,
+            offset=0,
+            timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+            context=with_part({}, Author(name="user")),
+            block=TextBlock(text="hello"),
+        )
+        dumped = seg.model_dump(mode="json")
+        assert dumped["context"] == {"author": {"name": "user"}}
+        assert dumped["block"] == {"kind": "text", "text": "hello"}
 
     def test_block_round_trip(self):
         block = TextBlock(text="hello")

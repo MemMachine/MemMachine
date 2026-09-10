@@ -21,26 +21,16 @@ from memmachine_server.common.data_types import (
     FilterValue,
     OrderedValue,
 )
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsMissing,
+    Not,
+    NotEquals,
+    Or,
+    Ordering,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.neo4j_utils import (
@@ -1225,6 +1215,16 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         return query_filter_string, query_filter_params
 
     @staticmethod
+    def _comparison_operator(expr: Equals | NotEquals | Ordering) -> str:
+        match expr:
+            case Equals():
+                return "="
+            case NotEquals():
+                return "!="
+            case Ordering(op=op):
+                return op
+
+    @staticmethod
     def _render_filter_expr(
         entity_query_alias: str,
         query_value_parameter: str,
@@ -1233,56 +1233,47 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         _render = Neo4jVectorGraphStore._render_filter_expr
         _sanitize = Neo4jVectorGraphStore._sanitize_name
 
-        if isinstance(expr, FilterIsNull):
-            field_ref = (
-                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
-            )
-            return f"{field_ref} IS NULL", {}
+        def field_ref(field: str) -> str:
+            return f"{entity_query_alias}.{_sanitize(mangle_property_name(field))}"
 
-        if isinstance(expr, FilterIn):
-            field_ref = (
-                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
-            )
-            param_name = _sanitize(f"filter_expr_param_{uuid4()}")
-            condition = f"{field_ref} IN ${query_value_parameter}.{param_name}"
-            params: dict[str, FilterValue] = {param_name: expr.values}
-            return condition, params
-
-        if isinstance(expr, FilterComparison):
-            field_ref = (
-                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
-            )
-            param_name = _sanitize(f"filter_expr_param_{uuid4()}")
-            condition = render_comparison(
-                left=field_ref,
-                op=expr.op,
-                right=f"${query_value_parameter}.{param_name}",
-                value=expr.value,
-            )
-            params = {
-                param_name: cast(FilterValue, sanitize_value_for_neo4j(expr.value))
-            }
-            return condition, params
-
-        if isinstance(expr, FilterAnd):
-            left_cond, left_params = _render(
-                entity_query_alias, query_value_parameter, expr.left
-            )
-            right_cond, right_params = _render(
-                entity_query_alias, query_value_parameter, expr.right
-            )
-            return f"({left_cond}) AND ({right_cond})", left_params | right_params
-        if isinstance(expr, FilterOr):
-            left_cond, left_params = _render(
-                entity_query_alias, query_value_parameter, expr.left
-            )
-            right_cond, right_params = _render(
-                entity_query_alias, query_value_parameter, expr.right
-            )
-            return f"({left_cond}) OR ({right_cond})", left_params | right_params
-        if isinstance(expr, FilterNot):
-            inner_cond, inner_params = _render(
-                entity_query_alias, query_value_parameter, expr.expr
-            )
-            return f"NOT ({inner_cond})", inner_params
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+        match expr:
+            case IsMissing(field):
+                return f"{field_ref(field)} IS NULL", {}
+            case In(field, values):
+                param_name = _sanitize(f"filter_expr_param_{uuid4()}")
+                condition = (
+                    f"{field_ref(field)} IN ${query_value_parameter}.{param_name}"
+                )
+                return condition, {param_name: cast(FilterValue, list(values))}
+            case (
+                Equals(field, value)
+                | NotEquals(field, value)
+                | Ordering(field, _, value)
+            ):
+                param_name = _sanitize(f"filter_expr_param_{uuid4()}")
+                condition = render_comparison(
+                    left=field_ref(field),
+                    op=Neo4jVectorGraphStore._comparison_operator(expr),
+                    right=f"${query_value_parameter}.{param_name}",
+                    value=value,
+                )
+                return condition, {
+                    param_name: cast(FilterValue, sanitize_value_for_neo4j(value))
+                }
+            case And(operands) | Or(operands):
+                joiner = " AND " if isinstance(expr, And) else " OR "
+                rendered = [
+                    _render(entity_query_alias, query_value_parameter, operand)
+                    for operand in operands
+                ]
+                params: dict[str, FilterValue] = {}
+                for _, operand_params in rendered:
+                    params |= operand_params
+                return joiner.join(
+                    f"({condition})" for condition, _ in rendered
+                ), params
+            case Not(operand):
+                inner_cond, inner_params = _render(
+                    entity_query_alias, query_value_parameter, operand
+                )
+                return f"NOT ({inner_cond})", inner_params

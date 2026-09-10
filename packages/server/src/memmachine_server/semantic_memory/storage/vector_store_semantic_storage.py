@@ -34,8 +34,8 @@ from sqlalchemy.sql import Delete, Select, func
 
 from memmachine_server.common.episode_store.episode_model import EpisodeIdT
 from memmachine_server.common.errors import InvalidArgumentError, ResourceNotFoundError
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
     demangle_user_metadata_key,
     normalize_filter_field,
 )

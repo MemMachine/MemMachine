@@ -10,6 +10,7 @@ from memmachine_server.common.configuration import (
     SemanticMemoryStorageBackend,
 )
 from memmachine_server.common.resource_manager.semantic_manager import (
+    _SEMANTIC_INDEXED_PROPERTIES,
     SemanticResourceManager,
 )
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
@@ -48,7 +49,9 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
     resource_manager.get_sql_engine.assert_awaited_once_with(
         "semantic_db", validate=True
     )
-    resource_manager.get_vector_store.assert_awaited_once_with("semantic_vectors")
+    resource_manager.get_vector_store.assert_awaited_once_with(
+        "semantic_vectors", indexed_properties=_SEMANTIC_INDEXED_PROPERTIES
+    )
     vector_store.open_or_create_collection.assert_awaited_once()
 
     await storage.cleanup()

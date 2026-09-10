@@ -3,12 +3,14 @@
 import asyncio
 import logging
 from asyncio import Lock
+from collections.abc import Mapping
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.mixin_confs import MetricsFactoryIdMixin
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import (
     CountCachingEpisodeStorage,
@@ -183,9 +185,13 @@ class ResourceManagerImpl:
         """Return a vector graph store by name."""
         return await self._database_manager.get_vector_graph_store(name)
 
-    async def get_vector_store(self, name: str) -> VectorStore:
-        """Return a vector store by name."""
-        return await self._database_manager.get_vector_store(name)
+    async def get_vector_store(
+        self, name: str, *, indexed_properties: Mapping[str, PropertyType]
+    ) -> VectorStore:
+        """Return a vector store by name, built for the service declaring these keys."""
+        return await self._database_manager.get_vector_store(
+            name, indexed_properties=indexed_properties
+        )
 
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return a segment store by name, constructing it on first access."""

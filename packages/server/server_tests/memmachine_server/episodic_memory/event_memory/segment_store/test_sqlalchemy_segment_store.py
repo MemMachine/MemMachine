@@ -17,15 +17,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from memmachine_server.common.filter.filter_parser import Comparison, parse_filter
+from memmachine_server.common.filter import (
+    Equals,
+)
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
-    NullContext,
-    ProducerContext,
+    Author,
+    Context,
+    Neighborhood,
     Segment,
     TextBlock,
+    with_part,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStoreAttemptsExhaustedError,
@@ -51,12 +58,15 @@ from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
 
 PARTITION_KEY = "test_partition"
 BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
-_NULL_CONTEXT = NullContext()
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _author(name: str) -> Context:
+    return with_part({}, Author(name=name))
 
 
 def _seg(
@@ -66,7 +76,9 @@ def _seg(
     offset: int = 0,
     ts_offset_seconds: int = 0,
     text: str = "hello",
-    context: ProducerContext | NullContext = _NULL_CONTEXT,
+    session_id: str | None = None,
+    source_id: str | None = None,
+    context: Context | None = None,
     properties: dict | None = None,
 ) -> Segment:
     return Segment(
@@ -75,10 +87,18 @@ def _seg(
         index=index,
         offset=offset,
         timestamp=BASE_TIME + timedelta(seconds=ts_offset_seconds),
+        session_id=session_id,
+        source_id=source_id,
         block=TextBlock(text=text),
-        context=context,
+        context=context if context is not None else {},
         properties=properties or {},
     )
+
+
+async def _drop_schema(engine: AsyncEngine) -> None:
+    """Drop the store's tables, so the next startup starts clean."""
+    async with engine.begin() as conn:
+        await conn.run_sync(BaseSegmentStore.metadata.drop_all)
 
 
 def _links(*segments: Segment) -> dict[Segment, list[UUID]]:
@@ -137,8 +157,7 @@ async def sqlite_store(
     )
     await store.startup()
     yield store
-    async with sqlalchemy_sqlite_engine.begin() as conn:
-        await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+    await _drop_schema(sqlalchemy_sqlite_engine)
 
 
 @pytest_asyncio.fixture
@@ -150,8 +169,7 @@ async def pg_store(
     )
     await store.startup()
     yield store
-    async with sqlalchemy_pg_engine.begin() as conn:
-        await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+    await _drop_schema(sqlalchemy_pg_engine)
 
 
 @pytest.fixture(
@@ -231,7 +249,7 @@ async def test_add_segments_with_properties(
 async def test_add_segments_with_producer_context(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    ctx = ProducerContext(producer="User")
+    ctx = _author("User")
     seg = _seg(context=ctx)
     await partition.add_segments(_links(seg))
 
@@ -242,8 +260,8 @@ async def test_add_segments_with_producer_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert json.loads(row.context) == {"context_type": "producer", "producer": "User"}
-    assert json.loads(row.block) == {"block_type": "text", "text": "hello"}
+    assert json.loads(row.context) == {"author": {"name": "User"}}
+    assert json.loads(row.block) == {"kind": "text", "text": "hello"}
 
 
 @pytest.mark.asyncio
@@ -257,10 +275,10 @@ async def test_add_segments_with_no_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert json.loads(row.context) == {"context_type": "null"}
+    assert json.loads(row.context) == {}
 
     result = await partition.get_segment_contexts([seg.uuid])
-    assert result[seg.uuid][0].context == NullContext()
+    assert result[seg.uuid][0].context == {}
 
 
 @pytest.mark.asyncio
@@ -290,7 +308,7 @@ async def test_timestamp_roundtrips_with_timezone(
         offset=0,
         timestamp=ts,
         block=TextBlock(text="tz"),
-        context=_NULL_CONTEXT,
+        context={},
         properties={},
     )
     await partition.add_segments(_links(seg))
@@ -329,7 +347,7 @@ async def test_timestamp_filter_compares_instants_not_wall_clocks(
 
     result = await partition.get_segment_contexts(
         [early.uuid],
-        max_forward_segments=5,
+        after=5,
         property_filter=parse_filter(f"timestamp <= date('{bound}')"),
     )
     assert [s.uuid for s in result[early.uuid]] == [early.uuid]
@@ -372,9 +390,7 @@ async def test_contexts_empty_seeds(
 async def test_contexts_unknown_seed(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    result = await partition.get_segment_contexts(
-        [uuid4()], max_backward_segments=2, max_forward_segments=2
-    )
+    result = await partition.get_segment_contexts([uuid4()], before=2, after=2)
     assert result == {}
 
 
@@ -382,7 +398,7 @@ async def test_contexts_unknown_seed(
 async def test_contexts_seed_only(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """When max_backward=0 and max_forward=0, return just the seed."""
+    """When before=0 and after=0, return just the seed."""
     seg = _seg()
     await partition.add_segments(_links(seg))
 
@@ -402,7 +418,7 @@ async def test_contexts_backward(
     await partition.add_segments(_links(*segs))
 
     seed = segs[3]
-    result = await partition.get_segment_contexts([seed.uuid], max_backward_segments=2)
+    result = await partition.get_segment_contexts([seed.uuid], before=2)
     ctx = result[seed.uuid]
     # backward(2) + seed = 3 segments
     assert len(ctx) == 3
@@ -419,7 +435,7 @@ async def test_contexts_forward(
     await partition.add_segments(_links(*segs))
 
     seed = segs[1]
-    result = await partition.get_segment_contexts([seed.uuid], max_forward_segments=2)
+    result = await partition.get_segment_contexts([seed.uuid], after=2)
     ctx = result[seed.uuid]
     # seed + forward(2) = 3 segments
     assert len(ctx) == 3
@@ -436,9 +452,7 @@ async def test_contexts_backward_and_forward(
     await partition.add_segments(_links(*segs))
 
     seed = segs[3]
-    result = await partition.get_segment_contexts(
-        [seed.uuid], max_backward_segments=2, max_forward_segments=2
-    )
+    result = await partition.get_segment_contexts([seed.uuid], before=2, after=2)
     ctx = result[seed.uuid]
     assert len(ctx) == 5
     uuids = [s.uuid for s in ctx]
@@ -461,9 +475,7 @@ async def test_contexts_clamp_at_boundaries(
     await partition.add_segments(_links(*segs))
 
     seed = segs[0]
-    result = await partition.get_segment_contexts(
-        [seed.uuid], max_backward_segments=10, max_forward_segments=10
-    )
+    result = await partition.get_segment_contexts([seed.uuid], before=10, after=10)
     ctx = result[seed.uuid]
     assert len(ctx) == 3
     uuids = [s.uuid for s in ctx]
@@ -481,8 +493,8 @@ async def test_contexts_multiple_seeds(
     seed_a, seed_b = segs[2], segs[7]
     result = await partition.get_segment_contexts(
         [seed_a.uuid, seed_b.uuid],
-        max_backward_segments=1,
-        max_forward_segments=1,
+        before=1,
+        after=1,
     )
     assert seed_a.uuid in result
     assert seed_b.uuid in result
@@ -503,9 +515,7 @@ async def test_contexts_with_properties(
     s2 = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2, properties={"k": "v2"})
     await partition.add_segments(_links(s0, s1, s2))
 
-    result = await partition.get_segment_contexts(
-        [s1.uuid], max_backward_segments=1, max_forward_segments=1
-    )
+    result = await partition.get_segment_contexts([s1.uuid], before=1, after=1)
     ctx = result[s1.uuid]
     assert len(ctx) == 3
     assert ctx[0].properties == {"k": "v0"}
@@ -525,11 +535,11 @@ async def test_contexts_property_filter(
     s3 = _seg(event_uuid=ep, offset=3, ts_offset_seconds=3, properties={"tag": "a"})
     await partition.add_segments(_links(s0, s1, s2, s3))
 
-    filt = Comparison(field="m.tag", op="=", value="a")
+    filt = Equals(field="m.tag", value="a")
     result = await partition.get_segment_contexts(
         [s2.uuid],
-        max_backward_segments=5,
-        max_forward_segments=5,
+        before=5,
+        after=5,
         property_filter=filt,
     )
     ctx = result[s2.uuid]
@@ -554,27 +564,27 @@ async def test_contexts_filter_by_context_producer(
         event_uuid=ep,
         offset=0,
         ts_offset_seconds=0,
-        context=ProducerContext(producer="Alice"),
+        context=_author("Alice"),
     )
     s1 = _seg(
         event_uuid=ep,
         offset=1,
         ts_offset_seconds=1,
-        context=ProducerContext(producer="Bob"),
+        context=_author("Bob"),
     )
     s2 = _seg(
         event_uuid=ep,
         offset=2,
         ts_offset_seconds=2,
-        context=ProducerContext(producer="Alice"),
+        context=_author("Alice"),
     )
     await partition.add_segments(_links(s0, s1, s2))
 
-    filt = Comparison(field="context.producer", op="=", value="Alice")
+    filt = Equals(field="context.producer", value="Alice")
     contexts = await partition.get_segment_contexts(
         [s0.uuid],
-        max_backward_segments=5,
-        max_forward_segments=5,
+        before=5,
+        after=5,
         property_filter=filt,
     )
     assert contexts == {}
@@ -590,27 +600,27 @@ async def test_contexts_filter_by_context_type(
         event_uuid=ep,
         offset=0,
         ts_offset_seconds=0,
-        context=ProducerContext(producer="Alice"),
+        context=_author("Alice"),
     )
     s1 = _seg(
         event_uuid=ep,
         offset=1,
         ts_offset_seconds=1,
-        context=NullContext(),
+        context={},
     )
     s2 = _seg(
         event_uuid=ep,
         offset=2,
         ts_offset_seconds=2,
-        context=ProducerContext(producer="Bob"),
+        context=_author("Bob"),
     )
     await partition.add_segments(_links(s0, s1, s2))
 
-    filt = Comparison(field="context.context_type", op="=", value="producer")
+    filt = Equals(field="context.context_type", value="producer")
     contexts = await partition.get_segment_contexts(
         [s0.uuid],
-        max_backward_segments=5,
-        max_forward_segments=5,
+        before=5,
+        after=5,
         property_filter=filt,
     )
     assert contexts == {}
@@ -636,9 +646,7 @@ async def test_contexts_session_isolation(store: SQLAlchemySegmentStore) -> None
     )
     await partition.add_segments(_links(s_seed, s_after))
 
-    result = await partition.get_segment_contexts(
-        [s_seed.uuid], max_backward_segments=5, max_forward_segments=5
-    )
+    result = await partition.get_segment_contexts([s_seed.uuid], before=5, after=5)
     ctx = result[s_seed.uuid]
     uuids = [s.uuid for s in ctx]
     assert s_other.uuid not in uuids
@@ -654,9 +662,7 @@ async def test_contexts_chronological_order(
     segs = [_seg(event_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
     await partition.add_segments(_links(*segs))
 
-    result = await partition.get_segment_contexts(
-        [segs[2].uuid], max_backward_segments=10, max_forward_segments=10
-    )
+    result = await partition.get_segment_contexts([segs[2].uuid], before=10, after=10)
     ctx = result[segs[2].uuid]
     timestamps = [s.timestamp for s in ctx]
     assert timestamps == sorted(timestamps)
@@ -668,16 +674,14 @@ async def test_context_preserved_in_segment_contexts(
 ) -> None:
     """Context is preserved when retrieving segment contexts (backward/forward)."""
     ep = uuid4()
-    ctx_user = ProducerContext(producer="User")
-    ctx_assistant = ProducerContext(producer="Assistant")
+    ctx_user = _author("User")
+    ctx_assistant = _author("Assistant")
     s0 = _seg(event_uuid=ep, offset=0, ts_offset_seconds=0, context=ctx_user)
     s1 = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1, context=ctx_assistant)
     s2 = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2, context=ctx_user)
     await partition.add_segments(_links(s0, s1, s2))
 
-    result = await partition.get_segment_contexts(
-        [s1.uuid], max_backward_segments=1, max_forward_segments=1
-    )
+    result = await partition.get_segment_contexts([s1.uuid], before=1, after=1)
     ctx = result[s1.uuid]
     assert len(ctx) == 3
     assert ctx[0].context == ctx_user
@@ -983,9 +987,7 @@ async def test_concurrent_reads_during_writes(
     async def reader() -> None:
         part = await _get_partition(engine)
         for _ in range(5):
-            result = await part.get_segment_contexts(
-                [segs[5].uuid], max_backward_segments=5, max_forward_segments=5
-            )
+            result = await part.get_segment_contexts([segs[5].uuid], before=5, after=5)
             if segs[5].uuid in result:
                 read_results.append(len(result[segs[5].uuid]))
             await asyncio.sleep(0.01)
@@ -1028,9 +1030,7 @@ async def test_concurrent_context_reads_during_deletes(
         part = await _get_partition(engine)
         for seg in all_segs[::3]:
             try:
-                await part.get_segment_contexts(
-                    [seg.uuid], max_backward_segments=2, max_forward_segments=2
-                )
+                await part.get_segment_contexts([seg.uuid], before=2, after=2)
             except Exception as e:
                 errors.append(e)
             await asyncio.sleep(0.01)
@@ -1247,8 +1247,8 @@ async def test_pg_context_preserved_via_lateral_join(
         _plaintext_partition_config(),
     )
     ep = uuid4()
-    ctx_user = ProducerContext(producer="User")
-    ctx_assistant = ProducerContext(producer="Assistant")
+    ctx_user = _author("User")
+    ctx_assistant = _author("Assistant")
     s0 = _seg(event_uuid=ep, offset=0, ts_offset_seconds=0, context=ctx_user)
     s1 = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1, context=ctx_assistant)
     s2 = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2, context=ctx_user)
@@ -1258,9 +1258,7 @@ async def test_pg_context_preserved_via_lateral_join(
     await partition.add_segments(_links(*all_segs))
 
     # Two seeds exercises the LATERAL join code path.
-    result = await partition.get_segment_contexts(
-        [s1.uuid, s3.uuid], max_backward_segments=1, max_forward_segments=1
-    )
+    result = await partition.get_segment_contexts([s1.uuid, s3.uuid], before=1, after=1)
 
     ctx_a = result[s1.uuid]
     assert len(ctx_a) == 3
@@ -1285,7 +1283,7 @@ async def test_pg_mixed_context_types(
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
-    ctx_msg = ProducerContext(producer="User")
+    ctx_msg = _author("User")
 
     s_msg = _seg(ts_offset_seconds=0, context=ctx_msg)
     s_none = _seg(ts_offset_seconds=1)
@@ -1299,13 +1297,13 @@ async def test_pg_mixed_context_types(
                 select(SegmentRow).where(SegmentRow.uuid == s_none.uuid)
             )
         ).scalar_one()
-    assert json.loads(row.context) == {"context_type": "null"}
+    assert json.loads(row.context) == {}
 
     result = await partition.get_segment_contexts([s_msg.uuid])
     assert result[s_msg.uuid][0].context == ctx_msg
 
     result = await partition.get_segment_contexts([s_none.uuid])
-    assert result[s_none.uuid][0].context == NullContext()
+    assert result[s_none.uuid][0].context == {}
 
 
 # ===================================================================
@@ -1830,8 +1828,7 @@ async def test_purge_bound_comes_from_params(
         assert await store.purge_deleted_partitions() is True
         assert await store.purge_deleted_partitions() is False
     finally:
-        async with sqlalchemy_sqlite_engine.begin() as conn:
-            await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+        await _drop_schema(sqlalchemy_sqlite_engine)
 
 
 @pytest.mark.integration
@@ -2156,8 +2153,7 @@ async def test_purge_bounds_entries_processed_per_call(
         while await store.purge_deleted_partitions():
             pass
     finally:
-        async with sqlalchemy_sqlite_engine.begin() as conn:
-            await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+        await _drop_schema(sqlalchemy_sqlite_engine)
 
 
 @pytest.mark.asyncio
@@ -2417,9 +2413,7 @@ async def test_windowed_read_raises_when_partition_dies_between_statements(
 
     monkeypatch.setattr(partition, context_method, delete_then_read)
     with pytest.raises(SegmentStorePartitionHandleStaleError):
-        await partition.get_segment_contexts(
-            [segs[1].uuid], max_backward_segments=1, max_forward_segments=1
-        )
+        await partition.get_segment_contexts([segs[1].uuid], before=1, after=1)
 
 
 @pytest.mark.asyncio
@@ -2758,3 +2752,342 @@ def test_empty_partition_key_is_named_as_empty() -> None:
     """An empty key is reported as empty, not as containing invalid characters."""
     with pytest.raises(ValueError, match="must not be empty"):
         validate_partition_key("")
+
+
+# ===================================================================
+# get_neighbourhoods -- the seed is an address
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_neighbourhoods_are_two_lists_without_the_seed(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    ep = uuid4()
+    segs = [_seg(event_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
+    await partition.add_segments(_links(*segs))
+
+    result = await partition.get_neighbourhoods([segs[2].uuid], before=2, after=2)
+
+    neighborhood = result[segs[2].uuid]
+    # Other chunks of the seed's own event are ordinary neighbors; only the
+    # seed itself is withheld, and its place is between the two lists.
+    assert [s.uuid for s in neighborhood.before] == [segs[0].uuid, segs[1].uuid]
+    assert [s.uuid for s in neighborhood.after] == [segs[3].uuid, segs[4].uuid]
+    assert segs[2].uuid not in {
+        s.uuid for s in [*neighborhood.before, *neighborhood.after]
+    }
+
+
+@pytest.mark.asyncio
+async def test_neighbourhoods_keep_the_window_when_the_seed_fails_the_filter(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """The seed is located whether or not it passes; the filter is about neighbors.
+
+    During a search the same seed is dropped before a window is built.
+    """
+    ep = uuid4()
+    s0 = _seg(event_uuid=ep, offset=0, ts_offset_seconds=0, properties={"tag": "a"})
+    s1 = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1, properties={"tag": "b"})
+    s2 = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2, properties={"tag": "a"})
+    await partition.add_segments(_links(s0, s1, s2))
+    only_a = parse_filter("m.tag = 'a'")
+
+    neighborhoods = await partition.get_neighbourhoods(
+        [s1.uuid], before=5, after=5, property_filter=only_a
+    )
+    contexts = await partition.get_segment_contexts(
+        [s1.uuid], before=5, after=5, property_filter=only_a
+    )
+
+    assert [s.uuid for s in neighborhoods[s1.uuid].before] == [s0.uuid]
+    assert [s.uuid for s in neighborhoods[s1.uuid].after] == [s2.uuid]
+    assert contexts == {}
+
+
+@pytest.mark.asyncio
+async def test_neighbourhoods_of_a_lone_seed_are_empty_lists(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    seed = _seg()
+    await partition.add_segments(_links(seed))
+
+    result = await partition.get_neighbourhoods([seed.uuid], before=5, after=5)
+
+    assert result == {seed.uuid: Neighborhood(before=[], after=[])}
+
+
+@pytest.mark.asyncio
+async def test_neighbourhoods_omit_an_unknown_seed(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    await partition.add_segments(_links(_seg()))
+
+    assert await partition.get_neighbourhoods([uuid4()], before=1, after=1) == {}
+
+
+@pytest.mark.asyncio
+async def test_neighbourhoods_with_zero_counts_still_locate_the_seed(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    seed = _seg()
+    await partition.add_segments(_links(seed, _seg(ts_offset_seconds=1)))
+
+    assert await partition.get_neighbourhoods([seed.uuid]) == {
+        seed.uuid: Neighborhood(before=[], after=[])
+    }
+
+
+# ===================================================================
+# The one total order: sessions
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_windows_stay_in_the_seeds_session(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Two conversations interleaved in time never appear in each other's windows."""
+    a0 = _seg(session_id="a", ts_offset_seconds=0)
+    b0 = _seg(session_id="b", ts_offset_seconds=1)
+    a1 = _seg(session_id="a", ts_offset_seconds=2)
+    b1 = _seg(session_id="b", ts_offset_seconds=3)
+    a2 = _seg(session_id="a", ts_offset_seconds=4)
+    await partition.add_segments(_links(a0, b0, a1, b1, a2))
+
+    contexts = await partition.get_segment_contexts([a1.uuid], before=5, after=5)
+    neighborhoods = await partition.get_neighbourhoods([b0.uuid], before=5, after=5)
+
+    assert [s.uuid for s in contexts[a1.uuid]] == [a0.uuid, a1.uuid, a2.uuid]
+    assert neighborhoods[b0.uuid].before == []
+    assert [s.uuid for s in neighborhoods[b0.uuid].after] == [b1.uuid]
+
+
+@pytest.mark.asyncio
+async def test_null_session_is_one_stream(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """A null session id compares equal to a null session id and to nothing else."""
+    n0 = _seg(session_id=None, ts_offset_seconds=0)
+    s0 = _seg(session_id="s", ts_offset_seconds=1)
+    n1 = _seg(session_id=None, ts_offset_seconds=2)
+    await partition.add_segments(_links(n0, s0, n1))
+
+    neighborhoods = await partition.get_neighbourhoods([n0.uuid], after=5)
+    contexts = await partition.get_segment_contexts([n1.uuid], before=5)
+
+    assert [s.uuid for s in neighborhoods[n0.uuid].after] == [n1.uuid]
+    assert [s.uuid for s in contexts[n1.uuid]] == [n0.uuid, n1.uuid]
+
+
+@pytest.mark.asyncio
+async def test_multiple_seeds_across_sessions(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Seeds of different sessions in one call each get their own session's window."""
+    a0 = _seg(session_id="a", ts_offset_seconds=0)
+    b0 = _seg(session_id="b", ts_offset_seconds=1)
+    a1 = _seg(session_id="a", ts_offset_seconds=2)
+    b1 = _seg(session_id="b", ts_offset_seconds=3)
+    n0 = _seg(session_id=None, ts_offset_seconds=4)
+    await partition.add_segments(_links(a0, b0, a1, b1, n0))
+
+    result = await partition.get_segment_contexts(
+        [a0.uuid, b0.uuid, n0.uuid], before=2, after=2
+    )
+
+    assert [s.uuid for s in result[a0.uuid]] == [a0.uuid, a1.uuid]
+    assert [s.uuid for s in result[b0.uuid]] == [b0.uuid, b1.uuid]
+    assert [s.uuid for s in result[n0.uuid]] == [n0.uuid]
+
+
+# ===================================================================
+# since / until, source_ids, block_kinds
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_since_and_until_meet_without_overlap(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """`since` is inclusive and `until` exclusive on a boundary timestamp."""
+    s0 = _seg(ts_offset_seconds=0)
+    s1 = _seg(ts_offset_seconds=60)
+    s2 = _seg(ts_offset_seconds=120)
+    await partition.add_segments(_links(s0, s1, s2))
+    boundary = BASE_TIME + timedelta(seconds=60)
+
+    from_boundary = await partition.get_segment_contexts(
+        [s1.uuid], before=5, after=5, since=boundary
+    )
+    to_boundary = await partition.get_segment_contexts(
+        [s1.uuid], before=5, after=5, until=boundary
+    )
+    around = await partition.get_neighbourhoods(
+        [s1.uuid], before=5, after=5, since=BASE_TIME, until=boundary
+    )
+
+    assert [s.uuid for s in from_boundary[s1.uuid]] == [s1.uuid, s2.uuid]
+    # The seed sits on the exclusive bound, so as a result it is out...
+    assert to_boundary == {}
+    # ...and as an address it still anchors, and the bound admits only s0.
+    assert [s.uuid for s in around[s1.uuid].before] == [s0.uuid]
+    assert around[s1.uuid].after == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "2024-01-01T00:00:30+00:00",
+        "2024-01-01T08:00:30+08:00",  # the same instant, named in another zone
+        "2023-12-31T16:00:30-08:00",  # and another
+    ],
+)
+async def test_time_bounds_compare_instants_not_wall_clocks(
+    partition: SQLAlchemySegmentStorePartition,
+    bound: str,
+) -> None:
+    """A bound means an instant, whatever zone it is written in.
+
+    Timestamps are stored as the UTC instant; a bound compared with its own
+    offset on SQLite would be compared on its wall-clock digits.
+    """
+    early = _seg(ts_offset_seconds=0)
+    late = _seg(ts_offset_seconds=60)
+    await partition.add_segments(_links(early, late))
+    instant = datetime.fromisoformat(bound)
+
+    before_bound = await partition.get_segment_contexts(
+        [early.uuid], after=5, until=instant
+    )
+    from_bound = await partition.get_neighbourhoods(
+        [early.uuid], after=5, since=instant
+    )
+
+    assert [s.uuid for s in before_bound[early.uuid]] == [early.uuid]
+    assert [s.uuid for s in from_bound[early.uuid].after] == [late.uuid]
+
+
+@pytest.mark.asyncio
+async def test_source_ids_select_rows(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    s0 = _seg(source_id="alice", ts_offset_seconds=0)
+    s1 = _seg(source_id="bob", ts_offset_seconds=1)
+    s2 = _seg(source_id="alice", ts_offset_seconds=2)
+    s3 = _seg(source_id=None, ts_offset_seconds=3)
+    await partition.add_segments(_links(s0, s1, s2, s3))
+
+    alice = await partition.get_segment_contexts(
+        [s0.uuid], after=5, source_ids=["alice"]
+    )
+    bob_around_alice = await partition.get_neighbourhoods(
+        [s0.uuid], after=5, source_ids=["bob"]
+    )
+    nobody = await partition.get_segment_contexts([s0.uuid], after=5, source_ids=[])
+
+    assert [s.uuid for s in alice[s0.uuid]] == [s0.uuid, s2.uuid]
+    assert [s.uuid for s in bob_around_alice[s0.uuid].after] == [s1.uuid]
+    assert nobody == {}
+    assert alice[s0.uuid][0].source_id == "alice"
+
+
+@pytest.mark.asyncio
+async def test_block_kinds_select_rows(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    s0 = _seg(ts_offset_seconds=0)
+    s1 = _seg(ts_offset_seconds=1)
+    await partition.add_segments(_links(s0, s1))
+
+    text = await partition.get_segment_contexts(
+        [s0.uuid], after=5, block_kinds=["text"]
+    )
+    image = await partition.get_segment_contexts(
+        [s0.uuid], after=5, block_kinds=["image"]
+    )
+    around = await partition.get_neighbourhoods(
+        [s0.uuid], after=5, block_kinds=["image"]
+    )
+
+    assert [s.uuid for s in text[s0.uuid]] == [s0.uuid, s1.uuid]
+    assert image == {}
+    assert around == {s0.uuid: Neighborhood(before=[], after=[])}
+
+
+@pytest.mark.asyncio
+async def test_row_projections_are_derived_from_the_segment(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    seg = _seg(session_id="s1", source_id="alice")
+    await partition.add_segments(_links(seg))
+
+    async with partition._create_session() as session:
+        row = (
+            await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
+        ).scalar_one()
+    assert (row.session_id, row.source_id, row.block_kind) == ("s1", "alice", "text")
+
+    [returned] = (await partition.get_segment_contexts([seg.uuid]))[seg.uuid]
+    assert (returned.session_id, returned.source_id) == ("s1", "alice")
+
+
+@pytest.mark.asyncio
+async def test_segment_uuids_by_event_are_in_the_events_order(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    ep = uuid4()
+    later_block = _seg(event_uuid=ep, index=1, offset=0)
+    second_chunk = _seg(event_uuid=ep, index=0, offset=1)
+    first_chunk = _seg(event_uuid=ep, index=0, offset=0)
+    await partition.add_segments(_links(later_block, second_chunk, first_chunk))
+
+    result = await partition.get_segment_uuids_by_event_uuids([ep])
+
+    assert result[ep] == [first_chunk.uuid, second_chunk.uuid, later_block.uuid]
+
+
+# ===================================================================
+# delete_derivatives
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_delete_derivatives_unlinks_and_keeps_the_segment(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    seg = _seg()
+    d1, d2 = uuid4(), uuid4()
+    await partition.add_segments({seg: [d1, d2]})
+
+    await partition.delete_derivatives([d1, uuid4()])
+
+    assert await partition.get_derivative_uuids_by_segment_uuids([seg.uuid]) == {
+        seg.uuid: [d2]
+    }
+    assert seg.uuid in await partition.get_segment_contexts([seg.uuid])
+
+
+@pytest.mark.asyncio
+async def test_delete_derivatives_empty(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    await partition.delete_derivatives([])
+
+
+@pytest.mark.asyncio
+async def test_delete_derivatives_on_a_stale_handle_raises(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    partition = await store.open_or_create_partition(
+        "unlink_fenced", _plaintext_partition_config()
+    )
+    seg = _seg()
+    derivative = uuid4()
+    await partition.add_segments({seg: [derivative]})
+    await store.delete_partition("unlink_fenced")
+
+    with pytest.raises(SegmentStorePartitionHandleStaleError):
+        await partition.delete_derivatives([derivative])

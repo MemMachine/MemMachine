@@ -5,48 +5,104 @@ import datetime
 import json
 import logging
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import ClassVar, cast
 from uuid import UUID
 
+import numpy as np
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.data_types import (
+    PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
+    PropertyType,
+    PropertyValue,
+)
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     FilterExpr,
-    demangle_user_metadata_key,
+    conjoin,
     map_filter_fields,
+    split_declared,
+)
+from memmachine_server.common.filter.filter_parser import (
+    demangle_user_metadata_key,
     normalize_filter_field,
 )
 from memmachine_server.common.metrics_factory import (
     MetricsFactory,
     OperationTracker,
 )
+from memmachine_server.common.property_keys import validate_caller_property_key
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import (
+    QueryResult,
     Record,
     VectorStoreCollection,
 )
 
 from .data_types import (
-    Block,
+    Author,
+    ContextPart,
     Derivative,
     Event,
+    EvictionOptions,
+    FilterOptions,
     FormatOptions,
-    NullContext,
-    ProducerContext,
-    QueryResult,
-    ScoredSegmentContext,
+    Neighborhood,
+    SearchHit,
     Segment,
-    TextBlock,
+    get_part,
 )
 from .deriver import Deriver
 from .formatting import format_timestamp
 from .segment_store import SegmentStorePartition
 from .segmenter import Segmenter
+from .system_filters import (
+    BLOCK_KIND_KEY,
+    EVENT_SESSION_KEY,
+    EVENT_SOURCE_KEY,
+    EVENT_TIMESTAMP_KEY,
+    system_predicates,
+)
 
 logger = logging.getLogger(__name__)
+
+ID_MAX_BYTES = 255
+"""Bound on `Event.session_id` and `Event.source_id`, in bytes.
+
+The width the store's key columns use; an id is an identifier a caller
+mints, never content.
+"""
+
+# The context part kinds rendering prints, in the order they are printed.
+_RENDERED_PART_KINDS: tuple[type[ContextPart], ...] = (Author,)
+
+# Each widening step multiplies the vector fetch by this.
+_OVERFETCH_BASE = 4
+
+
+class InvalidCollectionSchemaError(ValueError):
+    """Raised when a vector store collection does not declare EventMemory's system keys."""
+
+    def __init__(
+        self,
+        missing: Mapping[str, PropertyType],
+        declared: Mapping[str, PropertyType],
+    ) -> None:
+        """Initialize with the keys the collection lacks and the ones it declares."""
+        self.missing = dict(missing)
+        self.declared = dict(declared)
+        super().__init__(
+            "The vector store collection does not declare the system keys EventMemory "
+            f"writes: missing {_schema_names(missing)}, declared {_schema_names(declared)}."
+        )
+
+
+def _schema_names(schema: Mapping[str, PropertyType]) -> dict[str, str]:
+    return {
+        key: PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[property_type]
+        for key, property_type in sorted(schema.items())
+    }
 
 
 class EventMemoryParams(BaseModel):
@@ -64,10 +120,18 @@ class EventMemoryParams(BaseModel):
             Deriver that derives derivatives from segments.
         embedder (Embedder):
             Embedder instance for creating embeddings.
-        reranker (Reranker | None):
-            Reranker instance for scoring search results.
-            If None, embedding similarity scores are used instead
+        format_options (FormatOptions):
+            How the deriver formats a segment's timestamp and author into
+            the text it embeds. Fixed per memory because a memory's
+            derivatives must be formatted one way; a display format is a
+            call argument (default: a full date and no time).
+        eviction (EvictionOptions | None):
+            Trim clusters of near-duplicate derivatives at ingest. None
+            keeps every derivative and issues no eviction query
             (default: None).
+        filter (FilterOptions):
+            How far a search widens to make up for seeds the segment store's
+            post-filter drops (default: `FilterOptions()`).
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
@@ -93,10 +157,17 @@ class EventMemoryParams(BaseModel):
         ...,
         description="Embedder instance for creating embeddings",
     )
-    reranker: InstanceOf[Reranker] | None = Field(
+    format_options: FormatOptions = Field(
+        default_factory=lambda: FormatOptions(time_style=None),
+        description="How the deriver formats the text it embeds",
+    )
+    eviction: EvictionOptions | None = Field(
         None,
-        description="Reranker instance for scoring search results. "
-        "If None, embedding similarity scores are used instead",
+        description="Trim clusters of near-duplicate derivatives at ingest",
+    )
+    filter: FilterOptions = Field(
+        default_factory=FilterOptions,
+        description="How far a search widens over the segment store's post-filter",
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
@@ -107,12 +178,18 @@ class EventMemoryParams(BaseModel):
 class EventMemory:
     """Event memory system."""
 
-    # System-defined metadata field names. Reserved.
-    _TIMESTAMP_FIELD_NAME = "_timestamp"
-
-    _BASE_EVENT_MEMORY_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {_TIMESTAMP_FIELD_NAME}
-    )
+    # Every system value written into a vector record, under the reserved
+    # keys `system_filters` owns, with the type the collection declares:
+    # the fields a search filters on at the vector stage, and nothing
+    # else. The derivative's segment and event are not among them: the
+    # segment store owns those mappings, and a copy here could only go
+    # stale.
+    _RESERVED_PROPERTY_SCHEMA: ClassVar[dict[str, type[PropertyValue]]] = {
+        EVENT_TIMESTAMP_KEY: cast(type[PropertyValue], datetime.datetime),
+        EVENT_SESSION_KEY: cast(type[PropertyValue], str),
+        EVENT_SOURCE_KEY: cast(type[PropertyValue], str),
+        BLOCK_KIND_KEY: cast(type[PropertyValue], str),
+    }
 
     @classmethod
     def expected_vector_store_collection_schema(cls) -> dict[str, type[PropertyValue]]:
@@ -122,9 +199,7 @@ class EventMemory:
         Callers should merge this with any user or external system-defined properties
         when creating the collection so that EventMemory's reserved fields are efficiently filterable.
         """
-        return {
-            cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
-        }
+        return dict(cls._RESERVED_PROPERTY_SCHEMA)
 
     def __init__(self, params: EventMemoryParams) -> None:
         """
@@ -140,25 +215,26 @@ class EventMemory:
         self._segmenter = params.segmenter
         self._deriver = params.deriver
         self._embedder = params.embedder
-        self._reranker = params.reranker
+        self._format_options = params.format_options
+        self._eviction = params.eviction
+        self._filter = params.filter
 
         self._tracker = OperationTracker(
             params.metrics_factory,
             prefix="event_memory",
         )
 
-        self._schema_fields = frozenset(
-            params.vector_store_collection.config.indexed_properties_schema
-        )
-
-        missing_base_fields = (
-            EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES - self._schema_fields
-        )
-        if missing_base_fields:
-            raise ValueError(
-                f"Collection schema missing fields required by EventMemory: "
-                f"{', '.join(sorted(missing_base_fields))}"
-            )
+        # The store declares what it indexes; the system keys must be among
+        # them, with the types this memory writes.
+        declared = dict(params.vector_store_collection.indexed_properties)
+        missing = {
+            key: property_type
+            for key, property_type in EventMemory._RESERVED_PROPERTY_SCHEMA.items()
+            if declared.get(key) is not property_type
+        }
+        if missing:
+            raise InvalidCollectionSchemaError(missing, declared)
+        self._declared_properties = declared
 
         self._encode_events_phase_seconds: MetricsFactory.Histogram | None = None
         self._query_phase_seconds: MetricsFactory.Histogram | None = None
@@ -178,60 +254,66 @@ class EventMemory:
         """
         Validate a batch of events before encoding.
 
-        Raises ValueError if any event supplies a reserved field name in its properties,
-        or if the collection schema is missing fields required by EventMemory.
+        Raises ValueError if any event supplies a property key in the
+        reserved namespace or outside the naming contract, a value of another
+        type than the vector store declares for its key, or a session or
+        source id longer than `ID_MAX_BYTES`.
         """
-        events = list(events)
+        for event in events:
+            for key, value in event.properties.items():
+                validate_caller_property_key(key)
+                declared = self._declared_properties.get(key)
+                if declared is not None and type(value) is not declared:
+                    raise ValueError(
+                        f"Event {event.uuid} property {key!r} is a "
+                        f"{type(value).__name__}; the vector store declares it as "
+                        f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}."
+                    )
+            for name, value in (
+                ("session_id", event.session_id),
+                ("source_id", event.source_id),
+            ):
+                if value is not None and len(value.encode()) > ID_MAX_BYTES:
+                    raise ValueError(
+                        f"Event {event.uuid} {name} is {len(value.encode())} bytes; "
+                        f"the maximum is {ID_MAX_BYTES}."
+                    )
 
-        reserved_fields = {
-            field
-            for event in events
-            for field in event.properties
-            if field in EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES
-        }
-        if reserved_fields:
-            raise ValueError(
-                f"Event properties must not contain reserved fields: "
-                f"{', '.join(sorted(reserved_fields))}"
-            )
-
-    async def encode_events(
-        self,
-        events: Iterable[Event],
-        *,
-        format_options: FormatOptions | None = None,
-    ) -> None:
+    async def encode_events(self, events: Iterable[Event]) -> None:
         """
         Encode events.
 
+        A batch is written whole: each event's earlier encoding is forgotten
+        first, so a repeated batch leaves one copy.
+
         Args:
             events (Iterable[Event]): The events to encode.
-            format_options (FormatOptions | None):
-                Options for formatting.
-                (default: None).
 
         Raises:
             ValueError:
-                If any event supplies a reserved field name in its properties,
-                or if the collection schema is missing fields required by any event's Context type.
+                If any event supplies a reserved or illegal property key, or
+                a session or source id over `ID_MAX_BYTES`.
         """
         async with self._tracker("encode_events"):
-            await self._encode_events(events, format_options=format_options)
+            await self._encode_events(events)
 
-    async def _encode_events(
-        self,
-        events: Iterable[Event],
-        *,
-        format_options: FormatOptions | None,
-    ) -> None:
+    async def _encode_events(self, events: Iterable[Event]) -> None:
         t_start = time.monotonic()
 
         events = list(events)
         self._validate_events(events)
+        if not events:
+            return
+
+        await self._forget_events({event.uuid for event in events})
+
+        # Temporal order within the batch, so that eviction among the
+        # batch's own derivatives is what serial ingestion would decide.
+        events = sorted(events, key=lambda event: (event.timestamp, event.uuid))
 
         segment_lists = await asyncio.gather(
             *(
-                self._segmenter.segment(event, format_options=format_options)
+                self._segmenter.segment(event, format_options=self._format_options)
                 for event in events
             )
         )
@@ -242,7 +324,7 @@ class EventMemory:
 
         derivative_lists = await asyncio.gather(
             *(
-                self._deriver.derive(segment, format_options=format_options)
+                self._deriver.derive(segment, format_options=self._format_options)
                 for segment in segments
             )
         )
@@ -259,42 +341,81 @@ class EventMemory:
 
         derivative_texts: list[str] = []
         for derivative in derivatives:
-            text = EventMemory._extract_text(derivative.block)
+            text = derivative.block.render(self._format_options)
             if text is None:
                 raise NotImplementedError(
-                    f"Unsupported block type: {type(derivative.block).__name__}"
+                    f"Cannot embed a derivative of block kind {derivative.block.kind!r}"
                 )
             derivative_texts.append(text)
 
         derivative_embeddings = await self._embedder.ingest_embed(derivative_texts)
         t_embedding = time.monotonic()
 
+        displaced_uuids: set[UUID] = set()
+        skipped_uuids: set[UUID] = set()
+        if self._eviction is not None and derivatives:
+            batch_predecessors = EventMemory._compute_batch_predecessors(
+                derivative_embeddings,
+                self._eviction.similarity_threshold,
+            )
+            stored_neighbors = await self._vector_store_collection.query(
+                query_vectors=derivative_embeddings,
+                min_cosine_similarity=self._eviction.similarity_threshold,
+                limit=self._eviction.search_limit,
+            )
+            stored_timestamps = await self._stored_derivative_timestamps(
+                match.record_uuid
+                for query_result in stored_neighbors
+                for match in query_result.matches
+            )
+            displaced_uuids, skipped_uuids = EventMemory._select_eviction_targets(
+                derivatives,
+                stored_neighbors,
+                batch_predecessors,
+                stored_timestamps,
+                self._eviction.target_size,
+            )
+        t_eviction = time.monotonic()
+
         await self._segment_store_partition.add_segments(
             {
-                segment: [derivative.uuid for derivative in segment_derivatives]
+                segment: [
+                    derivative.uuid
+                    for derivative in segment_derivatives
+                    if derivative.uuid not in skipped_uuids
+                ]
                 for segment, segment_derivatives in segments_to_derivatives.items()
             }
         )
         t_segment_store = time.monotonic()
 
-        derivative_records = [
-            EventMemory._build_derivative_record(derivative, derivative_embedding)
-            for derivative, derivative_embedding in zip(
-                derivatives,
+        embeddings_by_derivative = dict(
+            zip(
+                (derivative.uuid for derivative in derivatives),
                 derivative_embeddings,
                 strict=True,
             )
+        )
+        derivative_records = [
+            self._build_derivative_record(
+                derivative, embeddings_by_derivative[derivative.uuid]
+            )
+            for derivative in derivatives
+            if derivative.uuid not in skipped_uuids
         ]
-
         if derivative_records:
             await self._vector_store_collection.upsert(records=derivative_records)
+        if displaced_uuids:
+            await self._vector_store_collection.delete(record_uuids=displaced_uuids)
+            await self._segment_store_partition.delete_derivatives(displaced_uuids)
         t_vector_store = time.monotonic()
 
         phase_durations = {
             "segmentation": t_segmentation - t_start,
             "derivation": t_derivation - t_segmentation,
             "embedding": t_embedding - t_derivation,
-            "segment_store": t_segment_store - t_embedding,
+            "eviction": t_eviction - t_embedding,
+            "segment_store": t_segment_store - t_eviction,
             "vector_store": t_vector_store - t_segment_store,
         }
 
@@ -313,20 +434,56 @@ class EventMemory:
                     duration, labels={"phase": phase}
                 )
 
-    @classmethod
+    async def _stored_derivative_timestamps(
+        self, derivative_uuids: Iterable[UUID]
+    ) -> dict[UUID, datetime.datetime]:
+        """The event timestamp of each stored derivative, read from its segment.
+
+        The vector store answers uuids and scores only; the segment store
+        owns the derivative's segment, and the segment its timestamp. A
+        derivative whose segment is gone is omitted.
+        """
+        segment_by_derivative = (
+            await self._segment_store_partition.get_segment_uuids_by_derivative_uuids(
+                derivative_uuids
+            )
+        )
+        if not segment_by_derivative:
+            return {}
+        segments_by_uuid = await self._segment_store_partition.get_segment_contexts(
+            seed_segment_uuids=set(segment_by_derivative.values())
+        )
+        return {
+            derivative_uuid: segments_by_uuid[segment_uuid][0].timestamp
+            for derivative_uuid, segment_uuid in segment_by_derivative.items()
+            if segment_uuid in segments_by_uuid
+        }
+
     def _build_derivative_record(
-        cls,
+        self,
         derivative: Derivative,
         derivative_embedding: Sequence[float],
     ) -> Record:
-        """Build a vector record from a derivative and its embedding."""
-        properties: dict[str, PropertyValue] = {}
+        """Build a vector record from a derivative and its embedding.
 
-        # System-defined metadata (underscore-prefixed).
-        properties[cls._TIMESTAMP_FIELD_NAME] = derivative.timestamp
-
-        # User-defined properties.
-        properties.update(derivative.properties)
+        Only the caller properties the store declares go in: an undeclared
+        key never exists in the vector store, and the segment store holds
+        every property for the filtering the vector store does not do.
+        """
+        # Caller properties first: a reserved key cannot reach here
+        # (encode_events validates), and building in this order makes the
+        # merge itself enforce that a system value always wins.
+        properties: dict[str, PropertyValue] = {
+            key: value
+            for key, value in derivative.properties.items()
+            if key in self._declared_properties
+        }
+        properties[EVENT_TIMESTAMP_KEY] = derivative.timestamp
+        if derivative.session_id is not None:
+            properties[EVENT_SESSION_KEY] = derivative.session_id
+        if derivative.source_id is not None:
+            properties[EVENT_SOURCE_KEY] = derivative.source_id
+        properties[BLOCK_KIND_KEY] = derivative.block.kind
 
         return Record(
             uuid=derivative.uuid,
@@ -334,74 +491,213 @@ class EventMemory:
             properties=properties,
         )
 
-    @classmethod
-    def _to_vector_record_property(cls, field: str) -> str:
+    @staticmethod
+    def _compute_batch_predecessors(
+        derivative_embeddings: Iterable[Sequence[float]],
+        similarity_threshold: float,
+    ) -> list[set[int]]:
         """
-        Translates canonical filter field name to vector record property.
+        Compute batch predecessors for each derivative embedding.
 
-        Event memory base properties (`foo`) translate to `_foo`.
+        The ith entry holds the indices j < i whose cosine similarity to i
+        is at or above the threshold. Only earlier indices count, so a
+        batch evicts exactly what serial ingestion would.
+        """
+        embeddings = np.asarray(list(derivative_embeddings), dtype=np.float64)
+        num_embeddings = len(embeddings)
+        if num_embeddings == 0:
+            return []
+
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        normalized = embeddings / norms
+        similarity_matrix = normalized @ normalized.T
+
+        # The diagonal and the upper triangle can never pass the threshold.
+        similarity_matrix[np.triu_indices(num_embeddings)] = -np.inf
+        mask = similarity_matrix >= similarity_threshold
+
+        return [set(np.where(mask[i])[0].tolist()) for i in range(num_embeddings)]
+
+    @staticmethod
+    def _select_eviction_targets(
+        derivatives: Iterable[Derivative],
+        query_results: Iterable[QueryResult],
+        batch_predecessors: list[set[int]],
+        stored_timestamps: Mapping[UUID, datetime.datetime],
+        target_size: int,
+    ) -> tuple[set[UUID], set[UUID]]:
+        """
+        Select eviction targets considering both stored and batch similarity.
+
+        The cluster of a derivative is its stored neighbors not already
+        displaced in this batch, its batch predecessors not already skipped,
+        and itself. Within `target_size` nothing happens; over it, the
+        cluster is sorted by event timestamp and the earliest
+        `target_size // 2` and the latest remainder are kept: the middle's
+        stored members are displaced, its batch members skipped. A stored
+        neighbor with no timestamp in `stored_timestamps` (its segment is
+        gone) is not a member.
+
+        Returns a tuple of:
+        - the stored derivative UUIDs to displace
+        - the batch derivative UUIDs to skip
+        """
+        derivatives = list(derivatives)
+        query_results = list(query_results)
+
+        displaced_uuids: set[UUID] = set()
+        skipped_uuids: set[UUID] = set()
+
+        for derivative, query_result, predecessor_indexes in zip(
+            derivatives, query_results, batch_predecessors, strict=True
+        ):
+            # Cluster members: (timestamp, uuid, is_stored).
+            members: list[tuple[datetime.datetime, UUID, bool]] = []
+
+            for match in query_result.matches:
+                if match.record_uuid in displaced_uuids:
+                    continue
+                timestamp = stored_timestamps.get(match.record_uuid)
+                if timestamp is None:
+                    continue
+                members.append((timestamp, match.record_uuid, True))
+
+            for index in predecessor_indexes:
+                neighbor = derivatives[index]
+                if neighbor.uuid not in skipped_uuids:
+                    members.append((neighbor.timestamp, neighbor.uuid, False))
+
+            members.append((derivative.timestamp, derivative.uuid, False))
+
+            total_size = len(members)
+            if total_size <= target_size:
+                continue
+
+            # Oversized: trim the temporal middle.
+            members.sort()
+            keep_early = target_size // 2
+            keep_late = target_size - keep_early
+
+            for _, uuid, is_stored in members[keep_early : total_size - keep_late]:
+                if is_stored:
+                    displaced_uuids.add(uuid)
+                else:
+                    skipped_uuids.add(uuid)
+
+        return displaced_uuids, skipped_uuids
+
+    @staticmethod
+    def _to_vector_record_property(field: str) -> str:
+        """
+        Translate a caller's filter field name to a vector record property.
+
         User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
+        `timestamp` is the event timestamp, under its reserved key. Any
+        other bare name (`foo`) translates to `_foo`, the layout the server
+        writes its own fields in.
         """
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             return demangle_user_metadata_key(internal_name)
+        if field == "timestamp":
+            return EVENT_TIMESTAMP_KEY
         return f"_{field}"
 
     async def query(
         self,
         query: str,
         *,
-        vector_search_limit: int = 20,
+        limit: int = 20,
+        min_cosine_similarity: float | None = None,
         expand_context: int = 0,
+        since: datetime.datetime | None = None,
+        until: datetime.datetime | None = None,
+        session_ids: Iterable[str] | None = None,
+        source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
-        format_options: FormatOptions | None = None,
-    ) -> QueryResult:
+    ) -> list[SearchHit]:
         """
         Query event memory for segments relevant to the query.
+
+        The vector stage: `rerank` is the second stage, for a caller that
+        has a reranker.
 
         Args:
             query (str):
                 The search query.
-            vector_search_limit (int):
-                The maximum number of seed segments
-                to retrieve from the vector search
-                (default: 20).
+            limit (int):
+                The maximum number of hits (default: 20).
+            min_cosine_similarity (float | None):
+                Drop matches whose cosine similarity is below this
+                (default: None).
             expand_context (int):
                 The number of additional segments to include
                 around each matched segment for additional context
                 (default: 0).
+            since (datetime | None):
+                Inclusive lower bound on the event timestamp (default: None).
+            until (datetime | None):
+                Exclusive upper bound on the event timestamp (default: None).
+            session_ids (Iterable[str] | None):
+                Keep only events of these sessions (default: None).
+            source_ids (Iterable[str] | None):
+                Keep only events of these sources (default: None).
+            block_kinds (Iterable[str] | None):
+                Keep only segments whose block is of these kinds (default: None).
             property_filter (FilterExpr | None):
                 Property fields and values
                 to use for filtering segments
                 (default: None).
-            format_options (FormatOptions | None):
-                Options for formatting.
-                (default: None).
 
         Returns:
-            QueryResult:
-                The query result.
+            list[SearchHit]:
+                At most `limit` hits in descending similarity, each with
+                its context window and the index of the matched segment in
+                it. Windows of different hits may overlap; each hit is
+                returned whole. Every count is a maximum.
 
         """
         async with self._tracker("query"):
             return await self._query(
                 query,
-                vector_search_limit=vector_search_limit,
+                limit=limit,
+                min_cosine_similarity=min_cosine_similarity,
                 expand_context=expand_context,
+                since=since,
+                until=until,
+                session_ids=session_ids,
+                source_ids=source_ids,
+                block_kinds=block_kinds,
                 property_filter=property_filter,
-                format_options=format_options,
             )
 
     async def _query(
         self,
         query: str,
         *,
-        vector_search_limit: int,
+        limit: int,
+        min_cosine_similarity: float | None,
         expand_context: int,
+        since: datetime.datetime | None,
+        until: datetime.datetime | None,
+        session_ids: Iterable[str] | None,
+        source_ids: Iterable[str] | None,
+        block_kinds: Iterable[str] | None,
         property_filter: FilterExpr | None,
-        format_options: FormatOptions | None,
-    ) -> QueryResult:
+    ) -> list[SearchHit]:
         t_start = time.monotonic()
+        session_ids = list(session_ids) if session_ids is not None else None
+        source_ids = list(source_ids) if source_ids is not None else None
+        block_kinds = list(block_kinds) if block_kinds is not None else None
+        # An empty id or kind list admits nothing, and needs no query to say so.
+        if any(
+            ids is not None and not ids
+            for ids in (session_ids, source_ids, block_kinds)
+        ):
+            return []
+
         query_embedding = (
             await self._embedder.search_embed(
                 [query],
@@ -409,21 +705,108 @@ class EventMemory:
         )[0]
         t_embedding = time.monotonic()
 
-        # Translate filter fields for vector store.
-        collection_filter = (
+        # One plan. The vector store gets the system predicates and the part
+        # of the caller's filter naming keys it declares, evaluated during
+        # the search; the rest is the segment store's, applied to the seeds
+        # afterward, and the search is widened to make up for what it drops.
+        declared_part, undeclared_part = split_declared(
             map_filter_fields(property_filter, EventMemory._to_vector_record_property)
             if property_filter is not None
-            else None
+            else None,
+            self._declared_properties,
+        )
+        collection_filter = conjoin(
+            [
+                system_predicates(
+                    since=since,
+                    until=until,
+                    session_ids=session_ids,
+                    source_ids=source_ids,
+                    block_kinds=block_kinds,
+                ),
+                declared_part,
+            ]
         )
 
-        # Search derivative collection for matches.
-        [query_result] = await self._vector_store_collection.query(
-            query_vectors=[query_embedding],
-            limit=vector_search_limit,
-            property_filter=collection_filter,
-        )
-        t_vector_query = time.monotonic()
+        before = expand_context // 3
+        after = expand_context - before
 
+        max_fetch = limit * self._filter.max_overfetch_factor
+        fetch_limit = limit
+        vector_query_seconds = 0.0
+        segment_query_seconds = 0.0
+        while True:
+            t_vector_start = time.monotonic()
+            [query_result] = await self._vector_store_collection.query(
+                query_vectors=[query_embedding],
+                limit=fetch_limit,
+                min_cosine_similarity=min_cosine_similarity,
+                property_filter=collection_filter,
+            )
+            t_vector_query = time.monotonic()
+            vector_query_seconds += t_vector_query - t_vector_start
+
+            hits = await self._hits(
+                query_result,
+                before=before,
+                after=after,
+                since=since,
+                until=until,
+                source_ids=source_ids,
+                block_kinds=block_kinds,
+                property_filter=property_filter,
+            )
+            segment_query_seconds += time.monotonic() - t_vector_query
+
+            exhausted = len(query_result.matches) < fetch_limit
+            if (
+                undeclared_part is None
+                or len(hits) >= limit
+                or exhausted
+                or fetch_limit >= max_fetch
+            ):
+                break
+            fetch_limit = min(fetch_limit * _OVERFETCH_BASE, max_fetch)
+
+        phase_durations = {
+            "embedding": t_embedding - t_start,
+            "vector_query": vector_query_seconds,
+            "segment_query": segment_query_seconds,
+        }
+
+        logger.debug(
+            "query timing: %s total=%.3fs",
+            " ".join(
+                f"{phase}={duration:.3f}s"
+                for phase, duration in phase_durations.items()
+            ),
+            time.monotonic() - t_start,
+        )
+
+        if self._query_phase_seconds is not None:
+            for phase, duration in phase_durations.items():
+                self._query_phase_seconds.observe(duration, labels={"phase": phase})
+
+        return hits[:limit]
+
+    async def _hits(
+        self,
+        query_result: QueryResult,
+        *,
+        before: int,
+        after: int,
+        since: datetime.datetime | None,
+        until: datetime.datetime | None,
+        source_ids: list[str] | None,
+        block_kinds: list[str] | None,
+        property_filter: FilterExpr | None,
+    ) -> list[SearchHit]:
+        """The hits of one vector query: each seed's window, in similarity order.
+
+        The segment store applies the whole caller filter to the seed and its
+        window, so a neighbor satisfies what the seed satisfies; a seed the
+        store does not return is dropped.
+        """
         segment_by_derivative = (
             await self._segment_store_partition.get_segment_uuids_by_derivative_uuids(
                 match.record_uuid for match in query_result.matches
@@ -441,230 +824,217 @@ class EventMemory:
             if segment_uuid not in seed_cosine_similarities:
                 seed_cosine_similarities[segment_uuid] = match.cosine_similarity
 
-        seed_segment_uuids = list(seed_cosine_similarities)
-
-        max_backward_segments = expand_context // 3
-        max_forward_segments = expand_context - max_backward_segments
-
         segment_contexts_by_seed = (
             await self._segment_store_partition.get_segment_contexts(
-                seed_segment_uuids=seed_segment_uuids,
-                max_backward_segments=max_backward_segments,
-                max_forward_segments=max_forward_segments,
+                seed_segment_uuids=seed_cosine_similarities.keys(),
+                before=before,
+                after=after,
+                since=since,
+                until=until,
+                source_ids=source_ids,
+                block_kinds=block_kinds,
                 property_filter=property_filter,
             )
         )
-        t_segment_query = time.monotonic()
 
-        # Filter to seeds with results, preserving similarity order.
-        kept_seed_segment_uuids = [
-            seed_segment_uuid
-            for seed_segment_uuid in seed_segment_uuids
-            if seed_segment_uuid in segment_contexts_by_seed
-        ]
-        segment_contexts: list[list[Segment]] = [
-            segment_contexts_by_seed[seed_segment_uuid]
-            for seed_segment_uuid in kept_seed_segment_uuids
-        ]
-
-        # Use embedding scores if reranker is not available.
-        if self._reranker is None:
-            scores = [
-                seed_cosine_similarities[seed_uuid]
-                for seed_uuid in kept_seed_segment_uuids
-            ]
-        else:
-            reranker_format_options = format_options or FormatOptions(
-                time_style="short"
+        hits: list[SearchHit] = []
+        for seed_uuid, score in seed_cosine_similarities.items():
+            segments = segment_contexts_by_seed.get(seed_uuid)
+            if segments is None:
+                continue
+            seed_index = next(
+                index
+                for index, segment in enumerate(segments)
+                if segment.uuid == seed_uuid
             )
-            scores = await self._score_segment_contexts(
-                query, segment_contexts, reranker_format_options
-            )
-        t_scoring = time.monotonic()
+            hits.append(SearchHit(score=score, seed=seed_index, segments=segments))
+        return hits
 
-        # Return scored contexts ordered by score.
-        scored_segment_contexts = [
-            ScoredSegmentContext(
-                score=score, seed_segment_uuid=seed_uuid, segments=context
-            )
-            for score, seed_uuid, context in sorted(
-                zip(
-                    scores,
-                    kept_seed_segment_uuids,
-                    segment_contexts,
-                    strict=True,
-                ),
-                key=lambda triple: triple[0],
-                reverse=True,
-            )
-        ]
-
-        phase_durations = {
-            "embedding": t_embedding - t_start,
-            "vector_query": t_vector_query - t_embedding,
-            "segment_query": t_segment_query - t_vector_query,
-            "scoring": t_scoring - t_segment_query,
-        }
-
-        logger.debug(
-            "query timing: %s total=%.3fs",
-            " ".join(
-                f"{phase}={duration:.3f}s"
-                for phase, duration in phase_durations.items()
-            ),
-            time.monotonic() - t_start,
-        )
-
-        if self._query_phase_seconds is not None:
-            for phase, duration in phase_durations.items():
-                self._query_phase_seconds.observe(duration, labels={"phase": phase})
-
-        return QueryResult(scored_segment_contexts=scored_segment_contexts)
-
-    async def _score_segment_contexts(
+    async def expand(
         self,
-        query: str,
-        segment_contexts: Iterable[Iterable[Segment]],
-        format_options: FormatOptions,
-    ) -> list[float]:
-        """Score segment contexts using the reranker. Requires reranker."""
-        assert self._reranker is not None
-        context_strings = [
-            EventMemory.string_from_segment_context(
-                segment_context, format_options=format_options
+        anchor: UUID,
+        *,
+        before: int = 0,
+        after: int = 0,
+        since: datetime.datetime | None = None,
+        until: datetime.datetime | None = None,
+        source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> Neighborhood:
+        """
+        Get the neighborhood of an anchor in its session's order.
+
+        The anchor is a segment uuid (from a hit) or an event uuid (its
+        first segment). The filters apply to the neighbors only, and the
+        anchor is never returned: its place is between the two lists. A
+        caller walks further by calling again from the first of `before`
+        or the last of `after` with one side zero.
+
+        Args:
+            anchor (UUID):
+                A segment or event uuid.
+            before (int):
+                The maximum number of segments before the anchor (default: 0).
+            after (int):
+                The maximum number of segments after the anchor (default: 0).
+            since (datetime | None):
+                Inclusive lower bound on the neighbors' timestamp (default: None).
+            until (datetime | None):
+                Exclusive upper bound on the neighbors' timestamp (default: None).
+            source_ids (Iterable[str] | None):
+                Keep only neighbors of these sources (default: None).
+            block_kinds (Iterable[str] | None):
+                Keep only neighbors whose block is of these kinds (default: None).
+            property_filter (FilterExpr | None):
+                Property fields and values to filter the neighbors by
+                (default: None).
+
+        Returns:
+            Neighborhood:
+                The neighbors before and after the anchor, in the store's order.
+
+        Raises:
+            LookupError: If the anchor is neither a segment nor an event of this memory.
+        """
+        async with self._tracker("expand"):
+            segment_uuids_by_event = (
+                await self._segment_store_partition.get_segment_uuids_by_event_uuids(
+                    event_uuids=[anchor],
+                )
             )
-            for segment_context in segment_contexts
-        ]
-        return await self._reranker.score(query, context_strings)
+            event_segment_uuids = segment_uuids_by_event.get(anchor)
+            seed = event_segment_uuids[0] if event_segment_uuids else anchor
+
+            neighborhoods = await self._segment_store_partition.get_neighbourhoods(
+                seed_segment_uuids=[seed],
+                before=before,
+                after=after,
+                since=since,
+                until=until,
+                source_ids=source_ids,
+                block_kinds=block_kinds,
+                property_filter=property_filter,
+            )
+            neighborhood = neighborhoods.get(seed)
+            if neighborhood is None:
+                raise LookupError(
+                    f"Anchor {anchor} is neither a segment nor an event of this memory"
+                )
+            return neighborhood
 
     @staticmethod
-    def string_from_segment_context(
-        segment_context: Iterable[Segment],
+    async def rerank(
+        query: str,
+        hits: Sequence[SearchHit],
         *,
-        format_options: FormatOptions | None = None,
+        reranker: Reranker,
+        limit: int,
+        min_score: float | None = None,
+        format_options: FormatOptions,
+    ) -> list[SearchHit]:
+        """
+        Rerank hits by a reranker's score of their rendered windows.
+
+        The second stage after `query`, for a caller that has a reranker:
+        each hit's window is rendered with `format_options` and scored
+        against the query; hits below `min_score` are dropped and at most
+        `limit` are returned in descending score, each with its score
+        replaced by the reranker's.
+        """
+        hits = list(hits)
+        if not hits:
+            return []
+        scores = await reranker.score(
+            query,
+            [
+                EventMemory.render(hit.segments, format_options=format_options)
+                for hit in hits
+            ],
+        )
+        reranked = [
+            SearchHit(score=score, seed=hit.seed, segments=hit.segments)
+            for hit, score in zip(hits, scores, strict=True)
+            if min_score is None or score >= min_score
+        ]
+        reranked.sort(key=lambda hit: hit.score, reverse=True)
+        return reranked[:limit]
+
+    @staticmethod
+    def _immediately_follows(previous: Segment, segment: Segment) -> bool:
+        """Whether `segment` is the very next piece of the same event as `previous`.
+
+        Two pieces are adjacent either within a block (the next chunk of it)
+        or across blocks (the first chunk of the next one). Anything else
+        means something between them is not being shown. A block's chunk
+        count is not known here, so the end of one block is recognized by
+        the next block starting at its own beginning rather than by
+        counting up to it.
+        """
+        if segment.event_uuid != previous.event_uuid:
+            return False
+        if segment.index == previous.index:
+            return segment.offset == previous.offset + 1
+        if segment.index == previous.index + 1:
+            return segment.offset == 0
+        return False
+
+    @staticmethod
+    def render(
+        segments: Iterable[Segment],
+        *,
+        format_options: FormatOptions,
     ) -> str:
-        """Format segment context as a string."""
-        if format_options is None:
-            format_options = FormatOptions(time_style="short")
+        """
+        The reader's text for a run of segments, in their order.
 
+        A header (the timestamp formatted by `format_options`, then the
+        context parts' contributions) starts each run of adjacent pieces
+        of one event; the pieces' block renderings are joined under it.
+        """
         context_string = ""
-        last_segment: Segment | None = None
+        previous: Segment | None = None
         accumulated_text = ""
-        first = True
 
-        for segment in segment_context:
-            is_continuation = (
-                last_segment is not None
-                and segment.event_uuid == last_segment.event_uuid
-                and segment.index == last_segment.index
+        for segment in segments:
+            is_continuation = previous is not None and EventMemory._immediately_follows(
+                previous, segment
             )
 
             if not is_continuation:
-                if not first:
+                if previous is not None:
                     context_string += (
                         json.dumps(accumulated_text, ensure_ascii=False) + "\n"
                     )
-                first = False
                 accumulated_text = ""
                 context_string += EventMemory._segment_header(segment, format_options)
 
-            text = EventMemory._extract_text(segment.block)
+            text = segment.block.render(format_options)
             if text is not None:
                 accumulated_text += text
             elif not is_continuation:
-                context_string += f"[{segment.block.block_type}]\n"
+                context_string += f"[{segment.block.kind}]\n"
 
-            last_segment = segment
+            previous = segment
 
-        if not first:
+        if previous is not None:
             context_string += json.dumps(accumulated_text, ensure_ascii=False) + "\n"
 
         return context_string.strip()
 
     @staticmethod
-    def string_from_segment_contexts(
-        segment_contexts: Iterable[Iterable[Segment]],
-        *,
-        format_options: FormatOptions | None = None,
-    ) -> str:
-        """Format multiple segment contexts as a string, separating disconnected components."""
-        segment_contexts = [list(context) for context in segment_contexts]
-
-        # Deduplicate segments and build union-find over their UUIDs in one pass.
-        segments_by_uuid: dict[UUID, Segment] = {}
-        component_parent: dict[UUID, UUID] = {}
-
-        def find(uuid: UUID) -> UUID:
-            component_parent.setdefault(uuid, uuid)
-            root = uuid
-            while component_parent[root] != root:
-                root = component_parent[root]
-            while component_parent[uuid] != root:
-                parent = component_parent[uuid]
-                component_parent[uuid] = root
-                uuid = parent
-            return root
-
-        for context in segment_contexts:
-            first_segment_root: UUID | None = None
-            for segment in context:
-                segments_by_uuid.setdefault(segment.uuid, segment)
-                if first_segment_root is None:
-                    first_segment_root = find(segment.uuid)
-                else:
-                    segment_root = find(segment.uuid)
-                    component_parent[segment_root] = first_segment_root
-
-        # Group unique segments by component root.
-        segments_by_root: dict[UUID, list[Segment]] = {}
-        for segment_uuid, segment in segments_by_uuid.items():
-            segments_by_root.setdefault(find(segment_uuid), []).append(segment)
-
-        # Sort segments within each component, then order components chronologically.
-        def segment_key(segment: Segment) -> tuple:
-            return (
-                segment.timestamp,
-                segment.event_uuid,
-                segment.index,
-                segment.offset,
-            )
-
-        components = list(segments_by_root.values())
-        for component in components:
-            component.sort(key=segment_key)
-        components.sort(key=lambda segments: segment_key(segments[0]))
-
-        return "\n\n".join(
-            EventMemory.string_from_segment_context(
-                segments, format_options=format_options
-            )
-            for segments in components
-        )
-
-    @staticmethod
     def _segment_header(segment: Segment, format_options: FormatOptions) -> str:
         """Build the header emitted before a segment."""
         formatted_timestamp = format_timestamp(segment.timestamp, format_options)
-        timestamp_prefix = f"[{formatted_timestamp}] " if formatted_timestamp else ""
-
-        match segment.context:
-            case ProducerContext(producer=producer):
-                return f"{timestamp_prefix}{producer}: "
-            case NullContext():
-                return timestamp_prefix
-            case _:
-                raise NotImplementedError(
-                    f"Unsupported context type: {type(segment.context).__name__}"
-                )
-
-    @staticmethod
-    def _extract_text(block: Block) -> str | None:
-        """Extract text from a block, if it contains text."""
-        match block:
-            case TextBlock(text=text):
-                return text
-            case _:
-                return None
+        header = f"[{formatted_timestamp}] " if formatted_timestamp else ""
+        for part_type in _RENDERED_PART_KINDS:
+            part = get_part(segment.context, part_type)
+            if part is None:
+                continue
+            contribution = part.render(format_options)
+            if contribution:
+                header += f"{contribution}: "
+        return header
 
     async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
         """Forget events by their UUIDs."""
@@ -676,7 +1046,6 @@ class EventMemory:
             await self._forget_events(event_uuids)
 
     async def _forget_events(self, event_uuids: set[UUID]) -> None:
-
         # Snapshot segment UUIDs for these events.
         segments_by_event = (
             await self._segment_store_partition.get_segment_uuids_by_event_uuids(
@@ -710,102 +1079,3 @@ class EventMemory:
         await self._segment_store_partition.delete_segments(
             segment_uuids=segment_uuids,
         )
-
-    @staticmethod
-    def build_query_result_context(
-        query_result: QueryResult,
-        max_num_segments: int,
-    ) -> list[Segment]:
-        """
-        Build a single segment context from the query result within the limit.
-
-        Iterates contexts in score order, accumulating segments until the limit is reached.
-        When a context would exceed the limit, segments nearest the seed are prioritized.
-        Deduplicates across segment contexts in the query result.
-
-        Args:
-            query_result (QueryResult):
-                The query result with scored anchored segment contexts.
-            max_num_segments (int):
-                The maximum number of segments to return.
-
-        Returns:
-            list[Segment]:
-                Deduplicated segments ordered chronologically.
-        """
-        unified: set[Segment] = set()
-
-        for scored_context in query_result.scored_segment_contexts:
-            context = scored_context.segments
-
-            if len(unified) >= max_num_segments:
-                break
-            if (len(unified) + len(context)) <= max_num_segments:
-                unified.update(context)
-            else:
-                # Prioritize segments near the seed segment.
-                seed_index = next(
-                    index
-                    for index, segment in enumerate(context)
-                    if segment.uuid == scored_context.seed_segment_uuid
-                )
-
-                for segment in sorted(
-                    context,
-                    key=lambda s: EventMemory._seed_proximity(s, context, seed_index),
-                ):
-                    if len(unified) >= max_num_segments:
-                        break
-                    unified.add(segment)
-
-        return sorted(
-            unified,
-            key=lambda segment: (
-                segment.timestamp,
-                segment.event_uuid,
-                segment.index,
-                segment.offset,
-            ),
-        )
-
-    @staticmethod
-    def string_from_query_result(
-        query_result: QueryResult,
-        *,
-        max_num_segments: int | None = None,
-        format_options: FormatOptions | None = None,
-    ) -> str:
-        """Format a query result as a string with breaks between disconnected contexts."""
-        contexts: list[list[Segment]] = [
-            list(scored_context.segments)
-            for scored_context in query_result.scored_segment_contexts
-        ]
-
-        if max_num_segments is not None:
-            included = {
-                segment.uuid
-                for segment in EventMemory.build_query_result_context(
-                    query_result, max_num_segments
-                )
-            }
-            contexts = [
-                [segment for segment in context if segment.uuid in included]
-                for context in contexts
-            ]
-
-        return EventMemory.string_from_segment_contexts(
-            contexts, format_options=format_options
-        )
-
-    @staticmethod
-    def _seed_proximity(
-        segment: Segment,
-        context: list[Segment],
-        seed_index: int,
-    ) -> float:
-        """Score a segment by its proximity to the seed. Lower is closer."""
-        offset = context.index(segment) - seed_index
-        if offset >= 0:
-            # Forward context is more useful than backward.
-            return (offset - 0.5) / 2
-        return -offset

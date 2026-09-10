@@ -1,109 +1,33 @@
-"""Module for parsing filter strings into dictionaries."""
+"""
+The server's textual filter language, parsed into filter expression trees.
+
+The HTTP API still speaks this language, so the parser stays as the server's
+translation into the tree in `filter_expression`; the tree is what every
+store compiles, and nothing below the API boundary parses text.
+"""
 
 import re
-from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Literal, NamedTuple, Protocol, cast, runtime_checkable
+from datetime import datetime
+from typing import NamedTuple, cast
 
-from memmachine_server.common.data_types import PropertyValue
-from memmachine_server.common.utils import ensure_tz_aware
+from memmachine_server.common.data_types import OrderedValue, PropertyValue
+
+from .filter_expression import (
+    And,
+    Equals,
+    FilterExpr,
+    In,
+    IsMissing,
+    Not,
+    NotEquals,
+    Or,
+    Ordering,
+    OrderingOp,
+)
 
 
 class FilterParseError(ValueError):
     """Raised when the textual filter specification is invalid."""
-
-
-@runtime_checkable
-class FilterExpr(Protocol):
-    """Marker protocol for filter expression nodes.
-
-    A value-carrying node normalizes datetime values to UTC-aware
-    instants at construction (naive means UTC); compilers rely on this
-    and bind instants without re-normalizing.
-    """
-
-
-ComparisonOp = Literal["=", "!=", ">", "<", ">=", "<="]
-
-
-@dataclass(frozen=True)
-class Comparison(FilterExpr):
-    """Scalar comparison of a field against a value."""
-
-    field: str
-    op: ComparisonOp
-    value: PropertyValue
-
-    def __post_init__(self) -> None:
-        """Normalize a datetime value to a UTC-aware instant.
-
-        The filter language defines datetime semantics: a value denotes
-        an instant, and a naive value means UTC. Normalizing at node
-        construction hands every consumer -- parsed and programmatically
-        built trees alike -- UTC-aware instants; compilers only choose a
-        representation.
-        """
-        if isinstance(self.value, datetime):
-            object.__setattr__(
-                self, "value", ensure_tz_aware(self.value).astimezone(UTC)
-            )
-
-
-@dataclass(frozen=True)
-class In(FilterExpr):
-    """Membership test of a field against a list of values."""
-
-    field: str
-    values: list[int] | list[str]
-
-    def __post_init__(self) -> None:
-        """Defensively normalize datetime members to UTC-aware instants.
-
-        The declared value types exclude datetimes, but runtime lists
-        are unchecked.
-        """
-        if any(isinstance(value, datetime) for value in self.values):
-            object.__setattr__(
-                self,
-                "values",
-                [
-                    ensure_tz_aware(value).astimezone(UTC)
-                    if isinstance(value, datetime)
-                    else value
-                    for value in self.values
-                ],
-            )
-
-
-@dataclass(frozen=True)
-class IsNull(FilterExpr):
-    """Nullity check on a field (field IS NULL)."""
-
-    field: str
-
-
-@dataclass(frozen=True)
-class And(FilterExpr):
-    """Logical conjunction of two filter expressions."""
-
-    left: FilterExpr
-    right: FilterExpr
-
-
-@dataclass(frozen=True)
-class Or(FilterExpr):
-    """Logical disjunction of two filter expressions."""
-
-    left: FilterExpr
-    right: FilterExpr
-
-
-@dataclass(frozen=True)
-class Not(FilterExpr):
-    """Logical negation of a filter expression."""
-
-    expr: FilterExpr
 
 
 class Token(NamedTuple):
@@ -162,9 +86,7 @@ def _tokenize(s: str) -> list[Token]:
     return tokens
 
 
-_SCALAR_OPS: dict[str, ComparisonOp] = {
-    "EQ": "=",
-    "NE": "!=",
+_ORDERING_OPS: dict[str, OrderingOp] = {
     "GE": ">=",
     "LE": "<=",
     "GT": ">",
@@ -218,10 +140,14 @@ class _Parser:
 
             self.pos += 1
             rhs = self._parse_expression(prec + 1)
+            # A chain of one operator is one n-ary node, so the tree's shape
+            # does not depend on how the text happened to group it.
             if tok.type == "AND":
-                expr = And(left=expr, right=rhs)
+                left = expr.operands if isinstance(expr, And) else (expr,)
+                expr = And((*left, rhs))
             else:
-                expr = Or(left=expr, right=rhs)
+                left = expr.operands if isinstance(expr, Or) else (expr,)
+                expr = Or((*left, rhs))
 
         return expr
 
@@ -231,7 +157,7 @@ class _Parser:
             self._expect("RPAREN")
             return expr
         if self._accept("NOT"):
-            return Not(expr=self._parse_primary())
+            return Not(self._parse_primary())
         return self._parse_predicate()
 
     def _parse_predicate(self) -> FilterExpr:
@@ -242,17 +168,20 @@ class _Parser:
         field_tok = self._expect("IDENT")
         field = field_tok.value
 
-        op_tok = self._accept("EQ", "NE", "GE", "LE", "GT", "LT")
+        if self._accept("EQ"):
+            return Equals(field, self._parse_value())
+        if self._accept("NE"):
+            return NotEquals(field, self._parse_value())
+        op_tok = self._accept("GE", "LE", "GT", "LT")
         if op_tok:
-            value = self._parse_value()
-            return Comparison(field=field, op=_SCALAR_OPS[op_tok.type], value=value)
+            return Ordering(field, _ORDERING_OPS[op_tok.type], self._parse_ordered())
 
         # IN / NOT IN
         negate = self._accept("NOT") is not None
         if self._accept("IN"):
             values = self._parse_value_list()
-            expr: FilterExpr = In(field=field, values=values)
-            return Not(expr=expr) if negate else expr
+            expr: FilterExpr = In(field, values)
+            return Not(expr) if negate else expr
         if negate:
             raise FilterParseError(f"Expected IN after NOT for field {field}")
 
@@ -264,8 +193,8 @@ class _Parser:
                 raise FilterParseError(
                     "Expected NULL after IS/IS NOT",
                 )
-            expr = IsNull(field=field)
-            return Not(expr=expr) if negate else expr
+            expr = IsMissing(field)
+            return Not(expr) if negate else expr
 
         raise FilterParseError(
             f"Expected operator after field {field}: "
@@ -273,16 +202,16 @@ class _Parser:
             "membership (IN, NOT IN), or nullity (IS NULL, IS NOT NULL)"
         )
 
-    def _parse_value_list(self) -> list[int] | list[str]:
+    def _parse_value_list(self) -> tuple[int, ...] | tuple[str, ...]:
         self._expect("LPAREN")
         raw: list[int | str] = [self._parse_in_value()]
         while self._accept("COMMA"):
             raw.append(self._parse_in_value())
         self._expect("RPAREN")
         if all(isinstance(v, int) for v in raw):
-            return cast(list[int], raw)
+            return tuple(cast(list[int], raw))
         if all(isinstance(v, str) for v in raw):
-            return cast(list[str], raw)
+            return tuple(cast(list[str], raw))
         raise FilterParseError(
             "Mixed types in IN list: all values must be int or all str"
         )
@@ -293,6 +222,16 @@ class _Parser:
         if isinstance(value, bool) or not isinstance(value, int | str):
             raise FilterParseError(
                 f"IN lists only support int and str values, got {type(value).__name__}"
+            )
+        return value
+
+    def _parse_ordered(self) -> OrderedValue:
+        """Parse the value of an ordering comparison: a number or a date."""
+        value = self._parse_value()
+        if isinstance(value, bool) or not isinstance(value, int | float | datetime):
+            raise FilterParseError(
+                "Ordering comparisons (>, <, >=, <=) take a number or a date(), "
+                f"got {type(value).__name__}"
             )
         return value
 
@@ -371,32 +310,6 @@ def is_user_metadata_key(candidate_key: str) -> bool:
     return candidate_key.startswith(USER_METADATA_STORAGE_PREFIX)
 
 
-def map_filter_fields(
-    expr: FilterExpr,
-    transform: Callable[[str], str],
-) -> FilterExpr:
-    """Apply a field name transformation to all fields in a FilterExpr tree."""
-    if isinstance(expr, Comparison):
-        return Comparison(field=transform(expr.field), op=expr.op, value=expr.value)
-    if isinstance(expr, In):
-        return In(field=transform(expr.field), values=expr.values)
-    if isinstance(expr, IsNull):
-        return IsNull(field=transform(expr.field))
-    if isinstance(expr, And):
-        return And(
-            left=map_filter_fields(expr.left, transform),
-            right=map_filter_fields(expr.right, transform),
-        )
-    if isinstance(expr, Or):
-        return Or(
-            left=map_filter_fields(expr.left, transform),
-            right=map_filter_fields(expr.right, transform),
-        )
-    if isinstance(expr, Not):
-        return Not(expr=map_filter_fields(expr.expr, transform))
-    raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
-
-
 def parse_filter(spec: str | None) -> FilterExpr | None:
     """Parse the given textual filter specification."""
     if spec is None:
@@ -415,28 +328,23 @@ def to_property_filter(
     if expr is None:
         return None
 
-    comparisons = _flatten_conjunction(expr)
-    if not comparisons:
+    equalities = _flatten_conjunction(expr)
+    if not equalities:
         return None
 
-    property_filter: dict[str, PropertyValue | None] = {}
-    for comp in comparisons:
-        if comp.op != "=":
-            raise TypeError(
-                f"Legacy property filters only support '=' comparisons, not {comp.op}",
-            )
-        property_filter[comp.field] = comp.value
-    return property_filter
+    return {equality.field: equality.value for equality in equalities}
 
 
-def _flatten_conjunction(expr: FilterExpr) -> list[Comparison]:
-    if isinstance(expr, Comparison):
+def _flatten_conjunction(expr: FilterExpr) -> list[Equals]:
+    if isinstance(expr, Equals):
         return [expr]
     if isinstance(expr, And):
-        flattened: list[Comparison] = []
-        flattened.extend(_flatten_conjunction(expr.left))
-        flattened.extend(_flatten_conjunction(expr.right))
-        return flattened
+        return [
+            equality
+            for operand in expr.operands
+            for equality in _flatten_conjunction(operand)
+        ]
     raise TypeError(
-        "Legacy property filters only support AND expressions made of simple comparisons",
+        "Legacy property filters only support AND expressions made of simple "
+        "equality comparisons",
     )

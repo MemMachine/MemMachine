@@ -15,7 +15,9 @@ from memmachine_server.common.configuration.episodic_config import (
 )
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.episode_store import ContentType, Episode
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
@@ -654,7 +656,7 @@ class TestSessionMemoryPublicAPI:
         assert len(episodes) == 1
         assert episodes == [ep1]
 
-        # IsNull filter: ep1 has no category
+        # IsMissing filter: ep1 has no category
         filter_str = "m.category IS NULL"
         filters = parse_filter(filter_str)
         episodes, _ = await memory.get_short_term_memory_context(

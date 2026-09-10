@@ -26,26 +26,16 @@ from pydantic import InstanceOf
 from memmachine_server.common.data_types import FilterValue, PropertyValue
 from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.errors import InvalidArgumentError
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsMissing,
+    Not,
+    NotEquals,
+    Or,
+    Ordering,
 )
 from memmachine_server.common.neo4j_utils import coerce_datetime_to_timestamp
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
@@ -1085,81 +1075,77 @@ class Neo4jSemanticStorage(SemanticStorage):
         *,
         target_field: str,
     ) -> set[str] | None:
-        if isinstance(expr, FilterComparison):
-            if expr.field != target_field or expr.op != "=":
+        match expr:
+            case Equals(field, value):
+                return {str(value)} if field == target_field else None
+            case In(field, values):
+                return {str(v) for v in values} if field == target_field else None
+            case And(operands):
+                definite = [
+                    values
+                    for operand in operands
+                    if (
+                        values := self._collect_field_values(
+                            operand, target_field=target_field
+                        )
+                    )
+                    is not None
+                ]
+                return set.intersection(*definite) if definite else None
+            case NotEquals() | Ordering() | IsMissing() | Or() | Not():
+                # None of these names a definite set of values.
                 return None
-            return {str(expr.value)}
-        if isinstance(expr, FilterIn):
-            if expr.field != target_field:
-                return None
-            return {str(v) for v in expr.values}
-        if isinstance(expr, FilterAnd):
-            return self._merge_and_values(expr, target_field)
-        # Or, IsNull, Not cannot provide definite values
-        return None
-
-    def _merge_and_values(self, expr: FilterAnd, target_field: str) -> set[str] | None:
-        left_vals = self._collect_field_values(expr.left, target_field=target_field)
-        right_vals = self._collect_field_values(expr.right, target_field=target_field)
-        if left_vals is None:
-            return right_vals
-        if right_vals is None:
-            return left_vals
-        return left_vals & right_vals
 
     def _render_filter_expr(
         self,
         alias: str,
         expr: FilterExpr,
     ) -> tuple[str, dict[str, Any]]:
-        if isinstance(expr, FilterIsNull):
-            field_ref, _ = self._resolve_field_reference(alias, expr.field)
-            return f"{field_ref} IS NULL", {}
-
-        if isinstance(expr, FilterIn):
-            field_ref, value_adapter = self._resolve_field_reference(
-                alias,
-                expr.field,
-            )
-            param = self._next_filter_param()
-            adapted_values = (
-                [self._adapt_filter_value(v, value_adapter) for v in expr.values]
-                if value_adapter is not None
-                else list(expr.values)
-            )
-            return f"{field_ref} IN ${param}", {param: adapted_values}
-
-        if isinstance(expr, FilterComparison):
-            field_ref, value_adapter = self._resolve_field_reference(
-                alias,
-                expr.field,
-            )
-            param = self._next_filter_param()
-            adapted_value = (
-                self._adapt_filter_value(expr.value, value_adapter)
-                if value_adapter is not None
-                else expr.value
-            )
-            cypher_op = "<>" if expr.op == "!=" else expr.op
-            return f"{field_ref} {cypher_op} ${param}", {param: adapted_value}
-
-        if isinstance(expr, FilterAnd):
-            left_cond, left_params = self._render_filter_expr(alias, expr.left)
-            right_cond, right_params = self._render_filter_expr(alias, expr.right)
-            condition = f"({left_cond}) AND ({right_cond})"
-            left_params.update(right_params)
-            return condition, left_params
-        if isinstance(expr, FilterOr):
-            left_cond, left_params = self._render_filter_expr(alias, expr.left)
-            right_cond, right_params = self._render_filter_expr(alias, expr.right)
-            condition = f"({left_cond}) OR ({right_cond})"
-            left_params.update(right_params)
-            return condition, left_params
-        if isinstance(expr, FilterNot):
-            inner_cond, inner_params = self._render_filter_expr(alias, expr.expr)
-            condition = f"NOT ({inner_cond})"
-            return condition, inner_params
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+        match expr:
+            case IsMissing(field):
+                field_ref, _ = self._resolve_field_reference(alias, field)
+                return f"{field_ref} IS NULL", {}
+            case In(field, values):
+                field_ref, value_adapter = self._resolve_field_reference(alias, field)
+                param = self._next_filter_param()
+                adapted_values = (
+                    [self._adapt_filter_value(v, value_adapter) for v in values]
+                    if value_adapter is not None
+                    else list(values)
+                )
+                return f"{field_ref} IN ${param}", {param: adapted_values}
+            case (
+                Equals(field, value)
+                | NotEquals(field, value)
+                | Ordering(field, _, value)
+            ):
+                field_ref, value_adapter = self._resolve_field_reference(alias, field)
+                param = self._next_filter_param()
+                adapted_value = (
+                    self._adapt_filter_value(value, value_adapter)
+                    if value_adapter is not None
+                    else value
+                )
+                match expr:
+                    case Equals():
+                        cypher_op = "="
+                    case NotEquals():
+                        cypher_op = "<>"
+                    case Ordering(op=op):
+                        cypher_op = op
+                return f"{field_ref} {cypher_op} ${param}", {param: adapted_value}
+            case And(operands) | Or(operands):
+                joiner = " AND " if isinstance(expr, And) else " OR "
+                conditions: list[str] = []
+                params: dict[str, Any] = {}
+                for operand in operands:
+                    condition, operand_params = self._render_filter_expr(alias, operand)
+                    conditions.append(f"({condition})")
+                    params.update(operand_params)
+                return joiner.join(conditions), params
+            case Not(operand):
+                inner_cond, inner_params = self._render_filter_expr(alias, operand)
+                return f"NOT ({inner_cond})", inner_params
 
     _KNOWN_FIELDS: frozenset[str] = frozenset(
         {

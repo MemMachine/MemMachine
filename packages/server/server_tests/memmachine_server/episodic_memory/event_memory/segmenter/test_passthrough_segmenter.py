@@ -6,9 +6,8 @@ from uuid import uuid4
 import pytest
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
     Event,
-    NullContext,
-    ProducerContext,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
@@ -24,7 +23,7 @@ async def test_passthrough_emits_one_segment_per_block():
     event = Event(
         uuid=uuid4(),
         timestamp=_TS,
-        context=ProducerContext(producer="alice"),
+        context={"author": Author(name="alice")},
         blocks=[
             TextBlock(text="first block"),
             TextBlock(text="second block"),
@@ -53,7 +52,7 @@ async def test_passthrough_does_not_split_long_text():
     event = Event(
         uuid=uuid4(),
         timestamp=_TS,
-        context=NullContext(),
+        context={},
         blocks=[TextBlock(text=long_text)],
     )
     segmenter = PassthroughSegmenter()
@@ -68,7 +67,7 @@ async def test_passthrough_empty_blocks_yields_no_segments():
     event = Event(
         uuid=uuid4(),
         timestamp=_TS,
-        context=NullContext(),
+        context={},
         blocks=[],
     )
     segmenter = PassthroughSegmenter()
@@ -82,7 +81,7 @@ async def test_passthrough_each_segment_has_unique_uuid():
     event = Event(
         uuid=uuid4(),
         timestamp=_TS,
-        context=NullContext(),
+        context={},
         blocks=[TextBlock(text="a"), TextBlock(text="b")],
     )
     segmenter = PassthroughSegmenter()

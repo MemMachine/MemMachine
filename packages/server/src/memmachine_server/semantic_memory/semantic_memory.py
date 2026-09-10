@@ -24,12 +24,7 @@ from memmachine_server.common.errors import (
     CategoryNotFoundError,
     InvalidSetIdConfigurationError,
 )
-from memmachine_server.common.filter.filter_parser import (
-    And,
-    Comparison,
-    FilterExpr,
-    In,
-)
+from memmachine_server.common.filter import And, Equals, FilterExpr, In
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.utils import merge_async_iterators
 
@@ -70,18 +65,18 @@ class ResourceManager(Protocol):
 def _with_has_set_ids(
     set_ids: Sequence[SetIdT],
     filter_expr: FilterExpr | None,
-) -> FilterExpr:
+) -> FilterExpr | None:
     if len(set_ids) == 0:
         return filter_expr
 
     set_expr = In(
         field="set_id",
-        values=list(set_ids),
+        values=tuple(set_ids),
     )
 
     if filter_expr is None:
         return set_expr
-    return And(left=set_expr, right=filter_expr)
+    return And((set_expr, filter_expr))
 
 
 class SemanticService:
@@ -720,9 +715,8 @@ class SemanticService:
 
             await self.delete_feature_set(
                 set_ids=set_ids,
-                filter_expr=Comparison(
+                filter_expr=Equals(
                     field="category_name",
-                    op="=",
                     value=category.name,
                 ),
             )

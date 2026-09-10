@@ -5,45 +5,38 @@ import hashlib
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, ClassVar, cast, override
+from typing import Any, ClassVar, Self, cast, override
 from uuid import UUID, uuid5
 from weakref import WeakKeyDictionary
 
 import grpc
 import grpc.aio
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, model_validator
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 from memmachine_server.common.data_types import (
     OrderedValue,
+    PropertyType,
     PropertyValue,
 )
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsMissing,
+    Not,
+    NotEquals,
+    Or,
+    Ordering,
+    OrderingOp,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.utils import ensure_tz_aware
 
 from .data_types import (
+    IndexedProperties,
     QueryMatch,
     QueryResult,
     Record,
@@ -51,7 +44,8 @@ from .data_types import (
     VectorStoreCollectionConfig,
     VectorStoreCollectionConfigMismatchError,
 )
-from .utils import validate_filter, validate_identifier
+from .declared_properties import require_declared_properties, require_supported_filter
+from .utils import validate_identifier
 from .vector_store import VectorStore, VectorStoreCollection
 
 # Point payload keys (stored on every Qdrant point).
@@ -76,156 +70,93 @@ def _partition_filter(partition_key: str) -> models.Filter:
 class QdrantVectorStoreCollection(VectorStoreCollection):
     """A collection backed by Qdrant."""
 
-    _RANGE_OPERATORS: ClassVar[dict[str, str]] = {
+    _RANGE_OPERATORS: ClassVar[dict[OrderingOp, str]] = {
         ">": "gt",
         ">=": "gte",
         "<": "lt",
         "<=": "lte",
     }
 
+    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
+        {Equals, NotEquals, Ordering, In, IsMissing, And, Or, Not}
+    )
+
     @staticmethod
     def _build_qdrant_filter(expr: FilterExpr) -> models.Filter:
         """Convert a FilterExpr tree into a Qdrant Filter."""
-        if isinstance(expr, FilterComparison):
-            return QdrantVectorStoreCollection._build_qdrant_comparison(expr)
-        if isinstance(expr, FilterIn):
-            return QdrantVectorStoreCollection._in_filter(expr.field, expr.values)
-        if isinstance(expr, FilterIsNull):
-            return QdrantVectorStoreCollection._null_filter(expr.field, negate=False)
-        if isinstance(expr, FilterNot):
-            return models.Filter(
-                must_not=[QdrantVectorStoreCollection._build_qdrant_filter(expr.expr)]
-            )
-        if isinstance(expr, FilterAnd):
-            left = QdrantVectorStoreCollection._build_qdrant_filter(expr.left)
-            right = QdrantVectorStoreCollection._build_qdrant_filter(expr.right)
-            return models.Filter(must=[left, right])
-        if isinstance(expr, FilterOr):
-            left = QdrantVectorStoreCollection._build_qdrant_filter(expr.left)
-            right = QdrantVectorStoreCollection._build_qdrant_filter(expr.right)
-            return models.Filter(should=[left, right])
-        message = f"Unsupported filter expression type: {type(expr)}"
-        raise TypeError(message)
-
-    @staticmethod
-    def _build_qdrant_comparison(comparison: FilterComparison) -> models.Filter:
-        """Convert a Comparison into a Qdrant Filter."""
-        field = comparison.field
-        operator = comparison.op
-        value = comparison.value
-
-        if operator in ("=", "!="):
-            negate = operator == "!="
-            if isinstance(value, float):
-                return QdrantVectorStoreCollection._float_eq_filter(
-                    field, value, negate=negate
+        build = QdrantVectorStoreCollection._build_qdrant_filter
+        eq_condition = QdrantVectorStoreCollection._eq_condition
+        missing_condition = QdrantVectorStoreCollection._missing_condition
+        match expr:
+            case Equals(field, value):
+                return models.Filter(must=[eq_condition(field, value)])
+            case NotEquals(field, value):
+                # `must_not` of the match alone would also admit points
+                # lacking the field; a differing value is one the point holds.
+                return models.Filter(
+                    must_not=[eq_condition(field, value), missing_condition(field)]
                 )
-            if isinstance(value, datetime):
-                return QdrantVectorStoreCollection._datetime_eq_filter(
-                    field, value, negate=negate
+            case Ordering(field, op, value):
+                return models.Filter(
+                    must=[
+                        QdrantVectorStoreCollection._range_condition(
+                            field,
+                            value,
+                            QdrantVectorStoreCollection._RANGE_OPERATORS[op],
+                        )
+                    ]
                 )
-            return QdrantVectorStoreCollection._match_filter(
-                field, value, negate=negate
-            )
-        if operator in QdrantVectorStoreCollection._RANGE_OPERATORS:
-            if not isinstance(value, OrderedValue):
-                message = (
-                    f"Range filter on '{field}' requires a numeric or datetime value, "
-                    f"got {type(value).__name__}"
+            case In(field, values):
+                return models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key=field, match=models.MatchAny(any=list(values))
+                        )
+                    ]
                 )
-                raise TypeError(message)
-            return QdrantVectorStoreCollection._range_filter(
-                field, value, QdrantVectorStoreCollection._RANGE_OPERATORS[operator]
+            case IsMissing(field):
+                return models.Filter(must=[missing_condition(field)])
+            case Not(operand):
+                return models.Filter(must_not=[build(operand)])
+            case And(operands):
+                return models.Filter(must=[build(o) for o in operands])
+            case Or(operands):
+                return models.Filter(should=[build(o) for o in operands])
+
+    @staticmethod
+    def _eq_condition(field: str, value: PropertyValue) -> models.FieldCondition:
+        """Match a field against a value, by the only condition Qdrant offers for its type."""
+        if isinstance(value, float):
+            # MatchValue does not accept floats.
+            return models.FieldCondition(
+                key=field, range=models.Range(gte=value, lte=value)
             )
-
-        message = f"Unsupported filter operator: {operator}"
-        raise ValueError(message)
-
-    @staticmethod
-    def _match_filter(
-        field: str,
-        value: bool | int | str,
-        *,
-        negate: bool,
-    ) -> models.Filter:
-        condition = models.FieldCondition(
-            key=field,
-            match=models.MatchValue(value=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
+        if isinstance(value, datetime):
+            instant = ensure_tz_aware(value)
+            return models.FieldCondition(
+                key=field, range=models.DatetimeRange(gte=instant, lte=instant)
+            )
+        return models.FieldCondition(key=field, match=models.MatchValue(value=value))
 
     @staticmethod
-    def _float_eq_filter(field: str, value: float, *, negate: bool) -> models.Filter:
-        """Use a range filter for float equality since MatchValue doesn't accept floats."""
-        condition = models.FieldCondition(
-            key=field,
-            range=models.Range(gte=value, lte=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
-
-    @staticmethod
-    def _datetime_eq_filter(
-        field: str, value: datetime, *, negate: bool
-    ) -> models.Filter:
-        """Use a DatetimeRange filter for datetime equality since MatchValue doesn't accept datetimes."""
-        value = ensure_tz_aware(value)
-        condition = models.FieldCondition(
-            key=field,
-            range=models.DatetimeRange(gte=value, lte=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
-
-    @staticmethod
-    def _in_filter(field: str, value: list[int] | list[str]) -> models.Filter:
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=field,
-                    match=models.MatchAny(any=value),
-                ),
-            ],
-        )
-
-    @staticmethod
-    def _range_filter(
+    def _range_condition(
         field: str,
         value: OrderedValue,
         range_parameter: str,
-    ) -> models.Filter:
+    ) -> models.FieldCondition:
         if isinstance(value, datetime):
-            value = ensure_tz_aware(value)
-            return models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key=field,
-                        range=models.DatetimeRange(**{range_parameter: value}),
-                    ),
-                ],
+            return models.FieldCondition(
+                key=field,
+                range=models.DatetimeRange(**{range_parameter: ensure_tz_aware(value)}),
             )
-
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=field,
-                    range=models.Range(**{range_parameter: value}),
-                ),
-            ],
+        return models.FieldCondition(
+            key=field, range=models.Range(**{range_parameter: value})
         )
 
     @staticmethod
-    def _null_filter(field: str, *, negate: bool) -> models.Filter:
-        condition = models.IsEmptyCondition(
-            is_empty=models.PayloadField(key=field),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
+    def _missing_condition(field: str) -> models.IsEmptyCondition:
+        """Points that do not carry the field."""
+        return models.IsEmptyCondition(is_empty=models.PayloadField(key=field))
 
     def __init__(
         self,
@@ -234,6 +165,7 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         collection_name: str,
         partition_key: str,
         config: VectorStoreCollectionConfig,
+        indexed_properties: Mapping[str, PropertyType],
         tracker: OperationTracker,
         shard_key: str | None = None,
     ) -> None:
@@ -243,6 +175,7 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         self._collection_name = collection_name
         self._partition_key = partition_key
         self._config = config
+        self._indexed_properties = dict(indexed_properties)
         self._shard_key = shard_key
 
     @property
@@ -251,44 +184,29 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         """The configuration for this collection."""
         return self._config
 
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
+
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return QdrantVectorStoreCollection._SUPPORTED_FILTER_NODES
+
     def _build_payload(
         self,
-        properties: dict[str, PropertyValue] | None,
+        properties: Mapping[str, PropertyValue],
     ) -> dict[str, PropertyValue]:
         """Build Qdrant-compatible payload from record properties."""
         payload: dict[str, PropertyValue] = {
             _PAYLOAD_PARTITION_KEY: self._partition_key,
         }
-        if properties:
-            for key, value in properties.items():
-                if value is None:
-                    continue
-                if isinstance(value, datetime):
-                    payload[key] = ensure_tz_aware(value)
-                else:
-                    payload[key] = value
+        for key, value in properties.items():
+            payload[key] = (
+                ensure_tz_aware(value) if isinstance(value, datetime) else value
+            )
         return payload
-
-    def _parse_payload(
-        self,
-        payload: dict[str, Any] | None,
-    ) -> dict[str, PropertyValue] | None:
-        """Parse record properties from Qdrant payload."""
-        if payload is None:
-            return None
-
-        indexed_properties_schema = self._config.indexed_properties_schema
-        result: dict[str, PropertyValue] = {}
-        for key, value in payload.items():
-            if key == _PAYLOAD_PARTITION_KEY or value is None:
-                continue
-            if indexed_properties_schema.get(key) is datetime and isinstance(
-                value, str
-            ):
-                result[key] = datetime.fromisoformat(value)
-            else:
-                result[key] = cast(PropertyValue, value)
-        return result
 
     @override
     async def upsert(
@@ -300,12 +218,12 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         async with self._tracker("upsert"):
             points: list[models.PointStruct] = []
             for record in records:
-                properties = record.properties
+                require_declared_properties(record.properties, self._indexed_properties)
                 points.append(
                     models.PointStruct(
                         id=record.uuid,
                         vector=record.vector,
-                        payload=self._build_payload(properties),
+                        payload=self._build_payload(record.properties),
                     )
                 )
             if points:
@@ -343,9 +261,12 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
                 return []
 
             partition_key_filter = _partition_filter(self._partition_key)
-            if property_filter:
-                if not validate_filter(property_filter):
-                    raise ValueError("Filter contains an invalid property key")
+            if property_filter is not None:
+                require_supported_filter(
+                    property_filter,
+                    self._indexed_properties,
+                    QdrantVectorStoreCollection._SUPPORTED_FILTER_NODES,
+                )
                 property_qdrant_filter = (
                     QdrantVectorStoreCollection._build_qdrant_filter(property_filter)
                 )
@@ -430,11 +351,30 @@ class QdrantVectorStoreParams(BaseModel):
         registry_replication_factor (int):
             Replication factor for registry collections. Write consistency factor is
             set to match so all replicas confirm writes before returning, guaranteeing
-            read-your-writes from any available replica.
+            read-your-writes from any available replica
+            (default: 1).
+        indexed_properties (IndexedProperties):
+            The declared schema every collection of this store carries: each
+            key gets a payload index of its declared type, and a record or a
+            filter naming any other key is rejected.
+        hnsw_config (HnswConfigDiff | None):
+            Optional HNSW index tuning applied to native collections.
+            `m` must be 0 or unset: native collections are multi-tenant
+            and disable the global graph in favor of per-tenant payload indexing,
+            so tune `payload_m` rather than `m`.
+            Does not apply to registry collections
+            (default: None).
+        optimizers_config (OptimizersConfigDiff | None):
+            Optional optimizer tuning applied to native collections.
+            Does not apply to registry collections
+            (default: None).
+        quantization_config (QuantizationConfig | None):
+            Optional quantization applied to native collections.
+            Does not apply to registry collections
+            (default: None).
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
-
     """
 
     client: InstanceOf[AsyncQdrantClient] = Field(
@@ -459,10 +399,48 @@ class QdrantVectorStoreParams(BaseModel):
             "read-your-writes from any available replica"
         ),
     )
+    indexed_properties: IndexedProperties = Field(
+        ...,
+        description="The declared schema every collection of this store carries",
+    )
+    hnsw_config: models.HnswConfigDiff | None = Field(
+        None,
+        description=(
+            "Optional HNSW index tuning applied to native collections. "
+            "`m` must be 0 or unset: native collections are multi-tenant "
+            "and disable the global graph in favor of per-tenant payload indexing, "
+            "so tune `payload_m` rather than `m`. "
+            "Does not apply to registry collections"
+        ),
+    )
+    optimizers_config: models.OptimizersConfigDiff | None = Field(
+        None,
+        description=(
+            "Optional optimizer tuning applied to native collections. "
+            "Does not apply to registry collections"
+        ),
+    )
+    quantization_config: models.QuantizationConfig | None = Field(
+        None,
+        description=(
+            "Optional quantization applied to native collections. "
+            "Does not apply to registry collections"
+        ),
+    )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
     )
+
+    @model_validator(mode="after")
+    def _validate_hnsw_m(self) -> Self:
+        if self.hnsw_config is not None and self.hnsw_config.m not in (None, 0):
+            raise ValueError(
+                "hnsw_config.m must be 0 or unset: native collections are "
+                "multi-tenant and disable the global graph in favor of per-tenant "
+                "payload indexing, so tune payload_m rather than m"
+            )
+        return self
 
 
 class QdrantVectorStore(VectorStore):
@@ -484,7 +462,9 @@ class QdrantVectorStore(VectorStore):
     _REGISTRY_SUFFIX: ClassVar[str] = "__registry"
     _REGISTRY_NAME: ClassVar[str] = "name"
     _REGISTRY_VECTOR_DIMENSIONS: ClassVar[str] = "vector_dimensions"
-    _REGISTRY_INDEXED_PROPERTIES_SCHEMA: ClassVar[str] = "indexed_properties_schema"
+
+    # The per-tenant graph size when no override is configured.
+    _DEFAULT_NATIVE_PAYLOAD_M: ClassVar[int] = 16
 
     # Fixed UUID namespace for deterministic registry point IDs.
     _REGISTRY_UUID_NAMESPACE: ClassVar[UUID] = UUID(
@@ -546,8 +526,10 @@ class QdrantVectorStore(VectorStore):
         self._is_distributed = params.is_distributed
 
         self._registry_replication_factor = params.registry_replication_factor
-
-        self._hnsw_m = 16
+        self._indexed_properties = params.indexed_properties
+        self._hnsw_config = params.hnsw_config
+        self._optimizers_config = params.optimizers_config
+        self._quantization_config = params.quantization_config
 
         self._tracker = OperationTracker(
             params.metrics_factory,
@@ -558,6 +540,11 @@ class QdrantVectorStore(VectorStore):
             self._client, defaultdict(asyncio.Lock)
         )
 
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
+
     @override
     async def startup(self) -> None:
         """No-op; client lifecycle is managed externally."""
@@ -565,6 +552,22 @@ class QdrantVectorStore(VectorStore):
     @override
     async def shutdown(self) -> None:
         """No-op; client lifecycle is managed externally."""
+
+    def _native_hnsw_config(self) -> models.HnswConfigDiff:
+        """The HNSW config of a native collection: the overrides, with `m` pinned at 0.
+
+        A native collection is multi-tenant, so the global graph is disabled
+        and each tenant gets its own graph of `payload_m` links.
+        """
+        overrides = self._hnsw_config or models.HnswConfigDiff()
+        return overrides.model_copy(
+            update={
+                "m": 0,
+                "payload_m": overrides.payload_m
+                if overrides.payload_m is not None
+                else QdrantVectorStore._DEFAULT_NATIVE_PAYLOAD_M,
+            }
+        )
 
     async def _ensure_namespace_registry_collection(self, namespace: str) -> None:
         """Idempotently create the registry collection for a namespace."""
@@ -626,9 +629,6 @@ class QdrantVectorStore(VectorStore):
         """Parse a VectorStoreCollectionConfig from a registry entry."""
         return VectorStoreCollectionConfig(
             vector_dimensions=entry[QdrantVectorStore._REGISTRY_VECTOR_DIMENSIONS],
-            indexed_properties_schema=entry[
-                QdrantVectorStore._REGISTRY_INDEXED_PROPERTIES_SCHEMA
-            ],
         )
 
     def _build_collection_handle(
@@ -642,6 +642,7 @@ class QdrantVectorStore(VectorStore):
             ),
             partition_key=name,
             config=config,
+            indexed_properties=self._indexed_properties,
             tracker=self._tracker,
             shard_key=name if self._is_distributed else None,
         )
@@ -666,10 +667,9 @@ class QdrantVectorStore(VectorStore):
                 vectors_config=models.VectorParams(
                     size=config.vector_dimensions, distance=distance
                 ),
-                hnsw_config=models.HnswConfigDiff(
-                    m=0,
-                    payload_m=self._hnsw_m,
-                ),
+                hnsw_config=self._native_hnsw_config(),
+                optimizers_config=self._optimizers_config,
+                quantization_config=self._quantization_config,
                 sharding_method=(
                     models.ShardingMethod.CUSTOM if self._is_distributed else None
                 ),
@@ -687,7 +687,7 @@ class QdrantVectorStore(VectorStore):
                 ),
             )
         ]
-        for prop_name, prop_type in config.indexed_properties_schema.items():
+        for prop_name, prop_type in self._indexed_properties.items():
             index_type = QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE.get(prop_type)
             if index_type is not None:
                 indexes.append((prop_name, index_type))
@@ -730,9 +730,6 @@ class QdrantVectorStore(VectorStore):
                     payload={
                         QdrantVectorStore._REGISTRY_NAME: name,
                         QdrantVectorStore._REGISTRY_VECTOR_DIMENSIONS: config.vector_dimensions,
-                        QdrantVectorStore._REGISTRY_INDEXED_PROPERTIES_SCHEMA: config.model_dump(
-                            mode="json"
-                        )["indexed_properties_schema"],
                     },
                 ),
             ],

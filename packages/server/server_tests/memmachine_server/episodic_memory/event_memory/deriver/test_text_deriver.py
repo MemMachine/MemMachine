@@ -8,10 +8,9 @@ import pytest
 from pydantic import BaseModel
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
     Block,
     FormatOptions,
-    NullContext,
-    ProducerContext,
     Segment,
     TextBlock,
 )
@@ -37,7 +36,7 @@ def _make_segment(
         index=0,
         offset=0,
         timestamp=_TS,
-        context=context if context is not None else NullContext(),
+        context=context if context is not None else {},
         block=block,
         properties=properties or {},
     )
@@ -47,7 +46,7 @@ def _make_segment_with_unsupported_block() -> Segment:
     """Bypass discriminated-union validation to exercise the deriver's fallback arm."""
 
     class _OtherBlock(BaseModel):
-        block_type: str = "other"
+        kind: str = "other"
 
     return Segment.model_construct(
         uuid=uuid4(),
@@ -55,7 +54,7 @@ def _make_segment_with_unsupported_block() -> Segment:
         index=0,
         offset=0,
         timestamp=_TS,
-        context=NullContext(),
+        context={},
         block=cast(Block, _OtherBlock()),
         properties={},
     )
@@ -87,7 +86,7 @@ class TestWholeTextDeriver:
     async def test_producer_context_prefixes_text(self):
         seg = _make_segment(
             block=TextBlock(text="hi there"),
-            context=ProducerContext(producer="Alice"),
+            context={"author": Author(name="Alice")},
         )
 
         result = await WholeTextDeriver().derive(seg)
@@ -100,7 +99,7 @@ class TestWholeTextDeriver:
     async def test_format_options_with_time_includes_time(self):
         seg = _make_segment(
             block=TextBlock(text="hi there"),
-            context=ProducerContext(producer="Alice"),
+            context={"author": Author(name="Alice")},
         )
 
         result = await WholeTextDeriver().derive(
@@ -136,7 +135,7 @@ class TestWholeTextDeriver:
     async def test_non_text_block_raises(self):
         seg = _make_segment_with_unsupported_block()
 
-        with pytest.raises(NotImplementedError, match="Unsupported block type"):
+        with pytest.raises(NotImplementedError, match="Unsupported block kind"):
             await WholeTextDeriver().derive(seg)
 
     async def test_each_derive_call_emits_unique_uuid(self):
@@ -177,7 +176,7 @@ class TestSentenceTextDeriver:
     async def test_producer_context_prefixes_each_sentence(self):
         seg = _make_segment(
             block=TextBlock(text="One. Two."),
-            context=ProducerContext(producer="Bob"),
+            context={"author": Author(name="Bob")},
         )
 
         result = await SentenceTextDeriver().derive(seg)
@@ -205,5 +204,5 @@ class TestSentenceTextDeriver:
     async def test_non_text_block_raises(self):
         seg = _make_segment_with_unsupported_block()
 
-        with pytest.raises(NotImplementedError, match="Unsupported block type"):
+        with pytest.raises(NotImplementedError, match="Unsupported block kind"):
             await SentenceTextDeriver().derive(seg)

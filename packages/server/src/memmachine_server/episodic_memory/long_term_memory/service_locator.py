@@ -18,6 +18,7 @@ from memmachine_server.common.configuration.episodic_config import (
 )
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
+    PropertyType,
     PropertyValue,
 )
 from memmachine_server.common.resource_manager import CommonResourceManager
@@ -93,7 +94,9 @@ async def _event_params(
     config: EventLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
 ) -> EventBackendParams:
-    vector_store = await resource_manager.get_vector_store(config.vector_store)
+    vector_store = await resource_manager.get_vector_store(
+        config.vector_store, indexed_properties=event_backend_indexed_properties()
+    )
     segment_store = await resource_manager.get_segment_store(config.segment_store)
     embedder = await resource_manager.get_embedder(config.embedder, validate=True)
     reranker = (
@@ -105,36 +108,14 @@ async def _event_params(
 
     partition_key = partition_key_for_session(config.session_id)
 
-    # Open the existing collection if any (preserves the original schema). Only
-    # create with our merged schema if the partition does not yet exist.
-    collection = await vector_store.open_collection(
+    # The keys a filter may name are validated below; which of them the
+    # store indexes is the store's own declaration.
+    _resolve_user_properties_schema(config.properties_schema)
+    collection = await vector_store.open_or_create_collection(
         namespace=_EVENT_BACKEND_NAMESPACE,
         name=partition_key,
+        config=VectorStoreCollectionConfig(vector_dimensions=embedder.dimensions),
     )
-    if collection is None:
-        user_schema = _resolve_user_properties_schema(config.properties_schema)
-        collection_config = VectorStoreCollectionConfig(
-            vector_dimensions=embedder.dimensions,
-            indexed_properties_schema={
-                **EventMemory.expected_vector_store_collection_schema(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-                **user_schema,
-            },
-        )
-        await vector_store.create_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-            config=collection_config,
-        )
-        collection = await vector_store.open_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-        )
-        if collection is None:
-            raise RuntimeError(
-                f"Failed to open vector store collection after creation for "
-                f"partition {partition_key!r}"
-            )
 
     partition = await segment_store.open_or_create_partition(
         partition_key,
@@ -160,6 +141,18 @@ async def _event_params(
         user_property_keys=frozenset(config.properties_schema),
         metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
     )
+
+
+def event_backend_indexed_properties() -> dict[str, PropertyType]:
+    """The system keys the event backend writes into every vector record.
+
+    EventMemory's reserved keys and the adapter's own event fields; the
+    vector store is built with these plus its configured user keys.
+    """
+    return {
+        **EventMemory.expected_vector_store_collection_schema(),
+        **EVENT_BACKEND_SYSTEM_FIELDS,
+    }
 
 
 def partition_key_for_session(session_id: str) -> str:

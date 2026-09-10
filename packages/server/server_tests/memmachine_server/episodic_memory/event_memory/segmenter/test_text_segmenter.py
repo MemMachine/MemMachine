@@ -8,10 +8,9 @@ import pytest
 from pydantic import BaseModel
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
     Block,
     Event,
-    NullContext,
-    ProducerContext,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
@@ -32,7 +31,7 @@ def _make_event(
     return Event(
         uuid=uuid4(),
         timestamp=_TS,
-        context=context if context is not None else NullContext(),
+        context=context if context is not None else {},
         blocks=blocks,
         properties=properties or {},
     )
@@ -42,12 +41,12 @@ def _make_event_with_unsupported_block() -> Event:
     """Bypass discriminated-union validation to exercise the segmenter's fallback arm."""
 
     class _OtherBlock(BaseModel):
-        block_type: str = "other"
+        kind: str = "other"
 
     return Event.model_construct(
         uuid=uuid4(),
         timestamp=_TS,
-        context=NullContext(),
+        context={},
         blocks=[cast(Block, _OtherBlock())],
         properties={},
     )
@@ -109,12 +108,12 @@ class TestTextSegmenter:
     async def test_propagates_event_context(self):
         event = _make_event(
             blocks=[TextBlock(text="hi")],
-            context=ProducerContext(producer="Alice"),
+            context={"author": Author(name="Alice")},
         )
 
         result = await TextSegmenter().segment(event)
 
-        assert result[0].context == ProducerContext(producer="Alice")
+        assert result[0].context == {"author": Author(name="Alice")}
 
     async def test_propagates_event_properties(self):
         event = _make_event(
@@ -144,5 +143,5 @@ class TestTextSegmenter:
     async def test_non_text_block_raises(self):
         event = _make_event_with_unsupported_block()
 
-        with pytest.raises(NotImplementedError, match="Unsupported block type"):
+        with pytest.raises(NotImplementedError, match="Unsupported block kind"):
             await TextSegmenter().segment(event)

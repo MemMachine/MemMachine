@@ -15,13 +15,14 @@ DataType = pymilvus.DataType
 MilvusClient = pymilvus.MilvusClient
 
 from memmachine_server.common.data_types import PropertyValue
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     In,
-    IsNull,
+    IsMissing,
     Not,
     Or,
+    Ordering,
 )
 from memmachine_server.common.vector_store.data_types import (
     Record,
@@ -34,10 +35,22 @@ from memmachine_server.common.vector_store.milvus_vector_store import (
     MilvusVectorStoreCollection,
     MilvusVectorStoreParams,
 )
+from server_tests.memmachine_server.common.filter.nodes import comparison
+from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
+    DeclaredSchemaContract,
+)
 
 NAMESPACE = "test_namespace"
 NAME = "test_name"
 VECTOR_DIM = 3
+
+INDEXED_PROPERTIES: dict[str, type[PropertyValue]] = {
+    "name": str,
+    "age": int,
+    "score": float,
+    "active": bool,
+    "created_at": datetime,
+}
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -82,7 +95,11 @@ def _make_record(
 async def store(tmp_path):
     client = MilvusClient(uri=str(tmp_path / "test_milvus.db"))
     vector_store = MilvusVectorStore(
-        MilvusVectorStoreParams(client=client, consistency_level="Session")
+        MilvusVectorStoreParams(
+            indexed_properties=INDEXED_PROPERTIES,
+            client=client,
+            consistency_level="Session",
+        )
     )
     await vector_store.startup()
     yield vector_store
@@ -97,13 +114,6 @@ async def collection(store):
         name=NAME,
         config=VectorStoreCollectionConfig(
             vector_dimensions=VECTOR_DIM,
-            indexed_properties_schema={
-                "name": str,
-                "age": int,
-                "score": float,
-                "active": bool,
-                "created_at": datetime,
-            },
         ),
     )
     coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
@@ -179,10 +189,8 @@ class TestCollectionLifecycle:
 
     @pytest.mark.asyncio
     async def test_same_config_shares_native_collection(self, store):
-        schema: dict[str, type[PropertyValue]] = {"name": str}
         config = VectorStoreCollectionConfig(
             vector_dimensions=VECTOR_DIM,
-            indexed_properties_schema=schema,
         )
         await store.create_collection(namespace=NAMESPACE, name="coll_a", config=config)
         await store.create_collection(namespace=NAMESPACE, name="coll_b", config=config)
@@ -215,7 +223,6 @@ class TestCollectionLifecycle:
         assert fields["partition_key"]["is_partition_key"] is True
         assert fields["vector"]["type"] == DataType.FLOAT_VECTOR
         assert fields["vector"]["params"]["dim"] == VECTOR_DIM
-        assert fields["properties"]["type"] == DataType.JSON
 
         await store.delete_collection(namespace=NAMESPACE, name="schema")
 
@@ -334,7 +341,7 @@ class TestUpsertAndQuery:
         results = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=IsNull(field="name"),
+            property_filter=IsMissing(field="name"),
         )
         assert {match.record_uuid for match in results[0].matches} == {record.uuid}
 
@@ -370,6 +377,10 @@ class TestUpsertAndQuery:
         assert results[0].matches[0].cosine_similarity == pytest.approx(1.0, abs=0.01)
 
 
+class TestDeclaredSchema(DeclaredSchemaContract):
+    """The declared-schema contract, against this store."""
+
+
 class TestFilters:
     async def _setup(self, collection):
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -394,7 +405,7 @@ class TestFilters:
         all_results = await collection.query(
             query_vectors=[query_vec],
             limit=10,
-            property_filter=Comparison(field=field, op=op, value=value),
+            property_filter=comparison(field, op, value),
         )
         return {match.record_uuid for match in all_results[0].matches}
 
@@ -450,14 +461,14 @@ class TestFilters:
         null_results = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=IsNull(field="name"),
+            property_filter=IsMissing(field="name"),
         )
         assert {m.record_uuid for m in null_results[0].matches} == {r_missing.uuid}
 
         not_null_results = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Not(expr=IsNull(field="name")),
+            property_filter=Not(IsMissing(field="name")),
         )
         assert {m.record_uuid for m in not_null_results[0].matches} == {
             r_has_value.uuid
@@ -470,7 +481,7 @@ class TestFilters:
         in_results = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=In(field="name", values=["alice", "carol"]),
+            property_filter=In(field="name", values=("alice", "carol")),
         )
         assert {m.record_uuid for m in in_results[0].matches} == {r1.uuid, r3.uuid}
 
@@ -478,8 +489,10 @@ class TestFilters:
             query_vectors=[v1],
             limit=10,
             property_filter=And(
-                left=Comparison(field="active", op="=", value=True),
-                right=Comparison(field="age", op=">", value=30),
+                (
+                    Equals(field="active", value=True),
+                    Ordering(field="age", op=">", value=30),
+                )
             ),
         )
         assert {m.record_uuid for m in and_results[0].matches} == {r3.uuid}
@@ -488,8 +501,7 @@ class TestFilters:
             query_vectors=[v1],
             limit=10,
             property_filter=Or(
-                left=Comparison(field="name", op="=", value="alice"),
-                right=Comparison(field="name", op="=", value="bob"),
+                (Equals(field="name", value="alice"), Equals(field="name", value="bob"))
             ),
         )
         assert {m.record_uuid for m in or_results[0].matches} == {r1.uuid, r2.uuid}
@@ -524,12 +536,12 @@ class TestPartitionIsolation:
         [only_a] = await coll_a.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="name", op="=", value="a"),
+            property_filter=Equals(field="name", value="a"),
         )
         [only_b] = await coll_b.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="name", op="=", value="b"),
+            property_filter=Equals(field="name", value="b"),
         )
         assert [m.record_uuid for m in only_a.matches] == [record_uuid]
         assert [m.record_uuid for m in only_b.matches] == [record_uuid]

@@ -2,30 +2,34 @@ import datetime
 
 import pytest
 
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
-    FilterParseError,
+    Equals,
     In,
-    IsNull,
+    IsMissing,
     Not,
+    NotEquals,
     Or,
+    Ordering,
     map_filter_fields,
+)
+from memmachine_server.common.filter.filter_parser import (
+    FilterParseError,
     normalize_filter_field,
     parse_filter,
     to_property_filter,
 )
 
 
-def _flatten_and(expr: And) -> list[Comparison]:
-    result: list[Comparison] = []
+def _flatten_and(expr: And) -> list[Equals | NotEquals | Ordering]:
+    result: list[Equals | NotEquals | Ordering] = []
 
     def _walk(node):
         if isinstance(node, And):
-            _walk(node.left)
-            _walk(node.right)
+            for operand in node.operands:
+                _walk(operand)
         else:
-            assert isinstance(node, Comparison)
+            assert isinstance(node, Equals | NotEquals | Ordering)
             result.append(node)
 
     _walk(expr)
@@ -39,62 +43,62 @@ def test_parse_filter_empty_string() -> None:
 
 def test_parse_filter_simple_equality() -> None:
     expr = parse_filter("owner = 'alice'")
-    assert expr == Comparison(field="owner", op="=", value="alice")
+    assert expr == Equals(field="owner", value="alice")
 
 
 def test_parse_filter_in_clause() -> None:
     expr = parse_filter("priority in (HIGH,LOW)")
-    assert expr == In(field="priority", values=["HIGH", "LOW"])
+    assert expr == In(field="priority", values=("HIGH", "LOW"))
 
 
 def test_parse_filter_boolean_and_numeric_values() -> None:
     expr = parse_filter("count = 10 AND pi = 3.14 AND done = true AND flag = FALSE")
     assert isinstance(expr, And)
     children = _flatten_and(expr)
-    assert children[0] == Comparison(field="count", op="=", value=10)
-    assert children[1] == Comparison(field="pi", op="=", value=3.14)
-    assert children[2] == Comparison(field="done", op="=", value=True)
-    assert children[3] == Comparison(field="flag", op="=", value=False)
+    assert children[0] == Equals(field="count", value=10)
+    assert children[1] == Equals(field="pi", value=3.14)
+    assert children[2] == Equals(field="done", value=True)
+    assert children[3] == Equals(field="flag", value=False)
 
 
 def test_parse_filter_greater_and_less_than() -> None:
     expr = parse_filter("count > 10 AND pi < 3.14")
     assert isinstance(expr, And)
     children = _flatten_and(expr)
-    assert children[0] == Comparison(field="count", op=">", value=10)
-    assert children[1] == Comparison(field="pi", op="<", value=3.14)
+    assert children[0] == Ordering(field="count", op=">", value=10)
+    assert children[1] == Ordering(field="pi", op="<", value=3.14)
 
 
 def test_parse_filter_greater_equal_and_less_equal() -> None:
     expr = parse_filter("count >= 10 AND pi <= 3.14")
     assert isinstance(expr, And)
     children = _flatten_and(expr)
-    assert children[0] == Comparison(field="count", op=">=", value=10)
-    assert children[1] == Comparison(field="pi", op="<=", value=3.14)
+    assert children[0] == Ordering(field="count", op=">=", value=10)
+    assert children[1] == Ordering(field="pi", op="<=", value=3.14)
 
 
 def test_parse_filter_and_or_precedence() -> None:
     expr = parse_filter("owner = alice OR priority = HIGH AND status = OPEN")
     assert isinstance(expr, Or)
-    left = expr.left
-    right = expr.right
-    assert left == Comparison(field="owner", op="=", value="alice")
+    left = expr.operands[0]
+    right = expr.operands[1]
+    assert left == Equals(field="owner", value="alice")
     assert isinstance(right, And)
     assert _flatten_and(right) == [
-        Comparison(field="priority", op="=", value="HIGH"),
-        Comparison(field="status", op="=", value="OPEN"),
+        Equals(field="priority", value="HIGH"),
+        Equals(field="status", value="OPEN"),
     ]
 
 
 def test_parse_filter_grouping_changes_precedence() -> None:
     expr = parse_filter("(owner = alice OR priority = HIGH) AND status = OPEN")
     assert isinstance(expr, And)
-    left = expr.left
-    right = expr.right
+    left = expr.operands[0]
+    right = expr.operands[1]
     assert isinstance(left, Or)
-    assert left.left == Comparison(field="owner", op="=", value="alice")
-    assert left.right == Comparison(field="priority", op="=", value="HIGH")
-    assert right == Comparison(field="status", op="=", value="OPEN")
+    assert left.operands[0] == Equals(field="owner", value="alice")
+    assert left.operands[1] == Equals(field="priority", value="HIGH")
+    assert right == Equals(field="status", value="OPEN")
 
 
 def test_parse_filter_complex_parentheses_precedence() -> None:
@@ -102,16 +106,16 @@ def test_parse_filter_complex_parentheses_precedence() -> None:
         "status = OPEN AND (project = memmachine OR project = memguard) OR owner = bob"
     )
     assert isinstance(expr, Or)
-    assert isinstance(expr.left, And)
-    assert isinstance(expr.left.right, Or)
-    assert expr.left.left == Comparison(field="status", op="=", value="OPEN")
-    assert expr.left.right.left == Comparison(
-        field="project", op="=", value="memmachine"
+    assert isinstance(expr.operands[0], And)
+    assert isinstance(expr.operands[0].operands[1], Or)
+    assert expr.operands[0].operands[0] == Equals(field="status", value="OPEN")
+    assert expr.operands[0].operands[1].operands[0] == Equals(
+        field="project", value="memmachine"
     )
-    assert expr.left.right.right == Comparison(
-        field="project", op="=", value="memguard"
+    assert expr.operands[0].operands[1].operands[1] == Equals(
+        field="project", value="memguard"
     )
-    assert expr.right == Comparison(field="owner", op="=", value="bob")
+    assert expr.operands[1] == Equals(field="owner", value="bob")
 
 
 def test_parse_filter_deeply_nested_groups() -> None:
@@ -119,25 +123,29 @@ def test_parse_filter_deeply_nested_groups() -> None:
         "((project = 'memmachine' AND owner = 'alice') OR (priority = 'HIGH' AND (status = 'OPEN' OR status = 'NEW'))) AND flag = TRUE"
     )
     assert isinstance(expr, And)
-    assert expr.right == Comparison(field="flag", op="=", value=True)
+    assert expr.operands[1] == Equals(field="flag", value=True)
 
-    left = expr.left
+    left = expr.operands[0]
     assert isinstance(left, Or)
 
-    assert isinstance(left.left, And)
-    assert left.left.left == Comparison(field="project", op="=", value="memmachine")
-    assert left.left.right == Comparison(field="owner", op="=", value="alice")
+    assert isinstance(left.operands[0], And)
+    assert left.operands[0].operands[0] == Equals(field="project", value="memmachine")
+    assert left.operands[0].operands[1] == Equals(field="owner", value="alice")
 
-    assert isinstance(left.right, And)
-    assert left.right.left == Comparison(field="priority", op="=", value="HIGH")
-    assert isinstance(left.right.right, Or)
-    assert left.right.right.left == Comparison(field="status", op="=", value="OPEN")
-    assert left.right.right.right == Comparison(field="status", op="=", value="NEW")
+    assert isinstance(left.operands[1], And)
+    assert left.operands[1].operands[0] == Equals(field="priority", value="HIGH")
+    assert isinstance(left.operands[1].operands[1], Or)
+    assert left.operands[1].operands[1].operands[0] == Equals(
+        field="status", value="OPEN"
+    )
+    assert left.operands[1].operands[1].operands[1] == Equals(
+        field="status", value="NEW"
+    )
 
 
 def test_parse_filter_is_null_operator() -> None:
     expr = parse_filter("metadata.note IS NULL")
-    assert expr == IsNull(field="metadata.note")
+    assert expr == IsMissing(field="metadata.note")
 
 
 def test_parse_filter_is_not_null_and_or_combination() -> None:
@@ -145,17 +153,17 @@ def test_parse_filter_is_not_null_and_or_combination() -> None:
         "(metadata.note IS NOT NULL AND status = 'OPEN') OR owner IS NULL"
     )
     assert isinstance(expr, Or)
-    assert isinstance(expr.left, And)
-    assert expr.left.left == Not(expr=IsNull(field="metadata.note"))
-    assert expr.left.right == Comparison(field="status", op="=", value="OPEN")
-    assert expr.right == IsNull(field="owner")
+    assert isinstance(expr.operands[0], And)
+    assert expr.operands[0].operands[0] == Not(IsMissing(field="metadata.note"))
+    assert expr.operands[0].operands[1] == Equals(field="status", value="OPEN")
+    assert expr.operands[1] == IsMissing(field="owner")
 
 
 def test_keywords_case_insensitive() -> None:
     expr = parse_filter("Owner In ('Alice', 'Bob') or PRIORITY = high")
     assert isinstance(expr, Or)
-    assert expr.left == In(field="Owner", values=["Alice", "Bob"])
-    assert expr.right == Comparison(field="PRIORITY", op="=", value="high")
+    assert expr.operands[0] == In(field="Owner", values=("Alice", "Bob"))
+    assert expr.operands[1] == Equals(field="PRIORITY", value="high")
 
 
 def test_legacy_mapping_generation() -> None:
@@ -198,7 +206,7 @@ def valid_filters(request) -> str:
 def test_datetime_parsing() -> None:
     expr = parse_filter("created_at < date('2026-01-19T01:56:41.513342Z')")
     assert expr is not None
-    assert expr == Comparison(
+    assert expr == Ordering(
         field="created_at",
         op="<",
         value=datetime.datetime.fromisoformat("2026-01-19T01:56:41.513342Z"),
@@ -209,8 +217,8 @@ def test_datetime_parsing_with_and_expression() -> None:
     expr = parse_filter("name='test' AND created_at >= date('2025-01-01T00:00:00')")
     assert isinstance(expr, And)
     children = _flatten_and(expr)
-    assert children[0] == Comparison(field="name", op="=", value="test")
-    assert children[1] == Comparison(
+    assert children[0] == Equals(field="name", value="test")
+    assert children[1] == Ordering(
         field="created_at",
         op=">=",
         value=datetime.datetime.fromisoformat("2025-01-01T00:00:00"),
@@ -219,16 +227,15 @@ def test_datetime_parsing_with_and_expression() -> None:
 
 def test_datetime_parsing_with_equality() -> None:
     expr = parse_filter("created_at = date('2026-01-19T01:56:41Z')")
-    assert expr == Comparison(
+    assert expr == Equals(
         field="created_at",
-        op="=",
         value=datetime.datetime.fromisoformat("2026-01-19T01:56:41Z"),
     )
 
 
 def test_comparison_normalizes_datetime_values_at_construction() -> None:
     """The language owns datetime semantics: instants, naive means UTC."""
-    offset_aware = Comparison(
+    offset_aware = Ordering(
         field="created_at",
         op=">=",
         value=datetime.datetime.fromisoformat("2024-01-01T13:30:45-08:00"),
@@ -239,7 +246,7 @@ def test_comparison_normalizes_datetime_values_at_construction() -> None:
     )
     assert offset_aware.value.tzinfo == datetime.UTC
 
-    naive = Comparison(
+    naive = Ordering(
         field="created_at",
         op=">=",
         value=datetime.datetime.fromisoformat("2024-01-01T13:30:45"),
@@ -251,7 +258,7 @@ def test_comparison_normalizes_datetime_values_at_construction() -> None:
 def test_parsed_date_literals_carry_utc_instants() -> None:
     """A date() literal's offset is consumed into a UTC instant."""
     expr = parse_filter("created_at >= date('2024-01-01T13:30:45-08:00')")
-    assert isinstance(expr, Comparison)
+    assert isinstance(expr, Ordering)
     assert isinstance(expr.value, datetime.datetime)
     assert expr.value == datetime.datetime(2024, 1, 1, 21, 30, 45, tzinfo=datetime.UTC)
     assert expr.value.tzinfo == datetime.UTC
@@ -267,41 +274,41 @@ def test_valid_fixtures_return(valid_filters) -> None:
     assert expr is not None
 
 
-# --- != / <> (Comparison with op="!=") ---
+# --- != / <> (Ordering with op="!=") ---
 
 
 def test_parse_filter_ne_bang_equal() -> None:
     expr = parse_filter("status != 'CLOSED'")
-    assert expr == Comparison(field="status", op="!=", value="CLOSED")
+    assert expr == NotEquals(field="status", value="CLOSED")
 
 
 def test_parse_filter_ne_diamond() -> None:
     expr = parse_filter("status <> 'CLOSED'")
-    assert expr == Comparison(field="status", op="!=", value="CLOSED")
+    assert expr == NotEquals(field="status", value="CLOSED")
 
 
 def test_parse_filter_ne_numeric() -> None:
     expr = parse_filter("count != 0")
-    assert expr == Comparison(field="count", op="!=", value=0)
+    assert expr == NotEquals(field="count", value=0)
 
 
 def test_parse_filter_ne_boolean() -> None:
     expr = parse_filter("active <> false")
-    assert expr == Comparison(field="active", op="!=", value=False)
+    assert expr == NotEquals(field="active", value=False)
 
 
 def test_parse_filter_ne_in_conjunction() -> None:
     expr = parse_filter("owner = 'alice' AND status != 'CLOSED'")
     assert isinstance(expr, And)
-    assert expr.left == Comparison(field="owner", op="=", value="alice")
-    assert expr.right == Comparison(field="status", op="!=", value="CLOSED")
+    assert expr.operands[0] == Equals(field="owner", value="alice")
+    assert expr.operands[1] == NotEquals(field="status", value="CLOSED")
 
 
 def test_parse_filter_ne_in_disjunction() -> None:
     expr = parse_filter("status <> 'CLOSED' OR priority != 'LOW'")
     assert isinstance(expr, Or)
-    assert expr.left == Comparison(field="status", op="!=", value="CLOSED")
-    assert expr.right == Comparison(field="priority", op="!=", value="LOW")
+    assert expr.operands[0] == NotEquals(field="status", value="CLOSED")
+    assert expr.operands[1] == NotEquals(field="priority", value="LOW")
 
 
 def test_legacy_mapping_rejects_ne() -> None:
@@ -315,98 +322,98 @@ def test_legacy_mapping_rejects_ne() -> None:
 def test_parse_filter_not_simple() -> None:
     expr = parse_filter("NOT status = 'CLOSED'")
     assert isinstance(expr, Not)
-    assert expr.expr == Comparison(field="status", op="=", value="CLOSED")
+    assert expr.operand == Equals(field="status", value="CLOSED")
 
 
 def test_parse_filter_not_with_parenthesized_or() -> None:
     expr = parse_filter("NOT (status = 'CLOSED' OR status = 'ARCHIVED')")
     assert isinstance(expr, Not)
-    inner = expr.expr
+    inner = expr.operand
     assert isinstance(inner, Or)
-    assert inner.left == Comparison(field="status", op="=", value="CLOSED")
-    assert inner.right == Comparison(field="status", op="=", value="ARCHIVED")
+    assert inner.operands[0] == Equals(field="status", value="CLOSED")
+    assert inner.operands[1] == Equals(field="status", value="ARCHIVED")
 
 
 def test_parse_filter_not_binds_tighter_than_and() -> None:
     # NOT x = 1 AND y = 2  =>  (NOT (x = 1)) AND (y = 2)
     expr = parse_filter("NOT x = 1 AND y = 2")
     assert isinstance(expr, And)
-    assert isinstance(expr.left, Not)
-    assert expr.left.expr == Comparison(field="x", op="=", value=1)
-    assert expr.right == Comparison(field="y", op="=", value=2)
+    assert isinstance(expr.operands[0], Not)
+    assert expr.operands[0].operand == Equals(field="x", value=1)
+    assert expr.operands[1] == Equals(field="y", value=2)
 
 
 def test_parse_filter_not_binds_tighter_than_or() -> None:
     # NOT x = 1 OR y = 2  =>  (NOT (x = 1)) OR (y = 2)
     expr = parse_filter("NOT x = 1 OR y = 2")
     assert isinstance(expr, Or)
-    assert isinstance(expr.left, Not)
-    assert expr.left.expr == Comparison(field="x", op="=", value=1)
-    assert expr.right == Comparison(field="y", op="=", value=2)
+    assert isinstance(expr.operands[0], Not)
+    assert expr.operands[0].operand == Equals(field="x", value=1)
+    assert expr.operands[1] == Equals(field="y", value=2)
 
 
 def test_parse_filter_double_not() -> None:
     expr = parse_filter("NOT NOT status = 'OPEN'")
     assert isinstance(expr, Not)
-    assert isinstance(expr.expr, Not)
-    assert expr.expr.expr == Comparison(field="status", op="=", value="OPEN")
+    assert isinstance(expr.operand, Not)
+    assert expr.operand.operand == Equals(field="status", value="OPEN")
 
 
 def test_parse_filter_not_with_in() -> None:
     expr = parse_filter("NOT priority IN ('LOW', 'MEDIUM')")
     assert isinstance(expr, Not)
-    assert expr.expr == In(field="priority", values=["LOW", "MEDIUM"])
+    assert expr.operand == In(field="priority", values=("LOW", "MEDIUM"))
 
 
 def test_parse_filter_not_with_is_null() -> None:
     expr = parse_filter("NOT owner IS NULL")
     assert isinstance(expr, Not)
-    assert expr.expr == IsNull(field="owner")
+    assert expr.operand == IsMissing(field="owner")
 
 
 def test_parse_filter_not_with_ne() -> None:
     # NOT status != 'OPEN'  =>  NOT(status != 'OPEN')
     expr = parse_filter("NOT status != 'OPEN'")
     assert isinstance(expr, Not)
-    assert expr.expr == Comparison(field="status", op="!=", value="OPEN")
+    assert expr.operand == NotEquals(field="status", value="OPEN")
 
 
 def test_parse_filter_not_case_insensitive() -> None:
     expr = parse_filter("not status = 'CLOSED'")
     assert isinstance(expr, Not)
-    assert expr.expr == Comparison(field="status", op="=", value="CLOSED")
+    assert expr.operand == Equals(field="status", value="CLOSED")
 
 
 def test_parse_filter_not_and_or_full_precedence() -> None:
     # NOT a = 1 OR b = 2 AND c = 3  =>  (NOT (a = 1)) OR ((b = 2) AND (c = 3))
     expr = parse_filter("NOT a = 1 OR b = 2 AND c = 3")
     assert isinstance(expr, Or)
-    assert isinstance(expr.left, Not)
-    assert expr.left.expr == Comparison(field="a", op="=", value=1)
-    assert isinstance(expr.right, And)
-    assert expr.right.left == Comparison(field="b", op="=", value=2)
-    assert expr.right.right == Comparison(field="c", op="=", value=3)
+    assert isinstance(expr.operands[0], Not)
+    assert expr.operands[0].operand == Equals(field="a", value=1)
+    assert isinstance(expr.operands[1], And)
+    assert expr.operands[1].operands[0] == Equals(field="b", value=2)
+    assert expr.operands[1].operands[1] == Equals(field="c", value=3)
 
 
 def test_parse_filter_not_inside_and_or_chain() -> None:
     # a = 1 AND NOT b = 2 OR c = 3  =>  ((a = 1) AND (NOT (b = 2))) OR (c = 3)
     expr = parse_filter("a = 1 AND NOT b = 2 OR c = 3")
     assert isinstance(expr, Or)
-    assert isinstance(expr.left, And)
-    assert expr.left.left == Comparison(field="a", op="=", value=1)
-    assert isinstance(expr.left.right, Not)
-    assert expr.left.right.expr == Comparison(field="b", op="=", value=2)
-    assert expr.right == Comparison(field="c", op="=", value=3)
+    assert isinstance(expr.operands[0], And)
+    assert expr.operands[0].operands[0] == Equals(field="a", value=1)
+    assert isinstance(expr.operands[0].operands[1], Not)
+    assert expr.operands[0].operands[1].operand == Equals(field="b", value=2)
+    assert expr.operands[1] == Equals(field="c", value=3)
 
 
 def test_parse_filter_multiple_nots_in_expression() -> None:
     # NOT a = 1 AND NOT b = 2  =>  (NOT (a = 1)) AND (NOT (b = 2))
     expr = parse_filter("NOT a = 1 AND NOT b = 2")
     assert isinstance(expr, And)
-    assert isinstance(expr.left, Not)
-    assert expr.left.expr == Comparison(field="a", op="=", value=1)
-    assert isinstance(expr.right, Not)
-    assert expr.right.expr == Comparison(field="b", op="=", value=2)
+    assert isinstance(expr.operands[0], Not)
+    assert expr.operands[0].operand == Equals(field="a", value=1)
+    assert isinstance(expr.operands[1], Not)
+    assert expr.operands[1].operand == Equals(field="b", value=2)
 
 
 def test_legacy_mapping_rejects_not() -> None:
@@ -419,36 +426,36 @@ def test_legacy_mapping_rejects_not() -> None:
 
 def test_parse_filter_not_in_simple() -> None:
     expr = parse_filter("priority NOT IN ('LOW', 'MEDIUM')")
-    assert expr == Not(expr=In(field="priority", values=["LOW", "MEDIUM"]))
+    assert expr == Not(In(field="priority", values=("LOW", "MEDIUM")))
 
 
 def test_parse_filter_not_in_single_value() -> None:
     expr = parse_filter("status NOT IN ('CLOSED')")
-    assert expr == Not(expr=In(field="status", values=["CLOSED"]))
+    assert expr == Not(In(field="status", values=("CLOSED",)))
 
 
 def test_parse_filter_not_in_numeric_values() -> None:
     expr = parse_filter("code NOT IN (1, 2, 3)")
-    assert expr == Not(expr=In(field="code", values=[1, 2, 3]))
+    assert expr == Not(In(field="code", values=(1, 2, 3)))
 
 
 def test_parse_filter_not_in_with_and() -> None:
     expr = parse_filter("owner = 'alice' AND status NOT IN ('CLOSED', 'ARCHIVED')")
     assert isinstance(expr, And)
-    assert expr.left == Comparison(field="owner", op="=", value="alice")
-    assert expr.right == Not(expr=In(field="status", values=["CLOSED", "ARCHIVED"]))
+    assert expr.operands[0] == Equals(field="owner", value="alice")
+    assert expr.operands[1] == Not(In(field="status", values=("CLOSED", "ARCHIVED")))
 
 
 def test_parse_filter_not_in_with_or() -> None:
     expr = parse_filter("priority NOT IN ('LOW') OR owner = 'bob'")
     assert isinstance(expr, Or)
-    assert expr.left == Not(expr=In(field="priority", values=["LOW"]))
-    assert expr.right == Comparison(field="owner", op="=", value="bob")
+    assert expr.operands[0] == Not(In(field="priority", values=("LOW",)))
+    assert expr.operands[1] == Equals(field="owner", value="bob")
 
 
 def test_parse_filter_not_in_case_insensitive() -> None:
     expr = parse_filter("status not in ('CLOSED', 'ARCHIVED')")
-    assert expr == Not(expr=In(field="status", values=["CLOSED", "ARCHIVED"]))
+    assert expr == Not(In(field="status", values=("CLOSED", "ARCHIVED")))
 
 
 def test_parse_filter_not_without_in_raises() -> None:
@@ -494,65 +501,54 @@ def test_normalize_filter_field_preserves_case() -> None:
 
 
 def test_map_filter_fields_comparison() -> None:
-    expr = Comparison(field="m.foo", op="=", value="bar")
+    expr = Equals(field="m.foo", value="bar")
     result = map_filter_fields(expr, lambda f: f.upper())
-    assert result == Comparison(field="M.FOO", op="=", value="bar")
+    assert result == Equals(field="M.FOO", value="bar")
 
 
 def test_map_filter_fields_in() -> None:
-    expr = In(field="m.tag", values=["a", "b"])
+    expr = In(field="m.tag", values=("a", "b"))
     result = map_filter_fields(expr, lambda f: f.upper())
-    assert result == In(field="M.TAG", values=["a", "b"])
+    assert result == In(field="M.TAG", values=("a", "b"))
 
 
 def test_map_filter_fields_is_null() -> None:
-    expr = IsNull(field="m.note")
+    expr = IsMissing(field="m.note")
     result = map_filter_fields(expr, lambda f: f.upper())
-    assert result == IsNull(field="M.NOTE")
+    assert result == IsMissing(field="M.NOTE")
 
 
 def test_map_filter_fields_and() -> None:
-    expr = And(
-        left=Comparison(field="a", op="=", value=1),
-        right=Comparison(field="b", op="=", value=2),
-    )
+    expr = And((Equals(field="a", value=1), Equals(field="b", value=2)))
     result = map_filter_fields(expr, lambda f: f.upper())
     assert isinstance(result, And)
-    assert result.left == Comparison(field="A", op="=", value=1)
-    assert result.right == Comparison(field="B", op="=", value=2)
+    assert result.operands[0] == Equals(field="A", value=1)
+    assert result.operands[1] == Equals(field="B", value=2)
 
 
 def test_map_filter_fields_or() -> None:
-    expr = Or(
-        left=Comparison(field="x", op="=", value=1),
-        right=Comparison(field="y", op="=", value=2),
-    )
+    expr = Or((Equals(field="x", value=1), Equals(field="y", value=2)))
     result = map_filter_fields(expr, lambda f: f.upper())
     assert isinstance(result, Or)
-    assert result.left == Comparison(field="X", op="=", value=1)
-    assert result.right == Comparison(field="Y", op="=", value=2)
+    assert result.operands[0] == Equals(field="X", value=1)
+    assert result.operands[1] == Equals(field="Y", value=2)
 
 
 def test_map_filter_fields_not() -> None:
-    expr = Not(expr=Comparison(field="status", op="=", value="CLOSED"))
+    expr = Not(Equals(field="status", value="CLOSED"))
     result = map_filter_fields(expr, lambda f: f.upper())
     assert isinstance(result, Not)
-    assert result.expr == Comparison(field="STATUS", op="=", value="CLOSED")
+    assert result.operand == Equals(field="STATUS", value="CLOSED")
 
 
 def test_map_filter_fields_nested() -> None:
     # NOT (a = 1 AND b = 2)
-    expr = Not(
-        expr=And(
-            left=Comparison(field="a", op="=", value=1),
-            right=Comparison(field="b", op="=", value=2),
-        )
-    )
+    expr = Not(And((Equals(field="a", value=1), Equals(field="b", value=2))))
     result = map_filter_fields(expr, lambda f: f"prefix_{f}")
     assert isinstance(result, Not)
-    assert isinstance(result.expr, And)
-    assert result.expr.left == Comparison(field="prefix_a", op="=", value=1)
-    assert result.expr.right == Comparison(field="prefix_b", op="=", value=2)
+    assert isinstance(result.operand, And)
+    assert result.operand.operands[0] == Equals(field="prefix_a", value=1)
+    assert result.operand.operands[1] == Equals(field="prefix_b", value=2)
 
 
 def test_parse_filter_in_rejects_bool() -> None:
@@ -573,10 +569,9 @@ def test_parse_filter_in_rejects_mixed_types() -> None:
 def test_map_filter_fields_with_normalize() -> None:
     """Test map_filter_fields combined with normalize_filter_field."""
     expr = And(
-        left=Comparison(field="m.foo", op="=", value="bar"),
-        right=Comparison(field="producer_id", op="=", value="alice"),
+        (Equals(field="m.foo", value="bar"), Equals(field="producer_id", value="alice"))
     )
     result = map_filter_fields(expr, lambda f: normalize_filter_field(f)[0])
     assert isinstance(result, And)
-    assert result.left == Comparison(field="metadata.foo", op="=", value="bar")
-    assert result.right == Comparison(field="producer_id", op="=", value="alice")
+    assert result.operands[0] == Equals(field="metadata.foo", value="bar")
+    assert result.operands[1] == Equals(field="producer_id", value="alice")

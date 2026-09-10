@@ -232,7 +232,10 @@ class EventLongTermMemoryConf(BaseModel):
         default_factory=dict,
         description=(
             "User-defined filterable properties and their type names "
-            '(e.g. {"my_field": "str"}). Type names: bool, int, float, str, datetime.'
+            '(e.g. {"my_field": "str"}). Type names: bool, int, float, str, datetime. '
+            "Names the caller keys a filter may use; which of them the vector "
+            "store indexes is declared on the store (`indexed_properties`), and "
+            "the rest are filtered through the segment store."
         ),
     )
     segmenter: SegmenterConf = Field(
