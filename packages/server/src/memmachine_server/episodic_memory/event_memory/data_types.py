@@ -21,6 +21,7 @@ from pydantic import (
     Field,
     InstanceOf,
     JsonValue,
+    SerializeAsAny,
     StringConstraints,
     TypeAdapter,
     field_serializer,
@@ -140,6 +141,11 @@ def encode_block(block: Block) -> dict[str, JsonValue]:
 def decode_block(encoded: Mapping[str, JsonValue]) -> Block:
     """Decode a block from JSON-compatible data."""
     return _BLOCK_ADAPTER.validate_python(encoded)
+
+
+def _block_from_field_input(value: object) -> object:
+    """Decode encoded block data given for a block field; an instance passes through."""
+    return decode_block(value) if isinstance(value, Mapping) else value
 
 
 # Context: typed, non-filterable data attached to content, keyed by part kind.
@@ -314,7 +320,7 @@ class Event(BaseModel):
         default_factory=dict,
         description="The context surrounding the event, as parts by kind",
     )
-    blocks: list[RegisteredBlock] = Field(
+    blocks: list[SerializeAsAny[Block]] = Field(
         description="The blocks of the event, in order"
     )
     properties: dict[str, PropertyValue] = Field(
@@ -330,6 +336,13 @@ class Event(BaseModel):
     @field_serializer("context")
     def _serialize_context(self, v: Context) -> dict[str, JsonValue]:
         return encode_context(v)
+
+    @field_validator("blocks", mode="before")
+    @classmethod
+    def _decode_blocks(cls, v: object) -> object:
+        if isinstance(v, list):
+            return [_block_from_field_input(item) for item in v]
+        return v
 
     @field_validator("properties", mode="before")
     @classmethod
@@ -365,7 +378,7 @@ class Segment(BaseModel):
         default=None, description="The event's source id"
     )
     context: Context = Field(default_factory=dict, description="The event's context")
-    block: RegisteredBlock = Field(description="The piece of the event's block")
+    block: SerializeAsAny[Block] = Field(description="The piece of the event's block")
     properties: dict[str, PropertyValue] = Field(
         default_factory=dict, description="The event's properties"
     )
@@ -378,6 +391,11 @@ class Segment(BaseModel):
     @field_serializer("context")
     def _serialize_context(self, v: Context) -> dict[str, JsonValue]:
         return encode_context(v)
+
+    @field_validator("block", mode="before")
+    @classmethod
+    def _decode_block(cls, v: object) -> object:
+        return _block_from_field_input(v)
 
     @field_validator("properties", mode="before")
     @classmethod

@@ -8,6 +8,7 @@ import pytest
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Author,
+    Block,
     Event,
     TextBlock,
 )
@@ -20,6 +21,11 @@ from memmachine_server.episodic_memory.event_memory.segmenter import (
 pytestmark = pytest.mark.asyncio
 
 _TS = datetime(2026, 1, 15, 10, 30, tzinfo=UTC)
+
+
+def _text(block: Block) -> str:
+    assert isinstance(block, TextBlock)
+    return block.text
 
 
 def _event(*texts: str, context=None, properties=None) -> Event:
@@ -98,7 +104,7 @@ async def test_empty_blocks_yield_no_segments():
 
 async def test_handler_of_the_kind_splits_its_blocks():
     segments = await Segmenter([_Halves()]).segment(_event("abcd", "wxyz"))
-    assert [(s.index, s.offset, s.block.text) for s in segments] == [
+    assert [(s.index, s.offset, _text(s.block)) for s in segments] == [
         (0, 0, "ab"),
         (0, 1, "cd"),
         (1, 0, "wx"),
@@ -108,7 +114,7 @@ async def test_handler_of_the_kind_splits_its_blocks():
 
 async def test_later_handler_replaces_earlier_for_its_kind():
     segments = await Segmenter([_Upper(), _Halves()]).segment(_event("abcd"))
-    assert [s.block.text for s in segments] == ["ab", "cd"]
+    assert [_text(s.block) for s in segments] == ["ab", "cd"]
 
 
 async def test_handler_receives_the_event_and_its_block():
