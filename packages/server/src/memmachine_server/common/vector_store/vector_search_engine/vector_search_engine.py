@@ -41,7 +41,9 @@ class VectorSearchEngine(ABC):
 
     Results are returned ordered from best to worst.
 
-    Safe for concurrent use from async tasks (single event loop).
+    Not safe for concurrent use; the owner serializes calls. Searches may run
+    concurrently with each other, and every other call runs alone.
+    `SQLiteVectorStore` holds a read-write lock per engine for this.
     Not safe across threads or processes.
     """
 

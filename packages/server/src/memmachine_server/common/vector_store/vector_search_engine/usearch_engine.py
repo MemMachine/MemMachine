@@ -7,8 +7,6 @@ from typing import ClassVar, override
 import numpy as np
 from usearch.index import Index, MetricKind
 
-from memmachine_server.common.rw_locks import AsyncRWLock
-
 from .index_persistence import atomic_index_write, clear_stale_index_temp
 from .vector_search_engine import SearchMatch, SearchResult, VectorSearchEngine
 
@@ -42,8 +40,6 @@ class USearchVectorSearchEngine(VectorSearchEngine):
             expansion_search=ef_search,
         )
 
-        self._lock = AsyncRWLock()
-
     @staticmethod
     def _distance_to_cosine_similarity(distance: float) -> float:
         """Convert a USearch cosine distance to a cosine similarity."""
@@ -53,8 +49,7 @@ class USearchVectorSearchEngine(VectorSearchEngine):
     async def add(self, vectors: Mapping[int, Sequence[float]]) -> None:
         if not vectors:
             return
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_add, vectors)
+        await asyncio.to_thread(self._sync_add, vectors)
 
     def _sync_add(self, vectors: Mapping[int, Sequence[float]]) -> None:
         keys_array = np.array(list(vectors.keys()), dtype=np.int64)
@@ -73,10 +68,7 @@ class USearchVectorSearchEngine(VectorSearchEngine):
         if self._index.size == 0 or not vectors:
             return [SearchResult(matches=[]) for _ in vectors]
 
-        async with self._lock.read_lock():
-            return await asyncio.to_thread(
-                self._sync_search, vectors, limit, allowed_keys
-            )
+        return await asyncio.to_thread(self._sync_search, vectors, limit, allowed_keys)
 
     def _sync_search(
         self,
@@ -138,8 +130,7 @@ class USearchVectorSearchEngine(VectorSearchEngine):
 
     @override
     async def remove(self, keys: Iterable[int]) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_remove, keys)
+        await asyncio.to_thread(self._sync_remove, keys)
 
     def _sync_remove(self, keys: Iterable[int]) -> None:
         index = self._index
@@ -148,8 +139,7 @@ class USearchVectorSearchEngine(VectorSearchEngine):
 
     @override
     async def save(self, path: str) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_save, path)
+        await asyncio.to_thread(self._sync_save, path)
 
     def _sync_save(self, path: str) -> None:
         with atomic_index_write(path) as temp_path:
@@ -157,8 +147,7 @@ class USearchVectorSearchEngine(VectorSearchEngine):
 
     @override
     async def load(self, path: str) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_load, path)
+        await asyncio.to_thread(self._sync_load, path)
 
     def _sync_load(self, path: str) -> None:
         clear_stale_index_temp(path)

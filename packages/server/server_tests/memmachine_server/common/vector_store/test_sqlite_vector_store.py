@@ -997,15 +997,11 @@ class TestConcurrentAsync:
         await asyncio.gather(query_loop(), upsert_more())
 
 
-# ── row_id reuse (issue #1468) ──
+# ── Engine access ──
 
 
-class _GatedSearchEngine(VectorSearchEngine):
-    """Delegates to a real engine; the next search() parks after scoring.
-
-    query() scores keys and then resolves them to rows without a lock, so a
-    write can retire a scored row in the gap. The gate parks in that gap.
-    """
+class _GatedAfterRemoveEngine(VectorSearchEngine):
+    """Delegates to a real engine; the next remove() parks after removing."""
 
     def __init__(self, inner: VectorSearchEngine) -> None:
         self.inner = inner
@@ -1017,22 +1013,81 @@ class _GatedSearchEngine(VectorSearchEngine):
 
     async def remove(self, keys):
         await self.inner.remove(keys)
-
-    async def search(self, vectors, *, limit, allowed_keys=None):
-        results = await self.inner.search(
-            vectors, limit=limit, allowed_keys=allowed_keys
-        )
         if self.gate is not None:
             gate, self.gate = self.gate, None
             self.gate_reached.set()
             await gate.wait()
-        return results
+
+    async def search(self, vectors, *, limit, allowed_keys=None):
+        return await self.inner.search(vectors, limit=limit, allowed_keys=allowed_keys)
 
     async def save(self, path):
         await self.inner.save(path)
 
     async def load(self, path):
         await self.inner.load(path)
+
+
+class TestEngineAccess:
+    """The store serializes engine access: searches share, mutations exclude."""
+
+    @pytest.mark.asyncio
+    async def test_a_reader_never_sees_a_rewrite_half_done(self, tmp_path):
+        """A rewrite removes the old vector and adds the new one as one step.
+
+        Engines are not safe for concurrent use, so the store holds the lock
+        across both calls. A query issued while the rewrite is parked between
+        them waits and sees the new vector, never neither.
+        """
+        db_path = tmp_path / "test.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        wrapped: list[_GatedAfterRemoveEngine] = []
+
+        def factory(ndim):
+            gated = _GatedAfterRemoveEngine(_engine_factory(ndim))
+            wrapped.append(gated)
+            return gated
+
+        store = SQLiteVectorStore(_params(engine, vector_search_engine_factory=factory))
+        await store.startup()
+        try:
+            collection = await store.open_or_create_partition(NAME)
+            (gated_engine,) = wrapped
+            record_uuid = uuid4()
+            await collection.upsert(
+                records=[
+                    _make_record(uuid=record_uuid, vector=_normalize([1.0, 0.0, 0.0]))
+                ]
+            )
+
+            gate = asyncio.Event()
+            gated_engine.gate = gate
+            rewrite_task = asyncio.create_task(
+                collection.upsert(
+                    records=[
+                        _make_record(
+                            uuid=record_uuid, vector=_normalize([0.0, 1.0, 0.0])
+                        )
+                    ]
+                )
+            )
+            await gated_engine.gate_reached.wait()
+
+            # Issued while the old vector is gone and the new one not yet added.
+            query_task = asyncio.create_task(
+                collection.query(query_vectors=[_normalize([0.0, 1.0, 0.0])], limit=1)
+            )
+
+            gate.set()
+            await rewrite_task
+            [result] = await query_task
+            assert [m.record_uuid for m in result.matches] == [record_uuid]
+        finally:
+            await store.shutdown()
+            await engine.dispose()
+
+
+# ── row_id reuse (issue #1468) ──
 
 
 class TestRowIdReuse:
@@ -1070,7 +1125,9 @@ class TestRowIdReuse:
         assert row_id_b != row_id_a
 
     @pytest.mark.asyncio
-    async def test_a_query_cannot_return_a_record_it_never_scored(self, tmp_path):
+    async def test_a_query_cannot_return_a_record_it_never_scored(
+        self, collection, monkeypatch
+    ):
         """A key the engine scored must never resolve to a later record.
 
         Writes run freely between scoring and row lookup, so a reused row_id
@@ -1078,46 +1135,37 @@ class TestRowIdReuse:
         record orthogonal to the query as a perfect hit. With ids never reused
         the stale key matches no row and is dropped.
         """
-        db_path = tmp_path / "test.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-        gated_engines: list[_GatedSearchEngine] = []
+        scored = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await collection.upsert(records=[scored])
 
-        def factory(ndim):
-            gated = _GatedSearchEngine(USearchVectorSearchEngine(num_dimensions=ndim))
-            gated_engines.append(gated)
-            return gated
+        # The query parks holding the scored key, after the engine search and
+        # before the row lookup: the highest row_id, and so the one a reused
+        # id would hand out next.
+        gate = asyncio.Event()
+        gate_reached = asyncio.Event()
+        build_matches = collection._build_matches
 
-        store = SQLiteVectorStore(_params(engine, vector_search_engine_factory=factory))
-        await store.startup()
-        try:
-            collection = await store.open_or_create_partition(NAME)
-            (gated_engine,) = gated_engines
+        async def parked_build_matches(*args, **kwargs):
+            gate_reached.set()
+            await gate.wait()
+            return await build_matches(*args, **kwargs)
 
-            scored = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
-            await collection.upsert(records=[scored])
+        monkeypatch.setattr(collection, "_build_matches", parked_build_matches)
+        query_task = asyncio.create_task(
+            collection.query(query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1)
+        )
+        await gate_reached.wait()
 
-            # The query parks holding the scored key: the highest row_id, and
-            # so the one a reused id would hand out next.
-            gate = asyncio.Event()
-            gated_engine.gate = gate
-            query_task = asyncio.create_task(
-                collection.query(query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1)
-            )
-            await gated_engine.gate_reached.wait()
+        await collection.delete(record_uuids=[scored.uuid])
+        successor = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        await collection.upsert(records=[successor])
 
-            await collection.delete(record_uuids=[scored.uuid])
-            successor = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
-            await collection.upsert(records=[successor])
+        gate.set()
+        results = await query_task
 
-            gate.set()
-            results = await query_task
-
-            assert [match.record_uuid for match in results[0].matches] == [], (
-                "a record the engine never scored was returned"
-            )
-        finally:
-            await store.shutdown()
-            await engine.dispose()
+        assert [match.record_uuid for match in results[0].matches] == [], (
+            "a record the engine never scored was returned"
+        )
 
 
 # ── Crash recovery & pending operations ──
