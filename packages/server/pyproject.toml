@@ -79,6 +79,9 @@ litellm = [
     # keeps the resolved OpenAI SDK on the 2.x line.
     "litellm>=1.93.0",
 ]
+turbovec = [
+    "turbovec>=1.0.0",
+]
 
 [project.scripts]
 memmachine-server = "memmachine_server.server.app:main"
