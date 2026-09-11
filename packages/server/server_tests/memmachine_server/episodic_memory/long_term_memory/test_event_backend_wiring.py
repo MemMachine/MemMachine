@@ -46,6 +46,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
     TextBlock,
 )
+from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
 )
@@ -56,12 +57,7 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
 from memmachine_server.episodic_memory.event_memory.event_memory_store import (
     EventMemoryStore,
 )
-from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
-    PassthroughSegmenter,
-)
-from memmachine_server.episodic_memory.event_memory.segmenter.segmenter import (
-    Segmenter,
-)
+from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
@@ -215,8 +211,8 @@ def long_term_memory(
             partition_key="sess1",
             episode_storage=fake_episode_storage,
             embedder=fake_embedder,
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter(),
+            deriver=Deriver([WholeTextDeriver()]),
         ),
     )
 
@@ -293,7 +289,7 @@ async def test_delete_episodes_removes_from_event_memory(
     episodes,
 ):
     await long_term_memory.add_episodes(episodes)
-    # Sanity: 3 events, each with 1 segment under PassthroughSegmenter.
+    # Sanity: 3 events, each with 1 segment under a segmenter with no handler.
     assert len(event_memory_store_partition.segments) == 3
 
     await long_term_memory.delete_episodes([_uid("ep-1")])
@@ -586,8 +582,8 @@ def _make_ltm(
             partition_key="sess1",
             episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),
             embedder=embedder,
-            segmenter=segmenter if segmenter is not None else PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=segmenter if segmenter is not None else Segmenter(),
+            deriver=Deriver([WholeTextDeriver()]),
         ),
     )
 
@@ -725,8 +721,8 @@ def timeline_long_term_memory(
             partition_key="sess1",
             episode_storage=timeline_storage,
             embedder=RankedEmbedder(),
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter(),
+            deriver=Deriver([WholeTextDeriver()]),
         ),
     )
 
@@ -859,12 +855,13 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
     """`expand_context` is a window of segments; it reaches their episodes.
 
     EventMemory and the event memory store know segments, not episodes. Under
-    PassthroughSegmenter one segment is one episode, so a window of
-    `expand_context` segments is `expand_context` neighbour episodes, the
-    declarative backend's unit. A splitting segmenter puts several segments
-    in each episode; the same window then covers fewer episodes, and the fold
-    dedups one episode's segments into it. Expanding by episodes is a matter
-    of configuring the passthrough segmenter.
+    a segmenter with no handler, which passes each block through as one
+    segment, one segment is one episode, so a window of `expand_context`
+    segments is `expand_context` neighbour episodes, the declarative
+    backend's unit. A splitting segmenter puts several segments in each
+    episode; the same window then covers fewer episodes, and the fold dedups
+    one episode's segments into it. Expanding by episodes is a matter of
+    configuring no text handler.
 
     An episode keeps the score of the first window that contributed it, so
     the episodes carrying the match's score are the ones its own window
@@ -878,8 +875,8 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
     # around the match's `tok-<i>` segment reaches one neighbour episode under
     # any backward/forward split, against three under passthrough.
     segmenters = {
-        "passthrough": PassthroughSegmenter(),
-        "text": TextSegmenter(max_chunk_length=9),
+        "passthrough": Segmenter(),
+        "text": Segmenter([TextSegmenter(max_chunk_length=9)]),
     }
     reached: dict[str, set[UUID]] = {}
     for name, segmenter in segmenters.items():

@@ -11,7 +11,7 @@ from memmachine_server.common.episode_store import (
     EpisodeType,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
-    ProducerContext,
+    Author,
     TextBlock,
 )
 from memmachine_server.episodic_memory.long_term_memory.long_term_memory import (
@@ -55,15 +55,16 @@ def test_event_uuid_is_deterministic_uuid5_of_episode_uid():
     assert LongTermMemory._episode_to_event(episode).uuid == event.uuid
 
 
-def test_producer_is_the_source():
-    """The producer id is the event's source.
+def test_producer_is_the_source_and_the_author():
+    """The producer id is the event's source and its `Author` part.
 
-    A message carries a `ProducerContext`, as before.
+    The part keeps rendering's `producer: text` shape, as the producer
+    context did.
     """
     episode = _episode(producer_id="alice")
     event = LongTermMemory._episode_to_event(episode)
     assert event.source_id == "alice"
-    assert event.context == ProducerContext(producer="alice")
+    assert event.context.get("author") == Author(name="alice")
 
 
 def test_event_has_single_text_block_with_episode_content():

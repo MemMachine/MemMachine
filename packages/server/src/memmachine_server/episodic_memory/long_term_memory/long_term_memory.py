@@ -42,12 +42,12 @@ from memmachine_server.episodic_memory.declarative_memory.data_types import (
     Episode as DeclarativeMemoryEpisode,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
     DateTimeFormat,
     Event,
-    NullContext,
-    ProducerContext,
     QueryHit,
     TextBlock,
+    with_part,
 )
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.event_memory import (
@@ -824,8 +824,11 @@ class LongTermMemory:
 
         - Event.uuid = uuid5(NAMESPACE, episode.uid) so the mapping is
           deterministic and reversible (`_episode_uid` carries the original).
-        - Event.source_id = producer_id, the one source an episode has.
-          Context: ProducerContext for messages; NullContext otherwise.
+        - The producer id is both the event's `source_id`, the one source
+          an episode has, and an `Author` part in its context, as the
+          `ProducerContext` was before, so a rendered segment keeps its
+          `producer: text` shape. The server API carries no readable name,
+          so the id stands in.
         - One TextBlock per event (Episode.content is a string today).
         - Properties: system fields stored with `_` prefix, user filterable
           metadata stored bare, the layout the event memory store maps a filter's
@@ -868,16 +871,11 @@ class LongTermMemory:
                 )
             properties.update(episode.filterable_metadata)
 
-        if episode.episode_type == EpisodeType.MESSAGE:
-            context = ProducerContext(producer=episode.producer_id)
-        else:
-            context = NullContext()
-
         return Event(
             uuid=uuid5(_EVENT_UUID_NAMESPACE, str(episode.uid)),
             timestamp=episode.created_at,
             source_id=episode.producer_id,
-            context=context,
+            context=with_part({}, Author(name=episode.producer_id)),
             blocks=[TextBlock(text=episode.content)],
             properties=properties,
         )

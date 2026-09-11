@@ -32,8 +32,9 @@ episodic_memory:
     reranker: my_reranker_id          # optional; omit to order by embedding score
     vector_store: event_vector_store  # Qdrant, below
     event_memory_store: profile_storage    # a relational DB; the event memory store is built from it
-    # segmenter:                      # optional — defaults to passthrough
-    #   type: passthrough             # or: text (with max_chunk_length)
+    # segmenter:                      # optional; omitted, every block is one segment
+    #   type: text
+    #   max_chunk_length: 500
     # deriver:                        # optional — defaults to whole_text
     #   type: whole_text              # or: sentence_text
   short_term_memory:

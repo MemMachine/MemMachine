@@ -11,10 +11,8 @@ from memmachine_server.common.configuration.episodic_config import (
     DeriverConf,
     EventLongTermMemoryConf,
     LongTermMemoryConf,
-    PassthroughSegmenterConf,
     SegmenterConf,
     SentenceTextDeriverConf,
-    TextSegmenterConf,
     WholeTextDeriverConf,
 )
 from memmachine_server.common.data_types import PropertyType
@@ -34,9 +32,6 @@ from memmachine_server.episodic_memory.event_memory.event_memory_store.utils imp
     validate_partition_key,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
-from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
-    PassthroughSegmenter,
-)
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
@@ -198,24 +193,20 @@ def partition_key_for_session(session_id: str) -> str:
     return partition_key
 
 
-def _build_segmenter(conf: SegmenterConf) -> Segmenter:
-    match conf:
-        case PassthroughSegmenterConf():
-            return PassthroughSegmenter()
-        case TextSegmenterConf(max_chunk_length=max_chunk_length):
-            return TextSegmenter(max_chunk_length=max_chunk_length)
-        case _:
-            raise NotImplementedError(
-                f"Unsupported segmenter config: {type(conf).__name__}"
-            )
+def _build_segmenter(conf: SegmenterConf | None) -> Segmenter:
+    # No configured handler: the table's own fallback, one segment per
+    # block, unchanged.
+    if conf is None:
+        return Segmenter()
+    return Segmenter([TextSegmenter(max_chunk_length=conf.max_chunk_length)])
 
 
 def _build_deriver(conf: DeriverConf) -> Deriver:
     match conf:
         case WholeTextDeriverConf():
-            return WholeTextDeriver()
+            return Deriver([WholeTextDeriver()])
         case SentenceTextDeriverConf():
-            return SentenceTextDeriver()
+            return Deriver([SentenceTextDeriver()])
         case _:
             raise NotImplementedError(
                 f"Unsupported deriver config: {type(conf).__name__}"

@@ -6,7 +6,7 @@ import json
 import math
 import random
 from datetime import UTC
-from typing import Any
+from typing import Any, ClassVar, override
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,15 +25,16 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.vector_store.data_types import Record
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
     Context,
+    ContextPart,
     DateTimeFormat,
     Event,
     EvictionOptions,
-    NullContext,
-    ProducerContext,
     QueryHit,
     Segment,
     TextBlock,
+    with_part,
 )
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
@@ -51,6 +52,7 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
 from memmachine_server.episodic_memory.event_memory.event_memory_store import (
     EventMemoryStoreEventAlreadyStoredError,
 )
+from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
@@ -105,7 +107,7 @@ def _record_query_filters(
 
 
 def _author(name: str) -> Context:
-    return ProducerContext(producer=name)
+    return with_part({}, Author(name=name))
 
 
 def _make_event(
@@ -120,7 +122,7 @@ def _make_event(
         uuid=uuid4(),
         timestamp=timestamp,
         source_id=source_id,
-        context=context if context is not None else NullContext(),
+        context=context if context is not None else {},
         blocks=[TextBlock(text=text)],
         properties=properties or {},
     )
@@ -152,8 +154,8 @@ def _build(
         "event_memory_store_partition": partition
         or InMemoryEventMemoryStorePartition(),
         "vector_store_partition": vector_store_partition or make_partition(),
-        "segmenter": TextSegmenter(),
-        "deriver": deriver or WholeTextDeriver(),
+        "segmenter": Segmenter([TextSegmenter()]),
+        "deriver": deriver or Deriver([WholeTextDeriver()]),
         "embedder": embedder,
         "eviction": eviction,
     }
@@ -330,9 +332,9 @@ class TestEncodeEvents:
                 EventMemoryParams(
                     vector_store_partition=vector_store_partition,
                     event_memory_store_partition=InMemoryEventMemoryStorePartition(),
-                    segmenter=TextSegmenter(),
+                    segmenter=Segmenter([TextSegmenter()]),
                     embedder=fake_embedder,
-                    deriver=WholeTextDeriver(),
+                    deriver=Deriver([WholeTextDeriver()]),
                 )
             )
 
@@ -794,7 +796,7 @@ def _make_segment(
         offset=offset,
         timestamp=timestamp,
         block=TextBlock(text=text),
-        context=context if context is not None else NullContext(),
+        context=context if context is not None else {},
     )
 
 
@@ -805,7 +807,7 @@ class TestRender:
         assert json.dumps("hello world") in result
         assert "[" in result  # Timestamp bracket.
 
-    def test_producer_renders_its_name(self):
+    def test_author_renders_its_name(self):
         segment = _make_segment(text="hi", context=_author("Alice"))
         result = EventMemory.render_segments([segment], datetime_format=_SHORT_TIME)
         assert "Alice:" in result
@@ -927,7 +929,7 @@ class TestRoundTrips:
         await event_memory.encode_events([event])
 
         [hit] = await event_memory.query("test")
-        assert hit.seed.context == ProducerContext(producer="Alice")
+        assert hit.seed.context.get("author") == Author(name="Alice")
 
     async def test_forget_then_query_excludes_forgotten(
         self, event_memory: EventMemory
@@ -1123,8 +1125,8 @@ class TestQueryWithFilter:
             EventMemoryParams(
                 event_memory_store_partition=fake_event_memory_store_partition,
                 vector_store_partition=collection,
-                segmenter=TextSegmenter(),
-                deriver=WholeTextDeriver(),
+                segmenter=Segmenter([TextSegmenter()]),
+                deriver=Deriver([WholeTextDeriver()]),
                 embedder=fake_embedder,
             )
         )
@@ -1303,8 +1305,8 @@ def declaring_event_memory(
         EventMemoryParams(
             event_memory_store_partition=fake_event_memory_store_partition,
             vector_store_partition=collection,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter([TextSegmenter()]),
+            deriver=Deriver([WholeTextDeriver()]),
             embedder=fake_embedder,
         )
     )
@@ -1440,8 +1442,8 @@ class TestQueryWithAConditionOnAnUndeclaredField:
             EventMemoryParams(
                 event_memory_store_partition=fake_event_memory_store_partition,
                 vector_store_partition=fake_vector_store_partition,
-                segmenter=TextSegmenter(),
-                deriver=WholeTextDeriver(),
+                segmenter=Segmenter([TextSegmenter()]),
+                deriver=Deriver([WholeTextDeriver()]),
                 embedder=_ColorEmbedder(),
             )
         )
@@ -1528,8 +1530,8 @@ class TestQueryDeduplication:
             EventMemoryParams(
                 event_memory_store_partition=InMemoryEventMemoryStorePartition(),
                 vector_store_partition=make_partition(),
-                segmenter=TextSegmenter(),
-                deriver=SentenceTextDeriver(),
+                segmenter=Segmenter([TextSegmenter()]),
+                deriver=Deriver([SentenceTextDeriver()]),
                 embedder=embedder,
             )
         )
@@ -1575,7 +1577,9 @@ class TestDeriverDateTimeFormat:
         embedder = _RecordingEmbedder()
         event_memory = _build(
             embedder,
-            deriver=WholeTextDeriver(DateTimeFormat(date_style=None, time_style=None)),
+            deriver=Deriver(
+                [WholeTextDeriver(DateTimeFormat(date_style=None, time_style=None))]
+            ),
         )
 
         await event_memory.encode_events([_make_event("hello world")])
@@ -1586,7 +1590,9 @@ class TestDeriverDateTimeFormat:
         embedder = _RecordingEmbedder()
         event_memory = _build(
             embedder,
-            deriver=WholeTextDeriver(DateTimeFormat(date_style=None, time_style=None)),
+            deriver=Deriver(
+                [WholeTextDeriver(DateTimeFormat(date_style=None, time_style=None))]
+            ),
         )
 
         await event_memory.encode_events(
@@ -1802,3 +1808,106 @@ class TestEviction:
 
         assert len(_linked(fake_event_memory_store_partition)) == 5
         assert len(fake_event_memory_store_partition.segments) == 20
+
+
+class _Mood(ContextPart):
+    """A part kind a library user would add; contributes its word."""
+
+    kind: ClassVar[str] = "mood"
+    word: str
+
+    @override
+    def render(self, datetime_format: DateTimeFormat) -> str | None:
+        return self.word
+
+
+@_async
+class TestComposition:
+    """Timestamp, then the parts `parts` names in that order, then the
+    content; parts carry no order of their own."""
+
+    def _segment(self, context) -> Segment:
+        return Segment(
+            source_id="src",
+            uuid=uuid4(),
+            event_uuid=uuid4(),
+            index=0,
+            offset=0,
+            timestamp=datetime.datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+            context=context,
+            block=TextBlock(text="hi"),
+        )
+
+    def test_default_order_is_timestamp_then_author_then_content(self):
+        segment = self._segment({"author": Author(name="Alice")})
+        rendered = EventMemory.render_segments([segment], datetime_format=_SHORT_TIME)
+        # Babel puts a narrow no-break space before the meridiem.
+        assert rendered.replace("\u202f", " ") == (
+            '[Thursday, January 15, 2026, 10:30 AM] Alice: "hi"'
+        )
+
+    def test_listed_parts_render_in_the_listed_order(self):
+        context = {"author": Author(name="Alice"), "mood": _Mood(word="happy")}
+        no_time = DateTimeFormat(time_style=None)
+        assert (
+            EventMemory.render_segments(
+                [self._segment(context)],
+                datetime_format=no_time,
+                parts=("mood", "author"),
+            )
+            == '[Thursday, January 15, 2026] happy: Alice: "hi"'
+        )
+        assert (
+            EventMemory.render_segments(
+                [self._segment(context)],
+                datetime_format=no_time,
+                parts=("author", "mood"),
+            )
+            == '[Thursday, January 15, 2026] Alice: happy: "hi"'
+        )
+
+    def test_a_part_not_listed_contributes_nothing(self):
+        context = {"author": Author(name="Alice"), "mood": _Mood(word="happy")}
+        no_time = DateTimeFormat(time_style=None)
+        assert (
+            EventMemory.render_segments(
+                [self._segment(context)], datetime_format=no_time, parts=("author",)
+            )
+            == '[Thursday, January 15, 2026] Alice: "hi"'
+        )
+        assert (
+            EventMemory.render_segments(
+                [self._segment(context)], datetime_format=no_time, parts=()
+            )
+            == '[Thursday, January 15, 2026] "hi"'
+        )
+
+    def test_parts_must_be_kind_names(self):
+        with pytest.raises(ValueError, match="Part kind"):
+            EventMemory.render_segments(
+                [], datetime_format=_SHORT_TIME, parts=("Not A Kind",)
+            )
+        with pytest.raises(ValueError, match="Part kind"):
+            WholeTextDeriver(parts=("Not A Kind",))
+
+    async def test_the_handler_composes_the_parts_it_names(self):
+        context = {"author": Author(name="Alice"), "mood": _Mood(word="happy")}
+        handler = WholeTextDeriver(
+            DateTimeFormat(date_style=None, time_style=None), parts=("mood",)
+        )
+        [derivative] = await Deriver([handler]).derive(self._segment(context))
+        assert derivative.text == 'happy: "hi"'
+
+    async def test_the_embedded_text_is_the_same_composition_over_the_derived_text(
+        self,
+    ):
+        segment = self._segment({"author": Author(name="Alice")})
+        [derivative] = await Deriver([WholeTextDeriver()]).derive(segment)
+        # The handler's default format: a full date and no time.
+        assert derivative.text == '[Thursday, January 15, 2026] Alice: "hi"'
+
+    async def test_embedded_text_without_author_or_timestamp(self):
+        segment = self._segment({})
+        bare = WholeTextDeriver(DateTimeFormat(date_style=None, time_style=None))
+        [derivative] = await Deriver([bare]).derive(segment)
+        assert derivative.text == '"hi"'
