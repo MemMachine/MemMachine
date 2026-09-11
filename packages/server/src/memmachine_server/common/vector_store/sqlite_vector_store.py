@@ -25,10 +25,11 @@ to re-ingest; nothing here detects the gap for them.
 """
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import ClassVar, override
 from uuid import UUID
@@ -53,7 +54,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, MappedColumn, Session, mapped_column
@@ -238,6 +239,49 @@ def _enable_sqlite_foreign_keys(
     cursor.close()
 
 
+_BEGIN_IMMEDIATE_OPTION = "memmachine_sqlite_begin_immediate"
+"""Execution option asking the begin hook for `BEGIN IMMEDIATE`."""
+
+
+def _disable_implicit_begin(
+    dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
+) -> None:
+    # With the DBAPI connection in autocommit, pysqlite emits no BEGIN of its
+    # own, so the begin hook chooses the mode, per transaction.
+    dbapi_connection.isolation_level = None
+
+
+def _begin(connection: Connection) -> None:
+    """Emit `BEGIN` explicitly, and `BEGIN IMMEDIATE` where asked for.
+
+    Reads keep the deferred `BEGIN`.
+    """
+    if connection.get_execution_options().get(_BEGIN_IMMEDIATE_OPTION):
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
+    else:
+        connection.exec_driver_sql("BEGIN")
+
+
+@contextlib.asynccontextmanager
+async def _write_transaction(
+    create_session: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
+    """A transaction holding SQLite's write lock from `BEGIN`.
+
+    A deferred `BEGIN` would take the lock at the first write, letting another
+    writer commit between an earlier read and it. Taking it at `BEGIN` makes
+    read-then-write atomic.
+    """
+    async with create_session() as session:
+        # Set before the transaction begins, where the begin hook reads it.
+        await session.connection(execution_options={_BEGIN_IMMEDIATE_OPTION: True})
+        yield session
+        # A body that raises is rolled back when the session closes. A rollback
+        # issued here could fail and mask the body's error; one issued by the
+        # pool is logged and invalidates the connection instead.
+        await session.commit()
+
+
 async def _save_partition_index(
     *,
     create_session: async_sessionmaker[AsyncSession],
@@ -261,7 +305,7 @@ async def _save_partition_index(
         await search_engine.save(path)
 
     # Delete applied pending operations and flip index_saved to True.
-    async with create_session() as session, session.begin():
+    async with _write_transaction(create_session) as session:
         await session.execute(
             delete(_PendingOperationRow).where(
                 _PendingOperationRow.vector_store_name == vector_store_name,
@@ -424,7 +468,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
             validate_dimensions(record.vector, self._vector_dimensions)
 
         async with self._write_lock:
-            async with self._create_session() as session, session.begin():
+            async with _write_transaction(self._create_session) as session:
                 insert_records = sqlite_insert(self._records_table)
                 upsert_records = insert_records.on_conflict_do_update(
                     index_elements=[self._records_table.c.uuid],
@@ -504,7 +548,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                 await self._search_engine.remove(engine_vectors.keys())
                 await self._search_engine.add(engine_vectors)
 
-            async with self._create_session() as session, session.begin():
+            async with _write_transaction(self._create_session) as session:
                 await session.execute(
                     update(_PendingOperationRow)
                     .where(
@@ -623,7 +667,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         record_uuids = list(uuid_list)
 
         async with self._write_lock:
-            async with self._create_session() as session, session.begin():
+            async with _write_transaction(self._create_session) as session:
                 rows = (
                     await session.execute(
                         select(self._records_table.c.row_id).where(
@@ -669,7 +713,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
             async with self._engine_lock.write_lock():
                 await self._search_engine.remove(record_row_ids)
-            async with self._create_session() as session, session.begin():
+            async with _write_transaction(self._create_session) as session:
                 await session.execute(
                     update(_PendingOperationRow)
                     .where(
@@ -806,7 +850,7 @@ class SQLiteVectorStore(VectorStore):
             str(self._sqlalchemy_engine.url).replace("aiosqlite", "pysqlite")
         )
 
-        # Stores of different collections may share the async engine; the
+        # Stores of different collections may share the async engine; each
         # listener is registered once per engine.
         for sync_engine in (
             self._sqlalchemy_engine.sync_engine,
@@ -814,6 +858,11 @@ class SQLiteVectorStore(VectorStore):
         ):
             if not event.contains(sync_engine, "connect", _enable_sqlite_foreign_keys):
                 event.listen(sync_engine, "connect", _enable_sqlite_foreign_keys)
+        async_sync_engine = self._sqlalchemy_engine.sync_engine
+        if not event.contains(async_sync_engine, "connect", _disable_implicit_begin):
+            event.listen(async_sync_engine, "connect", _disable_implicit_begin)
+        if not event.contains(async_sync_engine, "begin", _begin):
+            event.listen(async_sync_engine, "begin", _begin)
 
         self._started = False
 
@@ -928,7 +977,7 @@ class SQLiteVectorStore(VectorStore):
             if upserted_vectors:
                 await search_engine.add(upserted_vectors)
 
-        async with self._create_session() as session, session.begin():
+        async with _write_transaction(self._create_session) as session:
             await session.execute(
                 update(_PendingOperationRow)
                 .where(
@@ -966,7 +1015,7 @@ class SQLiteVectorStore(VectorStore):
         self._require_started()
         validate_partition_key(partition_key)
 
-        async with self._create_session() as session, session.begin():
+        async with _write_transaction(self._create_session) as session:
             if await self._partition_exists(session, partition_key):
                 raise VectorStorePartitionAlreadyExistsError(
                     self._vector_store_name, partition_key
@@ -988,7 +1037,7 @@ class SQLiteVectorStore(VectorStore):
         self._require_started()
         validate_partition_key(partition_key)
 
-        async with self._create_session() as session, session.begin():
+        async with _write_transaction(self._create_session) as session:
             if not await self._partition_exists(session, partition_key):
                 self._clear_search_engine_state(partition_key)
                 session.add(
@@ -1059,7 +1108,7 @@ class SQLiteVectorStore(VectorStore):
             return
 
         records_table = self._records_table(partition_key)
-        async with self._create_session() as session, session.begin():
+        async with _write_transaction(self._create_session) as session:
             connection = await session.connection()
             await connection.run_sync(
                 self._sa_metadata.drop_all, tables=[records_table]
