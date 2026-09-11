@@ -97,7 +97,6 @@ from memmachine_server.common.utils import utc_offset_seconds
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Derivative,
     Neighborhood,
-    NullContext,
     Segment,
     decode_block,
     decode_context,
@@ -376,7 +375,8 @@ class PendingWriteDerivativeRow(BaseEventMemoryStore):
         Integer, nullable=False, default=0
     )
     source_id: MappedColumn[str | None] = mapped_column(String(255), nullable=True)
-    block: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
+    block_kind: MappedColumn[str] = mapped_column(String(255), nullable=False)
+    text: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -665,7 +665,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
                 "context": self._payload_codec.encode(
                     json.dumps(encode_context(segment.context)).encode("utf-8")
                 ),
-                "block_kind": segment.block.block_type,
+                "block_kind": segment.block.kind,
                 "block": self._payload_codec.encode(
                     json.dumps(encode_block(segment.block)).encode("utf-8")
                 ),
@@ -728,9 +728,8 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
                 "timestamp": derivative.timestamp,
                 "timestamp_timezone_offset": utc_offset_seconds(derivative.timestamp),
                 "source_id": derivative.source_id,
-                "block": self._payload_codec.encode(
-                    json.dumps(encode_block(derivative.block)).encode("utf-8")
-                ),
+                "block_kind": derivative.block_kind,
+                "text": self._payload_codec.encode(derivative.text.encode("utf-8")),
             }
             for pending in pending_writes
             for derivative in pending.derivatives
@@ -1355,8 +1354,6 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
     def _segment_from_segment_row(self, row: SegmentRow) -> Segment:
         """Convert a SegmentRow into a Segment."""
         context = decode_context(json.loads(self._payload_codec.decode(row.context)))
-        if context is None:
-            context = NullContext()
         block = decode_block(json.loads(self._payload_codec.decode(row.block)))
         properties = decode_properties(row.properties)
         original_timezone = timezone(timedelta(seconds=row.timestamp_timezone_offset))
@@ -2520,5 +2517,6 @@ def _derivative_from_pending_write_derivative_row(
         segment_uuid=row.segment_uuid,
         timestamp=row.timestamp.astimezone(original_timezone),
         source_id=row.source_id,
-        block=decode_block(json.loads(payload_codec.decode(row.block))),
+        block_kind=row.block_kind,
+        text=payload_codec.decode(row.text).decode("utf-8"),
     )

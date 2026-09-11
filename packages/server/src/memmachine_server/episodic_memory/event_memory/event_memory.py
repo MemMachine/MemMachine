@@ -49,17 +49,14 @@ from memmachine_server.common.vector_store import (
 from memmachine_server.common.vector_store.data_types import is_valid_identifier
 
 from .data_types import (
-    Block,
     DateTimeFormat,
     Derivative,
     Event,
     EvictionOptions,
     Neighborhood,
-    NullContext,
-    ProducerContext,
     QueryHit,
     Segment,
-    TextBlock,
+    part_kinds,
 )
 from .deriver import Deriver
 from .event_memory_store import (
@@ -69,7 +66,7 @@ from .event_memory_store import (
     PendingWrite,
     PendingWriteClaim,
 )
-from .formatting import format_timestamp
+from .formatting import format_header
 from .segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
@@ -419,7 +416,7 @@ class EventMemory:
             key=lambda derivative: (derivative.timestamp, derivative.uuid),
         )
         embeddings = await self._params.embedder.ingest_embed(
-            _derivative_texts(derivatives)
+            [derivative.text for derivative in derivatives]
         )
         # Decided again, against what is stored now. The stranded write may
         # have stored some of the claim's own derivatives, which are not
@@ -567,42 +564,40 @@ class EventMemory:
         segments: Iterable[Segment],
         *,
         datetime_format: DateTimeFormat,
+        parts: Iterable[str] = ("author",),
     ) -> str:
         """
         The reader's text for a run of segments, in their order.
 
-        A header (the timestamp formatted by `datetime_format`, then the
-        producer's name) starts each run of adjacent pieces of one event;
-        the pieces' text is joined under it.
+        A header (`format_header`: the timestamp, then the context parts
+        `parts` names, in order) starts each run of adjacent pieces of one
+        event; the pieces' block renderings are joined under it.
         """
+        parts = part_kinds(parts)
         context_string = ""
         previous: Segment | None = None
         accumulated_text = ""
-
         for segment in segments:
             is_continuation = previous is not None and EventMemory._is_continuation(
                 previous, segment
             )
-
             if not is_continuation:
                 if previous is not None:
                     context_string += (
                         json.dumps(accumulated_text, ensure_ascii=False) + "\n"
                     )
                 accumulated_text = ""
-                context_string += EventMemory._segment_header(segment, datetime_format)
-
-            text = _extract_text(segment.block)
+                context_string += format_header(
+                    segment.timestamp, segment.context, datetime_format, parts
+                )
+            text = segment.block.render(datetime_format)
             if text is not None:
                 accumulated_text += text
             elif not is_continuation:
-                context_string += f"[{segment.block.block_type}]\n"
-
+                context_string += f"[{segment.block.kind}]\n"
             previous = segment
-
         if previous is not None:
             context_string += json.dumps(accumulated_text, ensure_ascii=False) + "\n"
-
         return context_string.strip()
 
     @staticmethod
@@ -620,22 +615,6 @@ class EventMemory:
         if segment.index == previous.index + 1:
             return segment.offset == 0
         return False
-
-    @staticmethod
-    def _segment_header(segment: Segment, datetime_format: DateTimeFormat) -> str:
-        """Build the header emitted before a segment."""
-        formatted_timestamp = format_timestamp(segment.timestamp, datetime_format)
-        timestamp_prefix = f"[{formatted_timestamp}] " if formatted_timestamp else ""
-
-        match segment.context:
-            case ProducerContext(producer=producer):
-                return f"{timestamp_prefix}{producer}: "
-            case NullContext():
-                return timestamp_prefix
-            case _:
-                raise NotImplementedError(
-                    f"Unsupported context type: {type(segment.context).__name__}"
-                )
 
 
 class EventMemoryPartition:
@@ -797,7 +776,7 @@ class EventMemoryPartition:
         t_derivation = time.monotonic()
 
         derivative_embeddings = await self._embedder.ingest_embed(
-            _derivative_texts(derivatives)
+            [derivative.text for derivative in derivatives]
         )
         t_embedding = time.monotonic()
 
@@ -1283,28 +1262,6 @@ class EventMemoryPartition:
             )
 
 
-def _extract_text(block: Block) -> str | None:
-    """Extract text from a block, if it contains text."""
-    match block:
-        case TextBlock(text=text):
-            return text
-        case _:
-            return None
-
-
-def _derivative_texts(derivatives: Iterable[Derivative]) -> list[str]:
-    """The text each derivative embeds."""
-    derivative_texts: list[str] = []
-    for derivative in derivatives:
-        text = _extract_text(derivative.block)
-        if text is None:
-            raise NotImplementedError(
-                f"Cannot embed a derivative of block type {derivative.block.block_type!r}"
-            )
-        derivative_texts.append(text)
-    return derivative_texts
-
-
 def _build_derivative_record(
     derivative: Derivative,
     derivative_embedding: Sequence[float],
@@ -1326,7 +1283,7 @@ def _build_derivative_record(
             if key in schema_fields
         },
         EVENT_TIMESTAMP_KEY: derivative.timestamp,
-        BLOCK_KIND_KEY: derivative.block.block_type,
+        BLOCK_KIND_KEY: derivative.block_kind,
     }
     if derivative.source_id is not None:
         properties[EVENT_SOURCE_KEY] = derivative.source_id

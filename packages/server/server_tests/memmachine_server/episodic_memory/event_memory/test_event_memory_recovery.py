@@ -22,6 +22,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     EvictionOptions,
     TextBlock,
 )
+from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
 )
@@ -41,6 +42,7 @@ from memmachine_server.episodic_memory.event_memory.event_memory_store.sqlalchem
     SQLAlchemyEventMemoryStoreParams,
     TombstoneRow,
 )
+from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
@@ -127,8 +129,8 @@ async def partition(
         event_memory_store_partition=fake_event_memory_store_partition,
         vector_store_partition=vector_store_partition,
         store_schema=store_schema,
-        segmenter=TextSegmenter(),
-        deriver=WholeTextDeriver(),
+        segmenter=Segmenter([TextSegmenter()]),
+        deriver=Deriver([WholeTextDeriver()]),
         embedder=fake_embedder,
     )
 
@@ -189,8 +191,8 @@ async def test_an_upsert_outlasting_the_write_budget_is_cancelled(
         EventMemoryParams(
             event_memory_store=event_memory_store,
             vector_store=vector_store,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter([TextSegmenter()]),
+            deriver=Deriver([WholeTextDeriver()]),
             embedder=fake_embedder,
             write_budget_seconds=1,
         )
@@ -372,8 +374,8 @@ async def test_delete_partition_deletes_the_event_memory_store_partition_first(
         EventMemoryParams(
             event_memory_store=event_memory_store,
             vector_store=vector_store,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter([TextSegmenter()]),
+            deriver=Deriver([WholeTextDeriver()]),
             embedder=fake_embedder,
         )
     )
@@ -416,8 +418,8 @@ async def event_memory(
         EventMemoryParams(
             event_memory_store=event_memory_store,
             vector_store=vector_store,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter([TextSegmenter()]),
+            deriver=Deriver([WholeTextDeriver()]),
             embedder=fake_embedder,
         )
     )
@@ -594,8 +596,8 @@ def _hooked_event_memory(
         EventMemoryParams(
             event_memory_store=event_memory_store,
             vector_store=vector_store,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter([TextSegmenter()]),
+            deriver=Deriver([WholeTextDeriver()]),
             embedder=embedder,
             **params,
         )
@@ -682,8 +684,8 @@ async def evicting_event_memory(
         EventMemoryParams(
             event_memory_store=event_memory_store,
             vector_store=vector_store,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter([TextSegmenter()]),
+            deriver=Deriver([WholeTextDeriver()]),
             embedder=fake_embedder,
             eviction=EvictionOptions(
                 score_threshold=0.5, search_limit=100, target_size=5

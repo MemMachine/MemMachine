@@ -43,13 +43,13 @@ from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
     Context,
     Derivative,
     Neighborhood,
-    NullContext,
-    ProducerContext,
     Segment,
     TextBlock,
+    with_part,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory_store import (
     EventMemoryStoreAttemptsExhaustedError,
@@ -93,7 +93,7 @@ BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 def _author(name: str) -> Context:
-    return ProducerContext(producer=name)
+    return with_part({}, Author(name=name))
 
 
 def _seg(
@@ -115,7 +115,7 @@ def _seg(
         timestamp=BASE_TIME + timedelta(seconds=ts_offset_seconds),
         source_id=source_id,
         block=TextBlock(text=text),
-        context=context if context is not None else NullContext(),
+        context=context if context is not None else {},
         properties=properties or {},
     )
 
@@ -149,8 +149,8 @@ def _events(
     """`add_event_segments` arguments for the segments' events, with a derivative per given UUID.
 
     Each event gets one pending write, and each derivative the timestamp,
-    source id and block of its segment, and the pending write the event's
-    properties, which its segments carry.
+    source id and block kind of its segment, and the pending write the
+    event's properties, which its segments carry.
     """
     segments_by_event: dict[UUID, list[Segment]] = {}
     derivatives_by_event: dict[UUID, list[Derivative]] = {}
@@ -162,7 +162,8 @@ def _events(
                 segment_uuid=segment.uuid,
                 timestamp=segment.timestamp,
                 source_id=segment.source_id,
-                block=segment.block,
+                block_kind=segment.block.kind,
+                text=f"derived from {segment.uuid}",
             )
             for derivative_uuid in derivative_uuids
         )
@@ -410,8 +411,8 @@ async def test_add_event_segments_with_producer_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert json.loads(row.context) == {"context_type": "producer", "producer": "User"}
-    assert json.loads(row.block) == {"block_type": "text", "text": "hello"}
+    assert json.loads(row.context) == {"author": {"name": "User"}}
+    assert json.loads(row.block) == {"kind": "text", "text": "hello"}
 
 
 @pytest.mark.asyncio
@@ -425,10 +426,10 @@ async def test_add_event_segments_with_no_context(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert json.loads(row.context) == {"context_type": "null"}
+    assert json.loads(row.context) == {}
 
     result = await partition.get_segments([seg.uuid])
-    assert result[seg.uuid].context == NullContext()
+    assert result[seg.uuid].context == {}
 
 
 @pytest.mark.asyncio
@@ -459,7 +460,7 @@ async def test_timestamp_roundtrips_with_timezone(
         offset=0,
         timestamp=ts,
         block=TextBlock(text="tz"),
-        context=NullContext(),
+        context={},
         properties={},
     )
     await _add_segments(partition, _links(seg))
@@ -668,19 +669,22 @@ async def test_pending_writes_roundtrip_through_a_claim(
                 2024, 1, 1, 13, 30, 45, tzinfo=timezone(timedelta(hours=5, minutes=30))
             ),
             source_id="user",
-            block=TextBlock(text="first"),
+            block_kind="text",
+            text="first",
         ),
         Derivative(
             uuid=uuid4(),
             segment_uuid=segments[0].uuid,
             timestamp=datetime(2024, 1, 1, tzinfo=timezone(timedelta(hours=-8))),
-            block=TextBlock(text="second"),
+            block_kind="text",
+            text="second",
         ),
         Derivative(
             uuid=uuid4(),
             segment_uuid=segments[1].uuid,
             timestamp=BASE_TIME,
-            block=TextBlock(text="third"),
+            block_kind="text",
+            text="third",
         ),
     ]
     pending_writes = PendingWrite(
@@ -2597,13 +2601,13 @@ async def test_pg_mixed_context_types(
                 select(SegmentRow).where(SegmentRow.uuid == s_none.uuid)
             )
         ).scalar_one()
-    assert json.loads(row.context) == {"context_type": "null"}
+    assert json.loads(row.context) == {}
 
     result = await partition.get_segments([s_msg.uuid])
     assert result[s_msg.uuid].context == ctx_msg
 
     result = await partition.get_segments([s_none.uuid])
-    assert result[s_none.uuid].context == NullContext()
+    assert result[s_none.uuid].context == {}
 
 
 # ===================================================================
