@@ -132,12 +132,6 @@ class ShortTermMemoryConfPartial(BaseModel):
 # Segmenter / Deriver sub-configurations for the event-backed long-term memory.
 
 
-class PassthroughSegmenterConf(BaseModel):
-    """One segment per block; no splitting."""
-
-    type: Literal["passthrough"] = "passthrough"
-
-
 class TextSegmenterConf(BaseModel):
     """Recursive-character text segmenter."""
 
@@ -148,10 +142,9 @@ class TextSegmenterConf(BaseModel):
     )
 
 
-SegmenterConf = Annotated[
-    PassthroughSegmenterConf | TextSegmenterConf,
-    Field(discriminator="type"),
-]
+SegmenterConf = TextSegmenterConf
+"""The segmenter's one configurable handler, for text blocks; a block of any
+kind with no handler is one segment, unchanged."""
 
 
 class WholeTextDeriverConf(BaseModel):

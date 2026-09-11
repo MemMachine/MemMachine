@@ -149,7 +149,7 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
             return False
         if source_ids is not None and segment.source_id not in source_ids:
             return False
-        if block_kinds is not None and segment.block.block_type not in block_kinds:
+        if block_kinds is not None and segment.block.kind not in block_kinds:
             return False
         if normalized_filter is not None:
             evaluated = {**segment.properties, "timestamp": segment.timestamp}
@@ -455,8 +455,8 @@ async def event_memory_partition(
         event_memory_store_partition=fake_event_memory_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
-        segmenter=TextSegmenter(),
-        deriver=WholeTextDeriver(),
+        segmenter=Segmenter([TextSegmenter()]),
+        deriver=Deriver([WholeTextDeriver()]),
         embedder=fake_embedder,
     )
 
@@ -472,8 +472,8 @@ async def event_memory_partition_with_sentences(
         event_memory_store_partition=fake_event_memory_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
-        segmenter=TextSegmenter(),
-        deriver=SentenceTextDeriver(),
+        segmenter=Segmenter([TextSegmenter()]),
+        deriver=Deriver([SentenceTextDeriver()]),
         embedder=fake_embedder,
     )
 
@@ -491,8 +491,8 @@ async def event_memory_partition_with_eviction(
         event_memory_store_partition=fake_event_memory_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
-        segmenter=TextSegmenter(),
-        deriver=WholeTextDeriver(),
+        segmenter=Segmenter([TextSegmenter()]),
+        deriver=Deriver([WholeTextDeriver()]),
         embedder=fake_embedder,
         eviction=EvictionOptions(score_threshold=0.5, search_limit=100, target_size=5),
     )
