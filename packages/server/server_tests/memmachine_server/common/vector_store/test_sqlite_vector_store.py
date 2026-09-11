@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import threading
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -1444,6 +1445,36 @@ class TestEngineAccess:
 # ── row_id reuse (issue #1468) ──
 
 
+async def _row_id_of(partition, record_uuid) -> int:
+    async with partition._create_session() as session:
+        return (
+            await session.execute(
+                select(partition._records_table.c.row_id).where(
+                    partition._records_table.c.uuid == record_uuid
+                )
+            )
+        ).scalar_one()
+
+
+async def _all_row_ids(partition) -> set[int]:
+    async with partition._create_session() as session:
+        rows = (await session.execute(select(partition._records_table.c.row_id))).all()
+    return {row.row_id for row in rows}
+
+
+async def _committed_name_is(partition, record_uuid, name: str) -> bool:
+    """Whether SQLite currently holds `name` as the record's `name` property."""
+    async with partition._create_session() as session:
+        committed = (
+            await session.execute(
+                select(partition._records_table.c[property_column_name("name")]).where(
+                    partition._records_table.c.uuid == record_uuid
+                )
+            )
+        ).scalar_one_or_none()
+    return committed == name
+
+
 class TestRowIdReuse:
     """Regression tests for row_id reuse (issue #1468).
 
@@ -1453,28 +1484,18 @@ class TestRowIdReuse:
     id policy itself.
     """
 
-    async def _row_id_of(self, partition, record_uuid):
-        async with partition._create_session() as session:
-            return (
-                await session.execute(
-                    select(partition._records_table.c.row_id).where(
-                        partition._records_table.c.uuid == record_uuid
-                    )
-                )
-            ).scalar_one()
-
     @pytest.mark.asyncio
     async def test_row_ids_are_never_reused(self, partition):
         """A new record must not be assigned a previously deleted row_id."""
         record_a = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await partition.upsert(records=[record_a])
-        row_id_a = await self._row_id_of(partition, record_a.uuid)
+        row_id_a = await _row_id_of(partition, record_a.uuid)
 
         await partition.delete(record_uuids=[record_a.uuid])
 
         record_b = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
         await partition.upsert(records=[record_b])
-        row_id_b = await self._row_id_of(partition, record_b.uuid)
+        row_id_b = await _row_id_of(partition, record_b.uuid)
 
         assert row_id_b != row_id_a
 
@@ -1520,6 +1541,134 @@ class TestRowIdReuse:
         assert [match.record_uuid for match in results[0].matches] == [], (
             "a record the engine never scored was returned"
         )
+
+
+class _GatedKeyFilter:
+    """Wraps a query's key filter; the first check parks until `gate` is set.
+
+    The check runs on the engine's worker thread, inside the search, so
+    parking it holds the query between scoring and filtering while the event
+    loop runs a rewrite.
+    """
+
+    def __init__(self, inner, loop: asyncio.AbstractEventLoop) -> None:
+        self.inner = inner
+        self.gate = threading.Event()
+        self.gate_reached = asyncio.Event()
+        self._loop = loop
+        self._parked = False
+
+    def __contains__(self, key: object) -> bool:
+        if not self._parked:
+            self._parked = True
+            self._loop.call_soon_threadsafe(self.gate_reached.set)
+            self.gate.wait()
+        return key in self.inner
+
+
+class TestVersionedKeys:
+    """A key names one version of a record.
+
+    Every write takes a fresh row id, so the score the engine computed under a
+    key, the filter verdict for that key, and the uuid it resolves to belong to
+    one version. A rewrite retires the old key.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_rewrite_moves_the_record_to_a_new_row_id(self, partition):
+        record_uuid = uuid4()
+        await partition.upsert(
+            records=[_make_record(uuid=record_uuid, vector=_normalize([1.0, 0.0, 0.0]))]
+        )
+        first_row_id = await _row_id_of(partition, record_uuid)
+
+        await partition.upsert(
+            records=[_make_record(uuid=record_uuid, vector=_normalize([0.0, 1.0, 0.0]))]
+        )
+
+        assert await _row_id_of(partition, record_uuid) != first_row_id
+        assert first_row_id not in await _all_row_ids(partition)
+
+    @pytest.mark.asyncio
+    async def test_a_query_cannot_pair_a_score_with_a_later_version(
+        self, partition, monkeypatch
+    ):
+        """Version 1 fails the filter and scores high; version 2 passes, low.
+
+        The query scores version 1 and parks before the filter check, and
+        version 2 commits in that gap. The check must not admit version 1's
+        score on version 2's properties: the record is absent, or it comes
+        back with version 2's score.
+        """
+        record_uuid = uuid4()
+        query_vector = _normalize([1.0, 0.0, 0.0])
+        await partition.upsert(
+            records=[
+                _make_record(
+                    uuid=record_uuid, vector=query_vector, properties={"name": "alice"}
+                )
+            ]
+        )
+
+        loop = asyncio.get_running_loop()
+        gated: list[_GatedKeyFilter] = []
+        key_filter_built = asyncio.Event()
+        build_key_filter = partition._build_key_filter
+
+        def build_gated_key_filter(property_filter):
+            key_filter = build_key_filter(property_filter)
+            if gated:
+                # Only the first query is held; the one at the end runs free.
+                return key_filter
+            gated.append(_GatedKeyFilter(key_filter, loop))
+            key_filter_built.set()
+            return gated[0]
+
+        monkeypatch.setattr(partition, "_build_key_filter", build_gated_key_filter)
+        query_task = asyncio.create_task(
+            partition.query(
+                query_vectors=[query_vector],
+                limit=1,
+                property_filter=Comparison(field="name", op="=", value="bob"),
+            )
+        )
+        try:
+            await key_filter_built.wait()
+            await gated[0].gate_reached.wait()
+
+            # Version 2 commits while the check is parked. Its engine apply
+            # waits for the search to finish, which is fine: the check reads
+            # SQLite.
+            rewrite_task = asyncio.create_task(
+                partition.upsert(
+                    records=[
+                        _make_record(
+                            uuid=record_uuid,
+                            vector=_normalize([0.0, 1.0, 0.0]),
+                            properties={"name": "bob"},
+                        )
+                    ]
+                )
+            )
+            await _wait_for(lambda: _committed_name_is(partition, record_uuid, "bob"))
+        finally:
+            for key_filter in gated:
+                key_filter.gate.set()
+
+        results = await query_task
+        await rewrite_task
+        for match in results[0].matches:
+            assert match.record_uuid == record_uuid
+            assert match.score < 0.5, "version 1's score was returned for version 2"
+
+        # Once the rewrite has fully applied, version 2 is what a query finds.
+        [settled] = await partition.query(
+            query_vectors=[query_vector],
+            limit=1,
+            property_filter=Comparison(field="name", op="=", value="bob"),
+        )
+        assert [m.record_uuid for m in settled.matches] == [record_uuid]
+        assert settled.matches[0].score < 0.5
 
 
 # ── Crash recovery & pending operations ──
@@ -1719,11 +1868,11 @@ class TestPendingLogStates:
         await engine2.dispose()
 
     @pytest.mark.asyncio
-    async def test_save_threshold_counts_log_rows_not_writes(self, tmp_path):
-        """The trigger counts log rows, and one uuid only ever has one.
+    async def test_save_threshold_counts_log_rows(self, tmp_path):
+        """The trigger counts log rows, and a rewrite adds two.
 
-        Rewriting a single record never advances it, however often it is
-        written.
+        A rewrite retires the old key and adds a new one, so rewriting one
+        record advances the threshold like writing two.
         """
         db_path = tmp_path / "test.db"
         store, engine = await _fresh_store(db_path, tmp_path, save_threshold=3)
@@ -1738,10 +1887,11 @@ class TestPendingLogStates:
                 ]
             )
 
-        # Six writes, one row, so the threshold of three was never reached.
-        assert await _pending_operation_count(engine) == 1
+        # Writes 3 and 5 cross the threshold of three and trim the log,
+        # leaving the two rows of write 6.
+        assert await _pending_operation_count(engine) == 2
 
-        # Three distinct records do reach it.
+        # Three distinct records reach it again.
         await coll.upsert(
             records=[
                 _make_record(vector=_normalize([1.0, 0.0, 0.0])),
