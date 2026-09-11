@@ -460,7 +460,9 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
     @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
-        records = list(records)
+        # A batch may name a uuid more than once; the last write wins, as it
+        # would were the batch applied one record at a time.
+        records = list({record.uuid: record for record in records}.values())
         if not records:
             return
         for record in records:
@@ -469,22 +471,28 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
         async with self._write_lock:
             async with _write_transaction(self._create_session) as session:
-                insert_records = sqlite_insert(self._records_table)
-                upsert_records = insert_records.on_conflict_do_update(
-                    index_elements=[self._records_table.c.uuid],
-                    # Every column but the row id takes the new version's value,
-                    # so a declared key the record no longer holds becomes NULL;
-                    # the uuid, rewritten to itself, keeps the SET list nonempty
-                    # for a store that declares no keys.
-                    set_={
-                        column.name: insert_records.excluded[column.name]
-                        for column in self._records_table.columns
-                        if column.name != "row_id"
-                    },
-                ).returning(self._records_table.c.uuid, self._records_table.c.row_id)
+                # Every write takes a fresh row id, so a key names one version
+                # of a record. A query that scored the previous version finds
+                # no row under its key and drops it, rather than pairing that
+                # score with this version's properties.
+                replaced_row_ids = list(
+                    (
+                        await session.execute(
+                            delete(self._records_table)
+                            .where(
+                                self._records_table.c.uuid.in_(
+                                    [record.uuid for record in records]
+                                )
+                            )
+                            .returning(self._records_table.c.row_id)
+                        )
+                    ).scalars()
+                )
                 rows = (
                     await session.execute(
-                        upsert_records,
+                        sqlite_insert(self._records_table).returning(
+                            self._records_table.c.uuid, self._records_table.c.row_id
+                        ),
                         [
                             {
                                 "uuid": record.uuid,
@@ -502,6 +510,16 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                     {
                         "vector_store_name": self._vector_store_name,
                         "partition_key": self._partition_key,
+                        "record_row_id": row_id,
+                        "operation_type": "delete",
+                        "vector": None,
+                        "applied": False,
+                    }
+                    for row_id in replaced_row_ids
+                ] + [
+                    {
+                        "vector_store_name": self._vector_store_name,
+                        "partition_key": self._partition_key,
                         "record_row_id": uuid_to_row_id[record.uuid],
                         "operation_type": "upsert",
                         "vector": np.array(record.vector, dtype=np.float32).tobytes(),
@@ -509,61 +527,61 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                     }
                     for record in records
                 ]
-                if pending_operation_values:
-                    upsert_pending_operation = sqlite_insert(_PendingOperationRow)
-                    await session.execute(
-                        upsert_pending_operation.on_conflict_do_update(
-                            index_elements=[
-                                "vector_store_name",
-                                "partition_key",
-                                "record_row_id",
-                            ],
-                            set_={
-                                "operation_type": upsert_pending_operation.excluded.operation_type,
-                                "vector": upsert_pending_operation.excluded.vector,
-                                "applied": upsert_pending_operation.excluded.applied,
-                            },
-                        ),
-                        pending_operation_values,
-                    )
+                upsert_pending_operation = sqlite_insert(_PendingOperationRow)
+                await session.execute(
+                    upsert_pending_operation.on_conflict_do_update(
+                        index_elements=[
+                            "vector_store_name",
+                            "partition_key",
+                            "record_row_id",
+                        ],
+                        set_={
+                            "operation_type": upsert_pending_operation.excluded.operation_type,
+                            "vector": upsert_pending_operation.excluded.vector,
+                            "applied": upsert_pending_operation.excluded.applied,
+                        },
+                    ),
+                    pending_operation_values,
+                )
 
-            await self._apply_engine_upserts(records, uuid_to_row_id)
+            await self._apply_engine_upserts(records, uuid_to_row_id, replaced_row_ids)
 
     async def _apply_engine_upserts(
         self,
         records: Iterable[Record],
         uuid_to_row_id: Mapping[UUID, int],
+        replaced_row_ids: Sequence[int],
     ) -> None:
         """Update search engine index after SQLite commit."""
-        engine_vectors: dict[int, list[float]] = {
+        vectors_by_row_id: dict[int, list[float]] = {
             uuid_to_row_id[record.uuid]: record.vector
             for record in records
             if record.vector is not None
         }
 
-        if engine_vectors:
-            # One hold for both, so no search sees the record's old vector gone
-            # and its new one not yet there.
-            async with self._engine_lock.write_lock():
-                await self._search_engine.remove(engine_vectors.keys())
-                await self._search_engine.add(engine_vectors)
+        async with self._engine_lock.write_lock():
+            if replaced_row_ids:
+                await self._search_engine.remove(replaced_row_ids)
+            if vectors_by_row_id:
+                await self._search_engine.add(vectors_by_row_id)
 
-            async with _write_transaction(self._create_session) as session:
-                await session.execute(
-                    update(_PendingOperationRow)
-                    .where(
-                        _PendingOperationRow.vector_store_name
-                        == self._vector_store_name,
-                        _PendingOperationRow.partition_key == self._partition_key,
-                        _PendingOperationRow.record_row_id.in_(
-                            list(engine_vectors.keys())
-                        ),
-                        _PendingOperationRow.applied.is_(False),
-                    )
-                    .values(applied=True)
+        applied_row_ids = [*replaced_row_ids, *vectors_by_row_id.keys()]
+        if not applied_row_ids:
+            return
+
+        async with _write_transaction(self._create_session) as session:
+            await session.execute(
+                update(_PendingOperationRow)
+                .where(
+                    _PendingOperationRow.vector_store_name == self._vector_store_name,
+                    _PendingOperationRow.partition_key == self._partition_key,
+                    _PendingOperationRow.record_row_id.in_(applied_row_ids),
+                    _PendingOperationRow.applied.is_(False),
                 )
+                .values(applied=True)
+            )
 
-            await self._maybe_save_index()
+        await self._maybe_save_index()
 
     @override
     async def query(
