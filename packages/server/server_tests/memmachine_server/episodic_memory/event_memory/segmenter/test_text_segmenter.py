@@ -54,8 +54,9 @@ def test_declares_the_text_kind():
 
 class TestTextSegmenter:
     async def test_short_text_emits_single_piece(self):
-        event = _make_event(blocks=[TextBlock(text="hello world")])
-        pieces = await TextSegmenter().split(event, event.blocks[0])
+        block = TextBlock(text="hello world")
+        event = _make_event(blocks=[block])
+        pieces = await TextSegmenter().split(event, block)
         assert [(p.offset, p.block) for p in pieces] == [
             (0, TextBlock(text="hello world"))
         ]
@@ -87,8 +88,9 @@ class TestTextSegmenter:
 
     async def test_pieces_join_back_into_the_text(self):
         text = ("The quick brown fox jumps over the lazy dog. " * 40).strip()
-        event = _make_event(blocks=[TextBlock(text=text)])
-        pieces = await TextSegmenter(max_chunk_length=100).split(event, event.blocks[0])
+        block = TextBlock(text=text)
+        event = _make_event(blocks=[block])
+        pieces = await TextSegmenter(max_chunk_length=100).split(event, block)
         assert len(pieces) > 1
         assert [p.offset for p in pieces] == list(range(len(pieces)))
         # The splitter strips whitespace at chunk boundaries (its
