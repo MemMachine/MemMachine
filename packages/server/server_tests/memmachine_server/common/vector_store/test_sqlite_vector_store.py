@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+import numpy as np
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
@@ -29,6 +30,7 @@ from memmachine_server.common.vector_store.sql_columns import (
 )
 from memmachine_server.common.vector_store.sqlite_vector_store import (
     IndexLoadError,
+    PendingOperationCorruptError,
     SQLiteVectorStore,
     SQLiteVectorStoreParams,
     SQLiteVectorStorePartition,
@@ -1250,6 +1252,174 @@ async def _set_all_pending_operations_unapplied(engine) -> None:
         await session.execute(update(_PendingOperationRow).values(applied=False))
 
 
+class TestPendingLogStates:
+    """The log's state machine, exercised across a restart."""
+
+    @pytest.mark.asyncio
+    async def test_replay_refuses_an_undecodable_vector(self, tmp_path):
+        """A blob that is not a float32 vector is damage, not a shorter vector."""
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        coll = await store1.open_or_create_partition(NAME)
+        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
+
+        session_factory = async_sessionmaker(engine1, expire_on_commit=False)
+        async with session_factory() as session, session.begin():
+            await session.execute(
+                update(_PendingOperationRow).values(vector=b"\x01\x02\x03")
+            )
+        await engine1.dispose()
+
+        with pytest.raises(PendingOperationCorruptError, match="cannot be decoded"):
+            await _fresh_store(db_path, tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_replay_refuses_a_vector_of_the_wrong_width(self, tmp_path):
+        """A blob of whole float32s that is not the store's width is damage too."""
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        coll = await store1.open_or_create_partition(NAME)
+        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
+
+        session_factory = async_sessionmaker(engine1, expire_on_commit=False)
+        async with session_factory() as session, session.begin():
+            await session.execute(
+                update(_PendingOperationRow).values(
+                    vector=np.zeros(VECTOR_DIM - 1, dtype=np.float32).tobytes()
+                )
+            )
+        await engine1.dispose()
+
+        with pytest.raises(PendingOperationCorruptError, match="dimension"):
+            await _fresh_store(db_path, tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_a_rewritten_uuid_replays_its_last_write(self, tmp_path):
+        """Replay restores a uuid's last write.
+
+        A second write to a uuid overwrites its log row rather than queueing
+        behind it, which is only observable across a restart.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        coll = await store1.open_or_create_partition(NAME)
+        first = _normalize([1.0, 0.0, 0.0])
+        second = _normalize([0.0, 1.0, 0.0])
+        record_uuid = uuid4()
+        await coll.upsert(records=[_make_record(uuid=record_uuid, vector=first)])
+        await coll.upsert(records=[_make_record(uuid=record_uuid, vector=second)])
+
+        # Crash: dispose without shutting down, so nothing is saved or trimmed.
+        await engine1.dispose()
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        coll2 = await store2.open_partition(NAME)
+        assert coll2 is not None
+
+        results = await coll2.query(query_vectors=[second], limit=1)
+        assert results[0].matches[0].record_uuid == record_uuid
+        assert results[0].matches[0].cosine_similarity == pytest.approx(1.0, abs=0.01)
+
+        # And the superseded vector is not still indexed under a second key.
+        stale = await coll2.query(query_vectors=[first], limit=5)
+        assert [m.record_uuid for m in stale[0].matches] == [record_uuid]
+
+        await store2.shutdown()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_an_upsert_then_delete_of_one_uuid_stays_deleted(self, tmp_path):
+        """A delete staged over an untrimmed upsert wins the replay."""
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        coll = await store1.open_or_create_partition(NAME)
+        vector = _normalize([1.0, 0.0, 0.0])
+        record = _make_record(vector=vector)
+        await coll.upsert(records=[record])
+        await coll.delete(record_uuids=[record.uuid])
+        await engine1.dispose()
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        coll2 = await store2.open_partition(NAME)
+        assert coll2 is not None
+        results = await coll2.query(query_vectors=[vector], limit=5)
+        assert results[0].matches == []
+
+        await store2.shutdown()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_index_save_leaves_the_write_replayable(self, tmp_path):
+        """A save that fails must not take the write with it.
+
+        The log is trimmed only after the save returns.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1)
+        coll = await store1.open_or_create_partition(NAME)
+        vector = _normalize([1.0, 0.0, 0.0])
+        record = _make_record(vector=vector)
+
+        search_engine = store1._search_engines[NAME]
+
+        async def failing_save(path: str) -> None:
+            raise OSError("no space left on device")
+
+        original_save = search_engine.save
+        search_engine.save = failing_save
+        with pytest.raises(OSError, match="no space"):
+            await coll.upsert(records=[record])
+        search_engine.save = original_save
+
+        assert await _pending_operation_count(engine1) == 1
+        await engine1.dispose()
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        coll2 = await store2.open_partition(NAME)
+        assert coll2 is not None
+        results = await coll2.query(query_vectors=[vector], limit=1)
+        assert results[0].matches[0].record_uuid == record.uuid
+
+        await store2.shutdown()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_save_threshold_counts_log_rows_not_writes(self, tmp_path):
+        """The trigger counts log rows, and one uuid only ever has one.
+
+        Rewriting a single record never advances it, however often it is
+        written.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine = await _fresh_store(db_path, tmp_path, save_threshold=3)
+        coll = await store.open_or_create_partition(NAME)
+        record_uuid = uuid4()
+        for i in range(6):
+            await coll.upsert(
+                records=[
+                    _make_record(
+                        uuid=record_uuid, vector=_normalize([1.0, float(i) + 1.0, 0.0])
+                    )
+                ]
+            )
+
+        # Six writes, one row, so the threshold of three was never reached.
+        assert await _pending_operation_count(engine) == 1
+
+        # Three distinct records do reach it.
+        await coll.upsert(
+            records=[
+                _make_record(vector=_normalize([1.0, 0.0, 0.0])),
+                _make_record(vector=_normalize([0.0, 1.0, 0.0])),
+                _make_record(vector=_normalize([0.0, 0.0, 1.0])),
+            ]
+        )
+        assert await _pending_operation_count(engine) == 0
+
+        await store.shutdown()
+        await engine.dispose()
+
+
 class TestBatchEdges:
     """Batches that name one record more than once."""
 
@@ -1417,6 +1587,46 @@ class TestConcurrentWrites:
 
 class TestCrashRecovery:
     """Tests for pending operations replay on startup."""
+
+    @pytest.mark.asyncio
+    async def test_replay_refuses_an_upsert_with_no_vector(self, tmp_path):
+        """A damaged log row fails the restart instead of vanishing.
+
+        Until the next index save the log holds the only copy of the vector,
+        so a skipped row is a record no search can find.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        coll = await store1.open_or_create_partition(NAME)
+        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
+
+        session_factory = async_sessionmaker(engine1, expire_on_commit=False)
+        async with session_factory() as session, session.begin():
+            await session.execute(update(_PendingOperationRow).values(vector=None))
+        await engine1.dispose()
+
+        with pytest.raises(PendingOperationCorruptError, match="no vector"):
+            await _fresh_store(db_path, tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_replay_refuses_an_unknown_operation_type(self, tmp_path):
+        """An operation_type replay does not understand fails the restart."""
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        coll = await store1.open_or_create_partition(NAME)
+        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
+
+        session_factory = async_sessionmaker(engine1, expire_on_commit=False)
+        async with session_factory() as session, session.begin():
+            await session.execute(
+                update(_PendingOperationRow).values(operation_type="rewrite")
+            )
+        await engine1.dispose()
+
+        with pytest.raises(
+            PendingOperationCorruptError, match="unknown operation_type"
+        ):
+            await _fresh_store(db_path, tmp_path)
 
     @pytest.mark.asyncio
     async def test_replay_upserts_after_crash(self, tmp_path):
