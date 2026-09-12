@@ -14,7 +14,6 @@ from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
     EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
-    PassthroughSegmenterConf,
     ShortTermMemoryConfPartial,
     WholeTextDeriverConf,
 )
@@ -413,7 +412,7 @@ def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
     assert conf.long_term_memory.vector_store == "vstore"
     assert conf.long_term_memory.segment_store == "pg_engine"
     # Default sub-configs.
-    assert isinstance(conf.long_term_memory.segmenter, PassthroughSegmenterConf)
+    assert conf.long_term_memory.segmenter is None
     assert isinstance(conf.long_term_memory.deriver, WholeTextDeriverConf)
     # Reranker is optional on the event backend.
     assert conf.long_term_memory.reranker is None

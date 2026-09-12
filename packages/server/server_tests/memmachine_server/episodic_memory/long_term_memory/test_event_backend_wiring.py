@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, override
 from unittest.mock import create_autospec
+from uuid import uuid4
 
 import pytest
 
@@ -33,6 +34,13 @@ from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.common.vector_store.data_types import (
     VectorStoreCollectionConfig,
 )
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    Neighborhood,
+    QueryHit,
+    Segment,
+    TextBlock,
+)
+from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
 )
@@ -40,9 +48,7 @@ from memmachine_server.episodic_memory.event_memory.event_memory import EventMem
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
 )
-from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
-    PassthroughSegmenter,
-)
+from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.long_term_memory import (
     EVENT_BACKEND_SYSTEM_FIELDS,
     EventBackendParams,
@@ -190,8 +196,8 @@ def long_term_memory(
             partition_key="sess1",
             episode_storage=fake_episode_storage,
             embedder=fake_embedder,
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter(),
+            deriver=Deriver([WholeTextDeriver()]),
         ),
     )
 
@@ -268,7 +274,7 @@ async def test_delete_episodes_removes_from_event_memory(
     episodes,
 ):
     await long_term_memory.add_episodes(episodes)
-    # Sanity: 3 events, each with 1 segment under PassthroughSegmenter.
+    # Sanity: 3 events, each with 1 segment under a segmenter with no handler.
     assert len(segment_store_partition.segments) == 3
 
     await long_term_memory.delete_episodes(["ep-1"])
@@ -448,8 +454,8 @@ async def test_unknown_user_metadata_field_raises_when_schema_configured(
             partition_key="sess1",
             episode_storage=fake_episode_storage,
             embedder=fake_embedder,
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter(),
+            deriver=Deriver([WholeTextDeriver()]),
             user_property_keys=frozenset({"color"}),
         ),
     )
@@ -504,8 +510,8 @@ def _make_ltm(episodes: list[Episode]) -> LongTermMemory:
             partition_key="sess1",
             episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),
             embedder=fake_embedder,
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter(),
+            deriver=Deriver([WholeTextDeriver()]),
         ),
     )
 
@@ -549,7 +555,7 @@ def _timeline_episode(uid: str, content: str, minute: int) -> Episode:
 # contributed anything: a search at `num_episodes_limit=N` returns the first N
 # episodes in store order whether or not the windows are folded in.
 #
-# The expansion tests below give each episode its own similarity instead, by an
+# The expansion tests below give each episode its own cosine similarity instead, by an
 # explicit search rank. The rank order is chosen so that the timeline
 # neighbours of the one matching episode are the LEAST similar of all, which is
 # what lets the tests assert on the contract ("expansion returns timeline
@@ -645,8 +651,8 @@ def timeline_long_term_memory(
             partition_key="sess1",
             episode_storage=timeline_storage,
             embedder=RankedEmbedder(),
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
+            segmenter=Segmenter(),
+            deriver=Deriver([WholeTextDeriver()]),
         ),
     )
 
@@ -719,37 +725,42 @@ async def test_expand_context_window_stays_within_the_episode_limit(
     """
     await timeline_long_term_memory.add_episodes(timeline_episodes)
 
-    windows: list[tuple[int, int]] = []
-    get_segment_contexts = segment_store_partition.get_segment_contexts
+    walks: list[tuple[int, int]] = []
+    get_segment_neighborhoods = segment_store_partition.get_segment_neighborhoods
 
-    async def recording_get_segment_contexts(seed_segment_uuids, **kwargs):
-        windows.append(
+    async def recording_get_segment_neighborhoods(seed_segment_uuids, **kwargs):
+        walks.append(
             (
-                kwargs.get("max_backward_segments", 0),
-                kwargs.get("max_forward_segments", 0),
+                kwargs.get("before", 0),
+                kwargs.get("after", 0),
             )
         )
-        return await get_segment_contexts(seed_segment_uuids, **kwargs)
+        return await get_segment_neighborhoods(seed_segment_uuids, **kwargs)
 
     monkeypatch.setattr(
         segment_store_partition,
-        "get_segment_contexts",
-        recording_get_segment_contexts,
+        "get_segment_neighborhoods",
+        recording_get_segment_neighborhoods,
     )
 
     for num_episodes_limit, expand_context in ((0, 5), (1, 5), (3, 99), (5, 2)):
-        windows.clear()
+        walks.clear()
         scored = await timeline_long_term_memory.search_scored(
             _timeline_token(_MATCH_INDEX),
             num_episodes_limit=num_episodes_limit,
             expand_context=expand_context,
         )
         assert len(scored) <= num_episodes_limit
-        assert windows
-        for backward, forward in windows:
+        allowed = max(0, num_episodes_limit - 1)
+        if allowed == 0:
+            # Nothing to expand into: no walk is asked of the store.
+            assert walks == []
+            continue
+        assert walks
+        for backward, forward in walks:
             assert backward >= 0
             assert forward >= 0
-            assert backward + forward <= max(0, num_episodes_limit - 1)
+            assert backward + forward <= allowed
 
 
 def test_unify_takes_whole_contexts_while_they_fit():
@@ -786,21 +797,25 @@ def test_unify_first_window_keeps_the_score():
 
 
 def test_episode_uid_context_dedup_and_nucleus():
-    class _Seg:
-        def __init__(self, uuid, uid):
-            self.uuid = uuid
-            self.properties = {"_episode_uid": uid}
+    def _seg(uid: str) -> Segment:
+        return Segment(
+            session_id="s",
+            source_id="src",
+            uuid=uuid4(),
+            event_uuid=uuid4(),
+            index=0,
+            offset=0,
+            timestamp=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
+            block=TextBlock(text=uid),
+            properties={"_episode_uid": uid},
+        )
 
-    class _Ctx:
-        def __init__(self):
-            self.seed_segment_uuid = "s2"
-            self.segments = [
-                _Seg("s1", "e1"),
-                _Seg("s2", "e2"),
-                _Seg("s3", "e2"),
-                _Seg("s4", "e3"),
-            ]
+    hit = QueryHit(
+        score=1.0,
+        seed=_seg("e2"),
+        neighborhood=Neighborhood(before=[_seg("e1")], after=[_seg("e2"), _seg("e3")]),
+    )
 
-    nucleus, context = LongTermMemory._episode_uid_context(_Ctx())
+    nucleus, context = LongTermMemory._episode_uid_context(hit)
     assert nucleus == "e2"
     assert context == ["e1", "e2", "e3"]

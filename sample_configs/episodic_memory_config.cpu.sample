@@ -23,8 +23,9 @@ episodic_memory:
     # properties_schema:                    # optional — user-defined filterable properties
     #   source_role: str
     #   target_id: str
-    # segmenter:                            # optional — defaults to passthrough
-    #   type: passthrough                   # or: text (with max_chunk_length)
+    # segmenter:                            # optional; omitted, every block is one segment
+    #   type: text
+    #   max_chunk_length: 500
     # deriver:                              # optional — defaults to whole-text deriver
     #   type: whole_text                    # or: sentence_text
   short_term_memory:
