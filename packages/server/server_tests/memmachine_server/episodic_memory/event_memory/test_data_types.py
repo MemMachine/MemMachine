@@ -7,9 +7,12 @@ import pytest
 from pydantic import ValidationError
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    ID_MAX_BYTES,
     Derivative,
     Event,
+    Neighborhood,
     ProducerContext,
+    QueryHit,
     Segment,
     TextBlock,
     decode_block,
@@ -30,6 +33,8 @@ SAMPLE_PROPERTIES = {
 class TestSegmentRoundTrip:
     def test_all_property_types(self):
         seg = Segment(
+            session_id="s",
+            source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
             index=0,
@@ -45,6 +50,8 @@ class TestSegmentRoundTrip:
 
     def test_empty_properties(self):
         seg = Segment(
+            session_id="s",
+            source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
             index=0,
@@ -57,6 +64,8 @@ class TestSegmentRoundTrip:
 
     def test_from_code_plain_values(self):
         seg = Segment(
+            session_id="s",
+            source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
             index=0,
@@ -69,6 +78,8 @@ class TestSegmentRoundTrip:
 
     def test_context_preserved(self):
         seg = Segment(
+            session_id="s",
+            source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
             index=0,
@@ -81,10 +92,108 @@ class TestSegmentRoundTrip:
         assert isinstance(seg2.context, ProducerContext)
         assert seg2.context.producer == "user"
 
+    def test_session_and_source_round_trip(self):
+        seg = Segment(
+            uuid=uuid4(),
+            event_uuid=uuid4(),
+            index=0,
+            offset=0,
+            timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+            session_id="s1",
+            source_id="alice",
+            block=TextBlock(text="hello"),
+        )
+        seg2 = Segment.model_validate(seg.model_dump(mode="json"))
+        assert (seg2.session_id, seg2.source_id) == ("s1", "alice")
+
+    def test_source_defaults_to_null_and_session_is_required(self):
+        fields = {
+            "uuid": uuid4(),
+            "event_uuid": uuid4(),
+            "index": 0,
+            "offset": 0,
+            "timestamp": datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+            "block": {"block_type": "text", "text": "hello"},
+        }
+        seg = Segment.model_validate({**fields, "session_id": "s1"})
+        assert seg.source_id is None
+        with pytest.raises(ValidationError, match="session_id"):
+            Segment.model_validate(fields)
+        with pytest.raises(ValidationError, match="session_id"):
+            Segment.model_validate({**fields, "session_id": ""})
+
+    def test_a_naive_timestamp_is_rejected(self):
+        with pytest.raises(ValidationError, match="timestamp"):
+            Segment.model_validate(
+                {
+                    "uuid": uuid4(),
+                    "event_uuid": uuid4(),
+                    "index": 0,
+                    "offset": 0,
+                    "timestamp": datetime(2026, 1, 15, 10, 30, tzinfo=UTC).replace(
+                        tzinfo=None
+                    ),
+                    "session_id": "s1",
+                    "block": {"block_type": "text", "text": "hello"},
+                }
+            )
+
+
+class TestBounds:
+    @pytest.mark.parametrize("field", ["session_id", "source_id"])
+    def test_overlong_id_is_rejected(self, field):
+        overlong = "x" * (ID_MAX_BYTES + 1)
+        with pytest.raises(ValidationError, match=field):
+            Event.model_validate(
+                {
+                    "uuid": uuid4(),
+                    "timestamp": datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+                    "blocks": [{"block_type": "text", "text": "hello"}],
+                    field: overlong,
+                }
+            )
+
+    @pytest.mark.parametrize("field", ["index", "offset"])
+    def test_negative_position_is_rejected(self, field):
+        with pytest.raises(ValidationError, match=field):
+            Segment.model_validate(
+                {
+                    "uuid": uuid4(),
+                    "event_uuid": uuid4(),
+                    "index": 0,
+                    "offset": 0,
+                    "timestamp": datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+                    "block": {"block_type": "text", "text": "hello"},
+                    field: -1,
+                }
+            )
+
+    def test_query_hit_window_is_the_seed_among_its_neighbors(self):
+        def segment(seconds: int) -> Segment:
+            return Segment(
+                uuid=uuid4(),
+                event_uuid=uuid4(),
+                index=0,
+                offset=0,
+                timestamp=datetime(2026, 1, 15, 10, 30, seconds, tzinfo=UTC),
+                session_id="s1",
+                block=TextBlock(text="hello"),
+            )
+
+        before, seed, after = segment(0), segment(1), segment(2)
+        hit = QueryHit(
+            score=1.0,
+            seed=seed,
+            neighborhood=Neighborhood(before=[before], after=[after]),
+        )
+        assert hit.window() == [before, seed, after]
+
 
 class TestEventRoundTrip:
     def test_all_property_types(self):
         evt = Event(
+            session_id="s",
+            source_id="src",
             uuid=uuid4(),
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
             blocks=[TextBlock(text="hi")],
@@ -99,6 +208,8 @@ class TestEventRoundTrip:
 class TestDerivativeRoundTrip:
     def test_all_property_types(self):
         der = Derivative(
+            session_id="s",
+            source_id="src",
             uuid=uuid4(),
             segment_uuid=uuid4(),
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),

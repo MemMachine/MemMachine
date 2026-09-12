@@ -30,6 +30,8 @@ class PassthroughSegmenter(Segmenter):
                 index=index,
                 offset=0,
                 timestamp=event.timestamp,
+                session_id=event.session_id,
+                source_id=event.source_id,
                 block=block,
                 context=event.context,
                 properties=event.properties,

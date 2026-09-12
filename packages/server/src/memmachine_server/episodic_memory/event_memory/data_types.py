@@ -1,7 +1,7 @@
 """Data types for EventMemory."""
 
 from collections.abc import Mapping
-from datetime import datetime, tzinfo
+from datetime import tzinfo
 from typing import (
     Annotated,
     Literal,
@@ -9,10 +9,13 @@ from typing import (
 from uuid import UUID
 
 from pydantic import (
+    AfterValidator,
+    AwareDatetime,
     BaseModel,
     Field,
     InstanceOf,
     JsonValue,
+    StringConstraints,
     TypeAdapter,
     field_serializer,
     field_validator,
@@ -92,15 +95,49 @@ def decode_block(encoded: Mapping[str, JsonValue]) -> Block:
 
 # Event, Segment, Derivative: core data models for EventMemory.
 
+ID_MAX_BYTES = 255
+"""Bound on a session id and a source id, in bytes: the width of the store's key columns."""
+
+
+def _bounded_id(value: str) -> str:
+    size = len(value.encode())
+    if size > ID_MAX_BYTES:
+        raise ValueError(f"is {size} bytes; the maximum is {ID_MAX_BYTES}")
+    return value
+
+
+_BoundedId = Annotated[
+    str, StringConstraints(min_length=1), AfterValidator(_bounded_id)
+]
+
 
 class Event(BaseModel):
-    """An event."""
+    """Something that happened at a point in time, and the content it produced.
 
-    uuid: UUID
-    timestamp: datetime
-    context: Context = Field(default_factory=NullContext)
-    blocks: list[Block]
-    properties: dict[str, PropertyValue] = Field(default_factory=dict)
+    Immutable once stored: no operation may edit a stored event. A change
+    is a forget and a re-encode under the same uuid.
+    """
+
+    uuid: UUID = Field(description="Identity of the event")
+    timestamp: AwareDatetime = Field(
+        description="When the event happened, with its zone; a naive value is rejected"
+    )
+    session_id: _BoundedId = Field(
+        description="The conversation or stream the event belongs to"
+    )
+    source_id: _BoundedId | None = Field(
+        default=None,
+        description="The entity responsible for the content; None for none",
+    )
+    context: Context = Field(
+        default_factory=NullContext,
+        description="The circumstances the content was produced in",
+    )
+    blocks: list[Block] = Field(description="The content, in order")
+    properties: dict[str, PropertyValue] = Field(
+        default_factory=dict,
+        description="Caller-defined values the event can be filtered by",
+    )
 
     @field_validator("properties", mode="before")
     @classmethod
@@ -124,16 +161,28 @@ class Event(BaseModel):
 
 
 class Segment(BaseModel):
-    """Snapshot of an event, representing a smaller unit of content."""
+    """A piece of one of an event's blocks, carrying the event's fields."""
 
-    uuid: UUID
-    event_uuid: UUID
-    index: int
-    offset: int
-    timestamp: datetime
-    context: Context = Field(default_factory=NullContext)
-    block: Block
-    properties: dict[str, PropertyValue] = Field(default_factory=dict)
+    uuid: UUID = Field(description="Identity of the segment")
+    event_uuid: UUID = Field(description="The event the segment is a piece of")
+    index: int = Field(
+        ge=0, description="Position of the block among the event's blocks"
+    )
+    offset: int = Field(
+        ge=0, description="Position of the piece among the block's pieces"
+    )
+    timestamp: AwareDatetime = Field(description="The event's timestamp")
+    session_id: _BoundedId = Field(description="The event's session id")
+    source_id: _BoundedId | None = Field(
+        default=None, description="The event's source id"
+    )
+    context: Context = Field(
+        default_factory=NullContext, description="The event's context"
+    )
+    block: Block = Field(description="The piece of the event's block")
+    properties: dict[str, PropertyValue] = Field(
+        default_factory=dict, description="The event's properties"
+    )
 
     @field_validator("properties", mode="before")
     @classmethod
@@ -158,14 +207,22 @@ class Segment(BaseModel):
 
 
 class Derivative(BaseModel):
-    """Information derived from a segment."""
+    """Content derived from a segment to be embedded in its place, carrying the segment's fields."""
 
-    uuid: UUID
-    segment_uuid: UUID
-    timestamp: datetime
-    context: Context = Field(default_factory=NullContext)
-    block: Block
-    properties: dict[str, PropertyValue] = Field(default_factory=dict)
+    uuid: UUID = Field(description="Identity of the derivative")
+    segment_uuid: UUID = Field(description="The segment the content was derived from")
+    timestamp: AwareDatetime = Field(description="The segment's timestamp")
+    session_id: _BoundedId = Field(description="The segment's session id")
+    source_id: _BoundedId | None = Field(
+        default=None, description="The segment's source id"
+    )
+    context: Context = Field(
+        default_factory=NullContext, description="The segment's context"
+    )
+    block: Block = Field(description="The derived content")
+    properties: dict[str, PropertyValue] = Field(
+        default_factory=dict, description="The segment's properties"
+    )
 
     @field_validator("properties", mode="before")
     @classmethod
@@ -203,18 +260,58 @@ class FormatOptions(BaseModel):
     timezone: InstanceOf[tzinfo] | None = None
 
 
-# QueryResult: the result of a memory query.
+# Results and options.
 
 
-class ScoredSegmentContext(BaseModel):
-    """A segment context anchored on a seed segment, with a score."""
+class Neighborhood(BaseModel):
+    """The segments around an anchor, never the anchor itself: its open neighborhood."""
 
-    score: float
-    seed_segment_uuid: UUID
-    segments: list[Segment]
+    before: list[Segment] = Field(
+        description="In the store's order, ending just before the anchor"
+    )
+    after: list[Segment] = Field(
+        description="In the store's order, starting just after the anchor"
+    )
 
 
-class QueryResult(BaseModel):
-    """Memory query result, ordered by reranker score."""
+class QueryHit(BaseModel):
+    """A segment a query matched, scored, with the neighborhood around it."""
 
-    scored_segment_contexts: list[ScoredSegmentContext]
+    score: float = Field(
+        description="Relevance of the seed segment to the query; higher is better"
+    )
+    seed: Segment = Field(description="The segment the query matched")
+    neighborhood: Neighborhood = Field(
+        description="The segments around the seed, in the store's order"
+    )
+
+    def window(self) -> list[Segment]:
+        """The seed and its neighbors, in the store's order."""
+        return [*self.neighborhood.before, self.seed, *self.neighborhood.after]
+
+
+class EvictionOptions(BaseModel):
+    """Eviction, at ingest, of stored derivatives that a new derivative nearly duplicates."""
+
+    cosine_similarity_threshold: float = Field(
+        ge=-1.0,
+        le=1.0,
+        description=(
+            "Cosine similarity between a new derivative and a stored one "
+            "at or above which eviction is considered"
+        ),
+    )
+    search_limit: int = Field(
+        gt=0,
+        description=(
+            "Maximum number of stored derivatives at or above the threshold "
+            "fetched per new derivative; only those can be evicted"
+        ),
+    )
+    target_size: int = Field(
+        gt=0,
+        description=(
+            "How many derivatives to keep out of a new derivative and the "
+            "stored ones at or above the threshold with it, when there are more"
+        ),
+    )

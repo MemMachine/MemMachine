@@ -2,8 +2,10 @@
 
 import datetime
 import json
+import math
 from datetime import UTC
-from uuid import uuid4
+from typing import Any
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -21,16 +23,18 @@ from memmachine_server.common.vector_store.data_types import (
     VectorStoreCollectionConfig,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Context,
     Event,
+    EvictionOptions,
     FormatOptions,
     NullContext,
     ProducerContext,
-    QueryResult,
-    ScoredSegmentContext,
+    QueryHit,
     Segment,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
+    SentenceTextDeriver,
     WholeTextDeriver,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
@@ -40,13 +44,22 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
+from memmachine_server.episodic_memory.event_memory.utils import (
+    BLOCK_KIND_KEY,
+    EVENT_SESSION_KEY,
+    EVENT_SOURCE_KEY,
+    EVENT_TIMESTAMP_KEY,
+)
 from server_tests.memmachine_server.common.reranker.fake_embedder import (
     FakeEmbedder,
 )
 
 from .conftest import (
+    AngleEmbedder,
+    FakeReranker,
     InMemorySegmentStorePartition,
     InMemoryVectorStoreCollection,
+    make_collection,
 )
 
 _async = pytest.mark.asyncio
@@ -56,7 +69,7 @@ _async = pytest.mark.asyncio
 # ---------------------------------------------------------------------------
 
 _T0 = datetime.datetime(2025, 6, 1, 12, 0, tzinfo=UTC)
-_NULL_CONTEXT = NullContext()
+_SHORT_TIME = FormatOptions(time_style="short")
 
 
 def _record_properties(record: Record) -> dict[str, PropertyValue]:
@@ -65,17 +78,25 @@ def _record_properties(record: Record) -> dict[str, PropertyValue]:
     return record.properties
 
 
+def _author(name: str) -> Context:
+    return ProducerContext(producer=name)
+
+
 def _make_event(
     text: str,
     *,
     timestamp: datetime.datetime = _T0,
-    context: ProducerContext | NullContext = _NULL_CONTEXT,
+    session_id: str = "s",
+    source_id: str = "src",
+    context: Context | None = None,
     properties=None,
 ) -> Event:
     return Event(
         uuid=uuid4(),
         timestamp=timestamp,
-        context=context,
+        session_id=session_id,
+        source_id=source_id,
+        context=context if context is not None else NullContext(),
         blocks=[TextBlock(text=text)],
         properties=properties or {},
     )
@@ -86,16 +107,53 @@ def _ts(minutes: int) -> datetime.datetime:
     return _T0 + datetime.timedelta(minutes=minutes)
 
 
+def _texts(hits: list[QueryHit]) -> set[str]:
+    return {
+        seg.block.text
+        for hit in hits
+        for seg in hit.window()
+        if isinstance(seg.block, TextBlock)
+    }
+
+
+def _build(
+    embedder: FakeEmbedder,
+    *,
+    partition: InMemorySegmentStorePartition | None = None,
+    collection: InMemoryVectorStoreCollection | None = None,
+    format_options: FormatOptions | None = None,
+    eviction: EvictionOptions | None = None,
+) -> EventMemory:
+    params: dict[str, Any] = {
+        "segment_store_partition": partition or InMemorySegmentStorePartition(),
+        "vector_store_collection": collection or make_collection(embedder),
+        "segmenter": TextSegmenter(),
+        "deriver": WholeTextDeriver(),
+        "embedder": embedder,
+        "eviction": eviction,
+    }
+    if format_options is not None:
+        params["format_options"] = format_options
+    return EventMemory(EventMemoryParams(**params))
+
+
 # ===================================================================
 # schema
 # ===================================================================
 
 
 class TestSchema:
-    def test_expected_vector_store_collection_schema_only_has_base_fields(self):
+    def test_expected_vector_store_collection_schema_declares_the_reserved_keys(self):
         assert EventMemory.expected_vector_store_collection_schema() == {
-            "_timestamp": datetime.datetime,
+            EVENT_TIMESTAMP_KEY: datetime.datetime,
+            EVENT_SESSION_KEY: str,
+            EVENT_SOURCE_KEY: str,
+            BLOCK_KIND_KEY: str,
         }
+        assert all(
+            key.startswith("memmachine_")
+            for key in EventMemory.expected_vector_store_collection_schema()
+        )
 
 
 # ===================================================================
@@ -122,42 +180,49 @@ class TestEncodeEvents:
         assert segment.offset == 0
         assert segment.block == TextBlock(text="hello world")
 
-        # One derivative record in vector store.
+        # One derivative record in vector store, with every filterable
+        # system value under its reserved key.
         assert len(fake_vector_store_collection.records) == 1
         record = next(iter(fake_vector_store_collection.records.values()))
         props = _record_properties(record)
-        assert props["_timestamp"] == event.timestamp
+        assert props[EVENT_TIMESTAMP_KEY] == event.timestamp
+        assert props[BLOCK_KIND_KEY] == "text"
+        assert props[EVENT_SESSION_KEY] == "s"
+        assert props[EVENT_SOURCE_KEY] == "src"
         # The derivative's segment is not copied here; the segment store owns
         # that mapping and answers it from the derivative's own row.
-        assert "_segment_uuid" not in props
+        assert not any("uuid" in key for key in props)
         assert await fake_segment_store_partition.get_segment_uuids_by_derivative_uuids(
             [record.uuid]
         ) == {record.uuid: segment.uuid}
 
-    async def test_producer_context(
+    async def test_session_and_source_are_recorded(
         self,
         event_memory: EventMemory,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
         fake_vector_store_collection: InMemoryVectorStoreCollection,
     ):
-        event = _make_event("hi", context=ProducerContext(producer="Alice"))
+        event = _make_event("hi", session_id="s1", source_id="alice")
         await event_memory.encode_events([event])
 
         record = next(iter(fake_vector_store_collection.records.values()))
         props = _record_properties(record)
-        assert "_context_type" not in props
-        assert "_context_producer" not in props
+        assert props[EVENT_SESSION_KEY] == "s1"
+        assert props[EVENT_SOURCE_KEY] == "alice"
+        segment = next(iter(fake_segment_store_partition.segments.values()))
+        assert (segment.session_id, segment.source_id) == ("s1", "alice")
 
-    async def test_no_context(
+    async def test_context_is_not_a_property(
         self,
         event_memory: EventMemory,
         fake_vector_store_collection: InMemoryVectorStoreCollection,
     ):
-        event = _make_event("bare text")
+        event = _make_event("hi", context=_author("Alice"))
         await event_memory.encode_events([event])
 
         record = next(iter(fake_vector_store_collection.records.values()))
         props = _record_properties(record)
-        assert "_context_type" not in props
+        assert not any("author" in key or "context" in key for key in props)
 
     async def test_long_text_chunking(
         self,
@@ -185,6 +250,8 @@ class TestEncodeEvents:
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
         event = Event(
+            session_id="s",
+            source_id="src",
             uuid=uuid4(),
             timestamp=_T0,
             blocks=[TextBlock(text="first"), TextBlock(text="second")],
@@ -212,47 +279,24 @@ class TestEncodeEvents:
         record = next(iter(fake_vector_store_collection.records.values()))
         assert _record_properties(record)["color"] == "red"
 
-    async def test_missing_context_schema_fields_still_allows_ingest(
-        self, fake_embedder
-    ):
-        # Collection without context fields.
-        config = VectorStoreCollectionConfig(
-            vector_dimensions=2,
-            indexed_properties_schema={
-                "_segment_uuid": str,
-                "_timestamp": datetime.datetime,
-            },
-        )
-        collection = InMemoryVectorStoreCollection(config)
-        partition = InMemorySegmentStorePartition()
-        em = EventMemory(
-            EventMemoryParams(
-                segment_store_partition=partition,
-                vector_store_collection=collection,
-                segmenter=TextSegmenter(),
-                deriver=WholeTextDeriver(),
-                embedder=fake_embedder,
+    async def test_reserved_property_key_is_rejected(self, event_memory: EventMemory):
+        event = _make_event("hi", properties={EVENT_SESSION_KEY: "spoofed"})
+        with pytest.raises(ValueError, match="reserved"):
+            await event_memory.encode_events([event])
+
+    async def test_illegal_property_key_is_rejected(self, event_memory: EventMemory):
+        event = _make_event("hi", properties={"Color": "red"})
+        with pytest.raises(ValueError, match=r"\[a-z0-9_\]"):
+            await event_memory.encode_events([event])
+
+    async def test_init_raises_on_missing_reserved_field(self, fake_embedder):
+        schema = EventMemory.expected_vector_store_collection_schema()
+        del schema[EVENT_SESSION_KEY]
+        collection = InMemoryVectorStoreCollection(
+            VectorStoreCollectionConfig(
+                vector_dimensions=2, indexed_properties_schema=schema
             )
         )
-        event = _make_event("hi", context=ProducerContext(producer="Alice"))
-        await em.encode_events([event])
-
-        assert len(collection.records) == 1
-        record = next(iter(collection.records.values()))
-        props = _record_properties(record)
-        assert "_context_type" not in props
-        assert "_context_producer" not in props
-
-    async def test_init_raises_on_missing_base_field(self, fake_embedder):
-        # Collection without _timestamp — base field required at init.
-        config = VectorStoreCollectionConfig(
-            vector_dimensions=2,
-            indexed_properties_schema={
-                "_segment_uuid": str,
-            },
-        )
-        collection = InMemoryVectorStoreCollection(config)
-        partition = InMemorySegmentStorePartition()
         with pytest.raises(
             ValueError,
             match="Collection schema missing fields required by EventMemory",
@@ -260,7 +304,7 @@ class TestEncodeEvents:
             EventMemory(
                 EventMemoryParams(
                     vector_store_collection=collection,
-                    segment_store_partition=partition,
+                    segment_store_partition=InMemorySegmentStorePartition(),
                     segmenter=TextSegmenter(),
                     embedder=fake_embedder,
                     deriver=WholeTextDeriver(),
@@ -290,6 +334,20 @@ class TestEncodeEvents:
         assert len(fake_segment_store_partition.segments) == 1
         assert len(fake_vector_store_collection.records) > 1
 
+    async def test_repeated_batch_leaves_one_copy(
+        self,
+        event_memory: EventMemory,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+        fake_vector_store_collection: InMemoryVectorStoreCollection,
+    ):
+        event = _make_event("hello world")
+        await event_memory.encode_events([event])
+        await event_memory.encode_events([event])
+
+        assert len(fake_segment_store_partition.segments) == 1
+        assert len(fake_vector_store_collection.records) == 1
+        assert len(await event_memory.query("hello")) == 1
+
 
 # ===================================================================
 # query
@@ -303,63 +361,242 @@ class TestQuery:
         e2 = _make_event("a longer sentence here", timestamp=_ts(1))
         await event_memory.encode_events([e1, e2])
 
-        result = await event_memory.query("test query")
-        assert isinstance(result, QueryResult)
-        assert len(result.scored_segment_contexts) > 0
+        hits = await event_memory.query("test query")
+        assert len(hits) == 2
+        for hit in hits:
+            assert isinstance(hit, QueryHit)
+            assert hit.seed.uuid in {s.uuid for s in hit.window()}
 
-        # Each scored context has segments.
-        for scored in result.scored_segment_contexts:
-            assert len(scored.segments) > 0
-
-    async def test_vector_search_limit(self, event_memory: EventMemory):
+    async def test_limit_is_a_maximum(self, event_memory: EventMemory):
         events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(10)]
         await event_memory.encode_events(events)
 
-        result = await event_memory.query("test", vector_search_limit=2)
-        assert len(result.scored_segment_contexts) <= 2
+        assert len(await event_memory.query("test", limit=2)) <= 2
 
-    async def test_expand_context(
+    async def test_expand_context_marks_the_seed(self, event_memory: EventMemory):
+        events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(5)]
+        await event_memory.encode_events(events)
+
+        hits = await event_memory.query("test query", limit=1, expand_context=6)
+
+        # With expand_context=6: before=2, after=4.
+        [hit] = hits
+        assert len(hit.window()) > 1
+        assert len({seg.event_uuid for seg in hit.window()}) > 1
+        assert hit.seed.uuid == hit.seed.uuid
+        timestamps = [seg.timestamp for seg in hit.window()]
+        assert timestamps == sorted(timestamps)
+
+    async def test_empty_memory(self, event_memory: EventMemory):
+        assert await event_memory.query("anything") == []
+
+    async def test_scores_are_cosine_similarities(self, event_memory: EventMemory):
+        await event_memory.encode_events([_make_event("hello")])
+        [hit] = await event_memory.query("hello")
+        # FakeEmbedder: all vectors same direction -> cosine 1.0.
+        assert hit.score == pytest.approx(1.0, abs=0.01)
+
+    async def test_hits_rank_by_cosine_similarity_and_a_threshold_excludes(self):
+        # Angles from the query: "near" 0.1 rad, "far" 1.2 rad, the query 0.
+        embedder = AngleEmbedder({"near": 0.1, "far": 1.2, "query": 0.0})
+        memory = _build(embedder)
+        far = _make_event("far", timestamp=_ts(0))
+        near = _make_event("near", timestamp=_ts(1))
+        await memory.encode_events([far, near])
+
+        ranked = await memory.query("query")
+        thresholded = await memory.query("query", min_cosine_similarity=0.9)
+
+        assert [hit.seed.event_uuid for hit in ranked] == [
+            near.uuid,
+            far.uuid,
+        ]
+        assert [hit.score for hit in ranked] == sorted(
+            (hit.score for hit in ranked), reverse=True
+        )
+        assert [hit.seed.event_uuid for hit in thresholded] == [near.uuid]
+
+    async def test_a_neighbor_in_the_window_is_not_a_hit(self):
+        embedder = AngleEmbedder({"match": 0.0, "other": 1.4, "query": 0.0})
+        memory = _build(embedder)
+        other = _make_event("other", timestamp=_ts(0))
+        match = _make_event("match", timestamp=_ts(1))
+        await memory.encode_events([other, match])
+
+        hits = await memory.query("query", limit=1, expand_context=3)
+
+        [hit] = hits
+        assert hit.seed.event_uuid == match.uuid
+        assert {seg.event_uuid for seg in hit.window()} == {other.uuid, match.uuid}
+
+
+@_async
+class TestQuerySystemFilters:
+    async def test_session_ids_select_events_and_confine_windows(
+        self, event_memory: EventMemory
+    ):
+        a0 = _make_event("a0", timestamp=_ts(0), session_id="a")
+        b0 = _make_event("b0", timestamp=_ts(1), session_id="b")
+        a1 = _make_event("a1", timestamp=_ts(2), session_id="a")
+        n0 = _make_event("n0", timestamp=_ts(3))
+        await event_memory.encode_events([a0, b0, a1, n0])
+
+        hits = await event_memory.query("x", session_ids=["a"], expand_context=6)
+
+        assert {hit.seed.event_uuid for hit in hits} == {
+            a0.uuid,
+            a1.uuid,
+        }
+        for hit in hits:
+            assert {seg.session_id for seg in hit.window()} == {"a"}
+
+    async def test_source_ids_select_events(self, event_memory: EventMemory):
+        alice = _make_event("alice says", timestamp=_ts(0), source_id="alice")
+        bob = _make_event("bob says", timestamp=_ts(1), source_id="bob")
+        await event_memory.encode_events([alice, bob])
+
+        hits = await event_memory.query("says", source_ids=["bob"], expand_context=6)
+
+        assert _texts(hits) == {"bob says"}
+
+    async def test_since_and_until_bound_hits_and_windows(
+        self, event_memory: EventMemory
+    ):
+        events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(5)]
+        await event_memory.encode_events(events)
+
+        hits = await event_memory.query(
+            "event", since=_ts(1), until=_ts(3), expand_context=6
+        )
+
+        assert _texts(hits) == {"event 1", "event 2"}
+
+    async def test_block_kinds_select_segments(self, event_memory: EventMemory):
+        await event_memory.encode_events([_make_event("hi")])
+
+        assert len(await event_memory.query("hi", block_kinds=["text"])) == 1
+        assert await event_memory.query("hi", block_kinds=["image"]) == []
+
+    async def test_timestamp_filter_field_reaches_the_reserved_key(
+        self, event_memory: EventMemory
+    ):
+        """A caller's bare `timestamp` names the event timestamp on both stores."""
+        early = _make_event("early", timestamp=_ts(0))
+        late = _make_event("late", timestamp=_ts(10))
+        await event_memory.encode_events([early, late])
+
+        hits = await event_memory.query(
+            "x",
+            property_filter=Comparison(field="timestamp", op=">=", value=_ts(5)),
+            expand_context=6,
+        )
+
+        assert _texts(hits) == {"late"}
+
+
+# ===================================================================
+# expand
+# ===================================================================
+
+
+@_async
+class TestExpand:
+    async def test_expand_around_a_segment(
         self,
         event_memory: EventMemory,
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
         events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(5)]
         await event_memory.encode_events(events)
+        [anchor] = fake_segment_store_partition.event_to_segments[events[2].uuid]
 
-        result = await event_memory.query("test query", expand_context=3)
+        neighborhood = await event_memory.expand(anchor, before=1, after=2)
 
-        # With expand_context=3, backward=1, forward=2.
-        # Context windows should include neighbors.
-        for scored in result.scored_segment_contexts:
-            assert len(scored.segments) >= 1
+        assert [s.event_uuid for s in neighborhood.before] == [events[1].uuid]
+        assert [s.event_uuid for s in neighborhood.after] == [
+            events[3].uuid,
+            events[4].uuid,
+        ]
+        assert anchor not in {s.uuid for s in neighborhood.before + neighborhood.after}
 
-    async def test_empty_memory(self, event_memory: EventMemory):
-        result = await event_memory.query("anything")
-        assert result.scored_segment_contexts == []
-
-    async def test_without_reranker_uses_embedding_scores(
-        self, event_memory: EventMemory
+    async def test_expand_around_an_event_uses_its_first_segment(
+        self,
+        event_memory: EventMemory,
     ):
-        await event_memory.encode_events([_make_event("hello")])
-        result = await event_memory.query("hello")
+        events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(3)]
+        long = Event(
+            session_id="s",
+            source_id="src",
+            uuid=uuid4(),
+            timestamp=_ts(1),
+            blocks=[TextBlock(text="first block"), TextBlock(text="second block")],
+        )
+        events[1] = long
+        await event_memory.encode_events(events)
 
-        # FakeEmbedder: all vectors same direction → cosine ≈ 1.0.
-        for scored in result.scored_segment_contexts:
-            assert scored.score == pytest.approx(1.0, abs=0.01)
+        neighborhood = await event_memory.expand(long.uuid, before=1, after=5)
 
-    async def test_with_reranker(self, event_memory_with_reranker: EventMemory):
-        e1 = _make_event("short", timestamp=_ts(0))
-        e2 = _make_event("a much longer text", timestamp=_ts(1))
-        await event_memory_with_reranker.encode_events([e1, e2])
+        assert [s.event_uuid for s in neighborhood.before] == [events[0].uuid]
+        # The anchor is the event's first segment; its second block is a neighbor.
+        assert [s.block.text for s in neighborhood.after] == [
+            "second block",
+            "event 2",
+        ]
 
-        result = await event_memory_with_reranker.query("anything")
+    async def test_expand_filters_neighbors_but_not_the_anchor(
+        self,
+        event_memory: EventMemory,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        red = _make_event("red", timestamp=_ts(0), properties={"color": "red"})
+        blue = _make_event("blue", timestamp=_ts(1), properties={"color": "blue"})
+        green = _make_event("green", timestamp=_ts(2), properties={"color": "green"})
+        await event_memory.encode_events([red, blue, green])
+        [anchor] = fake_segment_store_partition.event_to_segments[blue.uuid]
 
-        # FakeReranker scores by string length (higher is better).
-        # The result with the longer formatted context should come first.
-        scores = [sc.score for sc in result.scored_segment_contexts]
-        assert scores == sorted(scores, reverse=True)
-        assert len(scores) == 2
-        assert scores[0] > scores[1]
+        neighborhood = await event_memory.expand(
+            anchor,
+            before=5,
+            after=5,
+            property_filter=Comparison(field="m.color", op="=", value="green"),
+        )
+
+        assert neighborhood.before == []
+        assert [s.event_uuid for s in neighborhood.after] == [green.uuid]
+
+    async def test_expand_session_ids_bound_what_the_anchor_may_be_in(
+        self,
+        event_memory: EventMemory,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        a0 = _make_event("a0", timestamp=_ts(0), session_id="a")
+        b0 = _make_event("b0", timestamp=_ts(1), session_id="b")
+        a1 = _make_event("a1", timestamp=_ts(2), session_id="a")
+        await event_memory.encode_events([a0, b0, a1])
+        [anchor] = fake_segment_store_partition.event_to_segments[a0.uuid]
+
+        neighborhood = await event_memory.expand(anchor, after=5, session_ids=["a"])
+        assert [s.event_uuid for s in neighborhood.after] == [a1.uuid]
+        with pytest.raises(LookupError):
+            await event_memory.expand(anchor, after=5, session_ids=["b"])
+
+    async def test_expand_walks_further_from_an_edge(
+        self,
+        event_memory: EventMemory,
+    ):
+        events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(5)]
+        await event_memory.encode_events(events)
+
+        first = await event_memory.expand(events[0].uuid, after=2)
+        second = await event_memory.expand(first.after[-1].uuid, after=2)
+
+        assert [s.event_uuid for s in first.after] == [events[1].uuid, events[2].uuid]
+        assert [s.event_uuid for s in second.after] == [events[3].uuid, events[4].uuid]
+
+    async def test_unknown_anchor_raises(self, event_memory: EventMemory):
+        await event_memory.encode_events([_make_event("hi")])
+        with pytest.raises(LookupError):
+            await event_memory.expand(uuid4(), before=1, after=1)
 
 
 # ===================================================================
@@ -410,7 +647,7 @@ class TestForgetEvents:
 
 
 # ===================================================================
-# build_query_result_context (static, sync)
+# render (static, sync)
 # ===================================================================
 
 
@@ -421,167 +658,117 @@ def _make_segment(
     offset: int = 0,
     timestamp: datetime.datetime = _T0,
     text: str = "text",
-    context: ProducerContext | NullContext = _NULL_CONTEXT,
+    context: Context | None = None,
 ) -> Segment:
     return Segment(
+        session_id="s",
+        source_id="src",
         uuid=uuid4(),
         event_uuid=event_uuid or uuid4(),
         index=index,
         offset=offset,
         timestamp=timestamp,
         block=TextBlock(text=text),
-        context=context,
+        context=context if context is not None else NullContext(),
     )
 
 
-class TestBuildQueryResultContext:
-    def test_under_limit(self):
-        s1 = _make_segment(timestamp=_ts(0))
-        s2 = _make_segment(timestamp=_ts(1))
-        s3 = _make_segment(timestamp=_ts(2))
-
-        qr = QueryResult(
-            scored_segment_contexts=[
-                ScoredSegmentContext(
-                    score=1.0, seed_segment_uuid=s1.uuid, segments=[s1]
-                ),
-                ScoredSegmentContext(
-                    score=0.5, seed_segment_uuid=s2.uuid, segments=[s2, s3]
-                ),
-            ]
-        )
-        result = EventMemory.build_query_result_context(qr, max_num_segments=10)
-        assert len(result) == 3
-        # Sorted chronologically.
-        assert result == sorted(
-            result,
-            key=lambda s: (s.timestamp, s.event_uuid, s.index, s.offset),
-        )
-
-    def test_over_limit_prioritizes_seed(self):
-        # 5 segments, seed in the middle (index 2).
-        event_uuid = uuid4()
-        segments = [
-            _make_segment(
-                event_uuid=event_uuid, index=i, timestamp=_ts(i), text=f"seg{i}"
-            )
-            for i in range(5)
-        ]
-        seed = segments[2]
-
-        qr = QueryResult(
-            scored_segment_contexts=[
-                ScoredSegmentContext(
-                    score=1.0,
-                    seed_segment_uuid=seed.uuid,
-                    segments=segments,
-                ),
-            ]
-        )
-        result = EventMemory.build_query_result_context(qr, max_num_segments=3)
-        assert len(result) == 3
-        # Seed must be included.
-        result_uuids = {s.uuid for s in result}
-        assert seed.uuid in result_uuids
-
-    def test_deduplicates_across_contexts(self):
-        shared = _make_segment(timestamp=_ts(0))
-        s1 = _make_segment(timestamp=_ts(1))
-        s2 = _make_segment(timestamp=_ts(2))
-
-        qr = QueryResult(
-            scored_segment_contexts=[
-                ScoredSegmentContext(
-                    score=1.0,
-                    seed_segment_uuid=shared.uuid,
-                    segments=[shared, s1],
-                ),
-                ScoredSegmentContext(
-                    score=0.5,
-                    seed_segment_uuid=shared.uuid,
-                    segments=[shared, s2],
-                ),
-            ]
-        )
-        result = EventMemory.build_query_result_context(qr, max_num_segments=10)
-        uuids = [s.uuid for s in result]
-        assert len(uuids) == len(set(uuids))  # No duplicates.
-        assert len(result) == 3  # shared, s1, s2
-
-    def test_empty_result(self):
-        qr = QueryResult(scored_segment_contexts=[])
-        result = EventMemory.build_query_result_context(qr, max_num_segments=10)
-        assert result == []
-
-    def test_budget_exhaustion_across_contexts(self):
-        # First context: 3 segments. Second context: 4 segments. Budget: 5.
-        ctx1_segs = [_make_segment(timestamp=_ts(i)) for i in range(3)]
-        ctx2_segs = [_make_segment(timestamp=_ts(10 + i)) for i in range(4)]
-
-        qr = QueryResult(
-            scored_segment_contexts=[
-                ScoredSegmentContext(
-                    score=1.0,
-                    seed_segment_uuid=ctx1_segs[1].uuid,
-                    segments=ctx1_segs,
-                ),
-                ScoredSegmentContext(
-                    score=0.5,
-                    seed_segment_uuid=ctx2_segs[1].uuid,
-                    segments=ctx2_segs,
-                ),
-            ]
-        )
-        result = EventMemory.build_query_result_context(qr, max_num_segments=5)
-        assert len(result) == 5
-        # First context fully included.
-        result_uuids = {s.uuid for s in result}
-        for seg in ctx1_segs:
-            assert seg.uuid in result_uuids
-
-
-# ===================================================================
-# string_from_segment_context (static, sync)
-# ===================================================================
-
-
-class TestStringFromSegmentContext:
+class TestRender:
     def test_no_context(self):
         segment = _make_segment(text="hello world")
-        result = EventMemory.string_from_segment_context([segment])
+        result = EventMemory.render([segment], format_options=_SHORT_TIME)
         assert json.dumps("hello world") in result
         assert "[" in result  # Timestamp bracket.
 
-    def test_message_context(self):
-        segment = _make_segment(text="hi", context=ProducerContext(producer="Alice"))
-        result = EventMemory.string_from_segment_context([segment])
+    def test_producer_renders_its_name(self):
+        segment = _make_segment(text="hi", context=_author("Alice"))
+        result = EventMemory.render([segment], format_options=_SHORT_TIME)
         assert "Alice:" in result
         assert json.dumps("hi") in result
 
-    def test_continuation_segments(self):
+    def test_adjacent_pieces_share_a_header(self):
         event_uuid = uuid4()
         s1 = _make_segment(event_uuid=event_uuid, index=0, offset=0, text="part1")
-        s2 = Segment(
-            uuid=uuid4(),
-            event_uuid=event_uuid,
-            index=0,
-            offset=1,
-            timestamp=_T0,
-            block=TextBlock(text="part2"),
-        )
-        result = EventMemory.string_from_segment_context([s1, s2])
+        s2 = _make_segment(event_uuid=event_uuid, index=0, offset=1, text="part2")
+        s3 = _make_segment(event_uuid=event_uuid, index=1, offset=0, text="part3")
+        result = EventMemory.render([s1, s2, s3], format_options=_SHORT_TIME)
         # Text content is accumulated into one JSON string.
-        assert json.dumps("part1part2") in result
+        assert json.dumps("part1part2part3") in result
         # Only one timestamp line.
         assert result.count("[") == 1
 
+    def test_a_missing_piece_starts_a_new_header(self):
+        event_uuid = uuid4()
+        first = _make_segment(event_uuid=event_uuid, index=0, offset=0, text="A")
+        third = _make_segment(event_uuid=event_uuid, index=2, offset=0, text="C")
+        result = EventMemory.render([first, third], format_options=_SHORT_TIME)
+        assert result.count("[") == 2
+        assert json.dumps("AC") not in result
+
+    def test_no_timestamp_when_both_styles_are_off(self):
+        segment = _make_segment(text="hi", context=_author("Alice"))
+        result = EventMemory.render(
+            [segment], format_options=FormatOptions(date_style=None, time_style=None)
+        )
+        assert result == 'Alice: "hi"'
+
     def test_empty_list(self):
-        result = EventMemory.string_from_segment_context([])
-        assert result == ""
+        assert EventMemory.render([], format_options=_SHORT_TIME) == ""
 
 
 # ===================================================================
-# Round-trip tests (encode → query/forget → verify via public API)
+# rerank (static)
+# ===================================================================
+
+
+@_async
+class TestRerank:
+    async def test_scores_are_replaced_and_ordered(self, event_memory: EventMemory):
+        e1 = _make_event("short", timestamp=_ts(0))
+        e2 = _make_event("a much longer text", timestamp=_ts(1))
+        await event_memory.encode_events([e1, e2])
+        hits = await event_memory.query("anything")
+
+        reranked = await EventMemory.rerank(
+            "anything",
+            hits,
+            reranker=FakeReranker(),
+            format_options=_SHORT_TIME,
+        )
+
+        # FakeReranker scores by rendered length: the longer text first.
+        assert [hit.seed.event_uuid for hit in reranked] == [
+            e2.uuid,
+            e1.uuid,
+        ]
+        assert reranked[0].score > reranked[1].score > 1.0
+
+    async def test_every_hit_is_returned_in_descending_score(
+        self, event_memory: EventMemory
+    ):
+        events = [_make_event("x" * (i + 1), timestamp=_ts(i)) for i in range(4)]
+        await event_memory.encode_events(events)
+        hits = await event_memory.query("anything")
+
+        reranked = await EventMemory.rerank(
+            "anything", hits, reranker=FakeReranker(), format_options=_SHORT_TIME
+        )
+
+        assert len(reranked) == len(hits) == 4
+        scores = [hit.score for hit in reranked]
+        assert scores == sorted(scores, reverse=True)
+
+    async def test_empty(self):
+        assert (
+            await EventMemory.rerank(
+                "q", [], reranker=FakeReranker(), format_options=_SHORT_TIME
+            )
+            == []
+        )
+
+
+# ===================================================================
+# Round-trip tests (encode -> query/forget -> verify via public API)
 # ===================================================================
 
 
@@ -593,40 +780,27 @@ class TestRoundTrips:
         """Encoded events should be retrievable through query."""
         e1 = _make_event(
             "The quick brown fox",
-            context=ProducerContext(producer="Alice"),
+            context=_author("Alice"),
             timestamp=_ts(0),
         )
         e2 = _make_event(
             "jumps over the lazy dog",
-            context=ProducerContext(producer="Bob"),
+            context=_author("Bob"),
             timestamp=_ts(1),
         )
         await event_memory.encode_events([e1, e2])
 
-        result = await event_memory.query("test query")
-        assert len(result.scored_segment_contexts) == 2
-
-        # Verify the actual content is present in the returned segments.
-        all_segments = [
-            seg for scored in result.scored_segment_contexts for seg in scored.segments
-        ]
-        all_texts = {
-            seg.block.text for seg in all_segments if isinstance(seg.block, TextBlock)
-        }
-        assert "The quick brown fox" in all_texts
-        assert "jumps over the lazy dog" in all_texts
+        hits = await event_memory.query("test query")
+        assert len(hits) == 2
+        assert _texts(hits) == {"The quick brown fox", "jumps over the lazy dog"}
 
     async def test_encode_then_query_preserves_context(self, event_memory: EventMemory):
         """Query results should carry the original context."""
-        event = _make_event(
-            "hello", context=ProducerContext(producer="Alice"), timestamp=_ts(0)
-        )
+        event = _make_event("hello", context=_author("Alice"), timestamp=_ts(0))
         await event_memory.encode_events([event])
 
-        result = await event_memory.query("test")
-        segment = result.scored_segment_contexts[0].segments[0]
-        assert isinstance(segment.context, ProducerContext)
-        assert segment.context.producer == "Alice"
+        [hit] = await event_memory.query("test")
+        assert hit.seed.context == ProducerContext(producer="Alice")
 
     async def test_forget_then_query_excludes_forgotten(
         self, event_memory: EventMemory
@@ -638,76 +812,42 @@ class TestRoundTrips:
 
         await event_memory.forget_events([e2.uuid])
 
-        result = await event_memory.query("test query")
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
-        }
-        assert "keep this one" in all_texts
-        assert "forget this one" not in all_texts
+        texts = _texts(await event_memory.query("test query"))
+        assert "keep this one" in texts
+        assert "forget this one" not in texts
 
     async def test_forget_all_then_query_returns_empty(self, event_memory: EventMemory):
-        """After forgetting all events, query should return nothing."""
         e1 = _make_event("first", timestamp=_ts(0))
         e2 = _make_event("second", timestamp=_ts(1))
         await event_memory.encode_events([e1, e2])
 
         await event_memory.forget_events([e1.uuid, e2.uuid])
 
-        result = await event_memory.query("test")
-        assert result.scored_segment_contexts == []
+        assert await event_memory.query("test") == []
 
     async def test_multiple_encode_calls_are_additive(self, event_memory: EventMemory):
-        """Successive encode_events calls should accumulate data."""
         e1 = _make_event("batch one", timestamp=_ts(0))
         e2 = _make_event("batch two", timestamp=_ts(1))
 
         await event_memory.encode_events([e1])
         await event_memory.encode_events([e2])
 
-        result = await event_memory.query("test query")
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
+        assert _texts(await event_memory.query("test query")) == {
+            "batch one",
+            "batch two",
         }
-        assert "batch one" in all_texts
-        assert "batch two" in all_texts
 
-    async def test_expand_context_includes_neighbors(self, event_memory: EventMemory):
-        """Query with expand_context should return neighboring segments."""
-        events = [_make_event(f"event {i}", timestamp=_ts(i)) for i in range(5)]
-        await event_memory.encode_events(events)
-
-        result = await event_memory.query(
-            "test query", vector_search_limit=1, expand_context=6
-        )
-
-        # With expand_context=6: backward=2, forward=4.
-        # Even with only 1 seed, context window should include neighbors.
-        assert len(result.scored_segment_contexts) == 1
-        context_segments = result.scored_segment_contexts[0].segments
-        assert len(context_segments) > 1
-
-        # Context segments should be from distinct events.
-        event_uuids = {seg.event_uuid for seg in context_segments}
-        assert len(event_uuids) > 1
-
-    async def test_query_result_formatted_as_string(self, event_memory: EventMemory):
-        """End-to-end: encode, query, format as string."""
+    async def test_query_result_rendered_as_string(self, event_memory: EventMemory):
+        """End-to-end: encode, query, render."""
         event = _make_event(
             "The mitochondria is the powerhouse of the cell.",
-            context=ProducerContext(producer="textbook"),
+            context=_author("textbook"),
             timestamp=_ts(0),
         )
         await event_memory.encode_events([event])
 
-        result = await event_memory.query("biology")
-        segments = EventMemory.build_query_result_context(result, max_num_segments=10)
-        context_string = EventMemory.string_from_segment_context(segments)
+        [hit] = await event_memory.query("biology")
+        context_string = EventMemory.render(hit.window(), format_options=_SHORT_TIME)
 
         assert "textbook:" in context_string
         assert "The mitochondria is the powerhouse of the cell." in context_string
@@ -721,175 +861,112 @@ class TestRoundTrips:
 @_async
 class TestQueryWithFilter:
     async def test_equality_filter(self, event_memory: EventMemory):
-        """Filter by user property equality."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
         await event_memory.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "thing",
             property_filter=Comparison(field="m.color", op="=", value="red"),
         )
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
-        }
-        assert "red thing" in all_texts
-        assert "blue thing" not in all_texts
+        assert _texts(hits) == {"red thing"}
 
     async def test_inequality_filter(self, event_memory: EventMemory):
-        """Filter by != excludes matching events."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
         await event_memory.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "thing",
             property_filter=Comparison(field="m.color", op="!=", value="red"),
         )
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
-        }
-        assert "blue thing" in all_texts
-        assert "red thing" not in all_texts
+        assert _texts(hits) == {"blue thing"}
 
     async def test_in_filter(self, event_memory: EventMemory):
-        """Filter by IN membership."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
         e3 = _make_event("green thing", timestamp=_ts(2), properties={"color": "green"})
         await event_memory.encode_events([e1, e2, e3])
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "thing",
             property_filter=In(field="m.color", values=["red", "green"]),
         )
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
-        }
-        assert "red thing" in all_texts
-        assert "green thing" in all_texts
-        assert "blue thing" not in all_texts
+        assert _texts(hits) == {"red thing", "green thing"}
 
     async def test_is_null_filter(self, event_memory: EventMemory):
-        """Filter by IS NULL matches events missing the property."""
         e1 = _make_event("has color", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("no color", timestamp=_ts(1))
         await event_memory.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "thing",
             property_filter=IsNull(field="m.color"),
         )
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
-        }
-        assert "no color" in all_texts
-        assert "has color" not in all_texts
+        assert _texts(hits) == {"no color"}
 
     async def test_and_filter(self, event_memory: EventMemory):
-        """Filter by AND conjunction."""
         e1 = _make_event("red small", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue small", timestamp=_ts(1), properties={"color": "blue"})
         await event_memory.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "thing",
             property_filter=And(
                 left=Comparison(field="m.color", op="=", value="red"),
                 right=Not(expr=IsNull(field="m.color")),
             ),
         )
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
-        }
-        assert "red small" in all_texts
-        assert "blue small" not in all_texts
+        assert _texts(hits) == {"red small"}
 
     async def test_or_filter(self, event_memory: EventMemory):
-        """Filter by OR disjunction."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
         e3 = _make_event("green thing", timestamp=_ts(2), properties={"color": "green"})
         await event_memory.encode_events([e1, e2, e3])
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "thing",
             property_filter=Or(
                 left=Comparison(field="m.color", op="=", value="red"),
                 right=Comparison(field="m.color", op="=", value="blue"),
             ),
         )
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
-        }
-        assert "red thing" in all_texts
-        assert "blue thing" in all_texts
-        assert "green thing" not in all_texts
+        assert _texts(hits) == {"red thing", "blue thing"}
 
     async def test_not_filter(self, event_memory: EventMemory):
-        """Filter by NOT negation."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
         e2 = _make_event("blue thing", timestamp=_ts(1), properties={"color": "blue"})
         await event_memory.encode_events([e1, e2])
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "thing",
             property_filter=Not(expr=Comparison(field="m.color", op="=", value="red")),
         )
-        all_texts = {
-            seg.block.text
-            for scored in result.scored_segment_contexts
-            for seg in scored.segments
-            if isinstance(seg.block, TextBlock)
-        }
-        assert "blue thing" in all_texts
-        assert "red thing" not in all_texts
+        assert _texts(hits) == {"blue thing"}
 
     async def test_filter_returns_empty_when_nothing_matches(
         self, event_memory: EventMemory
     ):
-        """Filter that matches nothing returns empty results."""
-        e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
-        await event_memory.encode_events([e1])
+        await event_memory.encode_events(
+            [_make_event("red thing", timestamp=_ts(0), properties={"color": "red"})]
+        )
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "thing",
             property_filter=Comparison(field="m.color", op="=", value="purple"),
         )
-        assert result.scored_segment_contexts == []
+        assert hits == []
 
     async def test_context_filter_returns_no_results(self, event_memory: EventMemory):
-        """Context fields are no longer filterable."""
-        event = _make_event("hi", context=ProducerContext(producer="Alice"))
-        await event_memory.encode_events([event])
+        """Context is never filterable."""
+        await event_memory.encode_events([_make_event("hi", context=_author("Alice"))])
 
-        result = await event_memory.query(
+        hits = await event_memory.query(
             "hi",
-            property_filter=Comparison(
-                field="context.producer",
-                op="=",
-                value="Alice",
-            ),
+            property_filter=Comparison(field="context.author", op="=", value="Alice"),
         )
-        assert result.scored_segment_contexts == []
+        assert hits == []
 
 
 # ===================================================================
@@ -903,57 +980,48 @@ class TestQueryDeduplication:
         self,
         event_memory_with_sentences: EventMemory,
     ):
-        """Multiple derivatives from the same segment should produce one scored context."""
         event = _make_event(
             "First sentence. Second sentence. Third sentence.",
             timestamp=_ts(0),
         )
         await event_memory_with_sentences.encode_events([event])
 
-        result = await event_memory_with_sentences.query("sentence")
+        hits = await event_memory_with_sentences.query("sentence")
 
         # All derivatives map to the same segment, so deduplication
-        # should collapse them into a single scored context.
-        assert len(result.scored_segment_contexts) == 1
-        assert len(result.scored_segment_contexts[0].segments) == 1
+        # should collapse them into a single hit.
+        assert len(hits) == 1
+        assert len(hits[0].window()) == 1
 
     async def test_derivatives_from_different_segments_not_collapsed(
         self,
         event_memory_with_sentences: EventMemory,
     ):
-        """Derivatives from different segments should remain separate scored contexts."""
-        e1 = _make_event(
-            "Alpha sentence. Beta sentence.",
-            timestamp=_ts(0),
-        )
-        e2 = _make_event(
-            "Gamma sentence. Delta sentence.",
-            timestamp=_ts(1),
-        )
+        e1 = _make_event("Alpha sentence. Beta sentence.", timestamp=_ts(0))
+        e2 = _make_event("Gamma sentence. Delta sentence.", timestamp=_ts(1))
         await event_memory_with_sentences.encode_events([e1, e2])
 
-        result = await event_memory_with_sentences.query("sentence")
+        assert len(await event_memory_with_sentences.query("sentence")) == 2
 
-        # Two events → two segments → two scored contexts.
-        assert len(result.scored_segment_contexts) == 2
-
-    async def test_dedup_uses_best_derivative_score(
-        self,
-        event_memory_with_sentences: EventMemory,
-    ):
+    async def test_dedup_uses_best_derivative_score(self):
         """When multiple derivatives map to one segment, the best score wins."""
-        event = _make_event(
-            "Short. A much longer second sentence here.",
-            timestamp=_ts(0),
+        embedder = AngleEmbedder({"Close": 0.1, "Distant": 1.0, "query": 0.0})
+        memory = EventMemory(
+            EventMemoryParams(
+                segment_store_partition=InMemorySegmentStorePartition(),
+                vector_store_collection=make_collection(embedder),
+                segmenter=TextSegmenter(),
+                deriver=SentenceTextDeriver(),
+                embedder=embedder,
+            )
         )
-        await event_memory_with_sentences.encode_events([event])
+        await memory.encode_events(
+            [_make_event("Distant sentence. Close sentence.", timestamp=_ts(0))]
+        )
 
-        result = await event_memory_with_sentences.query("test")
+        [hit] = await memory.query("query")
 
-        # Cosine sim ≈ 1.0 for all (FakeEmbedder), but the key point
-        # is that we get exactly one context with a valid score.
-        assert len(result.scored_segment_contexts) == 1
-        assert result.scored_segment_contexts[0].score == pytest.approx(1.0, abs=0.01)
+        assert hit.score == pytest.approx(math.cos(0.1))
 
 
 # ===================================================================
@@ -975,27 +1043,9 @@ class _RecordingEmbedder(FakeEmbedder):
 
 @_async
 class TestIngestFormatOptions:
-    @staticmethod
-    def _build(embedder: FakeEmbedder) -> EventMemory:
-        config = VectorStoreCollectionConfig(
-            vector_dimensions=embedder.dimensions,
-            indexed_properties_schema=(
-                EventMemory.expected_vector_store_collection_schema()
-            ),
-        )
-        return EventMemory(
-            EventMemoryParams(
-                segment_store_partition=InMemorySegmentStorePartition(),
-                vector_store_collection=InMemoryVectorStoreCollection(config),
-                segmenter=TextSegmenter(),
-                deriver=WholeTextDeriver(),
-                embedder=embedder,
-            )
-        )
-
     async def test_default_bakes_full_date_into_embedding(self):
         embedder = _RecordingEmbedder()
-        event_memory = self._build(embedder)
+        event_memory = _build(embedder)
 
         await event_memory.encode_events([_make_event("hello world")])
 
@@ -1003,38 +1053,193 @@ class TestIngestFormatOptions:
         # and the message text is JSON-dumped (ensure_ascii=False).
         assert embedder.ingested == ['[Sunday, June 1, 2025] "hello world"']
 
-    async def test_format_options_can_disable_timestamp(self):
+    async def test_format_options_are_fixed_per_memory(self):
         embedder = _RecordingEmbedder()
-        event_memory = self._build(embedder)
-
-        await event_memory.encode_events(
-            [_make_event("hello world")],
-            format_options=FormatOptions(date_style=None, time_style=None),
+        event_memory = _build(
+            embedder, format_options=FormatOptions(date_style=None, time_style=None)
         )
 
+        await event_memory.encode_events([_make_event("hello world")])
+
         assert embedder.ingested == ['"hello world"']
+
+    async def test_author_is_embedded_by_name(self):
+        embedder = _RecordingEmbedder()
+        event_memory = _build(
+            embedder, format_options=FormatOptions(date_style=None, time_style=None)
+        )
+
+        await event_memory.encode_events(
+            [_make_event("hello", context=_author("Alice"), source_id="u-1")]
+        )
+
+        assert embedder.ingested == ['Alice: "hello"']
 
     async def test_segment_text_stays_structured(self):
         """The baked timestamp lives only in the embedding, not the segment."""
         embedder = _RecordingEmbedder()
         partition = InMemorySegmentStorePartition()
-        config = VectorStoreCollectionConfig(
-            vector_dimensions=embedder.dimensions,
-            indexed_properties_schema=(
-                EventMemory.expected_vector_store_collection_schema()
-            ),
-        )
-        event_memory = EventMemory(
-            EventMemoryParams(
-                segment_store_partition=partition,
-                vector_store_collection=InMemoryVectorStoreCollection(config),
-                segmenter=TextSegmenter(),
-                deriver=WholeTextDeriver(),
-                embedder=embedder,
-            )
-        )
+        event_memory = _build(embedder, partition=partition)
 
         await event_memory.encode_events([_make_event("hello world")])
 
         (segment,) = partition.segments.values()
         assert segment.block == TextBlock(text="hello world")
+
+
+# ===================================================================
+# eviction
+# ===================================================================
+
+
+async def _stored_minutes(collection: InMemoryVectorStoreCollection) -> list[int]:
+    """Minute-offsets (from _T0) of every derivative currently in the store."""
+    [result] = await collection.query(query_vectors=[[1.0, 0.0]], limit=1000)
+    minutes: list[int] = []
+    for match in result.matches:
+        timestamp = _record_properties(collection.records[match.record_uuid])[
+            EVENT_TIMESTAMP_KEY
+        ]
+        assert isinstance(timestamp, datetime.datetime)
+        minutes.append(int((timestamp - _T0).total_seconds() // 60))
+    return sorted(minutes)
+
+
+def _linked(partition: InMemorySegmentStorePartition) -> set[UUID]:
+    return {
+        uid for linked in partition.segment_to_derivatives.values() for uid in linked
+    }
+
+
+class TestEviction:
+    """Eviction caps a cosine similarity cluster at `target_size` by dropping its
+    temporally middle members.
+
+    The FakeEmbedder maps every text onto one direction (cosine 1.0), so
+    each batch below forms a single cluster regardless of the text.
+    """
+
+    @_async
+    async def test_disabled_keeps_all_and_issues_no_query(
+        self, event_memory, fake_vector_store_collection, monkeypatch
+    ):
+        queries: list[int] = []
+        original_query = fake_vector_store_collection.query
+
+        async def counting_query(**kwargs):
+            queries.append(1)
+            return await original_query(**kwargs)
+
+        monkeypatch.setattr(fake_vector_store_collection, "query", counting_query)
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(20)]
+
+        await event_memory.encode_events(events)
+
+        assert len(await _stored_minutes(fake_vector_store_collection)) == 20
+        assert queries == [1]  # the one query _stored_minutes made
+
+    @_async
+    async def test_cluster_within_target_keeps_all(
+        self, event_memory_with_eviction, fake_vector_store_collection
+    ):
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(5)]
+        await event_memory_with_eviction.encode_events(events)
+        assert await _stored_minutes(fake_vector_store_collection) == [0, 1, 2, 3, 4]
+
+    @_async
+    async def test_intra_batch_caps_and_keeps_temporal_extremes(
+        self, event_memory_with_eviction, fake_vector_store_collection
+    ):
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(20)]
+        await event_memory_with_eviction.encode_events(events)
+        # target=5 -> keep 2 earliest + 3 latest, evict the middle.
+        assert await _stored_minutes(fake_vector_store_collection) == [0, 1, 17, 18, 19]
+
+    @_async
+    async def test_batch_order_mimics_serial_ingestion(
+        self, fake_vector_store_collection
+    ):
+        """A batch evicts what encoding its events one at a time would."""
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(12)]
+        eviction = EvictionOptions(
+            cosine_similarity_threshold=0.5, search_limit=100, target_size=5
+        )
+        batched_collection = make_collection(FakeEmbedder())
+        serial_collection = make_collection(FakeEmbedder())
+        batched = _build(
+            FakeEmbedder(), collection=batched_collection, eviction=eviction
+        )
+        serial = _build(FakeEmbedder(), collection=serial_collection, eviction=eviction)
+
+        await batched.encode_events(list(reversed(events)))
+        for event in events:
+            await serial.encode_events([event])
+
+        assert await _stored_minutes(batched_collection) == await _stored_minutes(
+            serial_collection
+        )
+
+    @_async
+    async def test_clusters_are_trimmed_independently(self):
+        embedder = AngleEmbedder({"alpha": 0.0, "beta": math.pi / 2})
+        collection = make_collection(embedder)
+        memory = _build(
+            embedder,
+            collection=collection,
+            eviction=EvictionOptions(
+                cosine_similarity_threshold=0.5, search_limit=100, target_size=5
+            ),
+        )
+        alphas = [_make_event(f"alpha {i}", timestamp=_ts(i)) for i in range(7)]
+        betas = [_make_event(f"beta {i}", timestamp=_ts(10 + i)) for i in range(2)]
+
+        await memory.encode_events([*alphas, *betas])
+
+        assert await _stored_minutes(collection) == [
+            0,
+            1,
+            4,
+            5,
+            6,
+            10,
+            11,
+        ]
+
+    @_async
+    async def test_cross_batch_displaces_stored_records_and_their_links(
+        self,
+        event_memory_with_eviction,
+        fake_vector_store_collection,
+        fake_segment_store_partition,
+    ):
+        await event_memory_with_eviction.encode_events(
+            [_make_event(f"a{i}", timestamp=_ts(i)) for i in range(5)]
+        )
+        assert await _stored_minutes(fake_vector_store_collection) == [0, 1, 2, 3, 4]
+        stored_before = set(fake_vector_store_collection.records)
+
+        # A second batch grows the cluster past target: stored records from the
+        # temporal middle are displaced, from the vector store and the links.
+        await event_memory_with_eviction.encode_events(
+            [_make_event(f"b{i}", timestamp=_ts(5 + i)) for i in range(5)]
+        )
+
+        assert await _stored_minutes(fake_vector_store_collection) == [0, 1, 7, 8, 9]
+        displaced = stored_before - set(fake_vector_store_collection.records)
+        assert displaced
+        assert not (displaced & _linked(fake_segment_store_partition))
+        assert _linked(fake_segment_store_partition) == set(
+            fake_vector_store_collection.records
+        )
+        # Segments are untouched: every event is still expandable.
+        assert len(fake_segment_store_partition.segments) == 10
+
+    @_async
+    async def test_skipped_derivatives_are_never_linked(
+        self, event_memory_with_eviction, fake_segment_store_partition
+    ):
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(20)]
+        await event_memory_with_eviction.encode_events(events)
+
+        assert len(_linked(fake_segment_store_partition)) == 5
+        assert len(fake_segment_store_partition.segments) == 20

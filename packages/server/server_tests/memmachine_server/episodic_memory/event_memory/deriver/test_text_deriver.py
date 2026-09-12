@@ -32,6 +32,8 @@ def _make_segment(
     properties=None,
 ) -> Segment:
     return Segment(
+        session_id="s",
+        source_id="src",
         uuid=uuid4(),
         event_uuid=uuid4(),
         index=0,

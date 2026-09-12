@@ -85,6 +85,8 @@ class TextSegmenter(Segmenter):
                             index=index,
                             offset=offset,
                             timestamp=event.timestamp,
+                            session_id=event.session_id,
+                            source_id=event.source_id,
                             block=TextBlock(text=chunk),
                             context=event.context,
                             properties=event.properties,

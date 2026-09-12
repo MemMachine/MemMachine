@@ -6,10 +6,12 @@ Defines an interface for adding, retrieving, and deleting segments of events.
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
+from datetime import datetime
 from uuid import UUID
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Neighborhood,
     Segment,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
@@ -26,6 +28,18 @@ class SegmentStorePartition(ABC):
     then on, even if a partition is later created under the same key.
     A call with empty input may do no work and return without checking
     the handle.
+
+    Segments are immutable. `add_segments` must reject a segment uuid
+    that is already stored rather than replace it, and no operation that
+    edits a stored segment may be added to this contract; a changed
+    event is forgotten and encoded again.
+
+    Segments within a partition are in one total order,
+    `(timestamp, event_uuid, index, offset)`. `get_segments` fetches
+    segments by uuid, subject to the filters. `get_segment_neighborhoods`
+    walks the order outward from seeds named by uuid, within their
+    session, and returns the neighbors that pass the filters; the seed
+    itself is located, never filtered, and never returned.
     """
 
     @property
@@ -49,30 +63,105 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_segment_contexts(
+    async def get_segments(
+        self,
+        segment_uuids: Iterable[UUID],
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        session_ids: Iterable[str] | None = None,
+        source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> dict[UUID, Segment]:
+        """
+        Get the segments among these that the partition holds and that pass the filters.
+
+        Args:
+            segment_uuids (Iterable[UUID]):
+                The uuids to look up.
+            since (datetime | None):
+                Inclusive lower bound on the segment timestamp, timezone-aware
+                (default: None).
+            until (datetime | None):
+                Exclusive upper bound on the segment timestamp, timezone-aware,
+                so ranges meet without overlap (default: None).
+            session_ids (Iterable[str] | None):
+                Keep only segments whose session id is one of these; an
+                empty list keeps none (default: None, every session).
+            source_ids (Iterable[str] | None):
+                Keep only segments whose source id is one of these; an
+                empty list keeps none (default: None, every source).
+            block_kinds (Iterable[str] | None):
+                Keep only segments whose block is of one of these kinds;
+                an empty list keeps none (default: None, every kind).
+            property_filter (FilterExpr | None):
+                A filter expression over segment properties (default: None).
+
+        Returns:
+            dict[UUID, Segment]:
+                A mapping from each uuid found and admitted to its segment.
+                A uuid the partition does not hold, or whose segment fails
+                a filter, is absent.
+
+        Raises:
+            ValueError: If `since` or `until` is naive.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_segment_neighborhoods(
         self,
         seed_segment_uuids: Iterable[UUID],
         *,
-        max_backward_segments: int = 0,
-        max_forward_segments: int = 0,
+        before: int = 0,
+        after: int = 0,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
-    ) -> dict[UUID, list[Segment]]:
+    ) -> dict[UUID, Neighborhood]:
         """
-        Get a window of segments around each of the seed segments.
+        Get the segments around each seed segment, never the seed itself.
+
+        The seed is an address: it is located whether or not it passes any
+        filter, the walk stays within its session, and the filters select
+        the neighbors. Other segments of the seed's own event are ordinary
+        neighbors.
 
         Args:
             seed_segment_uuids (Iterable[UUID]):
-                The UUIDs of the seed segments for which to retrieve contexts.
-            max_backward_segments (int):
-                The maximum number of segments to include before each seed segment (default: 0).
-            max_forward_segments (int):
-                The maximum number of segments to include after each seed segment (default: 0).
+                The UUIDs of the segments to gather neighbors around.
+            before (int):
+                The maximum number of neighbors before each seed (default: 0).
+            after (int):
+                The maximum number of neighbors after each seed (default: 0).
+            since (datetime | None):
+                Inclusive lower bound on the neighbors' timestamp, timezone-aware
+                (default: None).
+            until (datetime | None):
+                Exclusive upper bound on the neighbors' timestamp, timezone-aware,
+                so ranges meet without overlap (default: None).
+            source_ids (Iterable[str] | None):
+                Keep only neighbors whose source id is one of these; an
+                empty list keeps none (default: None, every source).
+            block_kinds (Iterable[str] | None):
+                Keep only neighbors whose block is of one of these kinds;
+                an empty list keeps none (default: None, every kind).
             property_filter (FilterExpr | None):
-                An optional filter expression to apply to the segments (default: None).
+                A filter expression over the neighbors' properties
+                (default: None).
 
         Returns:
-            dict[UUID, list[Segment]]:
-                A mapping from each seed segment UUID to its context segments.
+            dict[UUID, Neighborhood]:
+                A mapping from each known seed to its neighbors: `before`
+                in order ending just before the seed, `after` in order
+                starting just after it. A seed with no neighbors to show
+                maps to two empty lists; an unknown seed is absent.
+
+        Raises:
+            ValueError: If `since` or `until` is naive.
         """
         raise NotImplementedError
 
@@ -90,7 +179,9 @@ class SegmentStorePartition(ABC):
 
         Returns:
             dict[UUID, list[UUID]]:
-                A mapping from each event UUID to the UUIDs of its associated segments.
+                A mapping from each event UUID to the UUIDs of its
+                associated segments, in the event's own order (by index,
+                then offset).
         """
         raise NotImplementedError
 
@@ -145,6 +236,20 @@ class SegmentStorePartition(ABC):
         Args:
             segment_uuids (Iterable[UUID]):
                 The UUIDs of the segments to delete.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_derivatives(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> None:
+        """
+        Delete derivative links by derivative UUID, leaving their segments.
+
+        Args:
+            derivative_uuids (Iterable[UUID]):
+                The UUIDs of the derivatives to unlink.
         """
         raise NotImplementedError
 
@@ -258,7 +363,7 @@ class SegmentStore(ABC):
 
         The partition becomes unreachable immediately: it can no longer be
         opened, and handles opened on it raise from then on.
-        Implementations may defer physically reclaiming its rows to
+        Implementations may defer physically reclaiming its storage to
         `purge_deleted_partitions`. Idempotent.
 
         Args:

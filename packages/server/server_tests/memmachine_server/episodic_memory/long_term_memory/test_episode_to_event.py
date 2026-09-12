@@ -11,12 +11,12 @@ from memmachine_server.common.episode_store import (
     EpisodeType,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
-    NullContext,
     ProducerContext,
     TextBlock,
 )
 from memmachine_server.episodic_memory.long_term_memory.long_term_memory import (
     _EVENT_UUID_NAMESPACE,
+    DEFAULT_SESSION_ID,
     LongTermMemory,
 )
 
@@ -58,29 +58,18 @@ def test_event_uuid_is_deterministic_uuid5_of_episode_uid():
     assert LongTermMemory._episode_to_event(episode).uuid == event.uuid
 
 
-def test_message_episode_uses_producer_context():
-    episode = _episode(producer_id="alice", episode_type=EpisodeType.MESSAGE)
-    event = LongTermMemory._episode_to_event(episode)
-    assert isinstance(event.context, ProducerContext)
-    assert event.context.producer == "alice"
+def test_producer_is_the_source_and_the_session_is_the_default_stream():
+    """The producer id is the event's source; the session is the reserved default.
 
-
-def test_non_message_episode_uses_null_context():
-    # Use any non-MESSAGE EpisodeType. The enum is defined in
-    # memmachine_common.api; pick the first non-MESSAGE entry dynamically so
-    # this test doesn't break when the enum gains members.
-    non_message = next(
-        (t for t in EpisodeType if t is not EpisodeType.MESSAGE),
-        None,
-    )
-    if non_message is None:
-        # Only MESSAGE exists today; this branch will start exercising once
-        # additional Episode types are introduced. Skip rather than assert
-        # invariant we can't yet exercise.
-        pytest.skip("Only MESSAGE EpisodeType exists; nothing else to verify yet")
-    episode = _episode(episode_type=non_message)
+    A message carries a `ProducerContext`, as before. The server has no
+    conversation id to give, so the events are one stream under a name a
+    caller cannot use.
+    """
+    episode = _episode(producer_id="alice")
     event = LongTermMemory._episode_to_event(episode)
-    assert isinstance(event.context, NullContext)
+    assert event.source_id == "alice"
+    assert event.context == ProducerContext(producer="alice")
+    assert event.session_id == DEFAULT_SESSION_ID == "memmachine_default"
 
 
 def test_event_has_single_text_block_with_episode_content():
