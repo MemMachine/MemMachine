@@ -8,6 +8,7 @@ import pytest
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Author,
+    Context,
     DateTimeFormat,
     Segment,
     TextBlock,
@@ -30,7 +31,7 @@ def _segment(text: str, *, context=None) -> Segment:
         offset=0,
         timestamp=_TS,
         source_id="chat",
-        context=context if context is not None else {},
+        context=context if context is not None else Context(),
         block=TextBlock(text=text),
     )
 
@@ -69,7 +70,7 @@ async def test_no_handler_derives_nothing():
 
 
 async def test_handler_of_the_kind_derives_and_the_table_builds_the_envelope():
-    segment = _segment("hi", context={"author": Author(name="alice")})
+    segment = _segment("hi", context=Context(Author(name="alice")))
     derivatives = await Deriver([_Two()]).derive(segment)
     # The table composes the text to embed: the handler's header, then
     # the derived text as one escaped token.
