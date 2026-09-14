@@ -48,8 +48,8 @@ through SQLAlchemy. The backend keeps only records, each carrying the
   SQLite.
 - `RegistryBackedVectorStore` (`common/vector_store/registry_backed_vector_store.py`)
   is the base of the Qdrant and Milvus stores and makes every registry call
-  they make: create, open-or-create, get, delete, the purge round, and a
-  handle's liveness fence. Its handle's `upsert`, `query`, and `delete` check
+  they make: create, get, delete, the purge round, and a handle's liveness
+  fence. Its handle's `upsert`, `query`, and `delete` check
   their inputs and the handle's liveness around the backend call. A subclass
   supplies the backend steps: preparing the storage the store's partitions
   share, at startup; preparing the storage a new partition needs of its own;
@@ -226,11 +226,11 @@ makes the partition live:
 
 - The registry's primary key is the one arbiter: a racing creator on any
   process loses at the insert, never in the backend.
-- A pending partition holds its key but is not opened: `open_partition` raises
+- A pending partition holds its key but is not opened: `get_partition` raises
   `VectorStorePartitionPendingError`, which says since when it has been
-  pending, a `create_partition` of the key raises
-  `VectorStorePartitionAlreadyExistsError`, and open-or-create waits for it.
-  `None` from `open_partition` means only that no partition holds the key.
+  pending, and a `create_partition` of the key raises
+  `VectorStorePartitionAlreadyExistsError`.
+  `None` from `get_partition` means only that no partition holds the key.
 - A preparation or confirmation that raises, or is cancelled, cancels the
   reservation when the registry can, which frees the key and queues the
   incarnation's tombstone; a confirmation that committed before its failure
@@ -248,18 +248,11 @@ makes the partition live:
   the mark is conditional on its incarnation: the creation raises
   `VectorStorePartitionDeletedError`.
 
-**`open_or_create_partition`** is read-then-create, retried a second apart: a
-live row is opened; a pending row is another creator's, so the loop waits for
-it rather than registering; no row means create; losing the create means a
-racing creator took the key; losing the mark means a racing deleter removed
-the partition while its storage was prepared, so the loop creates again.
-After 10 attempts it raises `VectorStorePartitionPendingError` if the last
-lookup found the partition pending, and `VectorStoreAttemptsExhaustedError`
-otherwise.
-
-The contract tests (`partition_lifecycle_contract.py`) pin the outcome of a
-lost race on Qdrant and Milvus: the loser opens the winner's partition, and
-exactly one reservation is lost.
+A store creates strictly and looks up without creating: create-if-absent is
+its owner's, where the key's provenance is known. The Qdrant tests pin a
+creation race between two clients sharing one registry: exactly one creator
+creates the key, the other gets `VectorStorePartitionAlreadyExistsError`, and
+both then bind handles to the one incarnation.
 
 ### Handles and fencing
 
@@ -292,9 +285,8 @@ retention before its purge starts.
 
 The registry reuses the segment store's incarnation logic wherever it can: the
 bounded mint loop, the in-transaction locking re-check of the queue, the
-idempotent deletion that queues a tombstone, the claim under `FOR UPDATE SKIP
-LOCKED`, and the retried read-then-create of open-or-create. It differs where
-the backend is remote:
+idempotent deletion that queues a tombstone, and the claim under `FOR UPDATE
+SKIP LOCKED`. It differs where the backend is remote:
 
 - deletion is `DELETE ... RETURNING` then the queue insert, since there is no
   write fence to pin the row with;

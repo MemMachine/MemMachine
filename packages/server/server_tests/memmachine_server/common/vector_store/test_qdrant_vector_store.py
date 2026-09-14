@@ -157,6 +157,16 @@ async def _params(client, registry_engine, **overrides) -> QdrantVectorStorePara
     return QdrantVectorStoreParams(**params)
 
 
+async def _get_or_create_partition(store, partition_key: str):
+    """The partition, created if absent: what a session's creation does, for a test."""
+    partition = await store.get_partition(partition_key)
+    if partition is None:
+        await store.create_partition(partition_key)
+        partition = await store.get_partition(partition_key)
+    assert partition is not None
+    return partition
+
+
 @pytest_asyncio.fixture
 async def store(any_qdrant_client, registry_engine):
     s = QdrantVectorStore(await _params(any_qdrant_client, registry_engine))
@@ -167,7 +177,7 @@ async def store(any_qdrant_client, registry_engine):
 @pytest_asyncio.fixture
 async def collection(store):
     await store.create_partition(NAME)
-    coll = await store.open_partition(NAME)
+    coll = await store.get_partition(NAME)
     assert coll is not None
     yield coll
     await store.delete_partition(NAME)
@@ -198,13 +208,13 @@ class TestPartitionLifecycle:
     @pytest.mark.asyncio
     async def test_create_get_delete(self, store):
         await store.create_partition("lifecycle")
-        coll = await store.open_partition("lifecycle")
+        coll = await store.get_partition("lifecycle")
         assert isinstance(coll, QdrantVectorStorePartition)
         await store.delete_partition("lifecycle")
 
     @pytest.mark.asyncio
-    async def test_open_partition_returns_qdrant_collection(self, store, collection):
-        coll = await store.open_partition(NAME)
+    async def test_get_partition_returns_qdrant_collection(self, store, collection):
+        coll = await store.get_partition(NAME)
         assert isinstance(coll, QdrantVectorStorePartition)
 
     @pytest.mark.asyncio
@@ -217,26 +227,13 @@ class TestPartitionLifecycle:
         await store.delete_partition("nonexistent")
 
     @pytest.mark.asyncio
-    async def test_open_or_create_creates_when_missing(self, store):
-        coll = await store.open_or_create_partition("new")
-        assert isinstance(coll, QdrantVectorStorePartition)
-        await store.delete_partition("new")
-
-    @pytest.mark.asyncio
-    async def test_open_or_create_opens_when_exists(self, store):
-        await store.create_partition("existing")
-        coll = await store.open_or_create_partition("existing")
-        assert isinstance(coll, QdrantVectorStorePartition)
-        await store.delete_partition("existing")
-
-    @pytest.mark.asyncio
     async def test_partitions_share_the_store_collection(self, store):
         """Every partition is a payload value inside the store's one native collection."""
         await store.create_partition("coll_a")
         await store.create_partition("coll_b")
 
-        coll_a = await store.open_partition("coll_a")
-        coll_b = await store.open_partition("coll_b")
+        coll_a = await store.get_partition("coll_a")
+        coll_b = await store.get_partition("coll_b")
         assert coll_a is not None
         assert coll_b is not None
         assert coll_a._vector_store_name == store._vector_store_name
@@ -409,7 +406,7 @@ class TestSimilarityMetrics:
         )
         await store.startup()
         await store.create_partition(NAME)
-        partition = await store.open_partition(NAME)
+        partition = await store.get_partition(NAME)
         assert partition is not None
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
         await partition.upsert(records=records)
@@ -461,7 +458,7 @@ class TestSimilarityMetrics:
         )
         await store.startup()
         await store.create_partition(NAME)
-        partition = await store.open_partition(NAME)
+        partition = await store.get_partition(NAME)
         assert partition is not None
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
         await partition.upsert(records=records)
@@ -1245,8 +1242,8 @@ class TestPartitionIsolation:
     async def test_query_only_returns_own_partition(self, store):
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
-        coll_a = await store.open_partition("tenant_a")
-        coll_b = await store.open_partition("tenant_b")
+        coll_a = await store.get_partition("tenant_a")
+        coll_b = await store.get_partition("tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -1272,8 +1269,8 @@ class TestPartitionIsolation:
     async def test_a_query_returns_only_its_own_partitions_records(self, store):
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
-        coll_a = await store.open_partition("tenant_a")
-        coll_b = await store.open_partition("tenant_b")
+        coll_a = await store.get_partition("tenant_a")
+        coll_b = await store.get_partition("tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -1299,8 +1296,8 @@ class TestPartitionIsolation:
         own records."""
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
-        coll_a = await store.open_partition("tenant_a")
-        coll_b = await store.open_partition("tenant_b")
+        coll_a = await store.get_partition("tenant_a")
+        coll_b = await store.get_partition("tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -1358,7 +1355,7 @@ class TestPartitionIsolation:
         await other.startup()
         await store.create_partition(NAME)
         await other.create_partition(NAME)
-        writer = await store.open_partition(NAME)
+        writer = await store.get_partition(NAME)
         assert writer is not None
         writer_before = await _count_stored(store)
         other_before = await _count_stored(other)
@@ -1380,8 +1377,8 @@ class TestPartitionIsolation:
     async def test_the_same_uuid_in_two_partitions_is_two_records(self, store):
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
-        coll_a = await store.open_partition("tenant_a")
-        coll_b = await store.open_partition("tenant_b")
+        coll_a = await store.get_partition("tenant_a")
+        coll_b = await store.get_partition("tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -1414,8 +1411,8 @@ class TestPartitionIsolation:
     async def test_delete_only_affects_own_partition(self, store):
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
-        coll_a = await store.open_partition("tenant_a")
-        coll_b = await store.open_partition("tenant_b")
+        coll_a = await store.get_partition("tenant_a")
+        coll_b = await store.get_partition("tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -1473,7 +1470,7 @@ class TestPurge:
         )
         await dropped.startup()
         await dropped.create_partition("dropped")
-        partition = await dropped.open_partition("dropped")
+        partition = await dropped.get_partition("dropped")
         assert partition is not None
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
@@ -1494,7 +1491,7 @@ class TestPurge:
         round reclaims the late write."""
         key = "purged"
         await store.create_partition(key)
-        partition = await store.open_partition(key)
+        partition = await store.get_partition(key)
         assert partition is not None
         await partition.upsert(
             records=[
@@ -1632,7 +1629,7 @@ class _ModelRun:
 
     async def create(self, key: str) -> None:
         await self.store.create_partition(key)
-        handle = await self.store.open_partition(key)
+        handle = await self.store.get_partition(key)
         assert handle is not None
         self.handles[key] = handle
         self.model[key] = {}
@@ -1816,7 +1813,16 @@ class _ChurnWorker:
 
     async def handle(self, key: str) -> QdrantVectorStorePartition:
         if key not in self.handles:
-            self.handles[key] = await self.store.open_or_create_partition(key)
+            handle = await self.store.get_partition(key)
+            if handle is None:
+                await self.store.create_partition(key)
+                handle = await self.store.get_partition(key)
+            if handle is None:
+                # Deleted again between its creation and the lookup.
+                raise VectorStorePartitionDeletedError(
+                    self.store._vector_store_name, key
+                )
+            self.handles[key] = handle
         return self.handles[key]
 
     async def upsert(self, key: str) -> None:
@@ -1962,7 +1968,7 @@ async def _assert_churned_state(
     """Each live partition holds what its workers wrote and kept; a deleted one holds nothing written successfully."""
     live: set[UUID] = set()
     for key in _CHURN_KEYS:
-        handle = await store.open_partition(key)
+        handle = await store.get_partition(key)
         if handle is None:
             continue
         live.add(handle._incarnation)
@@ -2053,7 +2059,7 @@ class TestMetrics:
 
         mock_histogram.reset_mock()
 
-        coll = await store.open_partition("metrics_test")
+        coll = await store.get_partition("metrics_test")
         assert coll is not None
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -2102,7 +2108,7 @@ class TestCollectionProvisioningAcrossWorkers:
         )
         await store.startup()
         try:
-            await store.open_or_create_partition(name)
+            await _get_or_create_partition(store, name)
             info = await qdrant_client.get_collection(native)
             indexed = set(info.payload_schema or {})
             assert _PAYLOAD_INCARNATION in indexed, (
@@ -2136,10 +2142,10 @@ class TestCollectionProvisioningAcrossWorkers:
     ):
         """Two clients, one registry - the multi-worker shape, in one process.
 
-        Both workers find the key free and reserve it at once. Both
-        open-or-creates return a handle on the one partition, so a record
-        written through either is read through the other, and of a strict
-        create both issue at once exactly one succeeds.
+        Both workers find the key free and reserve it at once. Of a strict
+        create both issue at once exactly one succeeds, and both then hold a
+        handle on the one partition, so a record written through either is
+        read through the other.
         """
         client_a = new_qdrant_client()
         client_b = new_qdrant_client()
@@ -2160,22 +2166,8 @@ class TestCollectionProvisioningAcrossWorkers:
         )
 
         try:
-            async with asyncio.timeout(60):
-                results = await asyncio.gather(
-                    store_a.open_or_create_partition(name),
-                    store_b.open_or_create_partition(name),
-                    return_exceptions=True,
-                )
-            handles = [r for r in results if isinstance(r, QdrantVectorStorePartition)]
-            assert len(handles) == 2, f"a concurrent creator raised: {results!r}"
-            record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
-            await handles[0].upsert(records=[record])
-            [result] = await handles[1].query(query_vectors=[record.vector], limit=10)
-            assert [match.record_uuid for match in result.matches] == [record.uuid]
-
             # The registry's primary key arbitrates a strict create: one
             # creator wins, the other gets AlreadyExists.
-            await store_a.delete_partition(name)
             async with asyncio.timeout(60):
                 results = await asyncio.gather(
                     store_a.create_partition(name),
@@ -2186,6 +2178,15 @@ class TestCollectionProvisioningAcrossWorkers:
                 "NoneType",
                 "VectorStorePartitionAlreadyExistsError",
             ], results
+
+            handle_a = await store_a.get_partition(name)
+            handle_b = await store_b.get_partition(name)
+            assert handle_a is not None
+            assert handle_b is not None
+            record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            await handle_a.upsert(records=[record])
+            [result] = await handle_b.query(query_vectors=[record.vector], limit=10)
+            assert [match.record_uuid for match in result.matches] == [record.uuid]
         finally:
             await store_a.delete_partition(name)
             await client_a.delete_collection(native)
@@ -2217,8 +2218,8 @@ class TestCollectionProvisioningAcrossWorkers:
                 await asyncio.gather(store_a.startup(), store_b.startup())
             await store_a.create_partition("first")
             await store_b.create_partition("second")
-            first = await store_b.open_partition("first")
-            second = await store_a.open_partition("second")
+            first = await store_b.get_partition("first")
+            second = await store_a.get_partition("second")
             assert first is not None
             assert second is not None
             records = {

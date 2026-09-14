@@ -155,14 +155,14 @@ async def _event_params(
 
     # No memory request creates storage: the session's partitions were created
     # with the session, and a session without them is broken, not new.
-    vector_store_partition = await vector_store.open_partition(partition_key)
+    vector_store_partition = await vector_store.get_partition(partition_key)
     if vector_store_partition is None:
         raise SessionPartitionMissingError(
             config.session_id,
             partition_key,
             f"vector store {config.vector_store!r}",
         )
-    partition = await segment_store.open_partition(partition_key)
+    partition = await segment_store.get_partition(partition_key)
     if partition is None:
         raise SessionPartitionMissingError(
             config.session_id, partition_key, "the segment store"

@@ -212,8 +212,8 @@ async def test_a_request_never_creates_a_partition(stores, resource_manager):
         await long_term_memory_params_from_config(_EVENT_CONF, resource_manager)
 
     key = partition_key_for_session("sess_1")
-    assert await vector_store.open_partition(key) is None
-    assert await segment_store.open_partition(key) is None
+    assert await vector_store.get_partition(key) is None
+    assert await segment_store.get_partition(key) is None
 
 
 @pytest.mark.asyncio
@@ -247,5 +247,5 @@ async def test_deleting_partitions_needs_none_to_exist(stores, resource_manager)
     await vector_store.delete_partition(key)
     await delete_event_backend_partitions(_EVENT_CONF, resource_manager)
 
-    assert await vector_store.open_partition(key) is None
-    assert await segment_store.open_partition(key) is None
+    assert await vector_store.get_partition(key) is None
+    assert await segment_store.get_partition(key) is None

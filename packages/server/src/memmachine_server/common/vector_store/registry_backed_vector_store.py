@@ -29,10 +29,6 @@ from .data_types import (
     IndexedProperties,
     QueryResult,
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionPendingError,
     validate_vector_store_name,
 )
 from .partition_registry import (
@@ -52,12 +48,6 @@ from .utils import (
 from .vector_store import VectorStore, VectorStorePartition
 
 logger = logging.getLogger(__name__)
-
-# Attempts open-or-create makes, _OPEN_OR_CREATE_RETRY_DELAY_SECONDS apart,
-# before it gives up on a partition that stays pending or a key it keeps
-# losing.
-_MAX_OPEN_OR_CREATE_ATTEMPTS = 10
-_OPEN_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
 
 class RegistryBackedVectorStorePartition(VectorStorePartition):
@@ -296,8 +286,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
     Any process sharing the backend and the registry may serve any partition.
     A partition is pending until its storage is prepared: meanwhile opening it
-    raises VectorStorePartitionPendingError, `open_or_create_partition` waits
-    a bounded time for it, and creating its key raises
+    raises VectorStorePartitionPendingError, and creating its key raises
     VectorStorePartitionAlreadyExistsError. A partition a crash left pending
     stays pending until `delete_partition` deletes it.
 
@@ -348,54 +337,6 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
             reservation = await self._partition_registry.reserve(partition_key)
             await self._prepare_and_confirm_or_cancel(reservation)
 
-    @override
-    async def open_or_create_partition(self, partition_key: str) -> PartitionT:
-        validate_partition_key(partition_key)
-        async with self._tracker("open_or_create_partition"):
-            # Read-then-create, retried: a pending partition is another
-            # creator's (open it once it is live), losing the reservation
-            # means another creator took the key meanwhile, and losing the
-            # confirmation means a deleter removed this one while its storage
-            # was prepared (create again).
-            pending_error: VectorStorePartitionPendingError | None = None
-            lost_race: (
-                VectorStorePartitionAlreadyExistsError
-                | VectorStorePartitionDeletedError
-                | None
-            ) = None
-            for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
-                if attempt:
-                    await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
-                try:
-                    registration = await self._partition_registry.resolve(partition_key)
-                except VectorStorePartitionPendingError as err:
-                    pending_error = err
-                    continue
-                pending_error = None
-                if registration is not None:
-                    return self._partition_handle(registration)
-                try:
-                    reservation = await self._partition_registry.reserve(partition_key)
-                except VectorStorePartitionAlreadyExistsError as err:
-                    lost_race = err
-                    continue
-                try:
-                    registration = await self._prepare_and_confirm_or_cancel(
-                        reservation
-                    )
-                except VectorStorePartitionDeletedError as err:
-                    lost_race = err
-                    continue
-                return self._partition_handle(registration)
-            # The last lookup found the partition pending.
-            if pending_error is not None:
-                raise pending_error
-            raise VectorStoreAttemptsExhaustedError(
-                f"Opening or creating partition {partition_key!r} of vector store "
-                f"{self._vector_store_name!r} made no progress after "
-                f"{_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
-            ) from lost_race
-
     async def _prepare_and_confirm_or_cancel(
         self, reservation: Reservation
     ) -> Registration:
@@ -436,9 +377,9 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
             raise
 
     @override
-    async def open_partition(self, partition_key: str) -> PartitionT | None:
+    async def get_partition(self, partition_key: str) -> PartitionT | None:
         validate_partition_key(partition_key)
-        async with self._tracker("open_partition"):
+        async with self._tracker("get_partition"):
             registration = await self._partition_registry.resolve(partition_key)
             if registration is None:
                 return None

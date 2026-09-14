@@ -26,7 +26,7 @@ class VectorStorePartition(ABC):
     All data operations are scoped to the partition: a record's UUID names
     it in this partition only, and the same UUID in another partition names
     another record. The handle owns nothing: a caller builds one with
-    `VectorStore.open_partition`, drops it, and builds another at will.
+    `VectorStore.get_partition`, drops it, and builds another at will.
 
     A partition created again under a deleted one's key starts empty.
     Operations through a handle whose partition was deleted may raise
@@ -202,32 +202,7 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_or_create_partition(
-        self, partition_key: str
-    ) -> VectorStorePartition:
-        """
-        Get a handle for the partition, creating the partition if it does not exist.
-
-        Args:
-            partition_key (str):
-                The key of the partition.
-
-        Returns:
-            VectorStorePartition:
-                A handle bound to the partition's current life.
-
-        Raises:
-            VectorStorePartitionPendingError: If the partition's creation, by
-                another caller, did not complete within the store's attempts
-                to open it.
-            VectorStoreAttemptsExhaustedError: If the store gave up opening or
-                creating the partition after repeated attempts that made no
-                progress.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def open_partition(self, partition_key: str) -> VectorStorePartition | None:
+    async def get_partition(self, partition_key: str) -> VectorStorePartition | None:
         """
         Get a handle for an existing partition.
 

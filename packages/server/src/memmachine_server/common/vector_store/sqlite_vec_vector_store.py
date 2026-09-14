@@ -472,27 +472,7 @@ class SQLiteVecVectorStore(VectorStore):
             )
 
     @override
-    async def open_or_create_partition(
-        self, partition_key: str
-    ) -> VectorStorePartition:
-        validate_partition_key(partition_key)
-
-        async with self._create_session() as session, session.begin():
-            if not await self._partition_exists(session, partition_key):
-                session.add(
-                    _PartitionRow(
-                        vector_store_name=self._vector_store_name,
-                        partition_key=partition_key,
-                    )
-                )
-            records_table, vector_table_name = await self._ensure_partition_tables(
-                session, partition_key
-            )
-
-        return self._partition_handle(records_table, vector_table_name)
-
-    @override
-    async def open_partition(self, partition_key: str) -> VectorStorePartition | None:
+    async def get_partition(self, partition_key: str) -> VectorStorePartition | None:
         validate_partition_key(partition_key)
 
         async with self._create_session() as session:
