@@ -8,6 +8,7 @@ import pytest
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Author,
     Block,
+    Context,
     Event,
     TextBlock,
 )
@@ -31,7 +32,7 @@ def _make_event(
         source_id="src",
         uuid=uuid4(),
         timestamp=_TS,
-        context=context if context is not None else {},
+        context=context if context is not None else Context(),
         blocks=blocks,
         properties=properties or {},
     )
@@ -121,10 +122,10 @@ class TestTextSegmenter:
     async def test_propagates_event_context(self):
         event = _make_event(
             blocks=[TextBlock(text="hi")],
-            context={"author": Author(name="Alice")},
+            context=Context(Author(name="Alice")),
         )
         result = await _segment(event)
-        assert result[0].context == {"author": Author(name="Alice")}
+        assert result[0].context == Context(Author(name="Alice"))
 
     async def test_propagates_event_properties(self):
         event = _make_event(
