@@ -81,28 +81,6 @@ class VectorStoreCollectionAlreadyExistsError(Exception):
         super().__init__(f"Collection ({namespace!r}, {name!r}) already exists.")
 
 
-class VectorStoreCollectionConfigMismatchError(Exception):
-    """Raised when opening a collection with a different configuration than it was created with."""
-
-    def __init__(
-        self,
-        namespace: str,
-        name: str,
-        existing_config: VectorStoreCollectionConfig,
-        requested_config: VectorStoreCollectionConfig,
-    ) -> None:
-        """Initialize with the namespace, name, and configurations."""
-        self.namespace = namespace
-        self.name = name
-        self.existing_config = existing_config
-        self.requested_config = requested_config
-        super().__init__(
-            f"Collection ({namespace!r}, {name!r}) already exists with a different configuration. "
-            f"Existing config: {existing_config.model_dump_json()}, "
-            f"requested config: {requested_config.model_dump_json()}."
-        )
-
-
 class Record(BaseModel):
     """
     A record to write to a vector store collection.

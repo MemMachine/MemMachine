@@ -49,7 +49,6 @@ from .data_types import (
     Record,
     VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
-    VectorStoreCollectionConfigMismatchError,
 )
 from .utils import validate_filter, validate_identifier
 from .vector_store import VectorStore, VectorStoreCollection
@@ -772,46 +771,6 @@ class QdrantVectorStore(VectorStore):
             await self._register_collection(namespace, name, config)
 
     @override
-    async def open_or_create_collection(
-        self,
-        *,
-        namespace: str,
-        name: str,
-        config: VectorStoreCollectionConfig,
-    ) -> QdrantVectorStoreCollection:
-        """Open the collection if it exists, or create and return it."""
-        if not validate_identifier(namespace):
-            raise ValueError(
-                f"Namespace {namespace!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
-        if not validate_identifier(name):
-            raise ValueError(
-                f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
-        async with (
-            self._client_name_locks[(namespace, name)],
-            self._tracker("open_or_create_collection"),
-        ):
-            entry = await self._get_registry_entry(namespace, name)
-            if entry is not None:
-                existing_config = QdrantVectorStore._parse_entry(entry)
-                if existing_config != config:
-                    raise VectorStoreCollectionConfigMismatchError(
-                        namespace, name, existing_config, config
-                    )
-                return self._build_collection_handle(namespace, name, existing_config)
-
-            await self._ensure_namespace_registry_collection(namespace)
-            await self._create_native_collection(namespace, config)
-            if self._is_distributed:
-                native_collection_name = (
-                    QdrantVectorStore._build_native_collection_name(namespace, config)
-                )
-                await self._ensure_shard_key(native_collection_name, name)
-            await self._register_collection(namespace, name, config)
-            return self._build_collection_handle(namespace, name, config)
-
-    @override
     async def open_collection(
         self, *, namespace: str, name: str
     ) -> QdrantVectorStoreCollection | None:
@@ -830,10 +789,6 @@ class QdrantVectorStore(VectorStore):
         return self._build_collection_handle(
             namespace, name, QdrantVectorStore._parse_entry(entry)
         )
-
-    @override
-    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
-        """No-op; Qdrant collection handles require no explicit close."""
 
     @override
     async def delete_collection(self, *, namespace: str, name: str) -> None:

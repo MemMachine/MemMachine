@@ -1,6 +1,7 @@
 """Tests for QdrantVectorStore."""
 
 import asyncio
+import contextlib
 import math
 from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import MagicMock
@@ -24,7 +25,6 @@ from memmachine_server.common.vector_store.data_types import (
     Record,
     VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
-    VectorStoreCollectionConfigMismatchError,
 )
 from memmachine_server.common.vector_store.qdrant_vector_store import (
     _PAYLOAD_PARTITION_KEY,
@@ -32,6 +32,22 @@ from memmachine_server.common.vector_store.qdrant_vector_store import (
     QdrantVectorStoreCollection,
     QdrantVectorStoreParams,
 )
+
+
+async def _open_or_create(store, *, namespace, name, config):
+    """Create the collection if absent, then open it, as a store's owner does.
+
+    Losing a creation race to another creator of the same collection is the
+    collection existing, which is the state asked for.
+    """
+    collection = await store.open_collection(namespace=namespace, name=name)
+    if collection is None:
+        with contextlib.suppress(VectorStoreCollectionAlreadyExistsError):
+            await store.create_collection(namespace=namespace, name=name, config=config)
+        collection = await store.open_collection(namespace=namespace, name=name)
+    assert collection is not None
+    return collection
+
 
 NAMESPACE = "test_namespace"
 NAME = "test_name"
@@ -163,42 +179,6 @@ class TestCollectionLifecycle:
     @pytest.mark.asyncio
     async def test_delete_nonexistent_is_idempotent(self, store):
         await store.delete_collection(namespace=NAMESPACE, name="nonexistent")
-
-    @pytest.mark.asyncio
-    async def test_open_or_create_creates_when_missing(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="new", config=config
-        )
-        assert isinstance(coll, QdrantVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="new")
-
-    @pytest.mark.asyncio
-    async def test_open_or_create_opens_when_exists(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="existing", config=config
-        )
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="existing", config=config
-        )
-        assert isinstance(coll, QdrantVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="existing")
-
-    @pytest.mark.asyncio
-    async def test_open_or_create_raises_on_config_mismatch(self, store):
-        await store.create_collection(
-            namespace=NAMESPACE,
-            name="mismatch",
-            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
-        )
-        with pytest.raises(VectorStoreCollectionConfigMismatchError):
-            await store.open_or_create_collection(
-                namespace=NAMESPACE,
-                name="mismatch",
-                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM + 1),
-            )
-        await store.delete_collection(namespace=NAMESPACE, name="mismatch")
 
     @pytest.mark.asyncio
     async def test_same_config_shares_native_collection(self, store):
@@ -1265,9 +1245,7 @@ class TestCollectionLifecycleAcrossWorkers:
         store = QdrantVectorStore(QdrantVectorStoreParams(client=qdrant_client))
         await store.startup()
         try:
-            await store.open_or_create_collection(
-                namespace=namespace, name=name, config=config
-            )
+            await _open_or_create(store, namespace=namespace, name=name, config=config)
             info = await qdrant_client.get_collection(native)
             indexed = set(info.payload_schema or {})
             assert _PAYLOAD_PARTITION_KEY in indexed, (
@@ -1309,12 +1287,8 @@ class TestCollectionLifecycleAcrossWorkers:
 
         try:
             results = await asyncio.gather(
-                store_a.open_or_create_collection(
-                    namespace=namespace, name=name, config=config
-                ),
-                store_b.open_or_create_collection(
-                    namespace=namespace, name=name, config=config
-                ),
+                _open_or_create(store_a, namespace=namespace, name=name, config=config),
+                _open_or_create(store_b, namespace=namespace, name=name, config=config),
                 return_exceptions=True,
             )
             failures = [r for r in results if isinstance(r, BaseException)]

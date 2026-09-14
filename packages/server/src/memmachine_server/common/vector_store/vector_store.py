@@ -173,36 +173,6 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_or_create_collection(
-        self,
-        *,
-        namespace: str,
-        name: str,
-        config: VectorStoreCollectionConfig,
-    ) -> VectorStoreCollection:
-        """
-        Open the collection if it exists, or create it if it does not.
-
-        Args:
-            namespace (str):
-                Groups related collections and guarantees storage
-                isolation at the native collection level.
-            name (str):
-                Name to identify the collection within a namespace.
-            config (VectorStoreCollectionConfig):
-                Configuration for the collection.
-
-        Returns:
-            VectorStoreCollection:
-                A handle to the opened or created collection.
-
-        Raises:
-            VectorStoreCollectionConfigMismatchError: If a collection with the same
-                (namespace, name) already exists with a different configuration.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
     async def open_collection(
         self, *, namespace: str, name: str
     ) -> VectorStoreCollection | None:
@@ -218,17 +188,6 @@ class VectorStore(ABC):
         Returns:
             VectorStoreCollection | None:
                 A handle to the opened collection, or None if it does not exist.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
-        """
-        Close a collection handle.
-
-        Args:
-            collection (Collection):
-                The handle of the collection to close.
         """
         raise NotImplementedError
 

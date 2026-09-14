@@ -2,6 +2,7 @@
 
 # ruff: noqa: E402
 
+import contextlib
 import math
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
@@ -27,13 +28,28 @@ from memmachine_server.common.vector_store.data_types import (
     Record,
     VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
-    VectorStoreCollectionConfigMismatchError,
 )
 from memmachine_server.common.vector_store.milvus_vector_store import (
     MilvusVectorStore,
     MilvusVectorStoreCollection,
     MilvusVectorStoreParams,
 )
+
+
+async def _open_or_create(store, *, namespace, name, config):
+    """Create the collection if absent, then open it, as a store's owner does.
+
+    Losing a creation race to another creator of the same collection is the
+    collection existing, which is the state asked for.
+    """
+    collection = await store.open_collection(namespace=namespace, name=name)
+    if collection is None:
+        with contextlib.suppress(VectorStoreCollectionAlreadyExistsError):
+            await store.create_collection(namespace=namespace, name=name, config=config)
+        collection = await store.open_collection(namespace=namespace, name=name)
+    assert collection is not None
+    return collection
+
 
 NAMESPACE = "test_namespace"
 NAME = "test_name"
@@ -161,21 +177,6 @@ class TestCollectionLifecycle:
     @pytest.mark.asyncio
     async def test_delete_nonexistent_is_idempotent(self, store):
         await store.delete_collection(namespace=NAMESPACE, name="nonexistent")
-
-    @pytest.mark.asyncio
-    async def test_open_or_create_raises_on_config_mismatch(self, store):
-        await store.create_collection(
-            namespace=NAMESPACE,
-            name="mismatch",
-            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
-        )
-        with pytest.raises(VectorStoreCollectionConfigMismatchError):
-            await store.open_or_create_collection(
-                namespace=NAMESPACE,
-                name="mismatch",
-                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM + 1),
-            )
-        await store.delete_collection(namespace=NAMESPACE, name="mismatch")
 
     @pytest.mark.asyncio
     async def test_same_config_shares_native_collection(self, store):
