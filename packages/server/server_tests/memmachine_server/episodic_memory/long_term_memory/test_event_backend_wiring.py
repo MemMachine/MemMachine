@@ -27,12 +27,9 @@ from memmachine_server.common.episode_store import (
     EpisodeStorage,
 )
 from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
+    Comparison,
 )
 from memmachine_server.common.vector_store import VectorStore
-from memmachine_server.common.vector_store.data_types import (
-    VectorStoreCollectionConfig,
-)
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
 )
@@ -147,14 +144,13 @@ def vector_store():
 
 @pytest.fixture
 def vector_store_partition(fake_embedder):
-    config = VectorStoreCollectionConfig(
-        vector_dimensions=fake_embedder.dimensions,
-        indexed_properties_schema={
+    return InMemoryVectorStorePartition(
+        "sess1",
+        {
             **EventMemory.expected_vector_store_collection_schema(),
             **EVENT_BACKEND_SYSTEM_FIELDS,
         },
     )
-    return InMemoryVectorStorePartition(config)
 
 
 @pytest.fixture
@@ -184,7 +180,6 @@ def long_term_memory(
             session_id="sess1",
             vector_store=vector_store,
             vector_store_partition=vector_store_partition,
-            vector_store_collection_namespace="long_term_memory",
             segment_store=segment_store,
             segment_store_partition=segment_store_partition,
             partition_key="sess1",
@@ -289,10 +284,7 @@ async def test_drop_session_partition_calls_parent_lifecycle_hooks(
     segment_store,
 ):
     await long_term_memory.drop_session_partition()
-    vector_store.delete_partition.assert_awaited_once_with(
-        namespace="long_term_memory",
-        name="sess1",
-    )
+    vector_store.delete_partition.assert_awaited_once_with("sess1")
     segment_store.delete_partition.assert_awaited_once_with("sess1")
     # Reclamation is the sweeper's; the delete path never purges.
     segment_store.purge_deleted_partitions.assert_not_awaited()
@@ -346,7 +338,7 @@ async def test_user_metadata_filter_round_trips(
     scored = await long_term_memory.search_scored(
         "fruit",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="m.color", op="=", value="red"),
+        property_filter=Comparison(field="m.color", op="=", value="red"),
     )
     uids = {ep.uid for _, ep in scored}
     assert uids == {"m-1"}
@@ -385,7 +377,7 @@ async def test_system_field_filter_round_trips(
     scored = await long_term_memory.search_scored(
         "msg",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="producer_id", op="=", value="alice"),
+        property_filter=Comparison(field="producer_id", op="=", value="alice"),
     )
     uids = {ep.uid for _, ep in scored}
     assert uids == {"s-1"}
@@ -406,19 +398,17 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
         await long_term_memory.search_scored(
             "msg",
             num_episodes_limit=10,
-            property_filter=FilterComparison(
-                field="producre_id", op="=", value="alice"
-            ),
+            property_filter=Comparison(field="producre_id", op="=", value="alice"),
         )
 
 
-async def test_any_user_metadata_field_is_accepted(long_term_memory):
-    """Any `m.<x>` is a valid filter field; only bare names are checked."""
+async def test_any_user_metadata_field_is_a_valid_filter_field(long_term_memory):
+    """A `m.<key>` names any caller key: the stores route it, nothing rejects it."""
     # Doesn't raise.
     scored = await long_term_memory.search_scored(
         "msg",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="m.anything", op="=", value="x"),
+        property_filter=Comparison(field="m.anything", op="=", value="x"),
     )
     assert scored == []
 
@@ -430,10 +420,8 @@ async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
     await long_term_memory.search_scored(
         "anything",
         num_episodes_limit=10,
-        property_filter=FilterComparison(
-            field="timestamp",
-            op=">=",
-            value=datetime(2000, 1, 1, tzinfo=UTC),
+        property_filter=Comparison(
+            field="timestamp", op=">=", value=datetime(2000, 1, 1, tzinfo=UTC)
         ),
     )
 
@@ -445,20 +433,17 @@ def _make_ltm(episodes: list[Episode]) -> LongTermMemory:
     """
     fake_embedder = FakeEmbedder()
     vector_store_partition = InMemoryVectorStorePartition(
-        VectorStoreCollectionConfig(
-            vector_dimensions=fake_embedder.dimensions,
-            indexed_properties_schema={
-                **EventMemory.expected_vector_store_collection_schema(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-            },
-        )
+        "sess1",
+        {
+            **EventMemory.expected_vector_store_collection_schema(),
+            **EVENT_BACKEND_SYSTEM_FIELDS,
+        },
     )
     return LongTermMemory(
         EventBackendParams(
             session_id="sess1",
             vector_store=create_autospec(VectorStore, instance=True),
             vector_store_partition=vector_store_partition,
-            vector_store_collection_namespace="long_term_memory",
             segment_store=create_autospec(SegmentStore, instance=True),
             segment_store_partition=InMemorySegmentStorePartition(),
             partition_key="sess1",
@@ -599,7 +584,6 @@ def timeline_long_term_memory(
             session_id="sess1",
             vector_store=vector_store,
             vector_store_partition=vector_store_partition,
-            vector_store_collection_namespace="long_term_memory",
             segment_store=segment_store,
             segment_store_partition=segment_store_partition,
             partition_key="sess1",

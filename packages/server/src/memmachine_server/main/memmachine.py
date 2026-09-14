@@ -15,6 +15,7 @@ from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
     EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
@@ -48,6 +49,9 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    event_backend_vector_store,
+)
 from memmachine_server.retrieval_agent import create_retrieval_agent
 from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
@@ -451,11 +455,6 @@ class MemMachine:
             ("embedder", self._resources.get_embedder, getattr(ltm, "embedder", None)),
             ("reranker", self._resources.get_reranker, getattr(ltm, "reranker", None)),
             (
-                "vector store",
-                self._resources.get_vector_store,
-                getattr(ltm, "vector_store", None),
-            ),
-            (
                 "segment store",
                 self._resources.get_segment_store,
                 getattr(ltm, "segment_store", None),
@@ -463,6 +462,15 @@ class MemMachine:
         ):
             if name:
                 warmers.append((label, partial(getter, name)))
+        if isinstance(ltm, EventLongTermMemoryConf):
+            # The store is one collection per embedder, so building it needs
+            # the embedder's dimensions first.
+            warmers.append(
+                (
+                    "vector store",
+                    partial(event_backend_vector_store, ltm, self._resources),
+                )
+            )
 
         for label, warm in warmers:
             try:

@@ -57,7 +57,7 @@ class EventMemoryParams(BaseModel):
         segment_store_partition (SegmentStorePartition):
             Segment store partition.
         vector_store_partition (VectorStorePartition):
-            Vector store collection.
+            Vector store partition.
         segmenter (Segmenter):
             Segmenter that segments events into segments.
         deriver (Deriver):
@@ -79,7 +79,7 @@ class EventMemoryParams(BaseModel):
     )
     vector_store_partition: InstanceOf[VectorStorePartition] = Field(
         ...,
-        description="Vector store collection",
+        description="Vector store partition",
     )
     segmenter: InstanceOf[Segmenter] = Field(
         ...,
@@ -148,7 +148,7 @@ class EventMemory:
         )
 
         self._schema_fields = frozenset(
-            params.vector_store_partition.config.indexed_properties_schema
+            params.vector_store_partition.indexed_properties
         )
 
         missing_base_fields = (

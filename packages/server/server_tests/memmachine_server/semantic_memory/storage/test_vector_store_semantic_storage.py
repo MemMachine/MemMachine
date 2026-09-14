@@ -6,8 +6,9 @@ from uuid import UUID
 import numpy as np
 import pytest
 
-from memmachine_server.common.filter.filter_parser import parse_filter
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorSemanticFeature,
@@ -21,15 +22,8 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_p
 @pytest.fixture
 def vector_collection() -> InMemoryVectorStorePartition:
     return InMemoryVectorStorePartition(
-        VectorStoreCollectionConfig(
-            vector_dimensions=2,
-            indexed_properties_schema={
-                "set_id": str,
-                "category": str,
-                "tag": str,
-                "feature_name": str,
-            },
-        )
+        "semantic_memory",
+        {"set_id": str, "category": str, "tag": str, "feature_name": str},
     )
 
 

@@ -2,10 +2,11 @@
 
 import math
 import operator
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import override
 from uuid import UUID
 
-from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.data_types import PropertyType, PropertyValue
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -20,7 +21,6 @@ from memmachine_server.common.vector_store.data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -99,28 +99,41 @@ class InMemoryVectorStorePartition(VectorStorePartition):
     Scores by cosine similarity and evaluates FilterExpr on record properties.
     """
 
-    def __init__(self, collection_config: VectorStoreCollectionConfig) -> None:
-        self.collection_config = collection_config
+    def __init__(
+        self,
+        partition_key: str,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> None:
+        self._partition_key = partition_key
+        self._indexed_properties = dict(indexed_properties)
         self.records: dict[UUID, Record] = {}
 
     @property
-    def config(self) -> VectorStoreCollectionConfig:
-        return self.collection_config
+    @override
+    def partition_key(self) -> str:
+        return self._partition_key
 
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
+
+    @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
         for record in records:
             self.records[record.uuid] = Record(
                 uuid=record.uuid,
-                vector=list(record.vector) if record.vector is not None else None,
-                properties=dict(record.properties) if record.properties else {},
+                vector=list(record.vector),
+                properties=dict(record.properties),
             )
 
+    @override
     async def query(
         self,
         *,
         query_vectors: Iterable[Sequence[float]],
+        limit: int,
         min_cosine_similarity: float | None = None,
-        limit: int | None = None,
         property_filter: FilterExpr | None = None,
     ) -> list[QueryResult]:
         results: list[QueryResult] = []
@@ -128,10 +141,8 @@ class InMemoryVectorStorePartition(VectorStorePartition):
             qv = list(query_vector)
             matches: list[QueryMatch] = []
             for record in self.records.values():
-                if record.vector is None:
-                    continue
                 if property_filter is not None and not evaluate_filter(
-                    property_filter, record.properties or {}
+                    property_filter, record.properties
                 ):
                     continue
                 cosine_similarity = _cosine_similarity(qv, record.vector)
@@ -147,11 +158,10 @@ class InMemoryVectorStorePartition(VectorStorePartition):
                     )
                 )
             matches.sort(key=lambda m: m.cosine_similarity, reverse=True)
-            if limit is not None:
-                matches = matches[:limit]
-            results.append(QueryResult(matches=matches))
+            results.append(QueryResult(matches=matches[:limit]))
         return results
 
+    @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         for uid in record_uuids:
             self.records.pop(uid, None)

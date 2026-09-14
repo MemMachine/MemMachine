@@ -129,9 +129,8 @@ class EventBackendParams(BaseModel):
     )
     vector_store_partition: InstanceOf[VectorStorePartition] = Field(
         ...,
-        description="Already-opened VectorStore collection",
+        description="The session's VectorStore partition",
     )
-    vector_store_collection_namespace: str = Field(...)
     segment_store: InstanceOf[SegmentStore] = Field(
         ...,
         description="Parent SegmentStore (for partition lifecycle)",
@@ -178,7 +177,6 @@ class LongTermMemory:
         self._declarative_memory: DeclarativeMemory | None = None
         self._event_memory: EventMemory | None = None
         self._vector_store: VectorStore | None = None
-        self._vector_store_namespace: str | None = None
         self._segment_store: SegmentStore | None = None
         self._partition_key: str | None = None
         self._episode_storage: EpisodeStorage | None = None
@@ -208,7 +206,6 @@ class LongTermMemory:
                     ),
                 )
                 self._vector_store = params.vector_store
-                self._vector_store_namespace = params.vector_store_collection_namespace
                 self._segment_store = params.segment_store
                 self._partition_key = params.partition_key
                 self._episode_storage = params.episode_storage
@@ -387,14 +384,13 @@ class LongTermMemory:
     async def drop_session_partition(self) -> None:
         """Delete all data for this session/partition.
 
-        On the event backend, this drops the underlying VectorStore collection
-        and SegmentStore partition. After this returns the instance is no
+        On the event backend, this drops the session's VectorStore and
+        SegmentStore partitions. After this returns the instance is no
         longer usable — `EventMemory` still holds handles to the deleted
-        collection and partition, and any reuse would talk to deleted
-        resources. We null those handles so subsequent calls fail loudly
-        rather than silently corrupt state. If the caller needs the same
-        session_id again, build a fresh LongTermMemory (which will open or
-        create a new collection/partition).
+        partitions, and any reuse would talk to deleted resources. We null
+        those handles so subsequent calls fail loudly rather than silently
+        corrupt state. The session's partitions are created with the
+        session; a new LongTermMemory for the same session finds none.
         """
         if self._backend == "declarative":
             assert self._declarative_memory is not None
@@ -405,13 +401,9 @@ class LongTermMemory:
             return
 
         assert self._vector_store is not None
-        assert self._vector_store_namespace is not None
         assert self._segment_store is not None
         assert self._partition_key is not None
-        await self._vector_store.delete_partition(
-            namespace=self._vector_store_namespace,
-            name=self._partition_key,
-        )
+        await self._vector_store.delete_partition(self._partition_key)
         await self._segment_store.delete_partition(self._partition_key)
         # Drop references to the now-deleted resources so any further
         # add_episodes / search_scored / delete_episodes calls raise

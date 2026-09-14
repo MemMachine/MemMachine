@@ -184,11 +184,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
     def __init__(
         self,
         sqlalchemy_engine: AsyncEngine,
-        vector_collection: VectorStorePartition,
+        vector_partition: VectorStorePartition,
     ) -> None:
-        """Initialize storage with an async SQLAlchemy engine and vector collection."""
+        """Initialize storage with an async SQLAlchemy engine and a vector store partition."""
         self._engine = sqlalchemy_engine
-        self._vector_collection = vector_collection
+        self._vector_partition = vector_partition
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             expire_on_commit=False,
@@ -212,7 +212,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             await session.execute(delete(VectorSemanticSetIngestedHistory))
             await session.execute(delete(VectorSemanticFeature))
             await session.commit()
-        await self._vector_collection.delete(record_uuids=vector_uuids)
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def reset_set_ids(self, set_ids: Sequence[SetIdT]) -> None:
         del set_ids
@@ -248,7 +248,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             await session.commit()
             feature_id = FeatureIdT(str(result.scalar_one()))
 
-        await self._vector_collection.upsert(
+        await self._vector_partition.upsert(
             records=[Record(uuid=vector_uuid, vector=embedding.tolist())]
         )
         return feature_id
@@ -298,7 +298,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         # Only an embedding reaches the vector store; everything else this
         # method can change lives on the row above.
         if embedding is not None:
-            await self._vector_collection.upsert(
+            await self._vector_partition.upsert(
                 records=[Record(uuid=row.vector_uuid, vector=embedding.tolist())]
             )
 
@@ -377,7 +377,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             )
             await session.commit()
 
-        await self._vector_collection.delete(record_uuids=vector_uuids)
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def delete_feature_set(
         self,
@@ -391,7 +391,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         async with self._create_session() as session:
             await session.execute(stmt)
             await session.commit()
-        await self._vector_collection.delete(record_uuids=vector_uuids)
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def add_citations(
         self,
@@ -615,7 +615,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             _DEFAULT_VECTOR_QUERY_LIMIT,
             offset + page_size if page_size is not None else 0,
         )
-        [query_result] = await self._vector_collection.query(
+        [query_result] = await self._vector_partition.query(
             query_vectors=[vector_search_opts.query_embedding.tolist()],
             limit=limit,
             min_cosine_similarity=vector_search_opts.min_distance,

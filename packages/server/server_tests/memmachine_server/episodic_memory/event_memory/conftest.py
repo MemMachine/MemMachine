@@ -14,9 +14,6 @@ from memmachine_server.common.filter.filter_parser import (
     normalize_filter_field,
 )
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.vector_store.data_types import (
-    VectorStoreCollectionConfig,
-)
 from memmachine_server.episodic_memory.event_memory.data_types import Segment
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
@@ -197,6 +194,14 @@ class FakeReranker(Reranker):
 # ---------------------------------------------------------------------------
 
 
+def make_collection(embedder: FakeEmbedder) -> InMemoryVectorStorePartition:
+    """A collection declaring EventMemory's reserved keys and a `color` property."""
+    return InMemoryVectorStorePartition(
+        "test",
+        {**EventMemory.expected_vector_store_collection_schema(), "color": str},
+    )
+
+
 @pytest.fixture
 def fake_embedder():
     return FakeEmbedder()
@@ -209,14 +214,7 @@ def fake_segment_store_partition():
 
 @pytest.fixture
 def fake_vector_store_partition(fake_embedder):
-    config = VectorStoreCollectionConfig(
-        vector_dimensions=fake_embedder.dimensions,
-        indexed_properties_schema={
-            **EventMemory.expected_vector_store_collection_schema(),
-            "color": str,
-        },
-    )
-    return InMemoryVectorStorePartition(config)
+    return make_collection(fake_embedder)
 
 
 @pytest.fixture

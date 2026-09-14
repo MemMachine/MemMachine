@@ -1,84 +1,149 @@
 """Data types for vector store."""
 
+import re
 from collections.abc import Mapping
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    Field,
+    field_validator,
+)
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
     PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
+    PropertyType,
     PropertyValue,
 )
 
 from .utils import validate_identifier
 
 
-class VectorStoreCollectionConfig(BaseModel):
-    """
-    Configuration for a logical collection in a vector store.
+def _coerce_property_types(value: object) -> object:
+    # Deployment configuration names a type ("str", "datetime"); code passes
+    # the type itself. Both are accepted, and the names are resolved here.
+    if not isinstance(value, Mapping):
+        return value
+    resolved: dict[str, object] = {}
+    for key, property_type in value.items():
+        if isinstance(property_type, str):
+            if property_type not in PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE:
+                raise ValueError(
+                    f"Unknown property type name {property_type!r} for key {key!r}; "
+                    f"expected one of {sorted(PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE)}"
+                )
+            resolved[key] = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE[property_type]
+        else:
+            resolved[key] = property_type
+    return resolved
 
-    Attributes:
-        vector_dimensions (int):
-            Dimensionality of vectors stored in the collection.
-        indexed_properties_schema (dict[str, type[PropertyValue]]):
-            Schema suggesting which properties should be indexed for filtering.
+
+def _validate_property_keys(value: dict[str, PropertyType]) -> dict[str, PropertyType]:
+    for key in value:
+        if not validate_identifier(key):
+            raise ValueError(
+                f"Property key {key!r} must match [a-z0-9_]+ and be at most 32 bytes"
+            )
+    return value
+
+
+IndexedProperties = Annotated[
+    dict[str, PropertyType],
+    BeforeValidator(_coerce_property_types),
+    AfterValidator(_validate_property_keys),
+]
+"""
+The one schema a store declares for every partition it holds: each key a
+store indexes for filtering, with the type its values hold. Declared once,
+at construction, from the system keys of the consumer the store is built for.
+"""
+
+
+def indexed_property_names(
+    indexed_properties: Mapping[str, PropertyType],
+) -> dict[str, str]:
+    """The JSON form of a declared schema: each type by its name."""
+    return {
+        key: PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[property_type]
+        for key, property_type in sorted(indexed_properties.items())
+    }
+
+
+COLLECTION_NAME_MAX_BYTES = 64
+"""Bound on a collection name, in bytes; a store's one native name."""
+
+_COLLECTION_NAME_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+def validate_collection_name(name: str) -> None:
+    """Raise ValueError unless `name` can name a native collection on every backend."""
+    if (
+        not _COLLECTION_NAME_RE.match(name)
+        or len(name.encode()) > COLLECTION_NAME_MAX_BYTES
+    ):
+        raise ValueError(
+            f"Collection name {name!r} must match [a-z0-9_]+ and be at most "
+            f"{COLLECTION_NAME_MAX_BYTES} bytes."
+        )
+
+
+class PartitionSchema(BaseModel):
+    """
+    What a partition was created under: its store's dimensions and schema.
+
+    Recorded beside the partition so a store built with other dimensions or
+    another declared schema fails loudly instead of reading columns or
+    vectors that are not there.
     """
 
     vector_dimensions: int
-    indexed_properties_schema: dict[str, type[PropertyValue]] = Field(
-        default_factory=dict
-    )
-
-    @field_validator("indexed_properties_schema", mode="after")
-    @classmethod
-    def _validate_property_keys(
-        cls, v: dict[str, type[PropertyValue]]
-    ) -> dict[str, type[PropertyValue]]:
-        for key in v:
-            if not validate_identifier(key):
-                raise ValueError(
-                    f"Property key {key!r} must match [a-z0-9_]+ and be at most 32 bytes"
-                )
-        return v
-
-    @field_validator("indexed_properties_schema", mode="before")
-    @classmethod
-    def _coerce_indexed_properties_schema(cls, v: object) -> object:
-        if v is None:
-            return {}
-        if isinstance(v, Mapping):
-            result = {}
-            for key, value in v.items():
-                if isinstance(value, str):
-                    if value not in PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE:
-                        raise ValueError(
-                            f"Unknown property type name {value!r} for key {key!r}."
-                        )
-                    result[key] = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE[value]
-                else:
-                    result[key] = value
-            return result
-
-        return v
-
-    @field_serializer("indexed_properties_schema")
-    def _serialize_indexed_properties_schema(
-        self, v: dict[str, type[PropertyValue]]
-    ) -> dict[str, str]:
-        return {
-            k: PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[val] for k, val in sorted(v.items())
-        }
+    indexed_properties: dict[str, str]
+    """The declared schema, each type by its name."""
 
 
 class VectorStorePartitionAlreadyExistsError(Exception):
-    """Raised when creating a collection that already exists."""
+    """Raised when creating a partition that already exists."""
 
-    def __init__(self, namespace: str, name: str) -> None:
-        """Initialize with the namespace and name of the existing collection."""
-        self.namespace = namespace
-        self.name = name
-        super().__init__(f"Collection ({namespace!r}, {name!r}) already exists.")
+    def __init__(self, collection: str, partition_key: str) -> None:
+        """Initialize with the collection and the key of the existing partition."""
+        self.collection = collection
+        self.partition_key = partition_key
+        super().__init__(
+            f"Partition {partition_key!r} of collection {collection!r} already exists."
+        )
+
+
+class VectorStorePartitionSchemaMismatchError(Exception):
+    """
+    Raised when a partition's recorded schema differs from its store's.
+
+    A store built with one dimensionality and one `indexed_properties`
+    schema holds columns and indexes for exactly those; a partition created
+    under others cannot be served without a migration, which nothing here
+    performs.
+    """
+
+    def __init__(
+        self,
+        collection: str,
+        partition_key: str,
+        stored: PartitionSchema,
+        declared: PartitionSchema,
+    ) -> None:
+        """Initialize with the partition and the two schemas."""
+        self.collection = collection
+        self.partition_key = partition_key
+        self.stored = stored
+        self.declared = declared
+        super().__init__(
+            f"Partition {partition_key!r} of collection {collection!r} was created "
+            f"under {stored.model_dump()}, but the store declares "
+            f"{declared.model_dump()}."
+        )
 
 
 class Record(BaseModel):
@@ -95,7 +160,7 @@ class Record(BaseModel):
         vector (list[float]):
             Vector for similarity search.
         properties (dict[str, PropertyValue]):
-            Property key-value pairs.
+            Property key-value pairs, each key one the store declares.
             Stored for property filtering; never returned
             (default: `{}`).
     """
