@@ -78,6 +78,9 @@ class ConfigurationWizard:
     SQLITE_VEC_VECTOR_STORE_ID = "sqlite_vec_vector_store"
     QDRANT_VECTOR_STORE_ID = "qdrant_vector_store"
     MILVUS_VECTOR_STORE_ID = "milvus_vector_store"
+    # Seconds a request to a remote vector store may take; the config field
+    # itself has no default, so the wizard supplies the starting point.
+    VECTOR_STORE_REQUEST_TIMEOUT = 30.0
     LANGUAGE_MODEL_NAME = "llm_model"
     EMBEDDER_NAME = "my_embedder"
     RERANKER_NAME = "my_reranker"
@@ -494,13 +497,18 @@ class ConfigurationWizard:
             case self.QDRANT_VECTOR_STORE_ID:
                 # Localhost defaults assume `docker run -p 6333:6333 qdrant/qdrant`
                 # or similar; user can edit cfg.yml to point at a remote Qdrant.
-                databases.qdrant_confs = {self.QDRANT_VECTOR_STORE_ID: QdrantConf()}
+                databases.qdrant_confs = {
+                    self.QDRANT_VECTOR_STORE_ID: QdrantConf(
+                        request_timeout=self.VECTOR_STORE_REQUEST_TIMEOUT
+                    )
+                }
             case self.MILVUS_VECTOR_STORE_ID:
                 # Local file defaults use Milvus Lite. Users can edit cfg.yml
                 # to point at a Milvus server or Zilliz Cloud URI/token.
                 databases.milvus_confs = {
                     self.MILVUS_VECTOR_STORE_ID: MilvusConf(
                         uri="memmachine_milvus.db",
+                        request_timeout=self.VECTOR_STORE_REQUEST_TIMEOUT,
                     )
                 }
             case self.SQLITE_VECTOR_STORE_ID:

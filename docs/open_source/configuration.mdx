@@ -340,6 +340,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # token: $MILVUS_TOKEN
               # db_name: default
               consistency_level: Session
+              request_timeout: 30
       ```
     </Tab>
     <Tab title="With Comments">
@@ -371,6 +372,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # token: $MILVUS_TOKEN # Required for Zilliz Cloud or auth-enabled Milvus
               # db_name: default # Optional Milvus database name
               consistency_level: Session # Strong, Session, Bounded, or Eventually
+              request_timeout: 30 # Seconds a request may take; required
       ```
     </Tab>
     </Tabs>

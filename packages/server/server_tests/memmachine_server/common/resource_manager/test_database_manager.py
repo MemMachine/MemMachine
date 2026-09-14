@@ -296,7 +296,7 @@ def _qdrant_only_conf() -> MagicMock:
     conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {
-        "qdrant1": QdrantConf(host="localhost", port=6333),
+        "qdrant1": QdrantConf(request_timeout=30.0, host="localhost", port=6333),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -308,6 +308,7 @@ async def test_qdrant_client_kwargs_forwarded():
     """host, port, grpc_port, prefer_grpc, and https are forwarded to AsyncQdrantClient."""
     conf = _qdrant_only_conf()
     conf.qdrant_confs["qdrant1"] = QdrantConf(
+        request_timeout=30.0,
         host="qdrant.example.com",
         port=7333,
         grpc_port=7334,
@@ -342,6 +343,7 @@ async def test_qdrant_client_kwargs_forwarded():
     assert call_kwargs["grpc_port"] == 7334
     assert call_kwargs["prefer_grpc"] is True
     assert call_kwargs["https"] is True
+    assert call_kwargs["timeout"] == 30.0
     assert call_kwargs["api_key"] == "secret-key"
 
 
@@ -377,7 +379,9 @@ async def test_qdrant_api_key_omitted_when_empty():
 async def test_qdrant_creates_vector_store():
     """async_get_qdrant_client creates a QdrantVectorStore and stores it."""
     conf = _qdrant_only_conf()
-    conf.qdrant_confs["qdrant1"] = QdrantConf(registry_replication_factor=3)
+    conf.qdrant_confs["qdrant1"] = QdrantConf(
+        request_timeout=30.0, registry_replication_factor=3
+    )
 
     mock_client = AsyncMock()
     mock_client.close = AsyncMock()
@@ -508,7 +512,7 @@ def _milvus_only_conf() -> MagicMock:
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {}
     conf.milvus_confs = {
-        "milvus1": MilvusConf(uri="./milvus.db"),
+        "milvus1": MilvusConf(request_timeout=30.0, uri="./milvus.db"),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -521,6 +525,7 @@ async def test_milvus_client_kwargs_forwarded():
     """uri, token, and db_name are forwarded to MilvusClient."""
     conf = _milvus_only_conf()
     conf.milvus_confs["milvus1"] = MilvusConf(
+        request_timeout=30.0,
         uri="https://example.zillizcloud.com",
         token=SecretStr("secret-token"),
         db_name="memory",
@@ -548,6 +553,7 @@ async def test_milvus_client_kwargs_forwarded():
     assert call_kwargs["uri"] == "https://example.zillizcloud.com"
     assert call_kwargs["token"] == "secret-token"
     assert call_kwargs["db_name"] == "memory"
+    assert call_kwargs["timeout"] == 30.0
 
 
 @pytest.mark.asyncio
@@ -572,7 +578,7 @@ async def test_milvus_token_and_db_name_omitted_when_empty():
         builder = DatabaseManager(conf)
         await builder.async_get_milvus_client("milvus1")
 
-    assert mock_cls.call_args.kwargs == {"uri": "./milvus.db"}
+    assert mock_cls.call_args.kwargs == {"uri": "./milvus.db", "timeout": 30.0}
 
 
 @pytest.mark.asyncio
@@ -580,7 +586,10 @@ async def test_milvus_token_and_db_name_omitted_when_empty():
 async def test_milvus_creates_vector_store():
     """async_get_milvus_client creates a MilvusVectorStore and stores it."""
     conf = _milvus_only_conf()
-    conf.milvus_confs["milvus1"] = MilvusConf(consistency_level="Strong")
+    conf.milvus_confs["milvus1"] = MilvusConf(
+        request_timeout=30.0,
+        consistency_level="Strong",
+    )
 
     mock_client = MagicMock()
     mock_client.close = MagicMock()
