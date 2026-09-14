@@ -255,8 +255,7 @@ racing creator took the key; losing the mark means a racing deleter removed
 the partition while its storage was prepared, so the loop creates again.
 After 10 attempts it raises `VectorStorePartitionPendingError` if the last
 lookup found the partition pending, and `VectorStoreAttemptsExhaustedError`
-otherwise. The event backend's service locator opens a session's partition
-with it.
+otherwise.
 
 The contract tests (`partition_lifecycle_contract.py`) pin the outcome of a
 lost race on Qdrant and Milvus: the loser opens the winner's partition, and
