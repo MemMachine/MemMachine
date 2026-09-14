@@ -305,3 +305,33 @@ class QueryHit(BaseModel):
     def window(self) -> list[Segment]:
         """The seed and its neighbors, in the store's order."""
         return [*self.neighborhood.before, self.seed, *self.neighborhood.after]
+
+
+class EvictionOptions(BaseModel):
+    """Eviction, at ingest, of stored derivatives that a new derivative nearly duplicates."""
+
+    score_threshold: float = Field(
+        allow_inf_nan=False,
+        description=(
+            "The score between a new derivative and a stored one, by the "
+            "vector store partition's similarity metric and in its units, at "
+            "or better than which eviction is considered. Under dot product "
+            "over vectors that are not normalized, a vector's length shifts "
+            "what a fixed threshold means"
+        ),
+    )
+    search_limit: int = Field(
+        gt=0,
+        description=(
+            "Maximum number of stored derivatives at or better than the "
+            "threshold fetched per new derivative; only those can be evicted"
+        ),
+    )
+    target_size: int = Field(
+        gt=0,
+        description=(
+            "How many derivatives to keep out of a new derivative and the "
+            "stored ones at or better than the threshold with it, when there "
+            "are more"
+        ),
+    )
