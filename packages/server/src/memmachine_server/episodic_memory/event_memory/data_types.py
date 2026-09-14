@@ -300,3 +300,30 @@ class QueryHit(BaseModel):
     def window(self) -> list[Segment]:
         """The seed and its neighbors, in the store's order."""
         return [*self.neighborhood.before, self.seed, *self.neighborhood.after]
+
+
+class EvictionOptions(BaseModel):
+    """Eviction, at ingest, of stored derivatives that a new derivative nearly duplicates."""
+
+    cosine_similarity_threshold: float = Field(
+        ge=-1.0,
+        le=1.0,
+        description=(
+            "Cosine similarity between a new derivative and a stored one "
+            "at or above which eviction is considered"
+        ),
+    )
+    search_limit: int = Field(
+        gt=0,
+        description=(
+            "Maximum number of stored derivatives at or above the threshold "
+            "fetched per new derivative; only those can be evicted"
+        ),
+    )
+    target_size: int = Field(
+        gt=0,
+        description=(
+            "How many derivatives to keep out of a new derivative and the "
+            "stored ones at or above the threshold with it, when there are more"
+        ),
+    )

@@ -19,6 +19,7 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    EvictionOptions,
     Neighborhood,
     Segment,
 )
@@ -304,6 +305,7 @@ class InMemoryEventMemoryStorePartitionWriter(EventMemoryStorePartitionWriter):
     def __init__(self, partition: InMemoryEventMemoryStorePartition) -> None:
         self._partition = partition
         self._staged: dict[UUID, dict[Segment, list[UUID]]] = {}
+        self._unlinked: set[UUID] = set()
 
     @override
     async def add_events(
@@ -338,6 +340,13 @@ class InMemoryEventMemoryStorePartitionWriter(EventMemoryStorePartitionWriter):
             self._staged[event_uuid] = segments
 
     @override
+    async def delete_derivatives(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> None:
+        self._unlinked |= set(derivative_uuids)
+
+    @override
     async def get_segment_uuids_by_derivative_uuids(
         self,
         derivative_uuids: Iterable[UUID],
@@ -347,7 +356,7 @@ class InMemoryEventMemoryStorePartitionWriter(EventMemoryStorePartitionWriter):
         )
 
     def apply(self) -> None:
-        """Commit the staged events into the partition."""
+        """Commit the staged events and unlinkings into the partition."""
         for event_uuid, segments in self._staged.items():
             self._partition.events.add(event_uuid)
             for segment, derivative_uuids in segments.items():
@@ -355,6 +364,14 @@ class InMemoryEventMemoryStorePartitionWriter(EventMemoryStorePartitionWriter):
                 self._partition.event_to_segments[event_uuid].append(segment.uuid)
                 self._partition.segment_to_derivatives[segment.uuid] = derivative_uuids
         self._staged = {}
+        if self._unlinked:
+            for segment_uuid, linked in self._partition.segment_to_derivatives.items():
+                self._partition.segment_to_derivatives[segment_uuid] = [
+                    derivative_uuid
+                    for derivative_uuid in linked
+                    if derivative_uuid not in self._unlinked
+                ]
+            self._unlinked = set()
 
 
 class FakeReranker(Reranker):
@@ -477,5 +494,27 @@ def event_memory_with_sentences(
             segmenter=TextSegmenter(),
             deriver=SentenceTextDeriver(),
             embedder=fake_embedder,
+        )
+    )
+
+
+@pytest.fixture
+def event_memory_with_eviction(
+    fake_vector_store_partition,
+    fake_event_memory_store_partition,
+    fake_embedder,
+):
+    # FakeEmbedder maps every text onto one direction, so all derivatives
+    # are cosine-similar (1.0): any batch forms a single eviction cluster.
+    return EventMemory(
+        EventMemoryParams(
+            event_memory_store_partition=fake_event_memory_store_partition,
+            vector_store_partition=fake_vector_store_partition,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=fake_embedder,
+            eviction=EvictionOptions(
+                cosine_similarity_threshold=0.5, search_limit=100, target_size=5
+            ),
         )
     )

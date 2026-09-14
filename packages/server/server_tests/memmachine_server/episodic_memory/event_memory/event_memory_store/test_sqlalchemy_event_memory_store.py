@@ -4017,3 +4017,55 @@ async def test_sqlite_exclusive_write_waits_for_a_write_in_flight(
     await asyncio.wait_for(writer, 30)
     assert not done, "the exclusive write did not wait for the write in flight"
     assert await asyncio.wait_for(settled, 30) == {derivative_uuid: seg.uuid}
+
+
+# ===================================================================
+# delete_derivatives
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_delete_derivatives_unlinks_and_keeps_the_segment(
+    partition: SQLAlchemyEventMemoryStorePartition,
+) -> None:
+    seg = _seg()
+    kept, unlinked = uuid4(), uuid4()
+    await _add(partition, {seg: [kept, unlinked]})
+
+    async with partition.write() as writer:
+        # An unknown uuid is a no-op.
+        await writer.delete_derivatives([unlinked, uuid4()])
+
+    assert await partition.get_derivative_uuids_by_event_uuids([seg.event_uuid]) == {
+        seg.event_uuid: [kept]
+    }
+    assert seg.uuid in await partition.get_segments([seg.uuid])
+
+
+@pytest.mark.asyncio
+async def test_delete_derivatives_empty(
+    partition: SQLAlchemyEventMemoryStorePartition,
+) -> None:
+    async with partition.write() as writer:
+        await writer.delete_derivatives([])
+
+
+@pytest.mark.asyncio
+async def test_delete_derivatives_rolls_back_when_the_block_raises(
+    partition: SQLAlchemyEventMemoryStorePartition,
+) -> None:
+    """A derivative unlinked inside a block that raises keeps its link."""
+    seg = _seg()
+    derivative_uuid = uuid4()
+    await _add(partition, {seg: [derivative_uuid]})
+
+    async def unlink_then_fail() -> None:
+        async with partition.write() as writer:
+            await writer.delete_derivatives([derivative_uuid])
+            raise RuntimeError("vector store down")
+
+    with pytest.raises(RuntimeError, match="vector store down"):
+        await unlink_then_fail()
+    assert await partition.get_segment_uuids_by_derivative_uuids([derivative_uuid]) == {
+        derivative_uuid: seg.uuid
+    }

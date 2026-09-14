@@ -7,7 +7,7 @@ import math
 import random
 from datetime import UTC
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -28,6 +28,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Context,
     DateTimeFormat,
     Event,
+    EvictionOptions,
     NullContext,
     ProducerContext,
     QueryHit,
@@ -144,6 +145,7 @@ def _build(
     partition: InMemoryEventMemoryStorePartition | None = None,
     vector_store_partition: InMemoryVectorStorePartition | None = None,
     deriver: Deriver | None = None,
+    eviction: EvictionOptions | None = None,
 ) -> EventMemory:
     params: dict[str, Any] = {
         "event_memory_store_partition": partition
@@ -152,6 +154,7 @@ def _build(
         "segmenter": TextSegmenter(),
         "deriver": deriver or WholeTextDeriver(),
         "embedder": embedder,
+        "eviction": eviction,
     }
     return EventMemory(EventMemoryParams(**params))
 
@@ -1628,3 +1631,163 @@ def test_predicates_name_the_reserved_keys():
 def test_empty_ids_admit_nothing_and_none_admits_everything():
     assert _system_predicates(source_ids=None) is None
     assert _system_predicates(source_ids=[]) == In(field=EVENT_SOURCE_KEY, values=[])
+
+
+# ===================================================================
+# eviction
+# ===================================================================
+
+
+async def _stored_minutes(collection: InMemoryVectorStorePartition) -> list[int]:
+    """Minute-offsets (from _T0) of every derivative currently in the store."""
+    [result] = await collection.query(query_vectors=[[1.0, 0.0]], limit=1000)
+    minutes: list[int] = []
+    for match in result.matches:
+        timestamp = _record_properties(collection.records[match.record_uuid])[
+            EVENT_TIMESTAMP_KEY
+        ]
+        assert isinstance(timestamp, datetime.datetime)
+        minutes.append(int((timestamp - _T0).total_seconds() // 60))
+    return sorted(minutes)
+
+
+def _linked(partition: InMemoryEventMemoryStorePartition) -> set[UUID]:
+    return {
+        uid for linked in partition.segment_to_derivatives.values() for uid in linked
+    }
+
+
+class TestEviction:
+    """Eviction caps a cosine similarity cluster at `target_size` by dropping its
+    temporally middle members.
+
+    The FakeEmbedder maps every text onto one direction (cosine 1.0), so
+    each batch below forms a single cluster regardless of the text.
+    """
+
+    @_async
+    async def test_disabled_keeps_all_and_issues_no_query(
+        self, event_memory, fake_vector_store_partition, monkeypatch
+    ):
+        queries: list[int] = []
+        original_query = fake_vector_store_partition.query
+
+        async def counting_query(**kwargs):
+            queries.append(1)
+            return await original_query(**kwargs)
+
+        monkeypatch.setattr(fake_vector_store_partition, "query", counting_query)
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(20)]
+
+        await event_memory.encode_events(events)
+
+        assert len(await _stored_minutes(fake_vector_store_partition)) == 20
+        assert queries == [1]  # the one query _stored_minutes made
+
+    @_async
+    async def test_cluster_within_target_keeps_all(
+        self, event_memory_with_eviction, fake_vector_store_partition
+    ):
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(5)]
+        await event_memory_with_eviction.encode_events(events)
+        assert await _stored_minutes(fake_vector_store_partition) == [0, 1, 2, 3, 4]
+
+    @_async
+    async def test_intra_batch_caps_and_keeps_temporal_extremes(
+        self, event_memory_with_eviction, fake_vector_store_partition
+    ):
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(20)]
+        await event_memory_with_eviction.encode_events(events)
+        # target=5 -> keep 2 earliest + 3 latest, evict the middle.
+        assert await _stored_minutes(fake_vector_store_partition) == [0, 1, 17, 18, 19]
+
+    @_async
+    async def test_batch_order_mimics_serial_ingestion(
+        self, fake_vector_store_partition
+    ):
+        """A batch evicts what encoding its events one at a time would."""
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(12)]
+        eviction = EvictionOptions(
+            cosine_similarity_threshold=0.5, search_limit=100, target_size=5
+        )
+        batched_collection = make_partition()
+        serial_collection = make_partition()
+        batched = _build(
+            FakeEmbedder(), vector_store_partition=batched_collection, eviction=eviction
+        )
+        serial = _build(
+            FakeEmbedder(), vector_store_partition=serial_collection, eviction=eviction
+        )
+
+        await batched.encode_events(list(reversed(events)))
+        for event in events:
+            await serial.encode_events([event])
+
+        assert await _stored_minutes(batched_collection) == await _stored_minutes(
+            serial_collection
+        )
+
+    @_async
+    async def test_clusters_are_trimmed_independently(self):
+        embedder = AngleEmbedder({"alpha": 0.0, "beta": math.pi / 2})
+        collection = make_partition()
+        memory = _build(
+            embedder,
+            vector_store_partition=collection,
+            eviction=EvictionOptions(
+                cosine_similarity_threshold=0.5, search_limit=100, target_size=5
+            ),
+        )
+        alphas = [_make_event(f"alpha {i}", timestamp=_ts(i)) for i in range(7)]
+        betas = [_make_event(f"beta {i}", timestamp=_ts(10 + i)) for i in range(2)]
+
+        await memory.encode_events([*alphas, *betas])
+
+        assert await _stored_minutes(collection) == [
+            0,
+            1,
+            4,
+            5,
+            6,
+            10,
+            11,
+        ]
+
+    @_async
+    async def test_cross_batch_displaces_stored_records_and_their_links(
+        self,
+        event_memory_with_eviction,
+        fake_vector_store_partition,
+        fake_event_memory_store_partition,
+    ):
+        await event_memory_with_eviction.encode_events(
+            [_make_event(f"a{i}", timestamp=_ts(i)) for i in range(5)]
+        )
+        assert await _stored_minutes(fake_vector_store_partition) == [0, 1, 2, 3, 4]
+        stored_before = set(fake_vector_store_partition.records)
+
+        # A second batch grows the cluster past target: stored records from the
+        # temporal middle are displaced, from the vector store and the links.
+        await event_memory_with_eviction.encode_events(
+            [_make_event(f"b{i}", timestamp=_ts(5 + i)) for i in range(5)]
+        )
+
+        assert await _stored_minutes(fake_vector_store_partition) == [0, 1, 7, 8, 9]
+        displaced = stored_before - set(fake_vector_store_partition.records)
+        assert displaced
+        assert not (displaced & _linked(fake_event_memory_store_partition))
+        assert _linked(fake_event_memory_store_partition) == set(
+            fake_vector_store_partition.records
+        )
+        # Segments are untouched: every event is still expandable.
+        assert len(fake_event_memory_store_partition.segments) == 10
+
+    @_async
+    async def test_skipped_derivatives_are_never_linked(
+        self, event_memory_with_eviction, fake_event_memory_store_partition
+    ):
+        events = [_make_event(f"msg {i}", timestamp=_ts(i)) for i in range(20)]
+        await event_memory_with_eviction.encode_events(events)
+
+        assert len(_linked(fake_event_memory_store_partition)) == 5
+        assert len(fake_event_memory_store_partition.segments) == 20

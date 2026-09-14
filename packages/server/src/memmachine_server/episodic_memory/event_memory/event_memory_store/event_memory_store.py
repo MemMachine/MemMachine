@@ -60,6 +60,28 @@ class EventMemoryStorePartitionWriter(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def delete_derivatives(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> None:
+        """
+        Delete derivative links by derivative UUID, leaving their segments.
+
+        The segments and their events stay held; a derivative UUID the
+        partition does not hold is ignored. A caller that unlinks a
+        derivative because another one displaces it adds the displacing
+        links in this same transaction, and deletes the displaced
+        records from the vector store only once the block has committed:
+        a record no link names is reclaimed when a search returns it,
+        while a link naming a record that is gone is not.
+
+        Args:
+            derivative_uuids (Iterable[UUID]):
+                The UUIDs of the derivatives to unlink.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_segment_uuids_by_derivative_uuids(
         self,
         derivative_uuids: Iterable[UUID],

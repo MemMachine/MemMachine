@@ -1004,6 +1004,8 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
                 )
             )
 
+    # Helpers
+
     @staticmethod
     def _resolve_segment_field(
         field: str,
@@ -1159,6 +1161,34 @@ class SQLAlchemyEventMemoryStorePartitionWriter(EventMemoryStorePartitionWriter)
             await self._session.execute(
                 insert(DerivativeLinkRow), derivative_row_values
             )
+
+    @override
+    async def delete_derivatives(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> None:
+        derivative_uuids = set(derivative_uuids)
+        if not derivative_uuids:
+            return
+
+        if not self._is_sqlite:
+            # Same deterministic lock order as delete_segments.
+            await self._session.execute(
+                select(DerivativeLinkRow.uuid)
+                .where(
+                    DerivativeLinkRow.incarnation == self._incarnation,
+                    DerivativeLinkRow.uuid.in_(derivative_uuids),
+                )
+                .order_by(DerivativeLinkRow.uuid)
+                .with_for_update()
+            )
+
+        await self._session.execute(
+            delete(DerivativeLinkRow).where(
+                DerivativeLinkRow.incarnation == self._incarnation,
+                DerivativeLinkRow.uuid.in_(derivative_uuids),
+            )
+        )
 
     @override
     async def get_segment_uuids_by_derivative_uuids(
