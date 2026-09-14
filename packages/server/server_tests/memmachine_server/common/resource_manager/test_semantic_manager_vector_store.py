@@ -23,7 +23,7 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
 async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_engine):
     vector_store = MagicMock()
     partition = MagicMock()
-    vector_store.open_partition = AsyncMock(side_effect=[None, partition])
+    vector_store.get_partition = AsyncMock(side_effect=[None, partition])
     vector_store.create_partition = AsyncMock()
 
     resource_manager = MagicMock()
@@ -65,6 +65,6 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
     )
     # The manager owns the partition: absent at the first open, created once.
     vector_store.create_partition.assert_awaited_once_with("semantic_memory")
-    assert vector_store.open_partition.await_count == 2
+    assert vector_store.get_partition.await_count == 2
 
     await storage.cleanup()

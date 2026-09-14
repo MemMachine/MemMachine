@@ -152,7 +152,7 @@ def _deployment_resource_manager(
 ) -> NonCallableMagicMock:
     """A resource manager whose deployment configures `deployment` and whose stores open autospec partitions."""
     vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.open_partition.return_value = create_autospec(
+    vector_store.get_partition.return_value = create_autospec(
         VectorStorePartition, instance=True
     )
     embedder = create_autospec(Embedder, instance=True)
@@ -167,7 +167,7 @@ def _deployment_resource_manager(
     resource_manager.get_segment_store.return_value = create_autospec(
         SegmentStore, instance=True
     )
-    resource_manager.get_segment_store.return_value.open_partition.return_value = (
+    resource_manager.get_segment_store.return_value.get_partition.return_value = (
         create_autospec(SegmentStorePartition, instance=True)
     )
     resource_manager.get_embedder.return_value = embedder
@@ -192,8 +192,8 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     params = await _event_params(config, resource_manager)
 
     vector_store = resource_manager.get_vector_store.return_value
-    assert params.vector_store_partition is vector_store.open_partition.return_value
-    vector_store.open_partition.assert_awaited_once_with("raced")
+    assert params.vector_store_partition is vector_store.get_partition.return_value
+    vector_store.get_partition.assert_awaited_once_with("raced")
     vector_store.create_partition.assert_not_awaited()
     resource_manager.get_vector_store.assert_awaited_once_with(
         "vs",
@@ -306,8 +306,8 @@ async def test_a_request_never_creates_a_partition(stores, resource_manager):
         await long_term_memory_params_from_config(_EVENT_CONF, resource_manager)
 
     key = partition_key_for_session("sess_1")
-    assert await vector_store.open_partition(key) is None
-    assert await segment_store.open_partition(key) is None
+    assert await vector_store.get_partition(key) is None
+    assert await segment_store.get_partition(key) is None
 
 
 @pytest.mark.asyncio
@@ -341,5 +341,5 @@ async def test_deleting_partitions_needs_none_to_exist(stores, resource_manager)
     await vector_store.delete_partition(key)
     await delete_event_backend_partitions(_EVENT_CONF, resource_manager)
 
-    assert await vector_store.open_partition(key) is None
-    assert await segment_store.open_partition(key) is None
+    assert await vector_store.get_partition(key) is None
+    assert await segment_store.get_partition(key) is None

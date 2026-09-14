@@ -175,12 +175,10 @@ class SemanticResourceManager:
 
         # The manager owns this partition and provisions it when the storage is
         # built.
-        vector_partition = await vector_store.open_partition(
-            _VECTOR_STORE_PARTITION_KEY
-        )
+        vector_partition = await vector_store.get_partition(_VECTOR_STORE_PARTITION_KEY)
         if vector_partition is None:
             await vector_store.create_partition(_VECTOR_STORE_PARTITION_KEY)
-            vector_partition = await vector_store.open_partition(
+            vector_partition = await vector_store.get_partition(
                 _VECTOR_STORE_PARTITION_KEY
             )
             if vector_partition is None:
