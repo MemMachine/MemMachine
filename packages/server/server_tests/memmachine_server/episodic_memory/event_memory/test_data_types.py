@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from memmachine_server.episodic_memory.event_memory.data_types import (
     ID_MAX_BYTES,
     Author,
+    Context,
     DateTimeFormat,
     Derivative,
     Event,
@@ -18,10 +19,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     TextBlock,
     UnknownPart,
     decode_block,
-    decode_context,
     encode_block,
-    encode_context,
-    with_part,
 )
 
 SAMPLE_PROPERTIES = {
@@ -84,7 +82,7 @@ class TestSegmentRoundTrip:
             index=0,
             offset=0,
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            context=with_part({}, Author(name="user")),
+            context=Context(Author(name="user")),
             block=TextBlock(text="hello"),
         )
         seg2 = Segment.model_validate(seg.model_dump(mode="json"))
@@ -255,11 +253,15 @@ class TestContextParts:
         assert not hasattr(Author, "indexed_properties")
 
     def test_with_part_replaces_the_part_of_that_kind(self):
-        context = with_part({}, Author(name="user"))
-        replaced = with_part(context, Author(name="other"))
+        context = Context(Author(name="user"))
+        replaced = context.with_part(Author(name="other"))
         assert context.get("author") == Author(name="user")
         assert replaced.get("author") == Author(name="other")
-        assert list(replaced) == ["author"]
+        assert list(replaced) == [Author(name="other")]
+
+    def test_two_parts_of_one_kind_are_rejected(self):
+        with pytest.raises(ValueError, match="author"):
+            Context(Author(name="user"), Author(name="other"))
 
     def test_author_renders_its_name_and_unknown_renders_nothing(self):
         unknown = UnknownPart(kind_name="plugin", data={"x": 1})
@@ -269,32 +271,32 @@ class TestContextParts:
 
 class TestContextAndBlockSerialization:
     def test_context_round_trip(self):
-        context = with_part({}, Author(name="user"))
+        context = Context(Author(name="user"))
 
-        serialized = encode_context(context)
-        deserialized = decode_context(serialized)
+        serialized = context.encode()
+        deserialized = Context.decode(serialized)
 
         assert serialized == {"author": {"name": "user"}}
         assert deserialized == context
 
     def test_empty_context_round_trip(self):
-        assert encode_context({}) == {}
-        assert decode_context({}) == {}
+        assert Context().encode() == {}
+        assert Context.decode({}) == Context()
 
     def test_unregistered_kind_round_trips_unchanged(self):
         encoded = {"author": {"name": "user"}, "plugin": {"x": 1, "y": "z"}}
 
-        decoded = decode_context(encoded)
+        decoded = Context.decode(encoded)
 
-        assert decoded["plugin"] == UnknownPart(
+        assert decoded.get("plugin") == UnknownPart(
             kind_name="plugin", data={"x": 1, "y": "z"}
         )
         assert decoded.get("author") == Author(name="user")
-        assert encode_context(decoded) == encoded
+        assert decoded.encode() == encoded
 
     def test_part_that_is_not_an_object_is_rejected(self):
         with pytest.raises(TypeError, match="object"):
-            decode_context({"author": "user"})
+            Context.decode({"author": "user"})
 
     def test_model_dump_encodes_parts_by_kind(self):
         seg = Segment(
@@ -304,7 +306,7 @@ class TestContextAndBlockSerialization:
             index=0,
             offset=0,
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
-            context=with_part({}, Author(name="user")),
+            context=Context(Author(name="user")),
             block=TextBlock(text="hello"),
         )
         dumped = seg.model_dump(mode="json")

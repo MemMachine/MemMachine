@@ -43,11 +43,11 @@ from memmachine_server.episodic_memory.declarative_memory.data_types import (
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Author,
+    Context,
     DateTimeFormat,
     Event,
     QueryHit,
     TextBlock,
-    with_part,
 )
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.event_memory import (
@@ -875,7 +875,7 @@ class LongTermMemory:
             uuid=uuid5(_EVENT_UUID_NAMESPACE, str(episode.uid)),
             timestamp=episode.created_at,
             source_id=episode.producer_id,
-            context=with_part({}, Author(name=episode.producer_id)),
+            context=Context(Author(name=episode.producer_id)),
             blocks=[TextBlock(text=episode.content)],
             properties=properties,
         )

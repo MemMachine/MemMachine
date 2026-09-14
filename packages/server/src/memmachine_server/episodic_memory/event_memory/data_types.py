@@ -2,10 +2,11 @@
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from datetime import tzinfo
 from typing import (
     Annotated,
+    Any,
     ClassVar,
     Literal,
     cast,
@@ -19,6 +20,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    GetCoreSchemaHandler,
     InstanceOf,
     JsonValue,
     SerializeAsAny,
@@ -27,6 +29,7 @@ from pydantic import (
     field_serializer,
     field_validator,
 )
+from pydantic_core import core_schema
 
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.properties_json import (
@@ -179,7 +182,7 @@ class Author(ContextPart):
 class UnknownPart(ContextPart):
     """A part of a kind the running process does not register.
 
-    Produced only by `decode_context`; keeps the kind name and the data so the
+    Produced only by `Context.decode`; keeps the kind name and the data so the
     context round-trips unchanged, renders nothing and is read by no step.
     """
 
@@ -190,9 +193,6 @@ class UnknownPart(ContextPart):
     def render(self, datetime_format: DateTimeFormat) -> str | None:
         return None
 
-
-Context = Mapping[str, ContextPart]
-"""A mapping from part kind to the one part of that kind; no context is `{}`."""
 
 _CONTEXT_PART_KINDS: dict[str, type[ContextPart]] = {Author.kind: Author}
 """The registered context part kinds. Built-ins register by import."""
@@ -222,55 +222,99 @@ def part_kind(part: ContextPart) -> str:
     return type(part).kind
 
 
-def with_part(context: Context, part: ContextPart) -> Context:
-    """A context with `part` set under its kind, replacing any part of that kind."""
-    return {**context, part_kind(part): part}
+class Context:
+    """The context surrounding an event: at most one part of each kind.
 
-
-def encode_context(context: Context) -> dict[str, JsonValue]:
-    """Encode a context into JSON-compatible data, as `{kind: fields}`."""
-    return {
-        kind: part.data
-        if isinstance(part, UnknownPart)
-        else part.model_dump(mode="json")
-        for kind, part in context.items()
-    }
-
-
-def decode_context(encoded: Mapping[str, JsonValue]) -> Context:
-    """Decode a context from JSON-compatible data.
-
-    A kind this process does not register decodes to an `UnknownPart`, so
-    nothing is dropped and the context encodes back unchanged.
+    Built from parts, read by kind. Encodes as `{kind: fields}`; a kind
+    this process does not register decodes to an `UnknownPart`, so nothing
+    is dropped and the context encodes back unchanged.
     """
-    context: dict[str, ContextPart] = {}
-    for kind, fields in encoded.items():
-        if not isinstance(fields, Mapping):
-            raise TypeError(
-                f"Context part {kind!r} must encode as an object, "
-                f"got {type(fields).__name__}"
-            )
-        part_type = _CONTEXT_PART_KINDS.get(kind)
-        if part_type is None:
-            logger.warning(
-                "Context part kind %r is not registered; keeping it as data", kind
-            )
-            context[kind] = UnknownPart(
-                kind_name=kind, data=cast(Mapping[str, JsonValue], fields)
-            )
-        else:
-            context[kind] = part_type.model_validate(fields)
-    return context
 
+    __slots__ = ("_parts",)
 
-def _deserialize_context(value: object) -> object:
-    # Encoded contexts (`{kind: fields}`) arrive from JSON; a mapping of
-    # parts is already decoded and passes through.
-    if isinstance(value, Mapping) and not all(
-        isinstance(part, ContextPart) for part in value.values()
-    ):
-        return decode_context(cast(Mapping[str, JsonValue], value))
-    return value
+    def __init__(self, *parts: ContextPart) -> None:
+        """Build a context from parts; two parts of one kind are rejected."""
+        by_kind: dict[str, ContextPart] = {}
+        for part in parts:
+            kind = part_kind(part)
+            if kind in by_kind:
+                raise ValueError(f"Two parts of kind {kind!r}")
+            by_kind[kind] = part
+        self._parts = by_kind
+
+    def get(self, kind: str) -> ContextPart | None:
+        """The part of this kind, or None."""
+        return self._parts.get(kind)
+
+    def with_part(self, part: ContextPart) -> "Context":
+        """This context with `part`, replacing any part of its kind."""
+        kind = part_kind(part)
+        return Context(*(p for k, p in self._parts.items() if k != kind), part)
+
+    def __iter__(self) -> Iterator[ContextPart]:
+        """Iterate over the parts."""
+        return iter(self._parts.values())
+
+    def __len__(self) -> int:
+        """The number of parts."""
+        return len(self._parts)
+
+    def __eq__(self, other: object) -> bool:
+        """Equal to another context with the same parts."""
+        return isinstance(other, Context) and self._parts == other._parts
+
+    def __repr__(self) -> str:
+        """The parts, as a constructor call."""
+        return f"Context({', '.join(repr(part) for part in self)})"
+
+    def encode(self) -> dict[str, JsonValue]:
+        """This context as JSON-compatible data, `{kind: fields}`."""
+        return {
+            kind: part.data
+            if isinstance(part, UnknownPart)
+            else part.model_dump(mode="json")
+            for kind, part in self._parts.items()
+        }
+
+    @classmethod
+    def decode(cls, encoded: Mapping[str, JsonValue]) -> "Context":
+        """A context from `{kind: fields}`."""
+        parts: list[ContextPart] = []
+        for kind, fields in encoded.items():
+            if not isinstance(fields, Mapping):
+                raise TypeError(
+                    f"Context part {kind!r} must encode as an object, "
+                    f"got {type(fields).__name__}"
+                )
+            part_type = _CONTEXT_PART_KINDS.get(kind)
+            if part_type is None:
+                logger.warning(
+                    "Context part kind %r is not registered; keeping it as data", kind
+                )
+                parts.append(
+                    UnknownPart(
+                        kind_name=kind, data=cast(Mapping[str, JsonValue], fields)
+                    )
+                )
+            else:
+                parts.append(part_type.model_validate(fields))
+        return cls(*parts)
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls, source: type[Any], handler: GetCoreSchemaHandler
+    ) -> core_schema.CoreSchema:
+        """A model field of this type accepts an instance or the encoded form, and serializes to the encoded form."""
+        from_encoded = core_schema.no_info_plain_validator_function(cls.decode)
+        return core_schema.json_or_python_schema(
+            json_schema=from_encoded,
+            python_schema=core_schema.union_schema(
+                [core_schema.is_instance_schema(cls), from_encoded]
+            ),
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls.encode, when_used="json"
+            ),
+        )
 
 
 def _deserialize_properties(value: object) -> object:
@@ -317,8 +361,8 @@ class Event(BaseModel):
         description="The source of the event, if any",
     )
     context: Context = Field(
-        default_factory=dict,
-        description="The context surrounding the event, as parts by kind",
+        default_factory=Context,
+        description="The context surrounding the event",
     )
     blocks: list[SerializeAsAny[Block]] = Field(
         description="The blocks of the event, in order"
@@ -327,15 +371,6 @@ class Event(BaseModel):
         default_factory=dict,
         description="User-defined values the event can be filtered by",
     )
-
-    @field_validator("context", mode="before")
-    @classmethod
-    def _validate_context(cls, v: object) -> object:
-        return _deserialize_context(v)
-
-    @field_serializer("context")
-    def _serialize_context(self, v: Context) -> dict[str, JsonValue]:
-        return encode_context(v)
 
     @field_validator("blocks", mode="before")
     @classmethod
@@ -377,20 +412,11 @@ class Segment(BaseModel):
     source_id: _BoundedId | None = Field(
         default=None, description="The event's source id"
     )
-    context: Context = Field(default_factory=dict, description="The event's context")
+    context: Context = Field(default_factory=Context, description="The event's context")
     block: SerializeAsAny[Block] = Field(description="The piece of the event's block")
     properties: dict[str, PropertyValue] = Field(
         default_factory=dict, description="The event's properties"
     )
-
-    @field_validator("context", mode="before")
-    @classmethod
-    def _validate_context(cls, v: object) -> object:
-        return _deserialize_context(v)
-
-    @field_serializer("context")
-    def _serialize_context(self, v: Context) -> dict[str, JsonValue]:
-        return encode_context(v)
 
     @field_validator("block", mode="before")
     @classmethod

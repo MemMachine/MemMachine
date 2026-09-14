@@ -47,7 +47,6 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Neighborhood,
     Segment,
     TextBlock,
-    with_part,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory_store import (
     EventMemoryStoreAttemptsExhaustedError,
@@ -84,7 +83,7 @@ BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
 
 
 def _author(name: str) -> Context:
-    return with_part({}, Author(name=name))
+    return Context(Author(name=name))
 
 
 def _seg(
@@ -106,7 +105,7 @@ def _seg(
         timestamp=BASE_TIME + timedelta(seconds=ts_offset_seconds),
         source_id=source_id,
         block=TextBlock(text=text),
-        context=context if context is not None else {},
+        context=context if context is not None else Context(),
         properties=properties or {},
     )
 
@@ -375,7 +374,7 @@ async def test_add_events_with_no_context(
     assert json.loads(row.context) == {}
 
     result = await partition.get_segments([seg.uuid])
-    assert result[seg.uuid].context == {}
+    assert result[seg.uuid].context == Context()
 
 
 @pytest.mark.asyncio
@@ -406,7 +405,7 @@ async def test_timestamp_roundtrips_with_timezone(
         offset=0,
         timestamp=ts,
         block=TextBlock(text="tz"),
-        context={},
+        context=Context(),
         properties={},
     )
     await _add(partition, _links(seg))
@@ -752,7 +751,7 @@ async def test_contexts_filter_by_context_type(
         event_uuid=ep,
         offset=1,
         ts_offset_seconds=1,
-        context={},
+        context=Context(),
     )
     s2 = _seg(
         event_uuid=ep,
@@ -1654,7 +1653,7 @@ async def test_pg_mixed_context_types(
     assert result[s_msg.uuid].context == ctx_msg
 
     result = await partition.get_segments([s_none.uuid])
-    assert result[s_none.uuid].context == {}
+    assert result[s_none.uuid].context == Context()
 
 
 # ===================================================================
