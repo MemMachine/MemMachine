@@ -22,6 +22,7 @@ from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    EvictionOptions,
     Neighborhood,
     Segment,
 )
@@ -308,6 +309,7 @@ async def open_event_memory_partition(
     segmenter: Segmenter,
     deriver: Deriver,
     embedder: Embedder,
+    eviction: EvictionOptions | None = None,
     metrics_factory: MetricsFactory | None = None,
 ) -> EventMemoryPartition:
     """Open a partition of an EventMemory whose stores hand out the given partitions, and whose vector store has `store_schema`."""
@@ -325,6 +327,7 @@ async def open_event_memory_partition(
             segmenter=segmenter,
             deriver=deriver,
             embedder=embedder,
+            eviction=eviction,
             metrics_factory=metrics_factory,
         )
     )
@@ -462,4 +465,24 @@ async def event_memory_partition_with_sentences(
         segmenter=TextSegmenter(),
         deriver=SentenceTextDeriver(),
         embedder=fake_embedder,
+    )
+
+
+@pytest_asyncio.fixture
+async def event_memory_partition_with_eviction(
+    fake_store_schema,
+    fake_vector_store_partition,
+    fake_event_memory_store_partition,
+    fake_embedder,
+):
+    # FakeEmbedder maps every text onto one direction, so all derivatives
+    # are cosine-similar (1.0): any batch forms a single eviction cluster.
+    return await open_event_memory_partition(
+        event_memory_store_partition=fake_event_memory_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        store_schema=fake_store_schema,
+        segmenter=TextSegmenter(),
+        deriver=WholeTextDeriver(),
+        embedder=fake_embedder,
+        eviction=EvictionOptions(score_threshold=0.5, search_limit=100, target_size=5),
     )
