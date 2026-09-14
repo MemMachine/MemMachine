@@ -147,26 +147,40 @@ class SemanticResourceManager:
         if vector_dimensions is None:
             vector_dimensions = (await self._get_default_embedder()).dimensions
 
-        collection = await vector_store.open_or_create_collection(
-            namespace=_VECTOR_STORE_NAMESPACE,
-            name=_VECTOR_STORE_COLLECTION_NAME,
-            config=VectorStoreCollectionConfig(
-                vector_dimensions=vector_dimensions,
-                indexed_properties_schema={
-                    "feature_id": str,
-                    "set_id": str,
-                    "set": str,
-                    "semantic_category_id": str,
-                    "category_name": str,
-                    "category": str,
-                    "tag_id": str,
-                    "tag": str,
-                    "feature": str,
-                    "feature_name": str,
-                    "value": str,
-                },
-            ),
+        # The manager owns this collection, so creating it here, once, at the
+        # storage's first use is the owner's provisioning, not a request's.
+        collection = await vector_store.open_collection(
+            namespace=_VECTOR_STORE_NAMESPACE, name=_VECTOR_STORE_COLLECTION_NAME
         )
+        if collection is None:
+            await vector_store.create_collection(
+                namespace=_VECTOR_STORE_NAMESPACE,
+                name=_VECTOR_STORE_COLLECTION_NAME,
+                config=VectorStoreCollectionConfig(
+                    vector_dimensions=vector_dimensions,
+                    indexed_properties_schema={
+                        "feature_id": str,
+                        "set_id": str,
+                        "set": str,
+                        "semantic_category_id": str,
+                        "category_name": str,
+                        "category": str,
+                        "tag_id": str,
+                        "tag": str,
+                        "feature": str,
+                        "feature_name": str,
+                        "value": str,
+                    },
+                ),
+            )
+            collection = await vector_store.open_collection(
+                namespace=_VECTOR_STORE_NAMESPACE, name=_VECTOR_STORE_COLLECTION_NAME
+            )
+            if collection is None:
+                raise RuntimeError(
+                    "The semantic memory's vector store collection is gone right "
+                    "after its creation"
+                )
         storage = VectorStoreSemanticStorage(sql_engine, collection)
         await storage.startup()
         return storage

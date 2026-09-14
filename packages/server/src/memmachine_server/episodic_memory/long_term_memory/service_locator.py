@@ -16,6 +16,7 @@ from memmachine_server.common.configuration.episodic_config import (
     TextSegmenterConf,
     WholeTextDeriverConf,
 )
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStoreCollectionConfig
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
@@ -85,6 +86,57 @@ async def _declarative_params(
     )
 
 
+class SessionPartitionMissingError(RuntimeError):
+    """A session's row exists, but a store holds no partition under its key."""
+
+    def __init__(self, session_id: str, partition_key: str, store: str) -> None:
+        """Initialize with the session, its partition key, and the store lacking it."""
+        self.session_id = session_id
+        self.partition_key = partition_key
+        super().__init__(
+            f"Session {session_id!r} has no partition {partition_key!r} in {store}: "
+            "its storage was never created, or has been deleted"
+        )
+
+
+async def create_event_backend_partitions(
+    config: EventLongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """Create the session's partition in its segment store and its vector store.
+
+    Strict, like the stores' own create: called once, when the session is
+    created.
+    """
+    vector_store = await resource_manager.get_vector_store(config.vector_store)
+    segment_store = await resource_manager.get_segment_store(config.segment_store)
+    embedder = await resource_manager.get_embedder(config.embedder, validate=True)
+    partition_key = partition_key_for_session(config.session_id)
+    await segment_store.create_partition(partition_key, SegmentStorePartitionConfig())
+    await vector_store.create_collection(
+        namespace=_EVENT_BACKEND_NAMESPACE,
+        name=partition_key,
+        config=VectorStoreCollectionConfig(
+            vector_dimensions=embedder.dimensions,
+            indexed_properties_schema=event_backend_indexed_properties(),
+        ),
+    )
+
+
+async def delete_event_backend_partitions(
+    config: EventLongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """Delete the session's partitions by key, whether or not both exist."""
+    vector_store = await resource_manager.get_vector_store(config.vector_store)
+    segment_store = await resource_manager.get_segment_store(config.segment_store)
+    partition_key = partition_key_for_session(config.session_id)
+    await vector_store.delete_collection(
+        namespace=_EVENT_BACKEND_NAMESPACE, name=partition_key
+    )
+    await segment_store.delete_partition(partition_key)
+
+
 async def _event_params(
     config: EventLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
@@ -101,39 +153,23 @@ async def _event_params(
 
     partition_key = partition_key_for_session(config.session_id)
 
-    # Open the existing collection if any (preserves the original schema). Only
-    # create with our merged schema if the partition does not yet exist.
+    # No memory request creates storage: the session's partitions were created
+    # with the session, and a session without them is broken, not new.
     collection = await vector_store.open_collection(
         namespace=_EVENT_BACKEND_NAMESPACE,
         name=partition_key,
     )
     if collection is None:
-        collection_config = VectorStoreCollectionConfig(
-            vector_dimensions=embedder.dimensions,
-            indexed_properties_schema={
-                **EventMemory.expected_vector_store_collection_schema(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-            },
+        raise SessionPartitionMissingError(
+            config.session_id,
+            partition_key,
+            f"namespace {_EVENT_BACKEND_NAMESPACE!r} of the vector store",
         )
-        await vector_store.create_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-            config=collection_config,
+    partition = await segment_store.open_partition(partition_key)
+    if partition is None:
+        raise SessionPartitionMissingError(
+            config.session_id, partition_key, "the segment store"
         )
-        collection = await vector_store.open_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-        )
-        if collection is None:
-            raise RuntimeError(
-                f"Failed to open vector store collection after creation for "
-                f"partition {partition_key!r}"
-            )
-
-    partition = await segment_store.open_or_create_partition(
-        partition_key,
-        SegmentStorePartitionConfig(),
-    )
 
     segmenter = _build_segmenter(config.segmenter)
     deriver = _build_deriver(config.deriver)
@@ -153,6 +189,18 @@ async def _event_params(
         deriver=deriver,
         metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
     )
+
+
+def event_backend_indexed_properties() -> dict[str, type[PropertyValue]]:
+    """The system keys the event backend writes into every vector record.
+
+    EventMemory's reserved keys and the adapter's own event fields; a
+    session's collection is created with these.
+    """
+    return {
+        **EventMemory.expected_vector_store_collection_schema(),
+        **EVENT_BACKEND_SYSTEM_FIELDS,
+    }
 
 
 def partition_key_for_session(session_id: str) -> str:

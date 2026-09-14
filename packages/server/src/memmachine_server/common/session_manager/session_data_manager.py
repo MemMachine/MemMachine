@@ -35,8 +35,11 @@ class SessionDataManager(ABC):
         param: EpisodicMemoryConf,
         description: str,
         metadata: dict[str, JsonValue],
-    ) -> None:
-        """Create a session, or accept an equivalent active session."""
+    ) -> bool:
+        """Create a session, or accept an equivalent active session.
+
+        Returns whether the session was created by this call.
+        """
         raise NotImplementedError
 
     @abstractmethod

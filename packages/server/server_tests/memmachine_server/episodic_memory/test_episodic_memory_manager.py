@@ -436,12 +436,18 @@ async def test_delete_episodic_session_not_in_cache(
     mock_episodic_memory_cls.reset_mock()
     mock_episodic_memory_instance.reset_mock()
 
-    await manager.delete_episodic_session(session_key)
+    with patch(
+        "memmachine_server.episodic_memory.episodic_memory_manager.delete_episodic_memory_storage",
+        new=AsyncMock(),
+    ) as delete_storage:
+        await manager.delete_episodic_session(session_key)
 
-    # Should load from storage to delete
-    mock_episodic_memory_cls.assert_called_once()
-    mock_episodic_memory_instance.delete_session_episodes.assert_awaited_once()
-    mock_episodic_memory_instance.close.assert_awaited_once()
+    # No instance is opened to delete: the storage goes by key, so a session
+    # whose storage was never fully created can still be deleted.
+    mock_episodic_memory_cls.assert_not_called()
+    delete_storage.assert_awaited_once()
+    conf = delete_storage.await_args_list[0].args[0]
+    assert conf.session_key == mock_episodic_memory_conf.session_key
 
 
 @pytest.mark.asyncio
@@ -606,3 +612,48 @@ async def test_open_deleted_session_raises_error(
             {},
         ):
             pass
+
+
+@pytest.mark.asyncio
+@patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
+async def test_storage_is_created_with_the_session_row_and_only_then(
+    mock_episodic_memory_cls,
+    manager: EpisodicMemoryManager,
+    mock_episodic_memory_conf,
+    mock_episodic_memory_instance,
+):
+    """Every creation path creates storage once, with the row; opening never does."""
+    mock_episodic_memory_cls.return_value = mock_episodic_memory_instance
+    with patch(
+        "memmachine_server.episodic_memory.episodic_memory_manager.create_episodic_memory_storage",
+        new=AsyncMock(),
+    ) as create_storage:
+        await manager.create_session("s1", mock_episodic_memory_conf, "", {})
+        create_storage.assert_awaited_once()
+
+        # An equivalent re-create accepts the row and leaves the storage alone.
+        await manager.create_session("s1", mock_episodic_memory_conf, "", {})
+        async with manager.create_episodic_memory(
+            "s1", mock_episodic_memory_conf, "", {}
+        ):
+            pass
+        async with manager.open_or_create_episodic_memory(
+            "s1", mock_episodic_memory_conf, "", {}
+        ):
+            pass
+        await manager.close_session("s1")
+        async with manager.open_episodic_memory("s1"):
+            pass
+        create_storage.assert_awaited_once()
+
+        # The other creation paths create storage too.
+        async with manager.create_episodic_memory(
+            "s2", mock_episodic_memory_conf, "", {}
+        ):
+            pass
+        assert create_storage.await_count == 2
+        async with manager.open_or_create_episodic_memory(
+            "s3", mock_episodic_memory_conf, "", {}
+        ):
+            pass
+        assert create_storage.await_count == 3

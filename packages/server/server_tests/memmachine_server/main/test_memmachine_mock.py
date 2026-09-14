@@ -265,9 +265,9 @@ def test_with_default_long_conf_enable_status(
 async def test_create_session_passes_generated_config(
     minimal_conf, patched_resource_manager
 ):
-    session_manager = AsyncMock()
-    patched_resource_manager.get_session_data_manager = AsyncMock(
-        return_value=session_manager
+    episodic_memory_manager = AsyncMock()
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_memory_manager
     )
 
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
@@ -284,9 +284,10 @@ async def test_create_session_passes_generated_config(
         user_conf=user_conf,
     )
 
-    session_manager.create_new_session_if_not_exist.assert_awaited_once()
-    _, kwargs = session_manager.create_new_session_if_not_exist.await_args
-    episodic_conf = kwargs["param"]
+    # Creation goes through the manager, which creates the storage with the row.
+    episodic_memory_manager.create_session.assert_awaited_once()
+    _, kwargs = episodic_memory_manager.create_session.await_args
+    episodic_conf = kwargs["episodic_memory_config"]
 
     assert episodic_conf.long_term_memory.embedder == "custom-embed"
     assert episodic_conf.long_term_memory.reranker == "custom-reranker"
