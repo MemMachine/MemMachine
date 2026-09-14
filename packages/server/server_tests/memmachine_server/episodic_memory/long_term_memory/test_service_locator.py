@@ -162,10 +162,10 @@ async def test_a_request_never_creates_a_partition(stores, resource_manager):
 
     key = partition_key_for_session("sess_1")
     assert (
-        await vector_store.open_collection(namespace=_EVENT_BACKEND_NAMESPACE, name=key)
+        await vector_store.get_partition(namespace=_EVENT_BACKEND_NAMESPACE, name=key)
         is None
     )
-    assert await segment_store.open_partition(key) is None
+    assert await segment_store.get_partition(key) is None
 
 
 @pytest.mark.asyncio
@@ -179,7 +179,7 @@ async def test_partitions_created_with_the_session_are_what_a_request_binds(
 
     assert isinstance(params, EventBackendParams)
     assert params.partition_key == key
-    assert params.vector_store_collection is not None
+    assert params.vector_store_partition is not None
     assert params.segment_store_partition is not None
     # Strict: the session is created once.
     with pytest.raises(SegmentStorePartitionAlreadyExistsError):
@@ -195,11 +195,11 @@ async def test_deleting_partitions_needs_none_to_exist(stores, resource_manager)
 
     await create_event_backend_partitions(_EVENT_CONF, resource_manager)
     # Half-created storage, as a crash between the two creates would leave.
-    await vector_store.delete_collection(namespace=_EVENT_BACKEND_NAMESPACE, name=key)
+    await vector_store.delete_partition(namespace=_EVENT_BACKEND_NAMESPACE, name=key)
     await delete_event_backend_partitions(_EVENT_CONF, resource_manager)
 
     assert (
-        await vector_store.open_collection(namespace=_EVENT_BACKEND_NAMESPACE, name=key)
+        await vector_store.get_partition(namespace=_EVENT_BACKEND_NAMESPACE, name=key)
         is None
     )
-    assert await segment_store.open_partition(key) is None
+    assert await segment_store.get_partition(key) is None

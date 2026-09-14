@@ -3,16 +3,16 @@
 from .data_types import (
     QueryResult,
     Record,
-    VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
+    VectorStorePartitionAlreadyExistsError,
 )
-from .vector_store import VectorStore, VectorStoreCollection
+from .vector_store import VectorStore, VectorStorePartition
 
 __all__ = [
     "QueryResult",
     "Record",
     "VectorStore",
-    "VectorStoreCollection",
-    "VectorStoreCollectionAlreadyExistsError",
     "VectorStoreCollectionConfig",
+    "VectorStorePartition",
+    "VectorStorePartitionAlreadyExistsError",
 ]

@@ -1,4 +1,4 @@
-"""In-memory VectorStoreCollection implementation for testing."""
+"""In-memory VectorStorePartition implementation for testing."""
 
 import math
 import operator
@@ -15,7 +15,7 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
-from memmachine_server.common.vector_store import VectorStoreCollection
+from memmachine_server.common.vector_store import VectorStorePartition
 from memmachine_server.common.vector_store.data_types import (
     QueryMatch,
     QueryResult,
@@ -89,12 +89,12 @@ def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# InMemoryVectorStoreCollection
+# InMemoryVectorStorePartition
 # ---------------------------------------------------------------------------
 
 
-class InMemoryVectorStoreCollection(VectorStoreCollection):
-    """In-memory VectorStoreCollection for testing.
+class InMemoryVectorStorePartition(VectorStorePartition):
+    """In-memory VectorStorePartition for testing.
 
     Scores by cosine similarity and evaluates FilterExpr on record properties.
     """

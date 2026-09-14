@@ -44,7 +44,7 @@ from memmachine_server.common.filter.sql_filter_util import (
     compile_sql_filter,
 )
 from memmachine_server.common.utils import ensure_tz_aware
-from memmachine_server.common.vector_store import Record, VectorStoreCollection
+from memmachine_server.common.vector_store import Record, VectorStorePartition
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -184,7 +184,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
     def __init__(
         self,
         sqlalchemy_engine: AsyncEngine,
-        vector_collection: VectorStoreCollection,
+        vector_collection: VectorStorePartition,
     ) -> None:
         """Initialize storage with an async SQLAlchemy engine and vector collection."""
         self._engine = sqlalchemy_engine

@@ -42,11 +42,11 @@ from .data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
+    VectorStorePartitionAlreadyExistsError,
 )
 from .utils import validate_filter, validate_identifier
-from .vector_store import VectorStore, VectorStoreCollection
+from .vector_store import VectorStore, VectorStorePartition
 
 
 class BaseSQLiteVecVectorStore(DeclarativeBase):
@@ -63,7 +63,7 @@ class _CollectionRow(BaseSQLiteVecVectorStore):
     )
 
 
-class SQLiteVecVectorStoreCollection(VectorStoreCollection):
+class SQLiteVecVectorStorePartition(VectorStorePartition):
     """A logical collection backed by SQLite + sqlite-vec."""
 
     def __init__(
@@ -355,7 +355,7 @@ class SQLiteVecVectorStore(VectorStore):
         pass
 
     @override
-    async def create_collection(
+    async def create_partition(
         self,
         *,
         namespace: str,
@@ -367,7 +367,7 @@ class SQLiteVecVectorStore(VectorStore):
         async with self._create_session() as session, session.begin():
             existing_config = await self._get_stored_config(session, namespace, name)
             if existing_config is not None:
-                raise VectorStoreCollectionAlreadyExistsError(namespace, name)
+                raise VectorStorePartitionAlreadyExistsError(namespace, name)
 
             await self._ensure_collection_tables(session, namespace, name, config)
             session.add(
@@ -379,9 +379,9 @@ class SQLiteVecVectorStore(VectorStore):
             )
 
     @override
-    async def open_collection(
+    async def get_partition(
         self, *, namespace: str, name: str
-    ) -> VectorStoreCollection | None:
+    ) -> VectorStorePartition | None:
         if not validate_identifier(namespace) or not validate_identifier(name):
             raise ValueError(f"Invalid namespace {namespace!r} or name {name!r}")
 
@@ -392,7 +392,7 @@ class SQLiteVecVectorStore(VectorStore):
 
         records_table = self._records_table(namespace, name)
         vector_table_name = self._vector_table_name(namespace, name)
-        return SQLiteVecVectorStoreCollection(
+        return SQLiteVecVectorStorePartition(
             create_session=self._create_session,
             config=existing,
             records_table=records_table,
@@ -400,7 +400,7 @@ class SQLiteVecVectorStore(VectorStore):
         )
 
     @override
-    async def delete_collection(self, *, namespace: str, name: str) -> None:
+    async def delete_partition(self, *, namespace: str, name: str) -> None:
         if not validate_identifier(namespace) or not validate_identifier(name):
             raise ValueError(f"Invalid namespace {namespace!r} or name {name!r}")
 

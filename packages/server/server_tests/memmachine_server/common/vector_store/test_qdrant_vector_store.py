@@ -23,14 +23,14 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.vector_store.data_types import (
     Record,
-    VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
+    VectorStorePartitionAlreadyExistsError,
 )
 from memmachine_server.common.vector_store.qdrant_vector_store import (
     _PAYLOAD_PARTITION_KEY,
     QdrantVectorStore,
-    QdrantVectorStoreCollection,
     QdrantVectorStoreParams,
+    QdrantVectorStorePartition,
 )
 
 
@@ -40,11 +40,11 @@ async def _open_or_create(store, *, namespace, name, config):
     Losing a creation race to another creator of the same collection is the
     collection existing, which is the state asked for.
     """
-    collection = await store.open_collection(namespace=namespace, name=name)
+    collection = await store.get_partition(namespace=namespace, name=name)
     if collection is None:
-        with contextlib.suppress(VectorStoreCollectionAlreadyExistsError):
-            await store.create_collection(namespace=namespace, name=name, config=config)
-        collection = await store.open_collection(namespace=namespace, name=name)
+        with contextlib.suppress(VectorStorePartitionAlreadyExistsError):
+            await store.create_partition(namespace=namespace, name=name, config=config)
+        collection = await store.get_partition(namespace=namespace, name=name)
     assert collection is not None
     return collection
 
@@ -80,7 +80,7 @@ async def store(any_qdrant_client):
 
 @pytest_asyncio.fixture
 async def collection(store):
-    await store.create_collection(
+    await store.create_partition(
         namespace=NAMESPACE,
         name=NAME,
         config=VectorStoreCollectionConfig(
@@ -94,10 +94,10 @@ async def collection(store):
             },
         ),
     )
-    coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
+    coll = await store.get_partition(namespace=NAMESPACE, name=NAME)
     assert coll is not None
     yield coll
-    await store.delete_collection(namespace=NAMESPACE, name=NAME)
+    await store.delete_partition(namespace=NAMESPACE, name=NAME)
 
 
 def _normalize(v: list[float]) -> list[float]:
@@ -144,24 +144,24 @@ def _make_record(
 class TestCollectionLifecycle:
     @pytest.mark.asyncio
     async def test_create_get_delete(self, store):
-        await store.create_collection(
+        await store.create_partition(
             namespace=NAMESPACE,
             name="lifecycle",
             config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
         )
-        coll = await store.open_collection(namespace=NAMESPACE, name="lifecycle")
-        assert isinstance(coll, QdrantVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="lifecycle")
+        coll = await store.get_partition(namespace=NAMESPACE, name="lifecycle")
+        assert isinstance(coll, QdrantVectorStorePartition)
+        await store.delete_partition(namespace=NAMESPACE, name="lifecycle")
 
     @pytest.mark.asyncio
-    async def test_open_collection_returns_qdrant_collection(self, store, collection):
-        coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
-        assert isinstance(coll, QdrantVectorStoreCollection)
+    async def test_get_partition_returns_qdrant_collection(self, store, collection):
+        coll = await store.get_partition(namespace=NAMESPACE, name=NAME)
+        assert isinstance(coll, QdrantVectorStorePartition)
 
     @pytest.mark.asyncio
     async def test_duplicate_name_raises(self, store, collection):
-        with pytest.raises(VectorStoreCollectionAlreadyExistsError):
-            await store.create_collection(
+        with pytest.raises(VectorStorePartitionAlreadyExistsError):
+            await store.create_partition(
                 namespace=NAMESPACE,
                 name=NAME,
                 config=VectorStoreCollectionConfig(
@@ -178,7 +178,7 @@ class TestCollectionLifecycle:
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_is_idempotent(self, store):
-        await store.delete_collection(namespace=NAMESPACE, name="nonexistent")
+        await store.delete_partition(namespace=NAMESPACE, name="nonexistent")
 
     @pytest.mark.asyncio
     async def test_same_config_shares_native_collection(self, store):
@@ -188,17 +188,17 @@ class TestCollectionLifecycle:
             vector_dimensions=VECTOR_DIM,
             indexed_properties_schema=schema,
         )
-        await store.create_collection(namespace=NAMESPACE, name="coll_a", config=config)
-        await store.create_collection(namespace=NAMESPACE, name="coll_b", config=config)
+        await store.create_partition(namespace=NAMESPACE, name="coll_a", config=config)
+        await store.create_partition(namespace=NAMESPACE, name="coll_b", config=config)
 
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="coll_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="coll_b")
+        coll_a = await store.get_partition(namespace=NAMESPACE, name="coll_a")
+        coll_b = await store.get_partition(namespace=NAMESPACE, name="coll_b")
         assert coll_a is not None
         assert coll_b is not None
         assert coll_a._collection_name == coll_b._collection_name
 
-        await store.delete_collection(namespace=NAMESPACE, name="coll_a")
-        await store.delete_collection(namespace=NAMESPACE, name="coll_b")
+        await store.delete_partition(namespace=NAMESPACE, name="coll_a")
+        await store.delete_partition(namespace=NAMESPACE, name="coll_b")
 
 
 # ── Upsert + Query ──
@@ -954,18 +954,18 @@ class TestDelete:
 class TestPartitionIsolation:
     @pytest.mark.asyncio
     async def test_query_only_returns_own_partition(self, store):
-        await store.create_collection(
+        await store.create_partition(
             namespace=NAMESPACE,
             name="tenant_a",
             config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
         )
-        await store.create_collection(
+        await store.create_partition(
             namespace=NAMESPACE,
             name="tenant_b",
             config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
         )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
+        coll_a = await store.get_partition(namespace=NAMESPACE, name="tenant_a")
+        coll_b = await store.get_partition(namespace=NAMESPACE, name="tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -984,23 +984,23 @@ class TestPartitionIsolation:
         assert uuids_a == {r1.uuid}
         assert uuids_b == {r2.uuid}
 
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
+        await store.delete_partition(namespace=NAMESPACE, name="tenant_a")
+        await store.delete_partition(namespace=NAMESPACE, name="tenant_b")
 
     @pytest.mark.asyncio
     async def test_get_only_returns_own_partition(self, store):
-        await store.create_collection(
+        await store.create_partition(
             namespace=NAMESPACE,
             name="tenant_a",
             config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
         )
-        await store.create_collection(
+        await store.create_partition(
             namespace=NAMESPACE,
             name="tenant_b",
             config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
         )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
+        coll_a = await store.get_partition(namespace=NAMESPACE, name="tenant_a")
+        coll_b = await store.get_partition(namespace=NAMESPACE, name="tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -1015,23 +1015,23 @@ class TestPartitionIsolation:
         assert len(results) == 1
         assert results[0] == r1.uuid
 
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
+        await store.delete_partition(namespace=NAMESPACE, name="tenant_a")
+        await store.delete_partition(namespace=NAMESPACE, name="tenant_b")
 
     @pytest.mark.asyncio
     async def test_delete_only_affects_own_partition(self, store):
-        await store.create_collection(
+        await store.create_partition(
             namespace=NAMESPACE,
             name="tenant_a",
             config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
         )
-        await store.create_collection(
+        await store.create_partition(
             namespace=NAMESPACE,
             name="tenant_b",
             config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
         )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
+        coll_a = await store.get_partition(namespace=NAMESPACE, name="tenant_a")
+        coll_b = await store.get_partition(namespace=NAMESPACE, name="tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -1049,8 +1049,8 @@ class TestPartitionIsolation:
         assert len(results) == 1
         assert results[0] == r2.uuid
 
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
+        await store.delete_partition(namespace=NAMESPACE, name="tenant_a")
+        await store.delete_partition(namespace=NAMESPACE, name="tenant_b")
 
 
 # ── Metrics ──
@@ -1071,7 +1071,7 @@ class TestMetrics:
         store = QdrantVectorStore(params)
         await store.startup()
 
-        await store.create_collection(
+        await store.create_partition(
             namespace=NAMESPACE,
             name="metrics_test",
             config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
@@ -1079,12 +1079,12 @@ class TestMetrics:
 
         assert mock_histogram.observe.called
         call_labels = mock_histogram.observe.call_args
-        assert call_labels[1]["labels"]["operation"] == "create_collection"
+        assert call_labels[1]["labels"]["operation"] == "create_partition"
         assert call_labels[1]["labels"]["status"] == "ok"
 
         mock_histogram.reset_mock()
 
-        coll = await store.open_collection(namespace=NAMESPACE, name="metrics_test")
+        coll = await store.get_partition(namespace=NAMESPACE, name="metrics_test")
         assert coll is not None
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -1095,7 +1095,7 @@ class TestMetrics:
         assert call_labels[1]["labels"]["operation"] == "upsert"
         assert call_labels[1]["labels"]["status"] == "ok"
 
-        await store.delete_collection(namespace=NAMESPACE, name="metrics_test")
+        await store.delete_partition(namespace=NAMESPACE, name="metrics_test")
 
 
 # ── Distributed sharding ──
@@ -1121,7 +1121,7 @@ class TestDistributedSharding:
         store = distributed_store
         ns, name = NAMESPACE, "distributed_crud"
 
-        await store.create_collection(
+        await store.create_partition(
             namespace=ns,
             name=name,
             config=VectorStoreCollectionConfig(
@@ -1129,7 +1129,7 @@ class TestDistributedSharding:
                 indexed_properties_schema={"name": str},
             ),
         )
-        coll = await store.open_collection(namespace=ns, name=name)
+        coll = await store.get_partition(namespace=ns, name=name)
         assert coll is not None
 
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -1146,7 +1146,7 @@ class TestDistributedSharding:
         got = await _present_uuids(coll, [r1.uuid])
         assert len(got) == 0
 
-        await store.delete_collection(namespace=ns, name=name)
+        await store.delete_partition(namespace=ns, name=name)
 
     async def test_shard_drop_isolates_logical_collections(self, distributed_store):
         """Dropping one logical collection's shard must not affect another's data."""
@@ -1156,11 +1156,11 @@ class TestDistributedSharding:
             vector_dimensions=VECTOR_DIM,
         )
 
-        await store.create_collection(namespace=ns, name="tenant_a", config=config)
-        await store.create_collection(namespace=ns, name="tenant_b", config=config)
+        await store.create_partition(namespace=ns, name="tenant_a", config=config)
+        await store.create_partition(namespace=ns, name="tenant_b", config=config)
 
-        coll_a = await store.open_collection(namespace=ns, name="tenant_a")
-        coll_b = await store.open_collection(namespace=ns, name="tenant_b")
+        coll_a = await store.get_partition(namespace=ns, name="tenant_a")
+        coll_b = await store.get_partition(namespace=ns, name="tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -1172,12 +1172,12 @@ class TestDistributedSharding:
         await coll_b.upsert(records=[r_b])
 
         # Delete tenant_a's shard.
-        await store.delete_collection(namespace=ns, name="tenant_a")
+        await store.delete_partition(namespace=ns, name="tenant_a")
 
         # tenant_b data should be untouched.
         assert await _present_uuids(coll_b, [r_b.uuid]) == [r_b.uuid]
 
-        await store.delete_collection(namespace=ns, name="tenant_b")
+        await store.delete_partition(namespace=ns, name="tenant_b")
 
     async def test_idempotent_delete(self, distributed_store):
         """Deleting an already-deleted collection should be a no-op."""
@@ -1185,10 +1185,10 @@ class TestDistributedSharding:
         ns, name = NAMESPACE, "distributed_idem"
         config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
 
-        await store.create_collection(namespace=ns, name=name, config=config)
-        await store.delete_collection(namespace=ns, name=name)
+        await store.create_partition(namespace=ns, name=name, config=config)
+        await store.delete_partition(namespace=ns, name=name)
         # Second delete should not raise.
-        await store.delete_collection(namespace=ns, name=name)
+        await store.delete_partition(namespace=ns, name=name)
 
 
 @pytest.mark.integration
@@ -1257,7 +1257,7 @@ class TestCollectionLifecycleAcrossWorkers:
                 f"declared property index absent. present: {sorted(indexed)}"
             )
         finally:
-            await store.delete_collection(namespace=namespace, name=name)
+            await store.delete_partition(namespace=namespace, name=name)
 
     @pytest.mark.asyncio
     async def test_two_workers_creating_at_once_both_succeed_and_index(
@@ -1302,6 +1302,6 @@ class TestCollectionLifecycleAcrossWorkers:
                 f"{sorted(indexed)}"
             )
         finally:
-            await store_a.delete_collection(namespace=namespace, name=name)
+            await store_a.delete_partition(namespace=namespace, name=name)
             await client_a.close()
             await client_b.close()

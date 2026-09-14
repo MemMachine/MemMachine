@@ -71,12 +71,12 @@ from .data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
+    VectorStorePartitionAlreadyExistsError,
 )
 from .utils import validate_filter, validate_identifier
 from .vector_search_engine import VectorSearchEngine
-from .vector_store import VectorStore, VectorStoreCollection
+from .vector_store import VectorStore, VectorStorePartition
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +269,7 @@ async def _save_collection_index(
         )
 
 
-class SQLiteVectorStoreCollection(VectorStoreCollection):
+class SQLiteVectorStorePartition(VectorStorePartition):
     """A logical collection backed by SQLite + a pluggable vector search engine.
 
     Reads run freely. Writes are serialized by `write_lock`, which the store
@@ -554,7 +554,7 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         if property_filter is None:
             return None
 
-        return SQLiteVectorStoreCollection._KeyFilter(
+        return SQLiteVectorStorePartition._KeyFilter(
             sync_sqlalchemy_engine=self._sync_sqlalchemy_engine,
             records_table=self._records_table,
             filter_expression=compile_sql_filter(
@@ -917,7 +917,7 @@ class SQLiteVectorStore(VectorStore):
         self._started = False
 
     @override
-    async def create_collection(
+    async def create_partition(
         self,
         *,
         namespace: str,
@@ -931,7 +931,7 @@ class SQLiteVectorStore(VectorStore):
         async with _write_transaction(self._create_session) as session:
             existing_config = await self._get_stored_config(session, namespace, name)
             if existing_config is not None:
-                raise VectorStoreCollectionAlreadyExistsError(namespace, name)
+                raise VectorStorePartitionAlreadyExistsError(namespace, name)
 
             self._clear_search_engine_state(namespace, name)
             await self._ensure_collection_resources(session, namespace, name, config)
@@ -944,12 +944,12 @@ class SQLiteVectorStore(VectorStore):
             )
 
     @override
-    async def open_collection(
+    async def get_partition(
         self,
         *,
         namespace: str,
         name: str,
-    ) -> VectorStoreCollection | None:
+    ) -> VectorStorePartition | None:
         self._require_started()
         if not validate_identifier(namespace) or not validate_identifier(name):
             raise ValueError(f"Invalid namespace {namespace!r} or name {name!r}")
@@ -965,7 +965,7 @@ class SQLiteVectorStore(VectorStore):
         )
 
         index_path = self._index_path(namespace, name)
-        return SQLiteVectorStoreCollection(
+        return SQLiteVectorStorePartition(
             create_session=self._create_session,
             sync_sqlalchemy_engine=self._sync_sqlalchemy_engine,
             records_table=records_table,
@@ -980,7 +980,7 @@ class SQLiteVectorStore(VectorStore):
         )
 
     @override
-    async def delete_collection(self, *, namespace: str, name: str) -> None:
+    async def delete_partition(self, *, namespace: str, name: str) -> None:
         self._require_started()
         if not validate_identifier(namespace) or not validate_identifier(name):
             raise ValueError(f"Invalid namespace {namespace!r} or name {name!r}")

@@ -91,11 +91,11 @@ async def _get_or_create_partition(
     config: SegmentStorePartitionConfig,
 ) -> SQLAlchemySegmentStorePartition:
     """Create-if-absent then get, as the composition root does."""
-    partition = await store.open_partition(partition_key)
+    partition = await store.get_partition(partition_key)
     if partition is None:
         with contextlib.suppress(SegmentStorePartitionAlreadyExistsError):
             await store.create_partition(partition_key, config)
-        partition = await store.open_partition(partition_key)
+        partition = await store.get_partition(partition_key)
     assert partition is not None
     return partition
 
@@ -1089,7 +1089,7 @@ async def test_partition_defaults_to_plaintext_config(
 @pytest.mark.asyncio
 async def test_create_partition(store: SQLAlchemySegmentStore) -> None:
     await store.create_partition("new_partition", _plaintext_partition_config())
-    partition = await store.open_partition("new_partition")
+    partition = await store.get_partition("new_partition")
     assert partition is not None
 
 
@@ -1101,15 +1101,15 @@ async def test_create_partition_already_exists(store: SQLAlchemySegmentStore) ->
 
 
 @pytest.mark.asyncio
-async def test_open_partition_nonexistent(store: SQLAlchemySegmentStore) -> None:
-    result = await store.open_partition("nonexistent")
+async def test_get_partition_nonexistent(store: SQLAlchemySegmentStore) -> None:
+    result = await store.get_partition("nonexistent")
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_open_partition_existing(store: SQLAlchemySegmentStore) -> None:
+async def test_get_partition_existing(store: SQLAlchemySegmentStore) -> None:
     await store.create_partition("existing", _plaintext_partition_config())
-    partition = await store.open_partition("existing")
+    partition = await store.get_partition("existing")
     assert partition is not None
 
 
@@ -1126,7 +1126,7 @@ async def test_delete_partition_removes_data(store: SQLAlchemySegmentStore) -> N
     await store.delete_partition("to_delete")
 
     # Partition no longer exists.
-    assert await store.open_partition("to_delete") is None
+    assert await store.get_partition("to_delete") is None
 
 
 @pytest.mark.integration
@@ -1742,7 +1742,7 @@ async def test_incarnation_with_garbage_left_is_never_reused(
 
     if create_via == "create_partition":
         await store.create_partition("fresh_p", _plaintext_partition_config())
-        fresh = await store.open_partition("fresh_p")
+        fresh = await store.get_partition("fresh_p")
     else:
         fresh = await _get_or_create_partition(
             store, "fresh_p", _plaintext_partition_config()
@@ -1801,7 +1801,7 @@ async def test_incarnation_colliding_with_live_partition_is_never_reused(
 
     if create_via == "create_partition":
         await store.create_partition("fresh_p", _plaintext_partition_config())
-        fresh = await store.open_partition("fresh_p")
+        fresh = await store.get_partition("fresh_p")
     else:
         fresh = await _get_or_create_partition(
             store, "fresh_p", _plaintext_partition_config()
@@ -1811,7 +1811,7 @@ async def test_incarnation_colliding_with_live_partition_is_never_reused(
     assert fresh._incarnation != live_incarnation
 
     # The live partition is unharmed.
-    reopened = await store.open_partition("live_src")
+    reopened = await store.get_partition("live_src")
     assert reopened is not None
     assert reopened._incarnation == live_incarnation
 
@@ -1910,7 +1910,7 @@ async def test_mint_detects_collision_with_concurrent_deletion(
     # Deletion committed on exiting begin().
     await asyncio.wait_for(creator, 30)
 
-    fresh = await pg_store.open_partition("mint_fresh")
+    fresh = await pg_store.get_partition("mint_fresh")
     assert fresh is not None
     assert offered, "the colliding uuid was never offered to the mint"
     assert fresh._incarnation != victim_incarnation, (
@@ -1930,7 +1930,7 @@ async def test_mint_detects_collision_with_concurrent_deletion(
             )
         ).scalar_one()
     assert dead_rows == 0
-    assert await pg_store.open_partition("mint_fresh") is not None
+    assert await pg_store.get_partition("mint_fresh") is not None
 
 
 @pytest.mark.integration
@@ -2509,7 +2509,7 @@ async def test_write_pin_blocks_partition_delete(
 
     await writer
     await deleter
-    assert await pg_store.open_partition("lk_write_pin") is None
+    assert await pg_store.get_partition("lk_write_pin") is None
 
 
 @pytest.mark.asyncio
@@ -2566,10 +2566,10 @@ async def test_lifecycle_churn_completes_without_database_errors(
     config = _plaintext_partition_config()
 
     async def create_if_absent(key: str) -> None:
-        if await store.open_partition(key) is None:
+        if await store.get_partition(key) is None:
             with contextlib.suppress(SegmentStorePartitionAlreadyExistsError):
                 await store.create_partition(key, config)
-            await store.open_partition(key)
+            await store.get_partition(key)
 
     async def worker(seed: int) -> None:
         rng = random.Random(seed)
@@ -2582,7 +2582,7 @@ async def test_lifecycle_churn_completes_without_database_errors(
                 elif operation == 1:
                     await create_if_absent(key)
                 elif operation == 2:
-                    await store.open_partition(key)
+                    await store.get_partition(key)
                 else:
                     await store.delete_partition(key)
             except SegmentStorePartitionAlreadyExistsError:
@@ -2611,7 +2611,7 @@ async def test_concurrent_partition_deletes_are_clean(
             asyncio.gather(*(store.delete_partition("lk_del_race") for _ in range(4))),
             30,
         )
-        assert await store.open_partition("lk_del_race") is None
+        assert await store.get_partition("lk_del_race") is None
         async with store._create_session() as session:
             queue_depth = (
                 await session.execute(select(func.count()).select_from(PurgeQueueRow))
@@ -2723,14 +2723,14 @@ async def test_sqlite_mint_detects_collision_with_concurrent_deletion(
     # Deletion committed on exiting begin().
     await asyncio.wait_for(creator, 30)
 
-    fresh = await sqlite_store.open_partition("sq_mint_fresh")
+    fresh = await sqlite_store.get_partition("sq_mint_fresh")
     assert fresh is not None
     assert offered
     assert fresh._incarnation != victim_incarnation
 
     while await sqlite_store.purge_deleted_partitions():
         pass
-    assert (await sqlite_store.open_partition("sq_mint_fresh")) is not None
+    assert (await sqlite_store.get_partition("sq_mint_fresh")) is not None
 
 
 def test_empty_partition_key_is_named_as_empty() -> None:

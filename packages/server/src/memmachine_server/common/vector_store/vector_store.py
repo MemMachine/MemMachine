@@ -19,7 +19,7 @@ from .data_types import (
 )
 
 
-class VectorStoreCollection(ABC):
+class VectorStorePartition(ABC):
     """
     A logical collection in a vector store.
 
@@ -144,7 +144,7 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def create_collection(
+    async def create_partition(
         self,
         *,
         namespace: str,
@@ -167,15 +167,15 @@ class VectorStore(ABC):
                 Configuration for the collection.
 
         Raises:
-            VectorStoreCollectionAlreadyExistsError: If a collection with the same
+            VectorStorePartitionAlreadyExistsError: If a collection with the same
                 (namespace, name) already exists.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def open_collection(
+    async def get_partition(
         self, *, namespace: str, name: str
-    ) -> VectorStoreCollection | None:
+    ) -> VectorStorePartition | None:
         """
         Get a handle to a logical collection in the vector store.
 
@@ -186,13 +186,13 @@ class VectorStore(ABC):
                 Name of the collection within the namespace.
 
         Returns:
-            VectorStoreCollection | None:
+            VectorStorePartition | None:
                 A handle to the opened collection, or None if it does not exist.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_collection(self, *, namespace: str, name: str) -> None:
+    async def delete_partition(self, *, namespace: str, name: str) -> None:
         """
         Delete a logical collection from the vector store.
 

@@ -47,11 +47,11 @@ from .data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
+    VectorStorePartitionAlreadyExistsError,
 )
 from .utils import validate_filter, validate_identifier
-from .vector_store import VectorStore, VectorStoreCollection
+from .vector_store import VectorStore, VectorStorePartition
 
 # Point payload keys (stored on every Qdrant point).
 # System keys use _SYSTEM_KEY_PREFIX, which contains a hyphen. Hyphens are valid in
@@ -72,7 +72,7 @@ def _partition_filter(partition_key: str) -> models.Filter:
     )
 
 
-class QdrantVectorStoreCollection(VectorStoreCollection):
+class QdrantVectorStorePartition(VectorStorePartition):
     """A collection backed by Qdrant."""
 
     _RANGE_OPERATORS: ClassVar[dict[str, str]] = {
@@ -86,22 +86,22 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
     def _build_qdrant_filter(expr: FilterExpr) -> models.Filter:
         """Convert a FilterExpr tree into a Qdrant Filter."""
         if isinstance(expr, FilterComparison):
-            return QdrantVectorStoreCollection._build_qdrant_comparison(expr)
+            return QdrantVectorStorePartition._build_qdrant_comparison(expr)
         if isinstance(expr, FilterIn):
-            return QdrantVectorStoreCollection._in_filter(expr.field, expr.values)
+            return QdrantVectorStorePartition._in_filter(expr.field, expr.values)
         if isinstance(expr, FilterIsNull):
-            return QdrantVectorStoreCollection._null_filter(expr.field, negate=False)
+            return QdrantVectorStorePartition._null_filter(expr.field, negate=False)
         if isinstance(expr, FilterNot):
             return models.Filter(
-                must_not=[QdrantVectorStoreCollection._build_qdrant_filter(expr.expr)]
+                must_not=[QdrantVectorStorePartition._build_qdrant_filter(expr.expr)]
             )
         if isinstance(expr, FilterAnd):
-            left = QdrantVectorStoreCollection._build_qdrant_filter(expr.left)
-            right = QdrantVectorStoreCollection._build_qdrant_filter(expr.right)
+            left = QdrantVectorStorePartition._build_qdrant_filter(expr.left)
+            right = QdrantVectorStorePartition._build_qdrant_filter(expr.right)
             return models.Filter(must=[left, right])
         if isinstance(expr, FilterOr):
-            left = QdrantVectorStoreCollection._build_qdrant_filter(expr.left)
-            right = QdrantVectorStoreCollection._build_qdrant_filter(expr.right)
+            left = QdrantVectorStorePartition._build_qdrant_filter(expr.left)
+            right = QdrantVectorStorePartition._build_qdrant_filter(expr.right)
             return models.Filter(should=[left, right])
         message = f"Unsupported filter expression type: {type(expr)}"
         raise TypeError(message)
@@ -116,25 +116,23 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         if operator in ("=", "!="):
             negate = operator == "!="
             if isinstance(value, float):
-                return QdrantVectorStoreCollection._float_eq_filter(
+                return QdrantVectorStorePartition._float_eq_filter(
                     field, value, negate=negate
                 )
             if isinstance(value, datetime):
-                return QdrantVectorStoreCollection._datetime_eq_filter(
+                return QdrantVectorStorePartition._datetime_eq_filter(
                     field, value, negate=negate
                 )
-            return QdrantVectorStoreCollection._match_filter(
-                field, value, negate=negate
-            )
-        if operator in QdrantVectorStoreCollection._RANGE_OPERATORS:
+            return QdrantVectorStorePartition._match_filter(field, value, negate=negate)
+        if operator in QdrantVectorStorePartition._RANGE_OPERATORS:
             if not isinstance(value, OrderedValue):
                 message = (
                     f"Range filter on '{field}' requires a numeric or datetime value, "
                     f"got {type(value).__name__}"
                 )
                 raise TypeError(message)
-            return QdrantVectorStoreCollection._range_filter(
-                field, value, QdrantVectorStoreCollection._RANGE_OPERATORS[operator]
+            return QdrantVectorStorePartition._range_filter(
+                field, value, QdrantVectorStorePartition._RANGE_OPERATORS[operator]
             )
 
         message = f"Unsupported filter operator: {operator}"
@@ -346,7 +344,7 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
                 if not validate_filter(property_filter):
                     raise ValueError("Filter contains an invalid property key")
                 property_qdrant_filter = (
-                    QdrantVectorStoreCollection._build_qdrant_filter(property_filter)
+                    QdrantVectorStorePartition._build_qdrant_filter(property_filter)
                 )
                 qdrant_filter = models.Filter(
                     must=[partition_key_filter, property_qdrant_filter]
@@ -632,9 +630,9 @@ class QdrantVectorStore(VectorStore):
 
     def _build_collection_handle(
         self, namespace: str, name: str, config: VectorStoreCollectionConfig
-    ) -> QdrantVectorStoreCollection:
-        """Build a QdrantVectorStoreCollection handle."""
-        return QdrantVectorStoreCollection(
+    ) -> QdrantVectorStorePartition:
+        """Build a QdrantVectorStorePartition handle."""
+        return QdrantVectorStorePartition(
             client=self._client,
             collection_name=QdrantVectorStore._build_native_collection_name(
                 namespace, config
@@ -739,7 +737,7 @@ class QdrantVectorStore(VectorStore):
         )
 
     @override
-    async def create_collection(
+    async def create_partition(
         self,
         *,
         namespace: str,
@@ -757,11 +755,11 @@ class QdrantVectorStore(VectorStore):
             )
         async with (
             self._client_name_locks[(namespace, name)],
-            self._tracker("create_collection"),
+            self._tracker("create_partition"),
         ):
             await self._ensure_namespace_registry_collection(namespace)
             if await self._get_registry_entry(namespace, name) is not None:
-                raise VectorStoreCollectionAlreadyExistsError(namespace, name)
+                raise VectorStorePartitionAlreadyExistsError(namespace, name)
             await self._create_native_collection(namespace, config)
             if self._is_distributed:
                 native_collection_name = (
@@ -771,9 +769,9 @@ class QdrantVectorStore(VectorStore):
             await self._register_collection(namespace, name, config)
 
     @override
-    async def open_collection(
+    async def get_partition(
         self, *, namespace: str, name: str
-    ) -> QdrantVectorStoreCollection | None:
+    ) -> QdrantVectorStorePartition | None:
         """Get a collection handle from the vector store."""
         if not validate_identifier(namespace):
             raise ValueError(
@@ -791,7 +789,7 @@ class QdrantVectorStore(VectorStore):
         )
 
     @override
-    async def delete_collection(self, *, namespace: str, name: str) -> None:
+    async def delete_partition(self, *, namespace: str, name: str) -> None:
         """Delete a logical collection from the Qdrant vector store."""
         if not validate_identifier(namespace):
             raise ValueError(
@@ -803,7 +801,7 @@ class QdrantVectorStore(VectorStore):
             )
         async with (
             self._client_name_locks[(namespace, name)],
-            self._tracker("delete_collection"),
+            self._tracker("delete_partition"),
         ):
             entry = await self._get_registry_entry(namespace, name)
             if entry is None:

@@ -113,7 +113,7 @@ async def create_event_backend_partitions(
     embedder = await resource_manager.get_embedder(config.embedder, validate=True)
     partition_key = partition_key_for_session(config.session_id)
     await segment_store.create_partition(partition_key, SegmentStorePartitionConfig())
-    await vector_store.create_collection(
+    await vector_store.create_partition(
         namespace=_EVENT_BACKEND_NAMESPACE,
         name=partition_key,
         config=VectorStoreCollectionConfig(
@@ -131,7 +131,7 @@ async def delete_event_backend_partitions(
     vector_store = await resource_manager.get_vector_store(config.vector_store)
     segment_store = await resource_manager.get_segment_store(config.segment_store)
     partition_key = partition_key_for_session(config.session_id)
-    await vector_store.delete_collection(
+    await vector_store.delete_partition(
         namespace=_EVENT_BACKEND_NAMESPACE, name=partition_key
     )
     await segment_store.delete_partition(partition_key)
@@ -155,7 +155,7 @@ async def _event_params(
 
     # No memory request creates storage: the session's partitions were created
     # with the session, and a session without them is broken, not new.
-    collection = await vector_store.open_collection(
+    collection = await vector_store.get_partition(
         namespace=_EVENT_BACKEND_NAMESPACE,
         name=partition_key,
     )
@@ -165,7 +165,7 @@ async def _event_params(
             partition_key,
             f"namespace {_EVENT_BACKEND_NAMESPACE!r} of the vector store",
         )
-    partition = await segment_store.open_partition(partition_key)
+    partition = await segment_store.get_partition(partition_key)
     if partition is None:
         raise SessionPartitionMissingError(
             config.session_id, partition_key, "the segment store"
@@ -177,7 +177,7 @@ async def _event_params(
     return EventBackendParams(
         session_id=config.session_id,
         vector_store=vector_store,
-        vector_store_collection=collection,
+        vector_store_partition=collection,
         vector_store_collection_namespace=_EVENT_BACKEND_NAMESPACE,
         segment_store=segment_store,
         segment_store_partition=partition,

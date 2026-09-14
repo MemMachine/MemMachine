@@ -46,11 +46,11 @@ from .data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
+    VectorStorePartitionAlreadyExistsError,
 )
 from .utils import validate_filter, validate_identifier
-from .vector_store import VectorStore, VectorStoreCollection
+from .vector_store import VectorStore, VectorStorePartition
 
 _ID_FIELD = "id"
 _RECORD_UUID_FIELD = "record_uuid"
@@ -94,7 +94,7 @@ def _normalize_property_filter_value(value: PropertyValue) -> PropertyValue:
     return value
 
 
-class MilvusVectorStoreCollection(VectorStoreCollection):
+class MilvusVectorStorePartition(VectorStorePartition):
     """A logical collection backed by Milvus."""
 
     _RANGE_OPERATORS: ClassVar[set[str]] = {">", ">=", "<", "<="}
@@ -103,7 +103,7 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
     def _build_milvus_filter(expr: FilterExpr) -> str:
         """Convert a FilterExpr tree into a Milvus filter expression."""
         if isinstance(expr, FilterComparison):
-            return MilvusVectorStoreCollection._build_milvus_comparison(expr)
+            return MilvusVectorStorePartition._build_milvus_comparison(expr)
         if isinstance(expr, FilterIn):
             if not expr.values:
                 return _FALSE_EXPR
@@ -112,16 +112,14 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
         if isinstance(expr, FilterIsNull):
             return f"{_property_field(expr.field)} is null"
         if isinstance(expr, FilterNot):
-            return (
-                f"not ({MilvusVectorStoreCollection._build_milvus_filter(expr.expr)})"
-            )
+            return f"not ({MilvusVectorStorePartition._build_milvus_filter(expr.expr)})"
         if isinstance(expr, FilterAnd):
-            left = MilvusVectorStoreCollection._build_milvus_filter(expr.left)
-            right = MilvusVectorStoreCollection._build_milvus_filter(expr.right)
+            left = MilvusVectorStorePartition._build_milvus_filter(expr.left)
+            right = MilvusVectorStorePartition._build_milvus_filter(expr.right)
             return f"({left}) && ({right})"
         if isinstance(expr, FilterOr):
-            left = MilvusVectorStoreCollection._build_milvus_filter(expr.left)
-            right = MilvusVectorStoreCollection._build_milvus_filter(expr.right)
+            left = MilvusVectorStorePartition._build_milvus_filter(expr.left)
+            right = MilvusVectorStorePartition._build_milvus_filter(expr.right)
             return f"({left}) || ({right})"
         message = f"Unsupported filter expression type: {type(expr)}"
         raise TypeError(message)
@@ -503,9 +501,9 @@ class MilvusVectorStore(VectorStore):
 
     def _build_collection_handle(
         self, namespace: str, name: str, config: VectorStoreCollectionConfig
-    ) -> MilvusVectorStoreCollection:
-        """Build a MilvusVectorStoreCollection handle."""
-        return MilvusVectorStoreCollection(
+    ) -> MilvusVectorStorePartition:
+        """Build a MilvusVectorStorePartition handle."""
+        return MilvusVectorStorePartition(
             client=self._client,
             collection_name=MilvusVectorStore._build_native_collection_name(
                 namespace, config
@@ -600,7 +598,7 @@ class MilvusVectorStore(VectorStore):
         )
 
     @override
-    async def create_collection(
+    async def create_partition(
         self,
         *,
         namespace: str,
@@ -618,18 +616,18 @@ class MilvusVectorStore(VectorStore):
             )
         async with (
             self._client_name_locks[(namespace, name)],
-            self._tracker("create_collection"),
+            self._tracker("create_partition"),
         ):
             await self._ensure_namespace_registry_collection(namespace)
             if await self._get_registry_entry(namespace, name) is not None:
-                raise VectorStoreCollectionAlreadyExistsError(namespace, name)
+                raise VectorStorePartitionAlreadyExistsError(namespace, name)
             await self._create_native_collection(namespace, config)
             await self._register_collection(namespace, name, config)
 
     @override
-    async def open_collection(
+    async def get_partition(
         self, *, namespace: str, name: str
-    ) -> MilvusVectorStoreCollection | None:
+    ) -> MilvusVectorStorePartition | None:
         """Get a collection handle from the vector store."""
         if not validate_identifier(namespace):
             raise ValueError(
@@ -647,7 +645,7 @@ class MilvusVectorStore(VectorStore):
         )
 
     @override
-    async def delete_collection(self, *, namespace: str, name: str) -> None:
+    async def delete_partition(self, *, namespace: str, name: str) -> None:
         """Delete a logical collection from the Milvus vector store."""
         if not validate_identifier(namespace):
             raise ValueError(
@@ -659,7 +657,7 @@ class MilvusVectorStore(VectorStore):
             )
         async with (
             self._client_name_locks[(namespace, name)],
-            self._tracker("delete_collection"),
+            self._tracker("delete_partition"),
         ):
             entry = await self._get_registry_entry(namespace, name)
             if entry is None:
