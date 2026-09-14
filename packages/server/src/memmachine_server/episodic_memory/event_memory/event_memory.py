@@ -113,9 +113,9 @@ class EventMemoryParams(BaseModel):
         vector_store_partition (VectorStorePartition):
             Vector store partition.
         segmenter (Segmenter):
-            Segmenter that segments events into segments.
+            The table from block kind to handler that segments events.
         deriver (Deriver):
-            Deriver that derives derivatives from segments.
+            The table from block kind to handler that derives from segments.
         embedder (Embedder):
             Embedder instance for creating embeddings.
         eviction (EvictionOptions | None):
@@ -138,11 +138,11 @@ class EventMemoryParams(BaseModel):
     )
     segmenter: InstanceOf[Segmenter] = Field(
         ...,
-        description="Segmenter that segments events into segments",
+        description="The table from block kind to handler that segments events",
     )
     deriver: InstanceOf[Deriver] = Field(
         ...,
-        description="Deriver that derives derivatives from segments",
+        description="The table from block kind to handler that derives from segments",
     )
     embedder: InstanceOf[Embedder] = Field(
         ...,
