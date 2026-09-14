@@ -279,68 +279,6 @@ class EpisodicMemoryManager:
         finally:
             await self._update_cache(instance, session_key)
 
-    @asynccontextmanager
-    async def open_or_create_episodic_memory(
-        self,
-        session_key: str,
-        episodic_memory_config: EpisodicMemoryConf,
-        description: str,
-        metadata: dict[str, JsonValue],
-        config: dict[str, JsonValue] | None = None,
-    ) -> AsyncIterator[EpisodicMemory]:
-        """
-        Create a new episodic memory instance and store its configuration if it doesn't exist. If the session already exists, it will be opened and returned.
-
-        Args:
-            session_key: The unique identifier for the session.
-            episodic_memory_config: Parameters for configuring the episodic memory.
-            description: A brief description of the session.
-            metadata: User-defined metadata for the session.
-            config: Additional configuration values for the session metadata.
-
-        """
-        instance: EpisodicMemory | None = None
-        if config is None:
-            config = {}
-        async with self._close_lock.read_lock():
-            if self._closed:
-                raise EpisodicMemoryManagerClosedError
-            async with self._session_locks[session_key].read_lock():
-                instance = await self._instance_cache.get(session_key)
-            if instance is None:
-                async with self._session_locks[session_key].write_lock():
-                    # Check if the instance is in the cache
-                    instance = await self._instance_cache.get(session_key)
-                    if instance is None:
-                        # try to load from the database
-                        session_info = await self.get_session_info(session_key)
-                        if session_info is not None:
-                            if (
-                                session_info.status
-                                != SessionDataManager.SessionStatus.Active
-                            ):
-                                raise SessionDeletedError(session_key)
-                            instance = await self._create_episodic_memory(
-                                session_key, session_info.episode_memory_conf
-                            )
-
-                    if instance is None:
-                        # session does not exist, create it
-                        await self._create_session(
-                            session_key,
-                            config,
-                            episodic_memory_config,
-                            description,
-                            metadata,
-                        )
-                        instance = await self._create_episodic_memory(
-                            session_key, episodic_memory_config
-                        )
-        try:
-            yield instance
-        finally:
-            await self._update_cache(instance, session_key)
-
     async def delete_episodic_session(self, session_key: str) -> None:
         """
         Delete an episodic memory instance and its associated data.

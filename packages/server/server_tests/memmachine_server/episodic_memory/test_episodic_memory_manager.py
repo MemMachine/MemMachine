@@ -13,6 +13,7 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionDeletedError,
     SessionInUseError,
+    SessionNotFoundError,
 )
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
@@ -226,55 +227,33 @@ async def test_create_episodic_memory_with_mismatched_configuration_raises_error
 
 
 @pytest.mark.asyncio
-async def test_create_or_open_episodic_memory_success(
+async def test_open_after_create_and_after_close(
     manager: EpisodicMemoryManager,
     mock_episodic_memory_conf,
 ):
-    """Test successfully creating or opening an episodic memory instance."""
-    session_key = "create_or_open_session"
-    description = "A test session"
-    metadata: dict[str, JsonValue] = {"owner": "tester"}
+    """A created session opens from the cache, and from storage after a close."""
+    session_key = "created_session"
+    await manager.create_session(session_key, mock_episodic_memory_conf, "", {})
 
-    # Create a new session
-    async with manager.open_or_create_episodic_memory(
-        session_key,
-        mock_episodic_memory_conf,
-        description,
-        metadata,
-    ) as instance:
+    async with manager.open_episodic_memory(session_key) as instance:
         assert instance is not None
-        assert (
-            await manager._instance_cache.get_ref_count(session_key) == 1
-        )  # 1 from add
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
 
-    # Open the same session again
-    async with manager.open_or_create_episodic_memory(
-        session_key,
-        mock_episodic_memory_conf,
-        description,
-        metadata,
-    ) as instance:
-        assert instance is not None
-        assert (
-            await manager._instance_cache.get_ref_count(session_key) == 1
-        )  # 1 from open
-
-    assert (
-        await manager._instance_cache.get_ref_count(session_key) == 0
-    )  # put is called
+    assert await manager._instance_cache.get_ref_count(session_key) == 0
     await manager.close_session(session_key)
 
-    # Open the same session again, should load from storage
-    async with manager.open_or_create_episodic_memory(
-        session_key,
-        mock_episodic_memory_conf,
-        description,
-        metadata,
-    ) as instance:
+    # Loads from storage again.
+    async with manager.open_episodic_memory(session_key) as instance:
         assert instance is not None
-        assert (
-            await manager._instance_cache.get_ref_count(session_key) == 1
-        )  # 1 from add
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
+
+
+@pytest.mark.asyncio
+async def test_open_never_creates_a_session(manager: EpisodicMemoryManager):
+    with pytest.raises(SessionNotFoundError):
+        async with manager.open_episodic_memory("never_created"):
+            pass
+    assert await manager.get_session_info("never_created") is None
 
 
 @pytest.mark.asyncio
@@ -601,17 +580,9 @@ async def test_open_deleted_session_raises_error(
         async with manager.open_episodic_memory(session_key):
             pass
 
-    # Try to open via open_or_create_episodic_memory
-    with pytest.raises(
-        SessionDeletedError, match=f"Session '{session_key}' has been deleted"
-    ):
-        async with manager.open_or_create_episodic_memory(
-            session_key,
-            mock_episodic_memory_conf,
-            "",
-            {},
-        ):
-            pass
+    # Re-creating a session that is being deleted is refused too.
+    with pytest.raises(SessionAlreadyExistsError):
+        await manager.create_session(session_key, mock_episodic_memory_conf, "", {})
 
 
 @pytest.mark.asyncio
@@ -637,23 +608,14 @@ async def test_storage_is_created_with_the_session_row_and_only_then(
             "s1", mock_episodic_memory_conf, "", {}
         ):
             pass
-        async with manager.open_or_create_episodic_memory(
-            "s1", mock_episodic_memory_conf, "", {}
-        ):
-            pass
         await manager.close_session("s1")
         async with manager.open_episodic_memory("s1"):
             pass
         create_storage.assert_awaited_once()
 
-        # The other creation paths create storage too.
+        # The other creation path creates storage too.
         async with manager.create_episodic_memory(
             "s2", mock_episodic_memory_conf, "", {}
         ):
             pass
         assert create_storage.await_count == 2
-        async with manager.open_or_create_episodic_memory(
-            "s3", mock_episodic_memory_conf, "", {}
-        ):
-            pass
-        assert create_storage.await_count == 3

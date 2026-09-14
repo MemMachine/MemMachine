@@ -763,13 +763,9 @@ class MemMachine:
             episodic_memory_manager = (
                 await self._resources.get_episodic_memory_manager()
             )
-            async with episodic_memory_manager.open_or_create_episodic_memory(
-                session_key=session_data.session_key,
-                description="",
-                episodic_memory_config=self._with_default_episodic_memory_conf(
-                    session_key=session_data.session_key
-                ),
-                metadata={},
+            # A write goes to a project that exists; it never creates one.
+            async with episodic_memory_manager.open_episodic_memory(
+                session_data.session_key
             ) as episodic_session:
                 tasks.append(episodic_session.add_memory_episodes(episodes))
 
@@ -822,13 +818,9 @@ class MemMachine:
         """
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
 
-        async with episodic_memory_manager.open_or_create_episodic_memory(
-            session_key=session_data.session_key,
-            description="",
-            episodic_memory_config=self._with_default_episodic_memory_conf(
-                session_key=session_data.session_key
-            ),
-            metadata={},
+        # A search reads a session that exists; it never creates one.
+        async with episodic_memory_manager.open_episodic_memory(
+            session_data.session_key
         ) as episodic_session:
             if retrieval_agent is None or episodic_session.long_term_memory is None:
                 response = await episodic_session.query_memory(

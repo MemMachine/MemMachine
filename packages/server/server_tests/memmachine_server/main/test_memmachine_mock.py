@@ -27,8 +27,10 @@ from memmachine_server.common.episode_store import (
     EpisodeResponse,
 )
 from memmachine_server.common.errors import SessionNotFoundError
-from memmachine_server.common.filter.filter_parser import And as FilterAnd
-from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
+from memmachine_server.common.filter.filter_parser import (
+    And,
+    Comparison,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -624,9 +626,6 @@ async def test_add_episodes_dispatches_to_all_memories(
     episodic_session = AsyncMock()
     episodic_manager = MagicMock()
     episodic_manager.open_episodic_memory.return_value = _async_cm(episodic_session)
-    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
-        episodic_session
-    )
     patched_resource_manager.get_episodic_memory_manager = AsyncMock(
         return_value=episodic_manager
     )
@@ -736,11 +735,7 @@ async def test_count_episodes_filters_by_session_only(
 
     assert result == 7
     episode_storage.get_episode_messages_count.assert_awaited_once_with(
-        filter_expr=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        )
+        filter_expr=Comparison(field="session_key", op="=", value=session.session_key)
     )
 
 
@@ -750,7 +745,7 @@ async def test_count_episodes_combines_search_filter(
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("session-with-filter")
-    custom_filter = FilterComparison(field="topic", op="=", value="alpha")
+    custom_filter = Comparison(field="topic", op="=", value="alpha")
     parsed_specs: list[str] = []
 
     def _fake_parse(spec: str | None):
@@ -773,12 +768,8 @@ async def test_count_episodes_combines_search_filter(
     await_args = episode_storage.get_episode_messages_count.await_args
     assert await_args is not None
     combined_filter = await_args.kwargs["filter_expr"]
-    assert combined_filter == FilterAnd(
-        left=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        ),
+    assert combined_filter == And(
+        left=Comparison(field="session_key", op="=", value=session.session_key),
         right=custom_filter,
     )
 
