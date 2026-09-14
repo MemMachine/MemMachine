@@ -237,7 +237,7 @@ class SessionDataManagerSQL(SessionDataManager):
         param: EpisodicMemoryConf,
         description: str,
         metadata: dict[str, JsonValue],
-    ) -> None:
+    ) -> bool:
         """Create a session, or accept an existing one with matching data."""
         param_data = param.model_dump(mode="json")
 
@@ -269,7 +269,7 @@ class SessionDataManagerSQL(SessionDataManager):
                     ).scalar_one_or_none()
                     if inserted_key is not None:
                         await dbsession.commit()
-                        return
+                        return True
                     session = (await dbsession.execute(query)).scalars().first()
                     if session is None:
                         # The conflicting row was deleted before our re-read.
@@ -280,7 +280,7 @@ class SessionDataManagerSQL(SessionDataManager):
                     and session.param_data == param_data
                     and session.user_metadata == metadata
                 ):
-                    return
+                    return False
                 raise SessionAlreadyExistsError(session_key)
         raise RuntimeError(f"Session '{session_key}' changed during creation")
 

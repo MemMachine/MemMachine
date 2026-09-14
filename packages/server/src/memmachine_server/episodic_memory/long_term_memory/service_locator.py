@@ -96,6 +96,47 @@ async def _declarative_params(
     )
 
 
+class SessionPartitionMissingError(RuntimeError):
+    """A session's row exists, but a store holds no partition under its key."""
+
+    def __init__(self, session_id: str, partition_key: str, store: str) -> None:
+        """Initialize with the session, its partition key, and the store lacking it."""
+        self.session_id = session_id
+        self.partition_key = partition_key
+        super().__init__(
+            f"Session {session_id!r} has no partition {partition_key!r} in {store}: "
+            "its storage was never created, or has been deleted"
+        )
+
+
+async def create_event_backend_partitions(
+    config: EventLongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """Create the session's partition in its segment store and its vector store.
+
+    Strict, like the stores' own `create_partition`: called once, when the
+    session is created.
+    """
+    segment_store = await resource_manager.get_segment_store(config.segment_store)
+    vector_store = await event_backend_vector_store(config, resource_manager)
+    partition_key = partition_key_for_session(config.session_id)
+    await segment_store.create_partition(partition_key, SegmentStorePartitionConfig())
+    await vector_store.create_partition(partition_key)
+
+
+async def delete_event_backend_partitions(
+    config: EventLongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """Delete the session's partitions by key, whether or not both exist."""
+    segment_store = await resource_manager.get_segment_store(config.segment_store)
+    vector_store = await event_backend_vector_store(config, resource_manager)
+    partition_key = partition_key_for_session(config.session_id)
+    await vector_store.delete_partition(partition_key)
+    await segment_store.delete_partition(partition_key)
+
+
 async def _event_params(
     config: EventLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
@@ -112,14 +153,20 @@ async def _event_params(
 
     partition_key = partition_key_for_session(config.session_id)
 
-    # A creation that loses a race to another caller, or finds another
-    # caller's still pending, opens that caller's partition once it is live.
-    vector_store_partition = await vector_store.open_or_create_partition(partition_key)
-
-    partition = await segment_store.open_or_create_partition(
-        partition_key,
-        SegmentStorePartitionConfig(),
-    )
+    # No memory request creates storage: the session's partitions were created
+    # with the session, and a session without them is broken, not new.
+    vector_store_partition = await vector_store.open_partition(partition_key)
+    if vector_store_partition is None:
+        raise SessionPartitionMissingError(
+            config.session_id,
+            partition_key,
+            f"vector store {config.vector_store!r}",
+        )
+    partition = await segment_store.open_partition(partition_key)
+    if partition is None:
+        raise SessionPartitionMissingError(
+            config.session_id, partition_key, "the segment store"
+        )
 
     segmenter = _build_segmenter(config.segmenter)
     deriver = _build_deriver(config.deriver)

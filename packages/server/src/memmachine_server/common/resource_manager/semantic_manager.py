@@ -156,11 +156,21 @@ class SemanticResourceManager:
             indexed_properties={},
         )
 
-        # The manager owns this partition, so opening it here, once, at the
+        # The manager owns this partition, so creating it here, once, at the
         # storage's first use is the owner's provisioning, not a request's.
-        vector_partition = await vector_store.open_or_create_partition(
+        vector_partition = await vector_store.open_partition(
             _VECTOR_STORE_PARTITION_KEY
         )
+        if vector_partition is None:
+            await vector_store.create_partition(_VECTOR_STORE_PARTITION_KEY)
+            vector_partition = await vector_store.open_partition(
+                _VECTOR_STORE_PARTITION_KEY
+            )
+            if vector_partition is None:
+                raise RuntimeError(
+                    "The semantic memory's vector store partition is gone right "
+                    "after its creation"
+                )
         storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()
         return storage
