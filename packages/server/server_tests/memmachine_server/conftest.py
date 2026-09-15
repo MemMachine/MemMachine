@@ -423,24 +423,6 @@ async def qdrant_grpc_client(qdrant_container):
     await client.close()
 
 
-@pytest.fixture(scope="session")
-def distributed_qdrant_container():
-    if not is_docker_available():
-        pytest.skip("Docker is not available")
-    container = QdrantContainer(image="qdrant/qdrant:v1.17.0")
-    container.with_env("QDRANT__CLUSTER__ENABLED", "true")
-    container.with_command("./qdrant --uri http://localhost:6335")
-    with container:
-        yield container
-
-
-@pytest_asyncio.fixture(scope="session")
-async def distributed_qdrant_client(distributed_qdrant_container):
-    client = distributed_qdrant_container.get_async_client()
-    yield client
-    await client.close()
-
-
 @pytest.fixture(
     params=[
         pytest.param("pgvector_semantic_storage", marks=pytest.mark.integration),

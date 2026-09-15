@@ -252,13 +252,6 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
     )
-    is_distributed: bool = Field(
-        default=False,
-        description=(
-            "Whether the Qdrant cluster is running in distributed mode. "
-            "If True, native collections use custom sharding."
-        ),
-    )
     registry_replication_factor: int = Field(
         default=1,
         description=(

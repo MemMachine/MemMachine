@@ -232,7 +232,6 @@ class QdrantVectorStorePartition(VectorStorePartition):
         partition_key: str,
         config: VectorStoreCollectionConfig,
         tracker: OperationTracker,
-        shard_key: str | None = None,
     ) -> None:
         """Initialize with a Qdrant client and collection name."""
         self._client = client
@@ -240,7 +239,6 @@ class QdrantVectorStorePartition(VectorStorePartition):
         self._collection_name = collection_name
         self._partition_key = partition_key
         self._config = config
-        self._shard_key = shard_key
 
     @property
     @override
@@ -315,7 +313,6 @@ class QdrantVectorStorePartition(VectorStorePartition):
             await self._client.upsert(
                 collection_name=self._collection_name,
                 points=points,
-                shard_key_selector=self._shard_key,
             )
         except (ResponseHandlingException, UnexpectedResponse):
             if len(points) <= 1:
@@ -354,7 +351,6 @@ class QdrantVectorStorePartition(VectorStorePartition):
 
             requests = [
                 models.QueryRequest(
-                    shard_key=self._shard_key,
                     query=query_vector,
                     filter=qdrant_filter,
                     score_threshold=min_cosine_similarity,
@@ -407,7 +403,6 @@ class QdrantVectorStorePartition(VectorStorePartition):
                         ],
                     ),
                 ),
-                shard_key_selector=self._shard_key,
             )
 
 
@@ -418,12 +413,6 @@ class QdrantVectorStoreParams(BaseModel):
     Attributes:
         client (AsyncQdrantClient):
             Async Qdrant client instance.
-        is_distributed (bool):
-            Whether the Qdrant cluster is running in distributed mode.
-            If True, native collections use custom sharding
-            so each logical collection maps to a dedicated shard key.
-            This enables logical collection deletion via shard drop
-            instead of filter-based deletion.
         registry_replication_factor (int):
             Replication factor for registry collections. Write consistency factor is
             set to match so all replicas confirm writes before returning, guaranteeing
@@ -437,16 +426,6 @@ class QdrantVectorStoreParams(BaseModel):
     client: InstanceOf[AsyncQdrantClient] = Field(
         ...,
         description="Async Qdrant client instance",
-    )
-    is_distributed: bool = Field(
-        False,
-        description=(
-            "Whether the Qdrant cluster is running in distributed mode. "
-            "If True, native collections use custom sharding "
-            "so each logical collection maps to a dedicated shard key. "
-            "This enables logical collection deletion via shard drop "
-            "instead of filter-based deletion"
-        ),
     )
     registry_replication_factor: int = Field(
         1,
@@ -540,7 +519,6 @@ class QdrantVectorStore(VectorStore):
         """Initialize the vector store with the provided parameters."""
         super().__init__()
         self._client: AsyncQdrantClient = params.client
-        self._is_distributed = params.is_distributed
 
         self._registry_replication_factor = params.registry_replication_factor
 
@@ -640,7 +618,6 @@ class QdrantVectorStore(VectorStore):
             partition_key=name,
             config=config,
             tracker=self._tracker,
-            shard_key=name if self._is_distributed else None,
         )
 
     async def _create_native_collection(
@@ -666,9 +643,6 @@ class QdrantVectorStore(VectorStore):
                 hnsw_config=models.HnswConfigDiff(
                     m=0,
                     payload_m=self._hnsw_m,
-                ),
-                sharding_method=(
-                    models.ShardingMethod.CUSTOM if self._is_distributed else None
                 ),
             )
         except (UnexpectedResponse, grpc.aio.AioRpcError, ValueError) as e:
@@ -699,18 +673,6 @@ class QdrantVectorStore(VectorStore):
             except (UnexpectedResponse, grpc.aio.AioRpcError, ValueError) as e:
                 if not QdrantVectorStore._is_already_exists_error(e):
                     raise
-
-    async def _ensure_shard_key(
-        self, native_collection_name: str, shard_key: str
-    ) -> None:
-        """Idempotently create a shard key on a native collection."""
-        try:
-            await self._client.create_shard_key(
-                native_collection_name, shard_key=shard_key
-            )
-        except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
-            if "already exists" not in str(e).lower():
-                raise
 
     async def _register_collection(
         self, namespace: str, name: str, config: VectorStoreCollectionConfig
@@ -761,11 +723,6 @@ class QdrantVectorStore(VectorStore):
             if await self._get_registry_entry(namespace, name) is not None:
                 raise VectorStorePartitionAlreadyExistsError(namespace, name)
             await self._create_native_collection(namespace, config)
-            if self._is_distributed:
-                native_collection_name = (
-                    QdrantVectorStore._build_native_collection_name(namespace, config)
-                )
-                await self._ensure_shard_key(native_collection_name, name)
             await self._register_collection(namespace, name, config)
 
     @override
@@ -813,21 +770,12 @@ class QdrantVectorStore(VectorStore):
             )
 
             # Delete partition data, then registry entry.
-            if self._is_distributed:
-                try:
-                    await self._client.delete_shard_key(
-                        native_collection_name, shard_key=name
-                    )
-                except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
-                    if "does not exist" not in str(e).lower():
-                        raise
-            else:
-                await self._client.delete(
-                    collection_name=native_collection_name,
-                    points_selector=models.FilterSelector(
-                        filter=_partition_filter(name),
-                    ),
-                )
+            await self._client.delete(
+                collection_name=native_collection_name,
+                points_selector=models.FilterSelector(
+                    filter=_partition_filter(name),
+                ),
+            )
 
             registry_name = QdrantVectorStore._registry_collection_name(namespace)
             point_uuid = QdrantVectorStore._registry_point_uuid(name)
