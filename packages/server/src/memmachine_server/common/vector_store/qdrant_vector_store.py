@@ -2,10 +2,10 @@
 
 import asyncio
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
-from datetime import datetime
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any, ClassVar, cast, override
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 from weakref import WeakKeyDictionary
 
 import grpc
@@ -50,6 +50,7 @@ from .data_types import (
     QueryResult,
     Record,
     VectorStorePartitionAlreadyExistsError,
+    VectorStorePartitionHandleStaleError,
     VectorStorePartitionSchemaMismatchError,
     indexed_property_names,
     validate_collection_name,
@@ -61,16 +62,22 @@ from .vector_store import VectorStore, VectorStorePartition
 # System keys use _SYSTEM_KEY_PREFIX, which contains a hyphen. Hyphens are valid in
 # Qdrant but forbidden by _IDENTIFIER_RE, so system keys can never collide with user keys.
 _SYSTEM_KEY_PREFIX = "sys-"
-_PAYLOAD_PARTITION_KEY = f"{_SYSTEM_KEY_PREFIX}partition_key"
+_PAYLOAD_INCARNATION = f"{_SYSTEM_KEY_PREFIX}incarnation"
+"""The payload key naming the partition incarnation a point belongs to.
+
+Points carry the incarnation, never the partition key: a partition deleted
+and re-created under the same key gets a fresh incarnation, and its
+predecessor's points are invisible to it while the purge reclaims them.
+"""
 
 
-def _partition_filter(partition_key: str) -> models.Filter:
-    """Build a Qdrant filter that matches the given partition key."""
+def _partition_filter(incarnation: UUID) -> models.Filter:
+    """Build a Qdrant filter that matches the points of one partition incarnation."""
     return models.Filter(
         must=[
             models.FieldCondition(
-                key=_PAYLOAD_PARTITION_KEY,
-                match=models.MatchValue(value=partition_key),
+                key=_PAYLOAD_INCARNATION,
+                match=models.MatchValue(value=incarnation.hex),
             ),
         ],
     )
@@ -234,15 +241,31 @@ class QdrantVectorStorePartition(VectorStorePartition):
         client: AsyncQdrantClient,
         collection_name: str,
         partition_key: str,
+        incarnation: UUID,
         indexed_properties: Mapping[str, PropertyType],
         tracker: OperationTracker,
+        is_live: Callable[[str, UUID], Awaitable[bool]],
     ) -> None:
-        """Initialize with a Qdrant client and the collection and partition it is bound to."""
+        """Initialize with a Qdrant client and the incarnation the handle is bound to."""
         self._client = client
         self._tracker = tracker
         self._collection_name = collection_name
         self._partition_key = partition_key
+        self._incarnation = incarnation
         self._indexed_properties = dict(indexed_properties)
+        self._is_live = is_live
+
+    async def _fence(self) -> None:
+        """Raise if this handle's incarnation is no longer the partition's.
+
+        Qdrant has no transactions, so the check and the operation are two
+        calls; a deletion landing between them leaves points under a dead
+        incarnation, which the purge reclaims like any other.
+        """
+        if not await self._is_live(self._partition_key, self._incarnation):
+            raise VectorStorePartitionHandleStaleError(
+                self._collection_name, self._partition_key
+            )
 
     @property
     @override
@@ -260,7 +283,7 @@ class QdrantVectorStorePartition(VectorStorePartition):
     ) -> dict[str, PropertyValue]:
         """Build Qdrant-compatible payload from record properties."""
         payload: dict[str, PropertyValue] = {
-            _PAYLOAD_PARTITION_KEY: self._partition_key,
+            _PAYLOAD_INCARNATION: self._incarnation.hex,
         }
         for key, value in properties.items():
             payload[key] = (
@@ -276,6 +299,7 @@ class QdrantVectorStorePartition(VectorStorePartition):
     ) -> None:
         """Upsert records into the collection."""
         async with self._tracker("upsert"):
+            await self._fence()
             points = [
                 models.PointStruct(
                     id=record.uuid,
@@ -317,7 +341,8 @@ class QdrantVectorStorePartition(VectorStorePartition):
             if not query_vectors:
                 return []
 
-            partition_key_filter = _partition_filter(self._partition_key)
+            await self._fence()
+            partition_key_filter = _partition_filter(self._incarnation)
             if property_filter is not None:
                 if not validate_filter(property_filter):
                     raise ValueError("Filter contains an invalid property key")
@@ -372,12 +397,13 @@ class QdrantVectorStorePartition(VectorStorePartition):
             if not uuid_list:
                 return
 
+            await self._fence()
             await self._client.delete(
                 collection_name=self._collection_name,
                 points_selector=models.FilterSelector(
                     filter=models.Filter(
                         must=[
-                            _partition_filter(self._partition_key),
+                            _partition_filter(self._incarnation),
                             models.HasIdCondition(
                                 has_id=list(uuid_list),
                             ),
@@ -467,10 +493,16 @@ class QdrantVectorStore(VectorStore):
         datetime: models.PayloadSchemaType.DATETIME,
     }
 
-    # Registry collection keys (stored on registry points, one per partition)
+    # The registry collection holds two kinds of point. A live entry, one per
+    # partition, has the deterministic id of its key and carries the key, the
+    # incarnation and the schema. A purge entry, one per dead incarnation, has
+    # the incarnation as its id and carries the key and the deletion stamp;
+    # the sweeper claims them oldest-first through the stamp's index.
     _REGISTRY_SUFFIX: ClassVar[str] = "__registry"
     _REGISTRY_PARTITION_KEY: ClassVar[str] = "partition_key"
+    _REGISTRY_INCARNATION: ClassVar[str] = "incarnation"
     _REGISTRY_SCHEMA: ClassVar[str] = "schema"
+    _REGISTRY_DELETED_AT: ClassVar[str] = "deleted_at"
 
     # Fixed UUID namespace for deterministic registry point IDs.
     _REGISTRY_UUID_NAMESPACE: ClassVar[UUID] = UUID(
@@ -572,7 +604,7 @@ class QdrantVectorStore(VectorStore):
         """No-op; client lifecycle is managed externally."""
 
     async def _ensure_registry_collection(self) -> None:
-        """Idempotently create the registry collection."""
+        """Idempotently create the registry collection and the purge stamp's index."""
         try:
             await self._client.create_collection(
                 collection_name=self._registry_collection_name,
@@ -585,6 +617,16 @@ class QdrantVectorStore(VectorStore):
                 ),
                 replication_factor=self._registry_replication_factor,
                 write_consistency_factor=self._registry_replication_factor,
+            )
+        except (UnexpectedResponse, grpc.aio.AioRpcError, ValueError) as e:
+            if not QdrantVectorStore._is_already_exists_error(e):
+                raise
+        # The sweeper orders purge entries by their stamp, which needs an index.
+        try:
+            await self._client.create_payload_index(
+                collection_name=self._registry_collection_name,
+                field_name=QdrantVectorStore._REGISTRY_DELETED_AT,
+                field_schema=models.PayloadSchemaType.INTEGER,
             )
         except (UnexpectedResponse, grpc.aio.AioRpcError, ValueError) as e:
             if not QdrantVectorStore._is_already_exists_error(e):
@@ -615,7 +657,7 @@ class QdrantVectorStore(VectorStore):
 
         indexes: list[tuple[str, Any]] = [
             (
-                _PAYLOAD_PARTITION_KEY,
+                _PAYLOAD_INCARNATION,
                 models.KeywordIndexParams(
                     type=models.KeywordIndexType.KEYWORD,
                     is_tenant=True,
@@ -638,9 +680,8 @@ class QdrantVectorStore(VectorStore):
                 if not QdrantVectorStore._is_already_exists_error(e):
                     raise
 
-    async def _stored_schema(self, partition_key: str) -> PartitionSchema | None:
-        """
-        The schema the partition was created under; raises if it is not this store's.
+    async def _live_entry(self, partition_key: str) -> dict[str, Any] | None:
+        """The partition's live registry entry, or None.
 
         Verifies the stored key matches to guard against collisions in the
         uuid5 point ID.
@@ -663,7 +704,13 @@ class QdrantVectorStore(VectorStore):
         payload = cast(dict[str, Any], points[0].payload)
         if payload.get(QdrantVectorStore._REGISTRY_PARTITION_KEY) != partition_key:
             return None
+        return payload
 
+    async def _checked_entry(self, partition_key: str) -> dict[str, Any] | None:
+        """The partition's live entry, or None; raises if its schema is not this store's."""
+        payload = await self._live_entry(partition_key)
+        if payload is None:
+            return None
         stored_schema = PartitionSchema.model_validate(
             payload[QdrantVectorStore._REGISTRY_SCHEMA]
         )
@@ -672,19 +719,31 @@ class QdrantVectorStore(VectorStore):
             raise VectorStorePartitionSchemaMismatchError(
                 self._collection, partition_key, stored_schema, declared_schema
             )
-        return stored_schema
+        return payload
 
-    def _partition_handle(self, partition_key: str) -> QdrantVectorStorePartition:
+    async def _is_live(self, partition_key: str, incarnation: UUID) -> bool:
+        """Whether the partition's live entry still names this incarnation."""
+        payload = await self._live_entry(partition_key)
+        return (
+            payload is not None
+            and payload.get(QdrantVectorStore._REGISTRY_INCARNATION) == incarnation.hex
+        )
+
+    def _partition_handle(
+        self, partition_key: str, incarnation: UUID
+    ) -> QdrantVectorStorePartition:
         return QdrantVectorStorePartition(
             client=self._client,
             collection_name=self._collection,
             partition_key=partition_key,
+            incarnation=incarnation,
             indexed_properties=self._indexed_properties,
             tracker=self._tracker,
+            is_live=self._is_live,
         )
 
-    async def _register_partition(self, partition_key: str) -> None:
-        """Write the partition's entry to the registry."""
+    async def _register_partition(self, partition_key: str, incarnation: UUID) -> None:
+        """Write the partition's live entry to the registry."""
         await self._client.upsert(
             collection_name=self._registry_collection_name,
             points=[
@@ -693,6 +752,7 @@ class QdrantVectorStore(VectorStore):
                     vector=[0.0],
                     payload={
                         QdrantVectorStore._REGISTRY_PARTITION_KEY: partition_key,
+                        QdrantVectorStore._REGISTRY_INCARNATION: incarnation.hex,
                         QdrantVectorStore._REGISTRY_SCHEMA: self._declared_schema().model_dump(
                             mode="json"
                         ),
@@ -720,41 +780,42 @@ class QdrantVectorStore(VectorStore):
             self._client_partition_locks[(self._collection, partition_key)],
             self._tracker("create_partition"),
         ):
-            if await self._stored_schema(partition_key) is not None:
+            if await self._checked_entry(partition_key) is not None:
                 raise VectorStorePartitionAlreadyExistsError(
                     self._collection, partition_key
                 )
-            await self._register_partition(partition_key)
+            await self._register_partition(partition_key, uuid4())
 
     @override
     async def get_partition(
         self, partition_key: str
     ) -> QdrantVectorStorePartition | None:
-        """Get a handle bound to an existing partition."""
         QdrantVectorStore._require_partition_key(partition_key)
-        if await self._stored_schema(partition_key) is None:
+        payload = await self._checked_entry(partition_key)
+        if payload is None:
             return None
-        return self._partition_handle(partition_key)
+        return self._partition_handle(
+            partition_key, UUID(payload[QdrantVectorStore._REGISTRY_INCARNATION])
+        )
 
     @override
     async def delete_partition(self, partition_key: str) -> None:
-        """Delete a partition and its records from the store's collection."""
         QdrantVectorStore._require_partition_key(partition_key)
         async with (
             self._client_partition_locks[(self._collection, partition_key)],
             self._tracker("delete_partition"),
         ):
-            if await self._stored_schema(partition_key) is None:
+            payload = await self._live_entry(partition_key)
+            if payload is None:
                 return
+            incarnation = UUID(payload[QdrantVectorStore._REGISTRY_INCARNATION])
 
-            # Delete partition data, then registry entry.
-            await self._client.delete(
-                collection_name=self._collection,
-                points_selector=models.FilterSelector(
-                    filter=_partition_filter(partition_key),
-                ),
-            )
-
+            # The live entry goes first, so the partition is unreachable
+            # before anything else happens; the purge entry follows. Qdrant
+            # has no transactions: a crash between the two leaves the
+            # incarnation's points unreachable and unreclaimed, which is a
+            # leak, never a partition the sweeper takes from under a live
+            # one.
             await self._client.delete(
                 collection_name=self._registry_collection_name,
                 points_selector=models.PointIdsList(
@@ -762,3 +823,63 @@ class QdrantVectorStore(VectorStore):
                 ),
                 wait=True,
             )
+            await self._client.upsert(
+                collection_name=self._registry_collection_name,
+                points=[
+                    models.PointStruct(
+                        id=incarnation,
+                        vector=[0.0],
+                        payload={
+                            QdrantVectorStore._REGISTRY_PARTITION_KEY: partition_key,
+                            QdrantVectorStore._REGISTRY_DELETED_AT: int(
+                                datetime.now(UTC).timestamp() * 1_000_000
+                            ),
+                        },
+                    ),
+                ],
+                wait=True,
+            )
+
+    @override
+    async def purge_deleted_partitions(self) -> bool:
+        # One dead incarnation per call, oldest first: the points go by
+        # filter, a single server-side operation, then the purge entry.
+        # Concurrent purgers may claim the same entry; every step is
+        # idempotent, so the loser does empty work.
+        async with self._tracker("purge_deleted_partitions"):
+            entries, _ = await self._client.scroll(
+                collection_name=self._registry_collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key=QdrantVectorStore._REGISTRY_DELETED_AT,
+                            range=models.Range(gte=0),
+                        )
+                    ]
+                ),
+                order_by=models.OrderBy(
+                    key=QdrantVectorStore._REGISTRY_DELETED_AT,
+                    direction=models.Direction.ASC,
+                ),
+                limit=1,
+                with_payload=False,
+                with_vectors=False,
+            )
+            if not entries:
+                return False
+            incarnation = UUID(str(entries[0].id))
+
+            await self._client.delete(
+                collection_name=self._collection,
+                points_selector=models.FilterSelector(
+                    filter=_partition_filter(incarnation),
+                ),
+                wait=True,
+            )
+
+            await self._client.delete(
+                collection_name=self._registry_collection_name,
+                points_selector=models.PointIdsList(points=[incarnation]),
+                wait=True,
+            )
+            return True

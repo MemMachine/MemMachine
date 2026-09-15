@@ -5,7 +5,9 @@ from .data_types import (
     PartitionSchema,
     QueryResult,
     Record,
+    VectorStoreAttemptsExhaustedError,
     VectorStorePartitionAlreadyExistsError,
+    VectorStorePartitionHandleStaleError,
     VectorStorePartitionSchemaMismatchError,
     validate_collection_name,
 )
@@ -17,8 +19,10 @@ __all__ = [
     "QueryResult",
     "Record",
     "VectorStore",
+    "VectorStoreAttemptsExhaustedError",
     "VectorStorePartition",
     "VectorStorePartitionAlreadyExistsError",
+    "VectorStorePartitionHandleStaleError",
     "VectorStorePartitionSchemaMismatchError",
     "validate_collection_name",
 ]

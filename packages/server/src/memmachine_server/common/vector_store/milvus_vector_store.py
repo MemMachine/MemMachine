@@ -3,10 +3,10 @@
 import asyncio
 import json
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, ClassVar, cast, override
-from uuid import UUID
+from uuid import UUID, uuid4
 from weakref import WeakKeyDictionary
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
@@ -48,6 +48,7 @@ from .data_types import (
     QueryResult,
     Record,
     VectorStorePartitionAlreadyExistsError,
+    VectorStorePartitionHandleStaleError,
     VectorStorePartitionSchemaMismatchError,
     indexed_property_names,
     validate_collection_name,
@@ -58,6 +59,12 @@ from .vector_store import VectorStore, VectorStorePartition
 _ID_FIELD = "id"
 _RECORD_UUID_FIELD = "record_uuid"
 _PARTITION_KEY_FIELD = "partition_key"
+"""The native partition-key field; holds the incarnation, never the caller's key.
+
+A partition deleted and re-created under the same key gets a fresh
+incarnation, and its predecessor's entities are invisible to it while the
+purge reclaims them.
+"""
 _VECTOR_FIELD = "vector"
 _PROPERTIES_FIELD = "properties"
 _PROPERTY_FILTER_PREFIX = "_p_"
@@ -65,6 +72,7 @@ _PROPERTY_FILTER_PREFIX = "_p_"
 _MAX_UUID_LENGTH = 36
 _MAX_PRIMARY_ID_LENGTH = 128
 _MAX_PARTITION_KEY_LENGTH = 32
+_INCARNATION_HEX_LENGTH = 32
 _REGISTRY_VECTOR_DIMENSION = 2
 _FALSE_EXPR = f'{_ID_FIELD} == "__memmachine_no_match__"'
 
@@ -135,9 +143,9 @@ class MilvusVectorStorePartition(VectorStorePartition):
         return f"{field} {operator} {_literal(comparison.value)}"
 
     @staticmethod
-    def _primary_id(partition_key: str, record_uuid: UUID) -> str:
+    def _primary_id(incarnation: UUID, record_uuid: UUID) -> str:
         """Build a native primary key unique within a shared native collection."""
-        return f"{partition_key}:{record_uuid}"
+        return f"{incarnation.hex}:{record_uuid}"
 
     def __init__(
         self,
@@ -145,15 +153,31 @@ class MilvusVectorStorePartition(VectorStorePartition):
         client: MilvusClient,
         collection_name: str,
         partition_key: str,
+        incarnation: UUID,
         indexed_properties: Mapping[str, PropertyType],
         tracker: OperationTracker,
+        is_live: Callable[[str, UUID], Awaitable[bool]],
     ) -> None:
-        """Initialize with a Milvus client and the collection and partition it is bound to."""
+        """Initialize with a Milvus client and the incarnation the handle is bound to."""
         self._client = client
         self._collection_name = collection_name
         self._partition_key = partition_key
+        self._incarnation = incarnation
         self._indexed_properties = dict(indexed_properties)
         self._tracker = tracker
+        self._is_live = is_live
+
+    async def _fence(self) -> None:
+        """Raise if this handle's incarnation is no longer the partition's.
+
+        Milvus has no transactions, so the check and the operation are two
+        calls; a deletion landing between them leaves entities under a dead
+        incarnation, which the purge reclaims like any other.
+        """
+        if not await self._is_live(self._partition_key, self._incarnation):
+            raise VectorStorePartitionHandleStaleError(
+                self._collection_name, self._partition_key
+            )
 
     @property
     @override
@@ -168,9 +192,9 @@ class MilvusVectorStorePartition(VectorStorePartition):
     def _build_entity(self, record: Record) -> dict[str, Any]:
         """Build a Milvus entity from a vector store record."""
         entity: dict[str, Any] = {
-            _ID_FIELD: self._primary_id(self._partition_key, record.uuid),
+            _ID_FIELD: self._primary_id(self._incarnation, record.uuid),
             _RECORD_UUID_FIELD: str(record.uuid),
-            _PARTITION_KEY_FIELD: self._partition_key,
+            _PARTITION_KEY_FIELD: self._incarnation.hex,
             _VECTOR_FIELD: record.vector,
             _PROPERTIES_FIELD: encode_properties(record.properties),
         }
@@ -199,7 +223,7 @@ class MilvusVectorStorePartition(VectorStorePartition):
         )[0]
 
     def _partition_filter(self) -> str:
-        return f"{_PARTITION_KEY_FIELD} == {_expr_string(self._partition_key)}"
+        return f"{_PARTITION_KEY_FIELD} == {_expr_string(self._incarnation.hex)}"
 
     @override
     async def upsert(
@@ -213,6 +237,7 @@ class MilvusVectorStorePartition(VectorStorePartition):
             if not records:
                 return
 
+            await self._fence()
             entities = [self._build_entity(record) for record in records]
 
             def _upsert() -> None:
@@ -240,6 +265,7 @@ class MilvusVectorStorePartition(VectorStorePartition):
             if limit <= 0:
                 return [QueryResult(matches=[]) for _ in query_vectors]
 
+            await self._fence()
             filter_expr = self._partition_filter()
             if property_filter is not None:
                 if not validate_filter(property_filter):
@@ -300,8 +326,9 @@ class MilvusVectorStorePartition(VectorStorePartition):
             uuid_list = list(record_uuids)
             if not uuid_list:
                 return
+            await self._fence()
             primary_ids = [
-                self._primary_id(self._partition_key, uuid) for uuid in uuid_list
+                self._primary_id(self._incarnation, uuid) for uuid in uuid_list
             ]
             await asyncio.to_thread(
                 self._client.delete,
@@ -370,8 +397,19 @@ class MilvusVectorStore(VectorStore):
 
     _MILVUS_METRIC_TYPE: ClassVar[str] = "COSINE"
 
+    # The registry collection holds two kinds of entity. A live entry, one
+    # per partition, has the partition key as its id and carries the
+    # incarnation and the schema. A purge entry, one per dead incarnation,
+    # has the incarnation as its id and carries the key and the deletion
+    # stamp, which orders the sweeper's claims.
     _REGISTRY_SUFFIX: ClassVar[str] = "__registry"
     _REGISTRY_SCHEMA: ClassVar[str] = "schema"
+    _REGISTRY_PARTITION_KEY: ClassVar[str] = "partition_key"
+    _REGISTRY_INCARNATION: ClassVar[str] = "incarnation"
+    _REGISTRY_DELETED_AT: ClassVar[str] = "deleted_at"
+    # How many purge entries a claim reads to pick the oldest: Milvus queries
+    # do not order, so the choice is made here over a bounded page.
+    _PURGE_CLAIM_PAGE: ClassVar[int] = 100
 
     _partition_locks: ClassVar[
         WeakKeyDictionary[
@@ -460,11 +498,13 @@ class MilvusVectorStore(VectorStore):
                 auto_id=False,
                 enable_dynamic_field=False,
             )
+            # A live entry's id is the partition key; a purge entry's is the
+            # incarnation hex.
             schema.add_field(
                 field_name=_ID_FIELD,
                 datatype=DataType.VARCHAR,
                 is_primary=True,
-                max_length=_MAX_PARTITION_KEY_LENGTH,
+                max_length=max(_MAX_PARTITION_KEY_LENGTH, _INCARNATION_HEX_LENGTH),
             )
             schema.add_field(
                 field_name=_VECTOR_FIELD,
@@ -474,6 +514,20 @@ class MilvusVectorStore(VectorStore):
             schema.add_field(
                 field_name=self._REGISTRY_SCHEMA,
                 datatype=DataType.JSON,
+            )
+            schema.add_field(
+                field_name=self._REGISTRY_PARTITION_KEY,
+                datatype=DataType.VARCHAR,
+                max_length=_MAX_PARTITION_KEY_LENGTH,
+            )
+            schema.add_field(
+                field_name=self._REGISTRY_INCARNATION,
+                datatype=DataType.VARCHAR,
+                max_length=_INCARNATION_HEX_LENGTH,
+            )
+            schema.add_field(
+                field_name=self._REGISTRY_DELETED_AT,
+                datatype=DataType.INT64,
             )
 
             index_params = self._client.prepare_index_params()
@@ -520,7 +574,7 @@ class MilvusVectorStore(VectorStore):
             schema.add_field(
                 field_name=_PARTITION_KEY_FIELD,
                 datatype=DataType.VARCHAR,
-                max_length=_MAX_PARTITION_KEY_LENGTH,
+                max_length=_INCARNATION_HEX_LENGTH,
                 is_partition_key=True,
             )
             schema.add_field(
@@ -553,20 +607,26 @@ class MilvusVectorStore(VectorStore):
             if not MilvusVectorStore._is_already_exists_error(exc):
                 raise
 
-    async def _stored_schema(self, partition_key: str) -> PartitionSchema | None:
-        """The schema the partition was created under; raises if it is not this store's."""
+    async def _live_entry(self, partition_key: str) -> dict[str, Any] | None:
+        """The partition's live registry entry, or None."""
         registry_collection_name = self._registry_collection_name
         if not await asyncio.to_thread(
             self._client.has_collection, registry_collection_name
         ):
             return None
 
+        output_fields = [
+            _ID_FIELD,
+            self._REGISTRY_SCHEMA,
+            self._REGISTRY_INCARNATION,
+            self._REGISTRY_DELETED_AT,
+        ]
         try:
             result = await asyncio.to_thread(
                 self._client.get,
                 collection_name=registry_collection_name,
                 ids=[partition_key],
-                output_fields=[_ID_FIELD, self._REGISTRY_SCHEMA],
+                output_fields=output_fields,
             )
         except MilvusException as exc:
             if MilvusVectorStore._is_not_found_error(exc):
@@ -576,43 +636,64 @@ class MilvusVectorStore(VectorStore):
         entries = list(result)
         if not entries:
             return None
-        entry = entries[0]
+        entry = cast(dict[str, Any], entries[0])
         entry_id = entry.get(_ID_FIELD)
         if entry_id is not None and entry_id != partition_key:
             return None
-        stored = cast(dict[str, Any] | None, entry.get(self._REGISTRY_SCHEMA))
-        if stored is None:
-            # Older clients may not include the primary key in get() output unless queried.
+        if entry.get(self._REGISTRY_SCHEMA) is None:
+            # Older clients may not include every field in get() output
+            # unless queried.
             rows = await asyncio.to_thread(
                 self._client.query,
                 collection_name=registry_collection_name,
                 filter=f"{_ID_FIELD} == {_expr_string(partition_key)}",
-                output_fields=[_ID_FIELD, self._REGISTRY_SCHEMA],
+                output_fields=output_fields,
             )
             rows = list(rows)
             if not rows:
                 return None
-            stored = cast(dict[str, Any], rows[0][self._REGISTRY_SCHEMA])
+            entry = cast(dict[str, Any], rows[0])
+        if entry.get(self._REGISTRY_DELETED_AT):
+            # A purge entry whose incarnation collides with a key: not live.
+            return None
+        return entry
 
-        stored_schema = PartitionSchema.model_validate(stored)
+    async def _checked_entry(self, partition_key: str) -> dict[str, Any] | None:
+        """The partition's live entry, or None; raises if its schema is not this store's."""
+        entry = await self._live_entry(partition_key)
+        if entry is None:
+            return None
+        stored_schema = PartitionSchema.model_validate(entry[self._REGISTRY_SCHEMA])
         declared_schema = self._declared_schema()
         if stored_schema != declared_schema:
             raise VectorStorePartitionSchemaMismatchError(
                 self._collection, partition_key, stored_schema, declared_schema
             )
-        return stored_schema
+        return entry
 
-    def _partition_handle(self, partition_key: str) -> MilvusVectorStorePartition:
+    async def _is_live(self, partition_key: str, incarnation: UUID) -> bool:
+        """Whether the partition's live entry still names this incarnation."""
+        entry = await self._live_entry(partition_key)
+        return (
+            entry is not None
+            and entry.get(self._REGISTRY_INCARNATION) == incarnation.hex
+        )
+
+    def _partition_handle(
+        self, partition_key: str, incarnation: UUID
+    ) -> MilvusVectorStorePartition:
         return MilvusVectorStorePartition(
             client=self._client,
             collection_name=self._collection,
             partition_key=partition_key,
+            incarnation=incarnation,
             indexed_properties=self._indexed_properties,
             tracker=self._tracker,
+            is_live=self._is_live,
         )
 
-    async def _register_partition(self, partition_key: str) -> None:
-        """Write the partition's entry to the registry."""
+    async def _register_partition(self, partition_key: str, incarnation: UUID) -> None:
+        """Write the partition's live entry to the registry."""
         await asyncio.to_thread(
             self._client.insert,
             collection_name=self._registry_collection_name,
@@ -623,6 +704,9 @@ class MilvusVectorStore(VectorStore):
                     self._REGISTRY_SCHEMA: self._declared_schema().model_dump(
                         mode="json"
                     ),
+                    self._REGISTRY_PARTITION_KEY: partition_key,
+                    self._REGISTRY_INCARNATION: incarnation.hex,
+                    self._REGISTRY_DELETED_AT: 0,
                 }
             ],
         )
@@ -643,40 +727,97 @@ class MilvusVectorStore(VectorStore):
             self._client_partition_locks[(self._collection, partition_key)],
             self._tracker("create_partition"),
         ):
-            if await self._stored_schema(partition_key) is not None:
+            if await self._checked_entry(partition_key) is not None:
                 raise VectorStorePartitionAlreadyExistsError(
                     self._collection, partition_key
                 )
-            await self._register_partition(partition_key)
+            await self._register_partition(partition_key, uuid4())
 
     @override
     async def get_partition(
         self, partition_key: str
     ) -> MilvusVectorStorePartition | None:
-        """Get a handle bound to an existing partition."""
         MilvusVectorStore._require_partition_key(partition_key)
-        if await self._stored_schema(partition_key) is None:
+        entry = await self._checked_entry(partition_key)
+        if entry is None:
             return None
-        return self._partition_handle(partition_key)
+        return self._partition_handle(
+            partition_key, UUID(entry[self._REGISTRY_INCARNATION])
+        )
 
     @override
     async def delete_partition(self, partition_key: str) -> None:
-        """Delete a partition and its records from the store's collection."""
         MilvusVectorStore._require_partition_key(partition_key)
         async with (
             self._client_partition_locks[(self._collection, partition_key)],
             self._tracker("delete_partition"),
         ):
-            if await self._stored_schema(partition_key) is None:
+            entry = await self._live_entry(partition_key)
+            if entry is None:
                 return
+            incarnation = UUID(entry[self._REGISTRY_INCARNATION])
 
-            await asyncio.to_thread(
-                self._client.delete,
-                collection_name=self._collection,
-                filter=f"{_PARTITION_KEY_FIELD} == {_expr_string(partition_key)}",
-            )
+            # The live entry goes first, so the partition is unreachable
+            # before anything else happens; the purge entry follows. Milvus
+            # has no transactions: a crash between the two leaves the
+            # incarnation's entities unreachable and unreclaimed, which is a
+            # leak, never a partition the sweeper takes from under a live
+            # one.
             await asyncio.to_thread(
                 self._client.delete,
                 collection_name=self._registry_collection_name,
                 ids=[partition_key],
             )
+            await asyncio.to_thread(
+                self._client.insert,
+                collection_name=self._registry_collection_name,
+                data=[
+                    {
+                        _ID_FIELD: incarnation.hex,
+                        _VECTOR_FIELD: [0.0] * _REGISTRY_VECTOR_DIMENSION,
+                        self._REGISTRY_SCHEMA: {},
+                        self._REGISTRY_PARTITION_KEY: partition_key,
+                        self._REGISTRY_INCARNATION: incarnation.hex,
+                        self._REGISTRY_DELETED_AT: int(
+                            datetime.now(UTC).timestamp() * 1_000_000
+                        ),
+                    }
+                ],
+            )
+
+    @override
+    async def purge_deleted_partitions(self) -> bool:
+        # One dead incarnation per call, the oldest of a bounded page of
+        # purge entries: its entities go by filter, a single server-side
+        # operation, then the entry. Concurrent purgers may claim the same
+        # entry; every step is idempotent, so the loser does empty work.
+        async with self._tracker("purge_deleted_partitions"):
+            if not await asyncio.to_thread(
+                self._client.has_collection, self._registry_collection_name
+            ):
+                return False
+            rows = list(
+                await asyncio.to_thread(
+                    self._client.query,
+                    collection_name=self._registry_collection_name,
+                    filter=f"{self._REGISTRY_DELETED_AT} > 0",
+                    output_fields=[_ID_FIELD, self._REGISTRY_DELETED_AT],
+                    limit=self._PURGE_CLAIM_PAGE,
+                )
+            )
+            if not rows:
+                return False
+            oldest = min(rows, key=lambda row: row[self._REGISTRY_DELETED_AT])
+            incarnation_hex = str(oldest[_ID_FIELD])
+
+            await asyncio.to_thread(
+                self._client.delete,
+                collection_name=self._collection,
+                filter=f"{_PARTITION_KEY_FIELD} == {_expr_string(incarnation_hex)}",
+            )
+            await asyncio.to_thread(
+                self._client.delete,
+                collection_name=self._registry_collection_name,
+                ids=[incarnation_hex],
+            )
+            return True

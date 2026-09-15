@@ -45,6 +45,9 @@ from memmachine_server.common.vector_store.vector_search_engine.usearch_engine i
 from memmachine_server.common.vector_store.vector_search_engine.vector_search_engine import (
     VectorSearchEngine,
 )
+from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
+    PartitionLifecycleContract,
+)
 
 COLLECTION = "test_namespace"
 NAME = "test_name"
@@ -1304,7 +1307,7 @@ async def _stored_record_uuids(engine, store) -> set[UUID]:
     The collection contract cannot see a record whose vector the index lost, so
     a test about surviving that loss has to look past the contract at the row.
     """
-    records_table = store._records_table(NAME)
+    records_table = store._records_table
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         rows = (await session.execute(select(records_table.c.uuid))).all()
@@ -1439,7 +1442,7 @@ class TestPendingLogStates:
         vector = _normalize([1.0, 0.0, 0.0])
         record = _make_record(vector=vector)
 
-        search_engine = store1._search_engines[NAME]
+        (search_engine,) = store1._search_engines.values()
 
         async def failing_save(path: str) -> None:
             raise OSError("no space left on device")
@@ -1929,8 +1932,8 @@ class TestCrashRecovery:
         await engine1.dispose()
 
     @pytest.mark.asyncio
-    async def test_cascade_deletes_pending_ops(self, tmp_path):
-        """Deleting a collection cascades to its pending operations."""
+    async def test_purge_reclaims_a_deleted_partitions_pending_ops(self, tmp_path):
+        """Deleting a partition leaves its log to the purge, which reclaims it."""
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
@@ -1943,6 +1946,8 @@ class TestCrashRecovery:
         assert await _pending_operation_count(engine1) == 2
 
         await store1.delete_partition(NAME)
+        assert await _pending_operation_count(engine1) == 2
+        assert await store1.purge_deleted_partitions() is False
         assert await _pending_operation_count(engine1) == 0
 
         await store1.shutdown()
@@ -2532,3 +2537,16 @@ class TestDeclaredSchemaIsFixed:
             await second.get_partition("fixed")
         await second.shutdown()
         await engine.dispose()
+
+
+class TestPartitionLifecycle(PartitionLifecycleContract):
+    """The partition lifecycle contract, against this store."""
+
+    @staticmethod
+    async def count_stored(store) -> int:
+        async with store._create_session() as session:
+            return (
+                await session.execute(
+                    select(func.count()).select_from(store._records_table)
+                )
+            ).scalar_one()

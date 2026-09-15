@@ -25,10 +25,13 @@ from memmachine_server.common.vector_store.data_types import (
     VectorStorePartitionAlreadyExistsError,
 )
 from memmachine_server.common.vector_store.qdrant_vector_store import (
-    _PAYLOAD_PARTITION_KEY,
+    _PAYLOAD_INCARNATION,
     QdrantVectorStore,
     QdrantVectorStoreParams,
     QdrantVectorStorePartition,
+)
+from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
+    PartitionLifecycleContract,
 )
 
 COLLECTION = "test_namespace"
@@ -1111,7 +1114,7 @@ class TestCollectionProvisioningAcrossWorkers:
             await store.startup()
             info = await qdrant_client.get_collection(collection)
             indexed = set(info.payload_schema or {})
-            assert _PAYLOAD_PARTITION_KEY in indexed, (
+            assert _PAYLOAD_INCARNATION in indexed, (
                 "the tenant partition index is missing: a collection that already "
                 "existed never had its payload indexes created, so tenant "
                 f"filtering is unindexed. present: {sorted(indexed)}"
@@ -1168,7 +1171,7 @@ class TestCollectionProvisioningAcrossWorkers:
 
             info = await client_a.get_collection(collection)
             indexed = set(info.payload_schema or {})
-            assert _PAYLOAD_PARTITION_KEY in indexed, (
+            assert _PAYLOAD_INCARNATION in indexed, (
                 "two workers raced and the tenant partition index was lost: the "
                 "loser skips index creation entirely. present: "
                 f"{sorted(indexed)}"
@@ -1217,3 +1220,12 @@ class TestDeclaredPayloadIndexes:
         )
         assert info.payload_schema["age"].data_type == models.PayloadSchemaType.INTEGER
         await store.delete_partition("declared_indexes")
+
+
+class TestPartitionLifecycle(PartitionLifecycleContract):
+    """The partition lifecycle contract, against this store."""
+
+    @staticmethod
+    async def count_stored(store) -> int:
+        result = await store._client.count(collection_name=COLLECTION, exact=True)
+        return result.count

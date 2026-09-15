@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.data_types import PropertyValue
@@ -27,6 +28,9 @@ from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
     SQLiteVecVectorStore,
     SQLiteVecVectorStoreParams,
     SQLiteVecVectorStorePartition,
+)
+from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
+    PartitionLifecycleContract,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -904,3 +908,23 @@ class TestDeclaredSchemaIsFixed:
             await second.get_partition("fixed")
         await second.shutdown()
         await engine.dispose()
+
+
+class TestPartitionLifecycle(PartitionLifecycleContract):
+    """The partition lifecycle contract, against this store."""
+
+    @staticmethod
+    async def count_stored(store) -> int:
+        async with store._create_session() as session:
+            records = (
+                await session.execute(
+                    select(func.count()).select_from(store._records_table)
+                )
+            ).scalar_one()
+            vectors = (
+                await session.execute(
+                    text(f"SELECT count(*) FROM [{store._vector_table_name}]")
+                )
+            ).scalar_one()
+        assert records == vectors, "records and vectors reclaimed together"
+        return records

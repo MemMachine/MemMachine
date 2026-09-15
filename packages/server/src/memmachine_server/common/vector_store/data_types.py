@@ -117,6 +117,29 @@ class VectorStorePartitionAlreadyExistsError(Exception):
         )
 
 
+class VectorStorePartitionHandleStaleError(Exception):
+    """A partition handle outlived the partition incarnation it was bound to."""
+
+    def __init__(self, collection: str, partition_key: str) -> None:
+        """Record the collection and the logical key the stale handle belonged to."""
+        self.collection = collection
+        self.partition_key = partition_key
+        super().__init__(
+            f"Stale handle for partition {partition_key!r} of collection "
+            f"{collection!r}: the partition was deleted (or re-created) after this "
+            "handle was bound"
+        )
+
+
+class VectorStoreAttemptsExhaustedError(Exception):
+    """The store exhausted its internal attempts; diagnose the cause.
+
+    Raised when an operation kept failing in a way that should not recur
+    under normal operation. An immediate retry is unlikely to succeed;
+    the underlying error is chained as the cause.
+    """
+
+
 class VectorStorePartitionSchemaMismatchError(Exception):
     """
     Raised when a partition's recorded schema differs from its store's.

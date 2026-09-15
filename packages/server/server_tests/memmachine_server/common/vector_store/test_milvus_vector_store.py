@@ -9,6 +9,10 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 
+from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
+    PartitionLifecycleContract,
+)
+
 pytest.importorskip("milvus_lite")
 pymilvus = pytest.importorskip("pymilvus")
 DataType = pymilvus.DataType
@@ -495,3 +499,17 @@ class TestPartitionIsolation:
 
         await store.delete_partition("tenant_a")
         await store.delete_partition("tenant_b")
+
+
+class TestPartitionLifecycle(PartitionLifecycleContract):
+    """The partition lifecycle contract, against this store."""
+
+    @staticmethod
+    async def count_stored(store) -> int:
+        rows = store._client.query(
+            collection_name=COLLECTION,
+            filter='id != ""',
+            output_fields=["id"],
+            limit=16384,
+        )
+        return len(list(rows))

@@ -21,11 +21,16 @@ from .data_types import QueryResult, Record
 
 class VectorStorePartition(ABC):
     """
-    One partition of a vector store, bound to its key.
+    One partition of a vector store, bound to one incarnation of its key.
 
     All data operations are scoped to the partition. The handle owns
     nothing: a caller builds one with `VectorStore.get_partition`, drops it,
-    and builds another at will.
+    and builds another at will. It is bound to the incarnation the store
+    minted when the partition was created: once the partition is deleted,
+    or deleted and re-created under the same key, every operation of a
+    handle bound to the old incarnation raises
+    `VectorStorePartitionHandleStaleError`, and none of them can reach the
+    successor's records.
 
     A partition stores every property of a record and filters on any key;
     the keys its store declares (`indexed_properties`) are indexed for
@@ -131,6 +136,14 @@ class VectorStore(ABC):
     shares the collection's dimensions and schema, and the schema is fixed
     for the life of the store's data: changing it is a migration.
 
+    A partition is identified to callers by a string key and inside the
+    store by an incarnation the store mints per partition life: records,
+    points and index files are keyed by the incarnation, never by the key,
+    so nothing written under one life of a key is ever seen by, or reclaimed
+    out from under, another. Deletion is a registry write that makes the
+    partition unreachable at once; its storage is reclaimed afterward by
+    `purge_deleted_partitions`, which the deployment runs.
+
     A given partition must be managed by at most one process at a time.
     The consumer is responsible for sharding partition keys across
     processes.
@@ -193,6 +206,10 @@ class VectorStore(ABC):
 
         Raises:
             VectorStorePartitionAlreadyExistsError: If the partition already exists.
+            VectorStoreAttemptsExhaustedError:
+                If creation exhausted its internal attempts on a failure
+                that should not recur; an immediate retry is unlikely to
+                succeed -- diagnose the chained cause.
         """
         raise NotImplementedError
 
@@ -205,10 +222,13 @@ class VectorStore(ABC):
             partition_key (str):
                 The key of the partition.
 
+        Staleness is a property of a handle already held, raised by its
+        operations, never of this lookup.
+
         Returns:
             VectorStorePartition | None:
-                A handle bound to the partition, or None if the partition
-                does not exist.
+                A handle bound to the partition's current incarnation, or
+                None if the partition does not exist.
 
         Raises:
             VectorStorePartitionSchemaMismatchError:
@@ -222,10 +242,37 @@ class VectorStore(ABC):
         """
         Delete a partition and all of its records.
 
-        Idempotent.
+        The partition becomes unreachable immediately: `get_partition`
+        returns None for it, and handles bound to it raise from then on.
+        Implementations may defer physically reclaiming its records to
+        `purge_deleted_partitions`. Idempotent.
 
         Args:
             partition_key (str):
                 The key of the partition to delete.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def purge_deleted_partitions(self) -> bool:
+        """
+        Physically reclaim storage for deleted partitions, bounded per call.
+
+        The sweeper: reclaims what `delete_partition` deferred, for every
+        partition of this collection, oldest deletion first. Each call does
+        a bounded amount of work, sized so it does not noticeably degrade
+        concurrent request serving, commits what it did or nothing, and is
+        safe to repeat, including after a failure on backend contention
+        with another writer, and to run concurrently from any process. The
+        store never schedules it; a deployment must run it somewhere (the
+        server's resource manager runs it in the background).
+        Implementations that reclaim physically in `delete_partition` may
+        return False without doing anything.
+
+        Returns:
+            bool:
+                True if another call may reclaim more. False if this call
+                found nothing to claim; entries a concurrent purger holds
+                are that purger's to finish, so the caller may back off.
         """
         raise NotImplementedError
