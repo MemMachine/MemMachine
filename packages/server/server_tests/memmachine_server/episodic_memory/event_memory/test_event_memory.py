@@ -5,8 +5,9 @@ import datetime
 import json
 import math
 import random
+from collections.abc import Iterable
 from datetime import UTC
-from typing import Any, ClassVar, override
+from typing import Any, ClassVar, cast, override
 from uuid import UUID, uuid4
 
 import pytest
@@ -52,6 +53,7 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EVENT_TIMESTAMP_KEY,
     EventMemory,
     EventMemoryParams,
+    IdKind,
     _system_predicates,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory_store import (
@@ -835,9 +837,10 @@ def _make_segment(
     text: str = "text",
     block: Block | None = None,
     context: Context | None = None,
+    session_id: str = "s",
 ) -> Segment:
     return Segment(
-        session_id="s",
+        session_id=session_id,
         source_id="src",
         uuid=uuid4(),
         event_uuid=event_uuid or uuid4(),
@@ -892,6 +895,62 @@ class TestRender:
 
     def test_empty_list(self):
         assert EventMemory.render_segments([], datetime_format=_SHORT_TIME) == ""
+
+    def test_sessions_are_blocks_in_the_order_of_their_latest_timestamps(self):
+        later = _make_segment(text="later", timestamp=_ts(2), session_id="b")
+        early = _make_segment(text="early", timestamp=_ts(0), session_id="a")
+        latest = _make_segment(text="latest", timestamp=_ts(3), session_id="a")
+        middle = _make_segment(text="middle", timestamp=_ts(1), session_id="b")
+
+        result = EventMemory.render_segments(
+            [later, early, latest, middle], datetime_format=_BARE
+        )
+
+        # Session b's latest is earlier than session a's, so b comes first;
+        # within a block the store's order, not the given one.
+        assert result == '"middle"\n"later"\n\n"early"\n"latest"'
+
+    def test_session_ids_head_each_block(self):
+        one = _make_segment(text="one", timestamp=_ts(0), session_id="chat 1")
+        two = _make_segment(text="two", timestamp=_ts(1), session_id='q"uote')
+
+        result = EventMemory.render_segments(
+            [one, two], datetime_format=_BARE, ids=("session",)
+        )
+
+        assert result == '[session:"chat 1"]\n"one"\n\n[session:"q\\"uote"]\n"two"'
+
+    def test_segment_ids_start_each_line(self):
+        event_uuid = uuid4()
+        one = _make_segment(text="one", timestamp=_ts(0))
+        first = _make_segment(
+            event_uuid=event_uuid, index=0, offset=0, text="two-", timestamp=_ts(1)
+        )
+        last = _make_segment(
+            event_uuid=event_uuid, index=0, offset=1, text="pieces", timestamp=_ts(1)
+        )
+
+        result = EventMemory.render_segments(
+            [one, first, last], datetime_format=_BARE, ids=("segment",)
+        )
+
+        assert result == (
+            f'[segment:{one.uuid.hex}] "one"\n'
+            f'[segments:{first.uuid.hex}..{last.uuid.hex}] "two-pieces"'
+        )
+
+    def test_a_segment_given_twice_renders_once(self):
+        segment = _make_segment(text="once")
+        assert (
+            EventMemory.render_segments([segment, segment], datetime_format=_BARE)
+            == '"once"'
+        )
+
+    def test_an_unknown_id_kind_is_rejected(self):
+        with pytest.raises(ValueError, match="Unknown id kinds"):
+            EventMemory.render_segments(
+                [], datetime_format=_BARE, ids=cast(Iterable[IdKind], ("event",))
+            )
 
     def test_a_window_of_messages_and_tool_events_reads_as_one_timeline(self):
         # The capture client writes one event per timeline entry, so each
