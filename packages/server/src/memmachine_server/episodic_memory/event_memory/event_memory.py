@@ -8,7 +8,7 @@ import logging
 import time
 from collections.abc import Collection, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Self, cast
+from typing import Final, Literal, Self, cast
 from uuid import UUID, uuid4
 
 import numpy as np
@@ -71,6 +71,7 @@ from .segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
 
+
 # The keys the memory writes into a vector record; `em` names this memory,
 # short because the keys share the identifier budget.
 _EVENT_MEMORY_SYSTEM: Final[str] = "em"
@@ -93,6 +94,11 @@ _RESERVED_PROPERTY_SCHEMA: Final[dict[str, type[PropertyValue]]] = {
 # the margin between the database's clock, which times the holds, and the
 # writers' clocks, which run the budgets.
 _CLAIM_MARGIN_SECONDS = 60
+
+IdKind = Literal["segment"]
+"""What `render_segments` marks with ids: each line's segments."""
+
+_ID_KINDS: Final[frozenset[str]] = frozenset({"segment"})
 
 
 def _conjoin(clauses: Iterable[FilterExpr | None]) -> FilterExpr | None:
@@ -565,40 +571,69 @@ class EventMemory:
         *,
         datetime_format: DateTimeFormat,
         parts: Iterable[str] = ("author",),
+        ids: Iterable[IdKind] = (),
     ) -> str:
         """
-        The reader's text for a run of segments, in their order.
+        The reader's text for segments: a line per event, in the store's order.
 
-        A header (`format_header`: the timestamp, then the context parts
-        `parts` names, in order) starts each run of adjacent pieces of one
-        event; the pieces' block renderings are joined under it.
+        A segment given twice is rendered once. A line is a run of adjacent
+        pieces of one event: a header (`format_header`: the timestamp, then
+        the context parts `parts` names, in order), then the pieces' block
+        renderings. Nothing in the text says whether two lines are adjacent
+        in the store.
+
+        `ids` names what is marked: `"segment"` starts each line with
+        `[segment:<hex>]`, or `[segments:<first>..<last>]` when the line
+        holds more than one segment, a uuid as 32 hex digits.
+
+        Raises:
+            ValueError:
+                If `ids` names a kind other than `"segment"`.
         """
         parts = part_kinds(parts)
-        context_string = ""
-        previous: Segment | None = None
-        accumulated_text = ""
+        ids = frozenset(ids)
+        unknown = ids - _ID_KINDS
+        if unknown:
+            raise ValueError(f"Unknown id kinds: {sorted(unknown)}")
+        unique: dict[UUID, Segment] = {}
         for segment in segments:
-            is_continuation = previous is not None and EventMemory._is_continuation(
-                previous, segment
-            )
-            if not is_continuation:
-                if previous is not None:
-                    context_string += (
-                        json.dumps(accumulated_text, ensure_ascii=False) + "\n"
-                    )
-                accumulated_text = ""
-                context_string += format_header(
-                    segment.timestamp, segment.context, datetime_format, parts
-                )
-            text = segment.block.render(datetime_format)
-            if text is not None:
-                accumulated_text += text
-            elif not is_continuation:
-                context_string += f"[{segment.block.kind}]\n"
-            previous = segment
-        if previous is not None:
-            context_string += json.dumps(accumulated_text, ensure_ascii=False) + "\n"
-        return context_string.strip()
+            unique.setdefault(segment.uuid, segment)
+        lines: list[str] = []
+        for run in EventMemory._runs(sorted(unique.values(), key=_store_order)):
+            line = EventMemory._render_run(run, datetime_format, parts)
+            if "segment" in ids:
+                line = f"{_segment_marker(run)} {line}"
+            lines.append(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _runs(segments: Iterable[Segment]) -> list[list[Segment]]:
+        """Split segments, in the store's order, into runs of adjacent pieces of one event."""
+        runs: list[list[Segment]] = []
+        for segment in segments:
+            if runs and EventMemory._is_continuation(runs[-1][-1], segment):
+                runs[-1].append(segment)
+            else:
+                runs.append([segment])
+        return runs
+
+    @staticmethod
+    def _render_run(
+        run: Sequence[Segment],
+        datetime_format: DateTimeFormat,
+        parts: Sequence[str],
+    ) -> str:
+        """One event's adjacent pieces as one line: the header, then the block renderings."""
+        first = run[0]
+        text = format_header(first.timestamp, first.context, datetime_format, parts)
+        accumulated = ""
+        for segment in run:
+            rendered = segment.block.render(datetime_format)
+            if rendered is not None:
+                accumulated += rendered
+            elif segment is first:
+                text += f"[{segment.block.kind}]\n"
+        return text + json.dumps(accumulated, ensure_ascii=False)
 
     @staticmethod
     def _is_continuation(previous: Segment, segment: Segment) -> bool:
@@ -1579,3 +1614,15 @@ def _pairwise_scores(
             return np.stack(
                 [np.abs(embeddings - row).sum(axis=1) for row in embeddings]
             )
+
+
+def _store_order(segment: Segment) -> tuple[datetime.datetime, UUID, int, int]:
+    """The event memory store's total order."""
+    return (segment.timestamp, segment.event_uuid, segment.index, segment.offset)
+
+
+def _segment_marker(run: Sequence[Segment]) -> str:
+    """The id marker of a rendered line: its one segment, or its first and last."""
+    if len(run) == 1:
+        return f"[segment:{run[0].uuid.hex}]"
+    return f"[segments:{run[0].uuid.hex}..{run[-1].uuid.hex}]"
