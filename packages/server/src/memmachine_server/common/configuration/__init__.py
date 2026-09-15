@@ -141,8 +141,8 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=SimilarityMetric.COSINE,
         description="Similarity metric for vector_store semantic memory search.",
     )
-    config_database: str = Field(
-        ...,
+    config_database: str | None = Field(
+        default=None,
         description="The config database to use for semantic memory",
     )
     with_config_cache: bool = Field(
@@ -186,15 +186,19 @@ class SemanticMemoryConf(YamlSerializableMixin):
         else:
             has_required_storage = bool(self.database)
         if self.enabled and not (
-            has_required_storage and self.llm_model and self.embedding_model
+            has_required_storage
+            and self.config_database
+            and self.llm_model
+            and self.embedding_model
         ):
             logger.warning(
                 "Semantic memory auto-disabled: missing required fields "
                 "(database=%r, feature_store=%r, vector_collection=%r, "
-                "llm_model=%r, embedding_model=%r).",
+                "config_database=%r, llm_model=%r, embedding_model=%r).",
                 self.database,
                 self.feature_store,
                 self.vector_collection,
+                self.config_database,
                 self.llm_model,
                 self.embedding_model,
             )
@@ -370,7 +374,10 @@ class Configuration(BaseModel):
 
     episodic_memory: EpisodicMemoryConfPartial
     retrieval_agent: RetrievalAgentConf = RetrievalAgentConf()
-    semantic_memory: SemanticMemoryConf
+    semantic_memory: SemanticMemoryConf = Field(
+        default_factory=lambda: SemanticMemoryConf(enabled=False),
+        description="Semantic memory configuration. Omitting the section disables semantic memory.",
+    )
     logging: LogConf
     prompt: PromptConf = PromptConf()
     session_manager: SessionManagerConf
