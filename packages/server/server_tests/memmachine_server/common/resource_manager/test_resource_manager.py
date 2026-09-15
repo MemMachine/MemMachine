@@ -3,7 +3,7 @@
 import asyncio
 import gc
 import weakref
-from unittest.mock import create_autospec
+from unittest.mock import AsyncMock, create_autospec
 
 import pytest
 from pydantic import SecretStr
@@ -43,6 +43,7 @@ from memmachine_server.common.resource_manager import (
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
+from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 
 RERANKER_ID = "my_reranker"
@@ -196,9 +197,7 @@ async def test_segment_store_purge_loop_ticks_and_survives_failures(
     invalid_resource_manager, monkeypatch
 ):
     """The background purge keeps driving the store past a failing call."""
-    monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_INTERVAL_SECONDS", 0
-    )
+    monkeypatch.setattr(resource_manager_module, "_PURGE_INTERVAL_SECONDS", 0)
     store = create_autospec(SegmentStore, instance=True)
     calls = 0
     third_call = asyncio.Event()
@@ -215,7 +214,9 @@ async def test_segment_store_purge_loop_ticks_and_survives_failures(
     store.purge_deleted_partitions.side_effect = counting_purge
 
     task = asyncio.create_task(
-        resource_manager_module._purge_deleted_partitions_forever(store)
+        resource_manager_module._purge_deleted_partitions_forever(
+            store, "Segment store s"
+        )
     )
     await asyncio.wait_for(third_call.wait(), 5)
     task.cancel()
@@ -229,12 +230,8 @@ async def test_segment_store_purge_drains_backlog_without_waiting(
 ):
     """True from a purge call means more work: the next call comes after
     the short busy pause, never the idle tick."""
-    monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_INTERVAL_SECONDS", 3600
-    )
-    monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS", 0
-    )
+    monkeypatch.setattr(resource_manager_module, "_PURGE_INTERVAL_SECONDS", 3600)
+    monkeypatch.setattr(resource_manager_module, "_PURGE_BUSY_PAUSE_SECONDS", 0)
     store = create_autospec(SegmentStore, instance=True)
     calls = 0
     drained = asyncio.Event()
@@ -250,7 +247,9 @@ async def test_segment_store_purge_drains_backlog_without_waiting(
     store.purge_deleted_partitions.side_effect = backlogged_purge
 
     task = asyncio.create_task(
-        resource_manager_module._purge_deleted_partitions_forever(store)
+        resource_manager_module._purge_deleted_partitions_forever(
+            store, "Segment store s"
+        )
     )
     await asyncio.wait_for(drained.wait(), 5)
     task.cancel()
@@ -263,9 +262,7 @@ async def test_close_cancels_segment_store_purge_tasks(
     invalid_resource_manager, monkeypatch
 ):
     """close() ends the background purge before shutting stores down."""
-    monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_INTERVAL_SECONDS", 0
-    )
+    monkeypatch.setattr(resource_manager_module, "_PURGE_INTERVAL_SECONDS", 0)
     store = create_autospec(SegmentStore, instance=True)
     started = asyncio.Event()
 
@@ -276,7 +273,9 @@ async def test_close_cancels_segment_store_purge_tasks(
     store.purge_deleted_partitions.side_effect = signalling_purge
 
     task = asyncio.create_task(
-        resource_manager_module._purge_deleted_partitions_forever(store)
+        resource_manager_module._purge_deleted_partitions_forever(
+            store, "Segment store s"
+        )
     )
     invalid_resource_manager._segment_store_purge_tasks.append(task)
     await asyncio.wait_for(started.wait(), 5)
@@ -290,14 +289,14 @@ async def test_close_cancels_segment_store_purge_tasks(
 async def test_purge_task_does_not_pin_the_manager(invalid_configure, monkeypatch):
     """A pending purge task keeps its store alive, not the manager that
     started it: a manager dropped without close() is collectable."""
-    monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_INTERVAL_SECONDS", 3600
-    )
+    monkeypatch.setattr(resource_manager_module, "_PURGE_INTERVAL_SECONDS", 3600)
     manager = ResourceManagerImpl(invalid_configure)
     store = create_autospec(SegmentStore, instance=True)
     store.purge_deleted_partitions.return_value = False
     task = asyncio.create_task(
-        resource_manager_module._purge_deleted_partitions_forever(store)
+        resource_manager_module._purge_deleted_partitions_forever(
+            store, "Segment store s"
+        )
     )
     manager._segment_store_purge_tasks.append(task)
     manager_ref = weakref.ref(manager)
@@ -318,3 +317,39 @@ async def test_get_segment_store_after_close_raises(invalid_resource_manager):
     await invalid_resource_manager.close()
     with pytest.raises(ResourceManagerClosedError):
         await invalid_resource_manager.get_segment_store(SQLDB_ID)
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_starts_one_sweeper_per_collection(
+    invalid_resource_manager, monkeypatch
+):
+    """The first get of a collection's store starts its purge loop; later
+    gets of the same collection reuse it, and close() cancels it."""
+    monkeypatch.setattr(resource_manager_module, "_PURGE_INTERVAL_SECONDS", 3600)
+    store = create_autospec(VectorStore, instance=True)
+    store.purge_deleted_partitions.return_value = False
+    monkeypatch.setattr(
+        invalid_resource_manager._database_manager,
+        "get_vector_store",
+        AsyncMock(return_value=store),
+    )
+
+    first = await invalid_resource_manager.get_vector_store(
+        "backend", collection="c", vector_dimensions=3, indexed_properties={}
+    )
+    second = await invalid_resource_manager.get_vector_store(
+        "backend", collection="c", vector_dimensions=3, indexed_properties={}
+    )
+    await asyncio.sleep(0)  # the loop makes its first call and parks in sleep
+
+    assert first is second is store
+    [task] = invalid_resource_manager._vector_store_purge_tasks.values()
+    assert store.purge_deleted_partitions.await_count == 1
+
+    await invalid_resource_manager.close()
+
+    assert task.cancelled()
+    with pytest.raises(ResourceManagerClosedError):
+        await invalid_resource_manager.get_vector_store(
+            "backend", collection="c", vector_dimensions=3, indexed_properties={}
+        )
