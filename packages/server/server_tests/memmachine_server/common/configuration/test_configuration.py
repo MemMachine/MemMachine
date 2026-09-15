@@ -416,11 +416,24 @@ def test_configuration_semantic_memory_disabled_with_enabled_false_alone():
     assert conf.semantic_memory.enabled is False
 
 
-def test_disabled_semantic_memory_round_trips_through_yaml():
+def test_configuration_semantic_memory_null_section_is_disabled():
     data = _sample_config_data()
-    data["semantic_memory"] = {"enabled": False}
+    data["semantic_memory"] = None
+
     conf = Configuration(**data)
 
-    conf_cp = Configuration(**yaml.safe_load(conf.to_yaml()))
+    assert conf.semantic_memory.enabled is False
 
+
+def test_disabled_semantic_memory_round_trips_through_yaml():
+    """A complete-but-disabled section keeps enabled: false across save + reload."""
+    data = _sample_config_data()
+    data["semantic_memory"]["enabled"] = False
+    conf = Configuration(**data)
+
+    dumped = yaml.safe_load(conf.to_yaml())
+    conf_cp = Configuration(**dumped)
+
+    assert dumped["semantic_memory"]["enabled"] is False
+    assert dumped["semantic_memory"]["config_database"] == "profile_storage"
     assert conf_cp.semantic_memory.enabled is False

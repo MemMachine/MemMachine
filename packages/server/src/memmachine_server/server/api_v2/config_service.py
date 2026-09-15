@@ -352,6 +352,13 @@ def _apply_semantic_memory_updates(
             f"semantic_memory.ingestion_trigger_age={spec.ingestion_trigger_age_seconds}s"
         )
 
+    # Field assignment above bypasses validation; re-run the completeness check so
+    # an enable request on an incomplete config cannot persist enabled=True.
+    if sm.auto_disable_when_incomplete() is True:
+        changes.append(
+            "semantic_memory.enabled=False (auto-disabled: required fields missing)"
+        )
+
     return changes
 
 

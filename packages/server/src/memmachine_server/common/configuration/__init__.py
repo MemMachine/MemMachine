@@ -102,7 +102,8 @@ class SemanticMemoryConf(YamlSerializableMixin):
     enabled: bool = Field(
         default=True,
         description="Whether semantic memory is enabled. "
-        "Auto-disabled when required backend, llm_model, or embedding_model fields are empty.",
+        "Auto-disabled when required backend, config_database, llm_model, "
+        "or embedding_model fields are empty.",
     )
     database: str | None = Field(
         default=None,
@@ -179,6 +180,16 @@ class SemanticMemoryConf(YamlSerializableMixin):
     @model_validator(mode="after")
     def _auto_disable_when_incomplete(self) -> SemanticMemoryConf:
         """Auto-disable semantic memory when required fields are missing."""
+        self.auto_disable_when_incomplete()
+        return self
+
+    def auto_disable_when_incomplete(self) -> bool:
+        """Disable semantic memory if a required field is missing.
+
+        Runs at validation time and again after in-place updates (the runtime
+        config API assigns fields without re-validating). Returns True when
+        this call flipped ``enabled`` to False.
+        """
         if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
             has_required_storage = bool(self.feature_store) and bool(
                 self.vector_collection
@@ -203,7 +214,8 @@ class SemanticMemoryConf(YamlSerializableMixin):
                 self.embedding_model,
             )
             self.enabled = False
-        return self
+            return True
+        return False
 
 
 def _read_txt(filename: str) -> str:
@@ -387,6 +399,14 @@ class Configuration(BaseModel):
 
     # Path to the configuration file (set when loaded from file)
     _config_file_path: str | None = None
+
+    @field_validator("semantic_memory", mode="before")
+    @classmethod
+    def _empty_semantic_section_disables(cls, value: object) -> object:
+        """Treat a bare ``semantic_memory:`` key (YAML null) as a disabled section."""
+        if value is None:
+            return {"enabled": False}
+        return value
 
     @model_validator(mode="after")
     def _auto_disable_when_openai_incomplete(self) -> Configuration:

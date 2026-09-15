@@ -175,7 +175,7 @@ class SemanticResourceManager:
     async def get_semantic_config_storage(self) -> SemanticConfigStorage:
         database = self._conf.config_database
 
-        if database is None:
+        if not database:
             raise ResourceNotReadyError(
                 "No config database configured for semantic memory.",
                 "semantic_memory",

@@ -10,6 +10,7 @@ from memmachine_common.api.config_spec import (
     UpdateSemanticMemorySpec,
 )
 
+from memmachine_server.common.configuration import SemanticMemoryConf
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
     LongTermMemoryConfPartial,
@@ -319,6 +320,28 @@ def test_update_semantic_memory_fields(memory_resource_manager):
     assert "feature_store=new-feature-db" in message
     assert "vector_collection=new-vector-store" in message
     memory_resource_manager.save_config.assert_called_once()
+
+
+def test_enable_semantic_memory_without_config_database_is_auto_disabled(
+    memory_resource_manager,
+):
+    """An API enable on a config with no config_database must not persist enabled=True."""
+    memory_resource_manager.config.semantic_memory = SemanticMemoryConf(enabled=False)
+    spec = UpdateSemanticMemorySpec.model_validate(
+        {
+            "enabled": True,
+            "database": "db",
+            "llm_model": "llm",
+            "embedding_model": "embedder",
+        }
+    )
+    service = ConfigService(memory_resource_manager)
+    message = service.update_semantic_memory_config(spec)
+
+    sm = memory_resource_manager.config.semantic_memory
+    assert sm.enabled is False
+    assert sm.config_database is None
+    assert "auto-disabled" in message
 
 
 def test_update_semantic_ingestion_settings(memory_resource_manager):
