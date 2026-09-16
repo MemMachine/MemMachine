@@ -252,11 +252,13 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
     )
-    registry_replication_factor: int = Field(
-        default=1,
+    registry_database: str = Field(
+        ...,
         description=(
-            "Replication factor for registry collections. Write consistency factor "
-            "is set to match so all replicas confirm writes."
+            "The relational database (a name under resources.databases) that "
+            "holds this backend's partition registry. Required: Qdrant cannot "
+            "arbitrate partition creation or deletion across server processes; "
+            "the registry lives where a primary key and a transaction can."
         ),
     )
     request_timeout: float = Field(
@@ -294,6 +296,15 @@ class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
         description=(
             "Milvus consistency level for newly created collections. "
             "Supported values: Strong, Session, Bounded, Eventually."
+        ),
+    )
+    registry_database: str = Field(
+        ...,
+        description=(
+            "The relational database (a name under resources.databases) that "
+            "holds this backend's partition registry. Required: Milvus cannot "
+            "arbitrate partition creation or deletion across server processes; "
+            "the registry lives where a primary key and a transaction can."
         ),
     )
     request_timeout: float = Field(

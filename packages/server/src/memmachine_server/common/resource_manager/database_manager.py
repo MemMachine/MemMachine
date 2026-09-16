@@ -761,7 +761,9 @@ class DatabaseManager:
                     "client": client,
                     "collection": collection,
                     "vector_dimensions": vector_dimensions,
-                    "registry_replication_factor": conf.registry_replication_factor,
+                    "registry_engine": await self.async_get_sql_engine(
+                        conf.registry_database
+                    ),
                     "indexed_properties": indexed_properties,
                     "metrics_factory": conf.get_metrics_factory(),
                 }
@@ -853,6 +855,7 @@ class DatabaseManager:
         return MilvusVectorStore(
             MilvusVectorStoreParams(
                 client=client,
+                registry_engine=await self.async_get_sql_engine(conf.registry_database),
                 collection=collection,
                 vector_dimensions=vector_dimensions,
                 consistency_level=conf.consistency_level,

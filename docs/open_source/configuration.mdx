@@ -341,6 +341,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # db_name: default
               consistency_level: Session
               request_timeout: 30
+              registry_database: sqlite_test
       ```
     </Tab>
     <Tab title="With Comments">
@@ -373,6 +374,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # db_name: default # Optional Milvus database name
               consistency_level: Session # Strong, Session, Bounded, or Eventually
               request_timeout: 30 # Seconds a request may take; required
+              registry_database: sqlite_test # Relational database (a name above) holding the partition registry; required
       ```
     </Tab>
     </Tabs>

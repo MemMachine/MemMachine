@@ -12,7 +12,9 @@ deleted-and-recreated partition never sees its predecessor's rows.
 Deleting a partition is a registry write: the incarnation goes onto the
 purge queue and the registry row goes, so the partition is unreachable at
 once; `purge_deleted_partitions` reclaims the rows afterward, a bounded
-batch per call.
+batch per call. The registry and the data share the one SQLite file, so
+every process on the node holding it may create, use, delete and purge
+partitions; a file is not shared across nodes.
 
 The records table holds a record's properties as JSON, with an index per
 declared property.

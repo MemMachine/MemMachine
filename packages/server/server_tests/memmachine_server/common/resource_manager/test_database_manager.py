@@ -289,14 +289,22 @@ async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted():
 # --- Qdrant ---
 
 
+_REGISTRY_DB = SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path=":memory:")
+
+
 def _qdrant_only_conf() -> MagicMock:
     """Build a DatabasesConf mock with only a Qdrant entry."""
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {}
+    conf.relational_db_confs = {"registry": _REGISTRY_DB}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {
-        "qdrant1": QdrantConf(request_timeout=30.0, host="localhost", port=6333),
+        "qdrant1": QdrantConf(
+            request_timeout=30.0,
+            registry_database="registry",
+            host="localhost",
+            port=6333,
+        ),
     }
     conf.milvus_confs = {}
     conf.sqlite_vector_store_confs = {}
@@ -310,6 +318,7 @@ async def test_qdrant_client_kwargs_forwarded():
     conf = _qdrant_only_conf()
     conf.qdrant_confs["qdrant1"] = QdrantConf(
         request_timeout=30.0,
+        registry_database="registry",
         host="qdrant.example.com",
         port=7333,
         grpc_port=7334,
@@ -383,7 +392,7 @@ async def test_qdrant_creates_vector_store():
     """get_vector_store creates a QdrantVectorStore built for the service's keys."""
     conf = _qdrant_only_conf()
     conf.qdrant_confs["qdrant1"] = QdrantConf(
-        request_timeout=30.0, registry_replication_factor=3
+        request_timeout=30.0, registry_database="registry"
     )
 
     mock_client = AsyncMock()
@@ -416,7 +425,7 @@ async def test_qdrant_creates_vector_store():
     assert kwargs["client"] is mock_client
     assert kwargs["collection"] == "c"
     assert kwargs["vector_dimensions"] == 3
-    assert kwargs["registry_replication_factor"] == 3
+    assert kwargs["registry_engine"] is builder.sql_engines["registry"]
     assert kwargs["indexed_properties"] == {"memmachine_event_session": str}
     # Asserted as "not None" rather than pinned to a value: OperationTracker
     # accepts None and then discards every timing without error, so passing the
@@ -526,11 +535,13 @@ def _milvus_only_conf() -> MagicMock:
     """Build a DatabasesConf mock with only a Milvus entry."""
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {}
+    conf.relational_db_confs = {"registry": _REGISTRY_DB}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {}
     conf.milvus_confs = {
-        "milvus1": MilvusConf(request_timeout=30.0, uri="./milvus.db"),
+        "milvus1": MilvusConf(
+            request_timeout=30.0, registry_database="registry", uri="./milvus.db"
+        ),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -544,6 +555,7 @@ async def test_milvus_client_kwargs_forwarded():
     conf = _milvus_only_conf()
     conf.milvus_confs["milvus1"] = MilvusConf(
         request_timeout=30.0,
+        registry_database="registry",
         uri="https://example.zillizcloud.com",
         token=SecretStr("secret-token"),
         db_name="memory",
@@ -608,6 +620,7 @@ async def test_milvus_creates_vector_store():
     conf = _milvus_only_conf()
     conf.milvus_confs["milvus1"] = MilvusConf(
         request_timeout=30.0,
+        registry_database="registry",
         consistency_level="Strong",
     )
 
@@ -635,6 +648,7 @@ async def test_milvus_creates_vector_store():
 
     mock_params_cls.assert_called_once_with(
         client=mock_client,
+        registry_engine=builder.sql_engines["registry"],
         collection="c",
         vector_dimensions=3,
         consistency_level="Strong",

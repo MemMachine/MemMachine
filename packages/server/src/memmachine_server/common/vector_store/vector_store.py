@@ -144,9 +144,12 @@ class VectorStore(ABC):
     partition unreachable at once; its storage is reclaimed afterward by
     `purge_deleted_partitions`, which the deployment runs.
 
-    A given partition must be managed by at most one process at a time.
-    The consumer is responsible for sharding partition keys across
-    processes.
+    Every operation is safe from any process sharing the backend, with
+    nothing coordinated outside the backend: creation is arbitrated by the
+    registry's primary key, deletion by its transaction, reclamation by its
+    claim, and a handle by its incarnation. A store whose backend cannot
+    give that (an embedded file, an index held in memory) says so in its
+    own contract.
 
     Naming constraints:
         - Collection names must match `[a-z0-9_]+` and be at most 64 bytes.

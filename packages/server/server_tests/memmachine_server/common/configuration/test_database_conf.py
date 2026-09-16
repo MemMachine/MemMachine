@@ -120,7 +120,7 @@ def db_conf_dict() -> dict:
                     "grpc_port": 6334,
                     "prefer_grpc": True,
                     "api_key": "test-key",
-                    "registry_replication_factor": 3,
+                    "registry_database": "local_sqlite",
                     "request_timeout": 12.5,
                 },
             },
@@ -132,6 +132,7 @@ def db_conf_dict() -> dict:
                     "db_name": "memory",
                     "consistency_level": "Strong",
                     "request_timeout": 7.0,
+                    "registry_database": "main_postgres",
                 },
             },
             "my_sqlite_vs": {
@@ -205,7 +206,7 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert qdrant_conf.grpc_port == 6334
     assert qdrant_conf.prefer_grpc is True
     assert qdrant_conf.api_key == SecretStr("test-key")
-    assert qdrant_conf.registry_replication_factor == 3
+    assert qdrant_conf.registry_database == "local_sqlite"
     assert qdrant_conf.request_timeout == 12.5
 
     # Milvus check
@@ -216,6 +217,7 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert milvus_conf.db_name == "memory"
     assert milvus_conf.consistency_level == "Strong"
     assert milvus_conf.request_timeout == 7.0
+    assert milvus_conf.registry_database == "main_postgres"
 
     # SQLiteVectorStore (hnswlib engine)
     sqlite_vs_conf = storage_conf.sqlite_vector_store_confs["my_sqlite_vs"]
@@ -283,7 +285,7 @@ def test_serialize_deserialize_database_conf(db_conf_dict):
 
 
 def test_milvus_conf_defaults():
-    conf = MilvusConf(request_timeout=30.0)
+    conf = MilvusConf(request_timeout=30.0, registry_database="db")
     assert conf.uri == "./milvus.db"
     assert conf.token == SecretStr("")
     assert conf.db_name == ""
@@ -296,6 +298,7 @@ def test_milvus_conf_reads_env(monkeypatch):
     monkeypatch.setenv("MILVUS_DB_NAME", "memory")
     conf = MilvusConf(
         request_timeout=30.0,
+        registry_database="db",
         uri="$MILVUS_URI",
         token=SecretStr("${MILVUS_TOKEN}"),
         db_name="$MILVUS_DB_NAME",
@@ -307,9 +310,13 @@ def test_milvus_conf_reads_env(monkeypatch):
 
 def test_milvus_conf_rejects_invalid_values():
     with pytest.raises(ValueError, match="non-empty 'uri'"):
-        MilvusConf(request_timeout=30.0, uri="")
+        MilvusConf(request_timeout=30.0, registry_database="db", uri="")
     with pytest.raises(ValueError, match="consistency_level"):
-        MilvusConf(request_timeout=30.0, consistency_level="Linearizable")
+        MilvusConf(
+            request_timeout=30.0,
+            registry_database="db",
+            consistency_level="Linearizable",
+        )
 
 
 def test_neo4j_pool_lifecycle_fields():
@@ -361,19 +368,23 @@ def test_neo4j_uri_with_special_host():
 
 
 def test_qdrant_conf_defaults():
-    conf = QdrantConf(request_timeout=30.0)
+    conf = QdrantConf(request_timeout=30.0, registry_database="db")
     assert conf.host == "localhost"
     assert conf.port == 6333
     assert conf.grpc_port == 6334
     assert conf.prefer_grpc is False
     assert conf.https is False
-    assert conf.registry_replication_factor == 1
+    assert conf.registry_database == "db"
     assert conf.api_key.get_secret_value() == ""
 
 
 def test_qdrant_conf_api_key_from_env(monkeypatch):
     monkeypatch.setenv("QDRANT_API_KEY", "env-qdrant-key")
-    conf = QdrantConf(request_timeout=30.0, api_key=SecretStr("$QDRANT_API_KEY"))
+    conf = QdrantConf(
+        request_timeout=30.0,
+        registry_database="db",
+        api_key=SecretStr("$QDRANT_API_KEY"),
+    )
     assert conf.api_key == SecretStr("env-qdrant-key")
 
 
@@ -382,14 +393,14 @@ def test_qdrant_build_config():
         {
             "host": "qdrant.local",
             "port": 9333,
-            "registry_replication_factor": 2,
+            "registry_database": "db",
             "request_timeout": 5.0,
         }
     )
     assert isinstance(config, QdrantConf)
     assert config.host == "qdrant.local"
     assert config.port == 9333
-    assert config.registry_replication_factor == 2
+    assert config.registry_database == "db"
     assert config.request_timeout == 5.0
 
 

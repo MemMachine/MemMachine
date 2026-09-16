@@ -901,7 +901,9 @@ class SQLiteVectorStore(VectorStore):
 
     One records table per collection, shared by every partition of it under
     the partition's incarnation; one engine instance and index file per
-    incarnation.
+    incarnation. The engine and its index file live in the process that
+    opened the partition, so a partition is managed by at most one process
+    at a time: an embedded store for one server process, not a shared one.
     """
 
     def __init__(self, params: SQLiteVectorStoreParams) -> None:
@@ -1241,8 +1243,8 @@ class SQLiteVectorStore(VectorStore):
         # every operation resolves the registry first. The partition's
         # in-process write lock is held too, so a write of this process
         # that has committed but not yet applied to the engine finishes its
-        # bookkeeping before the engine is dropped; the ABC gives one process
-        # the partition, so no other writer exists.
+        # bookkeeping before the engine is dropped; this store gives one
+        # process the partition, so no other writer exists.
         while True:
             async with self._create_session() as session:
                 row = await self._registry_row(session, partition_key)

@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from qdrant_client import AsyncQdrantClient, models
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.filter.filter_parser import (
@@ -74,12 +75,21 @@ def any_qdrant_client(request):
 
 
 @pytest_asyncio.fixture
-async def store(any_qdrant_client):
+async def registry_engine(tmp_path):
+    """The relational database holding the partition registry, one per test."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
+    yield engine
+    await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def store(any_qdrant_client, registry_engine):
     params = QdrantVectorStoreParams(
         collection=COLLECTION,
         vector_dimensions=VECTOR_DIM,
         indexed_properties=INDEXED_PROPERTIES,
         client=any_qdrant_client,
+        registry_engine=registry_engine,
     )
     s = QdrantVectorStore(params)
     await s.provision()
@@ -1022,7 +1032,7 @@ class TestPartitionIsolation:
 @pytest.mark.integration
 class TestMetrics:
     @pytest.mark.asyncio
-    async def test_metrics_collection(self, qdrant_client):
+    async def test_metrics_collection(self, qdrant_client, registry_engine):
         mock_factory = MagicMock(spec=MetricsFactory)
         mock_histogram = MagicMock(spec=MetricsFactory.Histogram)
         mock_factory.get_histogram.return_value = mock_histogram
@@ -1032,6 +1042,7 @@ class TestMetrics:
             vector_dimensions=VECTOR_DIM,
             indexed_properties=INDEXED_PROPERTIES,
             client=qdrant_client,
+            registry_engine=registry_engine,
             metrics_factory=mock_factory,
         )
         store = QdrantVectorStore(params)
@@ -1076,7 +1087,7 @@ class TestCollectionProvisioningAcrossWorkers:
 
     @pytest.mark.asyncio
     async def test_indexes_are_created_when_the_collection_already_exists(
-        self, qdrant_client
+        self, qdrant_client, registry_engine
     ):
         """A collection that exists without its indexes must still get them.
 
@@ -1107,6 +1118,7 @@ class TestCollectionProvisioningAcrossWorkers:
                 vector_dimensions=VECTOR_DIM,
                 indexed_properties=INDEXED_PROPERTIES,
                 client=qdrant_client,
+                registry_engine=registry_engine,
             )
         )
         try:
@@ -1124,16 +1136,16 @@ class TestCollectionProvisioningAcrossWorkers:
             )
         finally:
             await qdrant_client.delete_collection(collection)
-            await qdrant_client.delete_collection(store._registry_collection_name)
 
     @pytest.mark.asyncio
     async def test_two_workers_provisioning_at_once_both_succeed_and_index(
-        self, qdrant_container
+        self, qdrant_container, registry_engine
     ):
-        """Two clients, no shared lock - the multi-worker shape, in one process.
+        """Two clients, one registry - the multi-worker shape, in one process.
 
         Both provisioners must return, and the collection they agree on must
-        end up indexed; then both must be able to create partitions in it.
+        end up indexed; then both must be able to create partitions in it,
+        and a key both create at once is created once.
         """
         client_a = qdrant_container.get_async_client()
         client_b = qdrant_container.get_async_client()
@@ -1145,6 +1157,7 @@ class TestCollectionProvisioningAcrossWorkers:
                 vector_dimensions=VECTOR_DIM,
                 indexed_properties=INDEXED_PROPERTIES,
                 client=client_a,
+                registry_engine=registry_engine,
             )
         )
         store_b = QdrantVectorStore(
@@ -1153,11 +1166,8 @@ class TestCollectionProvisioningAcrossWorkers:
                 vector_dimensions=VECTOR_DIM,
                 indexed_properties=INDEXED_PROPERTIES,
                 client=client_b,
+                registry_engine=registry_engine,
             )
-        )
-
-        assert store_a._client_partition_locks is not store_b._client_partition_locks, (
-            "separate clients must not share a lock, or this does not test anything"
         )
 
         try:
@@ -1177,17 +1187,25 @@ class TestCollectionProvisioningAcrossWorkers:
                 f"{sorted(indexed)}"
             )
 
+            # The registry's primary key arbitrates: one creator wins, the
+            # other gets AlreadyExists, and both then hold the one partition.
             results = await asyncio.gather(
-                _get_or_create_partition(store_a, "race_two_key"),
-                _get_or_create_partition(store_b, "race_two_key"),
+                store_a.create_partition("race_two_key"),
+                store_b.create_partition("race_two_key"),
                 return_exceptions=True,
             )
-            failures = [r for r in results if isinstance(r, BaseException)]
-            assert not failures, f"a concurrent creator raised: {failures!r}"
+            assert sorted(type(r).__name__ for r in results) == [
+                "NoneType",
+                "VectorStorePartitionAlreadyExistsError",
+            ], results
+            partition_a = await store_a.get_partition("race_two_key")
+            partition_b = await store_b.get_partition("race_two_key")
+            assert partition_a is not None
+            assert partition_b is not None
+            assert partition_a._incarnation == partition_b._incarnation
         finally:
             await store_a.delete_partition("race_two_key")
             await client_a.delete_collection(collection)
-            await client_a.delete_collection(store_a._registry_collection_name)
             await client_a.close()
             await client_b.close()
 
@@ -1197,13 +1215,16 @@ class TestDeclaredPayloadIndexes:
     """Local mode accepts payload indexes but reports no schema, so this needs a server."""
 
     @pytest.mark.asyncio
-    async def test_every_declared_key_gets_a_payload_index(self, qdrant_client):
+    async def test_every_declared_key_gets_a_payload_index(
+        self, qdrant_client, registry_engine
+    ):
         store = QdrantVectorStore(
             QdrantVectorStoreParams(
                 collection=COLLECTION,
                 vector_dimensions=VECTOR_DIM,
                 indexed_properties=INDEXED_PROPERTIES,
                 client=qdrant_client,
+                registry_engine=registry_engine,
             )
         )
         await store.provision()

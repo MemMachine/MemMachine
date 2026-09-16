@@ -499,7 +499,8 @@ class ConfigurationWizard:
                 # or similar; user can edit cfg.yml to point at a remote Qdrant.
                 databases.qdrant_confs = {
                     self.QDRANT_VECTOR_STORE_ID: QdrantConf(
-                        request_timeout=self.VECTOR_STORE_REQUEST_TIMEOUT
+                        request_timeout=self.VECTOR_STORE_REQUEST_TIMEOUT,
+                        registry_database=self.SQLITE_DB_ID,
                     )
                 }
             case self.MILVUS_VECTOR_STORE_ID:
@@ -509,6 +510,7 @@ class ConfigurationWizard:
                     self.MILVUS_VECTOR_STORE_ID: MilvusConf(
                         uri="memmachine_milvus.db",
                         request_timeout=self.VECTOR_STORE_REQUEST_TIMEOUT,
+                        registry_database=self.SQLITE_DB_ID,
                     )
                 }
             case self.SQLITE_VECTOR_STORE_ID:

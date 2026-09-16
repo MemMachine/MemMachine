@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
     PartitionLifecycleContract,
@@ -91,12 +92,16 @@ def _make_record(
 @pytest_asyncio.fixture
 async def store(tmp_path):
     client = MilvusClient(uri=str(tmp_path / "test_milvus.db"))
+    registry_engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
+    )
     vector_store = MilvusVectorStore(
         MilvusVectorStoreParams(
             collection=COLLECTION,
             vector_dimensions=VECTOR_DIM,
             indexed_properties=INDEXED_PROPERTIES,
             client=client,
+            registry_engine=registry_engine,
             consistency_level="Session",
         )
     )
@@ -105,6 +110,7 @@ async def store(tmp_path):
     yield vector_store
     await vector_store.shutdown()
     client.close()
+    await registry_engine.dispose()
 
 
 @pytest_asyncio.fixture
@@ -123,27 +129,6 @@ class TestCollectionLifecycle:
         coll = await store.get_partition("lifecycle")
         assert isinstance(coll, MilvusVectorStorePartition)
         await store.delete_partition("lifecycle")
-
-    @pytest.mark.asyncio
-    async def test_registry_lookup_requests_primary_key(self, store, monkeypatch):
-        await store.create_partition("registry_fields")
-
-        captured_output_fields = None
-        original_get = MilvusClient.get
-
-        def tracked_get(self, *args, **kwargs):
-            nonlocal captured_output_fields
-            captured_output_fields = kwargs.get("output_fields")
-            return original_get(self, *args, **kwargs)
-
-        monkeypatch.setattr(MilvusClient, "get", tracked_get)
-        coll = await store.get_partition("registry_fields")
-
-        assert coll is not None
-        assert captured_output_fields is not None
-        assert "id" in captured_output_fields
-        assert "schema" in captured_output_fields
-        await store.delete_partition("registry_fields")
 
     @pytest.mark.asyncio
     async def test_duplicate_name_raises(self, store, collection):
