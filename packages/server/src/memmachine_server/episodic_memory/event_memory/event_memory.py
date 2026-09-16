@@ -207,6 +207,7 @@ class EventMemory:
 
         self._encode_events_phase_seconds: MetricsFactory.Histogram | None = None
         self._query_phase_seconds: MetricsFactory.Histogram | None = None
+        self._orphan_records_deleted: MetricsFactory.Counter | None = None
         if params.metrics_factory is not None:
             self._encode_events_phase_seconds = params.metrics_factory.get_histogram(
                 "event_memory_encode_events_phase_seconds",
@@ -217,6 +218,10 @@ class EventMemory:
                 "event_memory_query_phase_seconds",
                 "Time spent in each phase of query",
                 label_names=("phase",),
+            )
+            self._orphan_records_deleted = params.metrics_factory.get_counter(
+                "event_memory_orphan_records_deleted_total",
+                "Vector records a query deleted because their segment was gone",
             )
 
     def _validate_events(self, events: Iterable[Event]) -> None:
@@ -234,8 +239,9 @@ class EventMemory:
         """
         Encode events.
 
-        Every call adds: nothing is looked up or removed first, so encoding
-        an event a second time stores a second copy.
+        An event is encoded once: a batch naming an event the memory
+        already holds is rejected whole, and nothing is stored. Forget
+        the event to encode it again.
 
         Args:
             events (Iterable[Event]): The events to encode.
@@ -243,6 +249,8 @@ class EventMemory:
         Raises:
             ValueError:
                 If any event supplies a reserved or illegal property key.
+            SegmentStoreEventAlreadyStoredError:
+                If the memory already holds any of the events.
         """
         async with self._tracker("encode_events"):
             await self._encode_events(events)
@@ -289,14 +297,6 @@ class EventMemory:
         derivative_embeddings = await self._embedder.ingest_embed(derivative_texts)
         t_embedding = time.monotonic()
 
-        await self._segment_store_partition.add_segments(
-            {
-                segment: [derivative.uuid for derivative in segment_derivatives]
-                for segment, segment_derivatives in segments_to_derivatives.items()
-            }
-        )
-        t_segment_store = time.monotonic()
-
         properties_by_segment = {
             segment.uuid: segment.properties for segment in segments
         }
@@ -312,15 +312,50 @@ class EventMemory:
                 strict=True,
             )
         ]
-        if derivative_records:
-            await self._vector_store_partition.upsert(records=derivative_records)
-        t_vector_store = time.monotonic()
+        events_to_segments = {
+            event.uuid: {
+                segment: [
+                    derivative.uuid for derivative in segments_to_derivatives[segment]
+                ]
+                for segment in segment_list
+            }
+            for event, segment_list in zip(events, segment_lists, strict=True)
+        }
+
+        # The records are written inside the segment store's transaction:
+        # the segments commit only once the vector store has acknowledged
+        # their records, and an upsert that fails rolls them back.
+        async with self._segment_store_partition.write() as writer:
+            await writer.add_events(events_to_segments)
+            t_segment_store = time.monotonic()
+            if derivative_records:
+                try:
+                    await self._vector_store_partition.upsert(
+                        records=derivative_records
+                    )
+                except Exception as upsert_error:
+                    # The upsert may have been applied before it failed;
+                    # delete what it may have written, so the rollback
+                    # leaves no record behind.
+                    try:
+                        await self._vector_store_partition.delete(
+                            record_uuids=[record.uuid for record in derivative_records]
+                        )
+                    except Exception as delete_error:
+                        upsert_error.add_note(
+                            "deleting the records the upsert may have written "
+                            f"failed too: {delete_error!r}"
+                        )
+                    raise
+            t_vector_store = time.monotonic()
+        t_commit = time.monotonic()
 
         phase_durations = {
             "segmentation": t_segmentation - t_start,
             "derivation": t_derivation - t_segmentation,
             "embedding": t_embedding - t_derivation,
-            "segment_store": t_segment_store - t_embedding,
+            "segment_store": (t_segment_store - t_embedding)
+            + (t_commit - t_vector_store),
             "vector_store": t_vector_store - t_segment_store,
         }
 
@@ -330,7 +365,7 @@ class EventMemory:
                 f"{phase}={duration:.3f}s"
                 for phase, duration in phase_durations.items()
             ),
-            t_vector_store - t_start,
+            t_commit - t_start,
         )
 
         if self._encode_events_phase_seconds is not None:
@@ -505,10 +540,8 @@ class EventMemory:
         )
         t_vector_query = time.monotonic()
 
-        segments_by_derivatives = (
-            await self._segment_store_partition.get_segment_uuids_by_derivative_uuids(
-                match.record_uuid for match in query_result.matches
-            )
+        segments_by_derivatives = await self._segment_uuids_by_record_uuids(
+            [match.record_uuid for match in query_result.matches]
         )
 
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
@@ -517,7 +550,7 @@ class EventMemory:
         for match in query_result.matches:
             segment_uuid = segments_by_derivatives.get(match.record_uuid)
             if segment_uuid is None:
-                # The derivative's segment is gone; its vector outlived it.
+                # An orphan, deleted by the repair.
                 continue
             if segment_uuid not in cosine_similarity_by_seed_uuid:
                 cosine_similarity_by_seed_uuid[segment_uuid] = match.cosine_similarity
@@ -577,6 +610,46 @@ class EventMemory:
                 self._query_phase_seconds.observe(duration, labels={"phase": phase})
 
         return hits
+
+    async def _segment_uuids_by_record_uuids(
+        self, record_uuids: list[UUID]
+    ) -> dict[UUID, UUID]:
+        """The segment of each record, repairing records found without one."""
+        linked = (
+            await self._segment_store_partition.get_segment_uuids_by_derivative_uuids(
+                record_uuids
+            )
+        )
+        unlinked = [uuid for uuid in record_uuids if uuid not in linked]
+        if unlinked:
+            linked.update(await self._repair_unlinked_records(unlinked))
+        return linked
+
+    async def _repair_unlinked_records(
+        self, record_uuids: list[UUID]
+    ) -> dict[UUID, UUID]:
+        """Settle records the vector search returned without a link.
+
+        Such a record is either an encode's, between its upsert and its
+        commit, or an orphan: its encode rolled back after the upsert, or
+        its event was forgotten and the record delete never landed. Under
+        the exclusive fence no encode is in flight, so a link found now
+        is kept, and a record still without one is an orphan, deleted
+        once the fence is released; derivative uuids are never reused,
+        so it can never gain a link later.
+
+        Returns:
+            dict[UUID, UUID]:
+                The links found, from record uuid to segment uuid.
+        """
+        async with self._segment_store_partition.write(exclusive=True) as writer:
+            linked = await writer.get_segment_uuids_by_derivative_uuids(record_uuids)
+        orphans = [uuid for uuid in record_uuids if uuid not in linked]
+        if orphans:
+            await self._vector_store_partition.delete(record_uuids=orphans)
+            if self._orphan_records_deleted is not None:
+                self._orphan_records_deleted.increment(len(orphans))
+        return linked
 
     async def expand(
         self,
@@ -772,36 +845,21 @@ class EventMemory:
             await self._forget_events(event_uuids)
 
     async def _forget_events(self, event_uuids: set[UUID]) -> None:
-        # Snapshot segment UUIDs for these events.
-        segments_by_event = (
-            await self._segment_store_partition.get_segment_uuids_by_event_uuids(
-                event_uuids=event_uuids,
-            )
-        )
-        segment_uuids = {
-            segment_uuid
-            for event_segment_uuids in segments_by_event.values()
-            for segment_uuid in event_segment_uuids
-        }
-        if not segment_uuids:
-            return
-
-        # Get derivative UUIDs for those segments.
-        derivatives_by_segment = (
-            await self._segment_store_partition.get_derivative_uuids_by_segment_uuids(
-                segment_uuids=segment_uuids,
+        derivatives_by_event = (
+            await self._segment_store_partition.get_derivative_uuids_by_event_uuids(
+                event_uuids
             )
         )
         derivative_uuids = {
             derivative_uuid
-            for segment_derivative_uuids in derivatives_by_segment.values()
-            for derivative_uuid in segment_derivative_uuids
+            for event_derivative_uuids in derivatives_by_event.values()
+            for derivative_uuid in event_derivative_uuids
         }
 
-        # Delete from vector DB first, then segment store.
+        # Records before events: an event whose records are gone is
+        # deleted next, while a failed record delete leaves the event
+        # whole for a retry.
         if derivative_uuids:
             await self._vector_store_partition.delete(record_uuids=derivative_uuids)
 
-        await self._segment_store_partition.delete_segments(
-            segment_uuids=segment_uuids,
-        )
+        await self._segment_store_partition.delete_events(event_uuids)

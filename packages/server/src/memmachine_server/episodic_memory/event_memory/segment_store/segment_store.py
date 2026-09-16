@@ -1,11 +1,13 @@
 """
 Abstract base class for a segment store.
 
-Defines an interface for adding, retrieving, and deleting segments of events.
+Defines an interface for adding, retrieving, and deleting the segments of
+events.
 """
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from uuid import UUID
 
@@ -19,6 +21,67 @@ from memmachine_server.episodic_memory.event_memory.segment_store.data_types imp
 )
 
 
+class SegmentStorePartitionWriter(ABC):
+    """One write transaction on a partition, open inside `write()`.
+
+    Everything done through the writer commits when the `write()` block
+    exits normally and is rolled back when it exits by exception, so a
+    caller can make a write conditional on work of its own, such as a
+    write to another store, by doing that work inside the block. The
+    partition stays live for the whole block: its deletion waits.
+    """
+
+    @abstractmethod
+    async def add_events(
+        self,
+        events: Mapping[UUID, Mapping[Segment, Iterable[UUID]]],
+    ) -> None:
+        """
+        Add events, each with its segments and their derivative UUIDs.
+
+        The partition holds an event at most once. A batch naming an
+        event the partition already holds is rejected whole, before
+        anything is stored, so a repeated encoding never stores a second
+        copy; the event must be deleted first.
+
+        Args:
+            events (Mapping[UUID, Mapping[Segment, Iterable[UUID]]]):
+                A mapping from each event's UUID to its segments, and
+                from each segment to the UUIDs of its derivatives.
+
+        Raises:
+            SegmentStoreEventAlreadyStoredError:
+                If the partition already holds any of the events; it
+                names them all.
+            ValueError:
+                If a segment names an event other than the one it is
+                listed under.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        """
+        Get the segment each of the given derivatives belongs to.
+
+        The same read as the partition's, inside this transaction: with
+        `write(exclusive=True)`, it sees every write that was in flight
+        when the block was entered, committed or rolled back.
+
+        Args:
+            derivative_uuids (Iterable[UUID]):
+                The UUIDs of the derivatives whose owning segments to look up.
+
+        Returns:
+            dict[UUID, UUID]:
+                A mapping from each derivative UUID to its segment's UUID.
+        """
+        raise NotImplementedError
+
+
 class SegmentStorePartition(ABC):
     """Partition-scoped handle for a segment store.
 
@@ -29,10 +92,11 @@ class SegmentStorePartition(ABC):
     A call with empty input may do no work and return without checking
     the handle.
 
-    Segments are immutable. `add_segments` must reject a segment uuid
-    that is already stored rather than replace it, and no operation that
-    edits a stored segment may be added to this contract; a changed
-    event is forgotten and encoded again.
+    Events and their segments are immutable, and the partition holds an
+    event at most once: `add_events` rejects an event that is already
+    stored rather than replacing it, and no operation that edits a
+    stored segment may be added to this contract; a changed event is
+    deleted and added again.
 
     Segments within a partition are in one total order,
     `(timestamp, event_uuid, index, offset)`.
@@ -45,16 +109,31 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def add_segments(
-        self,
-        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
-    ) -> None:
+    def write(
+        self, *, exclusive: bool = False
+    ) -> AbstractAsyncContextManager[SegmentStorePartitionWriter]:
         """
-        Add segments and their associated derivative UUIDs to the partition.
+        Open a write transaction on the partition.
+
+        Entering the block checks the handle and pins the partition
+        against deletion until the block exits. With `exclusive`, entry
+        also waits for every write in flight on the partition to commit
+        or roll back, and no write can start until the block exits; a
+        reader that must see the partition settled uses it, so keep such
+        a block short.
 
         Args:
-            segments_to_derivative_uuids (Mapping[Segment, Iterable[UUID]]):
-                A mapping from each segment to the UUIDs of its derivatives.
+            exclusive (bool):
+                Whether to wait for in-flight writes and exclude new ones
+                (default: False).
+
+        Returns:
+            AbstractAsyncContextManager[SegmentStorePartitionWriter]:
+                The transaction, as a context manager; its writer is
+                usable only inside the block.
+
+        Raises:
+            SegmentStorePartitionHandleStaleError: On entry, if the handle is stale.
         """
         raise NotImplementedError
 
@@ -162,38 +241,22 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_segment_uuids_by_event_uuids(
+    async def get_derivative_uuids_by_event_uuids(
         self,
         event_uuids: Iterable[UUID],
     ) -> dict[UUID, list[UUID]]:
         """
-        Get segment UUIDs associated with the events given by their UUIDs.
+        Get the derivative UUIDs of the events given by their UUIDs.
 
         Args:
             event_uuids (Iterable[UUID]):
-                The UUIDs of the events for which to retrieve the UUIDs of associated segments.
+                The UUIDs of the events whose derivatives to look up.
 
         Returns:
             dict[UUID, list[UUID]]:
-                A mapping from each event UUID to the UUIDs of its associated segments.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_derivative_uuids_by_segment_uuids(
-        self,
-        segment_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        """
-        Get derivative UUIDs associated with the segments given by their UUIDs.
-
-        Args:
-            segment_uuids (Iterable[UUID]):
-                The UUIDs of the segments for which to retrieve the UUIDs of associated derivatives.
-
-        Returns:
-            dict[UUID, list[UUID]]:
-                A mapping from each segment UUID to the UUIDs of its associated derivatives.
+                A mapping from each event UUID the partition holds to the
+                UUIDs of the derivatives of its segments; an event the
+                partition does not hold is omitted.
         """
         raise NotImplementedError
 
@@ -219,12 +282,29 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def delete_events(
+        self,
+        event_uuids: Iterable[UUID],
+    ) -> None:
+        """
+        Delete events, with their segments and derivatives. Idempotent.
+
+        Args:
+            event_uuids (Iterable[UUID]):
+                The UUIDs of the events to delete.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def delete_segments(
         self,
         segment_uuids: Iterable[UUID],
     ) -> None:
         """
-        Delete segments and their associated derivatives given by segment UUIDs.
+        Delete segments and their derivatives. Idempotent.
+
+        The segments' events stay held: a deleted segment is not added
+        back by adding its event again.
 
         Args:
             segment_uuids (Iterable[UUID]):

@@ -1,8 +1,10 @@
 """Shared fakes and fixtures for event memory tests."""
 
+import asyncio
 import math
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, override
 from uuid import UUID
@@ -29,8 +31,10 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemoryParams,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStoreEventAlreadyStoredError,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
+    SegmentStorePartitionWriter,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
@@ -66,9 +70,15 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         config: SegmentStorePartitionConfig | None = None,
     ) -> None:
         self._config = config or SegmentStorePartitionConfig()
+        self.events: set[UUID] = set()
         self.segments: dict[UUID, Segment] = {}
         self.event_to_segments: dict[UUID, list[UUID]] = defaultdict(list)
         self.segment_to_derivatives: dict[UUID, list[UUID]] = {}
+        # The fence: shared writes count, an exclusive one waits for zero
+        # and excludes new ones, as the registry row lock does.
+        self._writes_in_flight = 0
+        self._exclusive_held = False
+        self._fence = asyncio.Condition()
 
     @override
     @property
@@ -76,16 +86,32 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return self._config
 
     @override
-    async def add_segments(
-        self,
-        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
-    ) -> None:
-        for segment, derivative_uuids in segments_to_derivative_uuids.items():
-            if segment.uuid in self.segments:
-                raise ValueError(f"segment {segment.uuid} is already stored")
-            self.segments[segment.uuid] = segment
-            self.event_to_segments[segment.event_uuid].append(segment.uuid)
-            self.segment_to_derivatives[segment.uuid] = list(derivative_uuids)
+    @asynccontextmanager
+    async def write(
+        self, *, exclusive: bool = False
+    ) -> AsyncIterator[SegmentStorePartitionWriter]:
+        async with self._fence:
+            await self._fence.wait_for(
+                lambda: (
+                    not self._exclusive_held
+                    and (not exclusive or self._writes_in_flight == 0)
+                )
+            )
+            if exclusive:
+                self._exclusive_held = True
+            else:
+                self._writes_in_flight += 1
+        writer = InMemorySegmentStorePartitionWriter(self)
+        try:
+            yield writer
+            writer.apply()
+        finally:
+            async with self._fence:
+                if exclusive:
+                    self._exclusive_held = False
+                else:
+                    self._writes_in_flight -= 1
+                self._fence.notify_all()
 
     def _ordered(self) -> list[Segment]:
         return sorted(self.segments.values(), key=_order_key)
@@ -217,28 +243,19 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return neighborhoods
 
     @override
-    async def get_segment_uuids_by_event_uuids(
+    async def get_derivative_uuids_by_event_uuids(
         self,
         event_uuids: Iterable[UUID],
     ) -> dict[UUID, list[UUID]]:
-        result: dict[UUID, list[UUID]] = {}
-        for event_uuid in event_uuids:
-            segment_uuids = self.event_to_segments.get(event_uuid)
-            if segment_uuids:
-                result[event_uuid] = list(segment_uuids)
-        return result
-
-    @override
-    async def get_derivative_uuids_by_segment_uuids(
-        self,
-        segment_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        result: dict[UUID, list[UUID]] = {}
-        for segment_uuid in segment_uuids:
-            derivative_uuids = self.segment_to_derivatives.get(segment_uuid)
-            if derivative_uuids:
-                result[segment_uuid] = list(derivative_uuids)
-        return result
+        return {
+            event_uuid: [
+                derivative_uuid
+                for segment_uuid in self.event_to_segments.get(event_uuid, [])
+                for derivative_uuid in self.segment_to_derivatives.get(segment_uuid, [])
+            ]
+            for event_uuid in event_uuids
+            if event_uuid in self.events
+        }
 
     @override
     async def get_segment_uuids_by_derivative_uuids(
@@ -252,6 +269,17 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
             for derivative_uuid in owned
             if derivative_uuid in wanted
         }
+
+    @override
+    async def delete_events(
+        self,
+        event_uuids: Iterable[UUID],
+    ) -> None:
+        for event_uuid in set(event_uuids):
+            self.events.discard(event_uuid)
+            for segment_uuid in self.event_to_segments.pop(event_uuid, []):
+                self.segments.pop(segment_uuid, None)
+                self.segment_to_derivatives.pop(segment_uuid, None)
 
     @override
     async def delete_segments(
@@ -268,6 +296,65 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 if not event_list:
                     del self.event_to_segments[segment.event_uuid]
             self.segment_to_derivatives.pop(segment_uuid, None)
+
+
+class InMemorySegmentStorePartitionWriter(SegmentStorePartitionWriter):
+    """Stages a write; the partition applies it when the block exits normally."""
+
+    def __init__(self, partition: InMemorySegmentStorePartition) -> None:
+        self._partition = partition
+        self._staged: dict[UUID, dict[Segment, list[UUID]]] = {}
+
+    @override
+    async def add_events(
+        self,
+        events: Mapping[UUID, Mapping[Segment, Iterable[UUID]]],
+    ) -> None:
+        events = {
+            event_uuid: {
+                segment: list(derivative_uuids)
+                for segment, derivative_uuids in segments.items()
+            }
+            for event_uuid, segments in events.items()
+        }
+        for event_uuid, segments in events.items():
+            for segment in segments:
+                if segment.event_uuid != event_uuid:
+                    raise ValueError(
+                        f"segment {segment.uuid} names event {segment.event_uuid}, "
+                        f"listed under {event_uuid}"
+                    )
+        already_stored = {
+            event_uuid
+            for event_uuid in events
+            if event_uuid in self._partition.events or event_uuid in self._staged
+        }
+        if already_stored:
+            raise SegmentStoreEventAlreadyStoredError(already_stored)
+        for event_uuid, segments in events.items():
+            for segment in segments:
+                if segment.uuid in self._partition.segments:
+                    raise ValueError(f"segment {segment.uuid} is already stored")
+            self._staged[event_uuid] = segments
+
+    @override
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        return await self._partition.get_segment_uuids_by_derivative_uuids(
+            derivative_uuids
+        )
+
+    def apply(self) -> None:
+        """Commit the staged events into the partition."""
+        for event_uuid, segments in self._staged.items():
+            self._partition.events.add(event_uuid)
+            for segment, derivative_uuids in segments.items():
+                self._partition.segments[segment.uuid] = segment
+                self._partition.event_to_segments[event_uuid].append(segment.uuid)
+                self._partition.segment_to_derivatives[segment.uuid] = derivative_uuids
+        self._staged = {}
 
 
 class FakeReranker(Reranker):

@@ -1,5 +1,6 @@
 """Tests for EventMemory."""
 
+import asyncio
 import datetime
 import json
 import math
@@ -44,6 +45,9 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
     _system_predicates,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStoreEventAlreadyStoredError,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
@@ -345,6 +349,78 @@ class TestEncodeEvents:
         assert len(fake_segment_store_partition.segments) == 1
         assert len(fake_vector_store_partition.records) > 1
 
+    async def test_an_event_already_encoded_rejects_the_batch(
+        self,
+        event_memory: EventMemory,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+    ):
+        """A batch naming an encoded event is rejected whole; forget frees the uuid."""
+        held = _make_event("hello world")
+        await event_memory.encode_events([held])
+        fresh = _make_event("brand new")
+
+        with pytest.raises(SegmentStoreEventAlreadyStoredError) as raised:
+            await event_memory.encode_events([fresh, held])
+
+        assert raised.value.event_uuids == {held.uuid}
+        assert fake_segment_store_partition.events == {held.uuid}
+        assert len(fake_vector_store_partition.records) == 1
+
+        await event_memory.forget_events([held.uuid])
+        await event_memory.encode_events([fresh, held])
+        assert fake_segment_store_partition.events == {held.uuid, fresh.uuid}
+
+    async def test_a_failed_upsert_stores_nothing_and_deletes_what_it_may_have_written(
+        self,
+        event_memory: EventMemory,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch,
+    ):
+        """An upsert that was applied and then failed leaves neither segments nor records."""
+        original_upsert = fake_vector_store_partition.upsert
+
+        async def applied_then_failed(**kwargs):
+            await original_upsert(**kwargs)
+            raise TimeoutError("acknowledgment lost")
+
+        monkeypatch.setattr(fake_vector_store_partition, "upsert", applied_then_failed)
+        event = _make_event("hello world")
+
+        with pytest.raises(TimeoutError, match="acknowledgment lost"):
+            await event_memory.encode_events([event])
+
+        assert fake_segment_store_partition.segments == {}
+        assert fake_segment_store_partition.events == set()
+        assert fake_vector_store_partition.records == {}
+        # The uuid is free: the retry succeeds.
+        monkeypatch.setattr(fake_vector_store_partition, "upsert", original_upsert)
+        await event_memory.encode_events([event])
+        assert len(fake_vector_store_partition.records) == 1
+
+    async def test_a_failed_compensating_delete_is_noted_on_the_upsert_error(
+        self,
+        event_memory: EventMemory,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch,
+    ):
+        async def failing_upsert(**kwargs):
+            raise TimeoutError("acknowledgment lost")
+
+        async def failing_delete(**kwargs):
+            raise ConnectionError("vector store unreachable")
+
+        monkeypatch.setattr(fake_vector_store_partition, "upsert", failing_upsert)
+        monkeypatch.setattr(fake_vector_store_partition, "delete", failing_delete)
+
+        with pytest.raises(TimeoutError, match="acknowledgment lost") as raised:
+            await event_memory.encode_events([_make_event("hello world")])
+
+        assert any(
+            "vector store unreachable" in note for note in raised.value.__notes__
+        )
+
 
 # ===================================================================
 # query
@@ -353,6 +429,56 @@ class TestEncodeEvents:
 
 @_async
 class TestQuery:
+    async def test_a_record_whose_segment_is_gone_is_deleted_and_not_returned(
+        self,
+        event_memory: EventMemory,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+    ):
+        """An orphan record, such as a forget leaves when its record delete never lands, is repaired on retrieval."""
+        orphaned = _make_event("hello world", timestamp=_ts(0))
+        kept = _make_event("hello there", timestamp=_ts(1))
+        await event_memory.encode_events([orphaned, kept])
+        # The event is gone from the segment store, its record is not.
+        await fake_segment_store_partition.delete_events([orphaned.uuid])
+        assert len(fake_vector_store_partition.records) == 2
+
+        hits = await event_memory.query("hello", vector_search_limit=10)
+
+        assert [hit.seed.event_uuid for hit in hits] == [kept.uuid]
+        assert len(fake_vector_store_partition.records) == 1
+
+    async def test_a_record_whose_encode_is_in_flight_is_kept(
+        self,
+        event_memory: EventMemory,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch,
+    ):
+        """A query that sees a record before its links commit waits for the commit, and keeps it."""
+        applied = asyncio.Event()
+        release = asyncio.Event()
+        original_upsert = fake_vector_store_partition.upsert
+
+        async def upsert_then_wait(**kwargs):
+            await original_upsert(**kwargs)
+            applied.set()
+            await release.wait()
+
+        monkeypatch.setattr(fake_vector_store_partition, "upsert", upsert_then_wait)
+        event = _make_event("hello world")
+        encode = asyncio.create_task(event_memory.encode_events([event]))
+        await asyncio.wait_for(applied.wait(), 5)
+
+        query = asyncio.create_task(event_memory.query("hello", vector_search_limit=10))
+        done, _pending = await asyncio.wait([query], timeout=0.1)
+        assert not done, "the query did not wait for the encode in flight"
+
+        release.set()
+        await asyncio.wait_for(encode, 5)
+        hits = await asyncio.wait_for(query, 5)
+        assert [hit.seed.event_uuid for hit in hits] == [event.uuid]
+        assert len(fake_vector_store_partition.records) == 1
+
     async def test_basic_query(self, event_memory: EventMemory):
         e1 = _make_event("short", timestamp=_ts(0))
         e2 = _make_event("a longer sentence here", timestamp=_ts(1))

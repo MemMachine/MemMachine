@@ -3,8 +3,8 @@
 import json
 import logging
 import sqlite3
-from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from functools import partial
 from typing import override
@@ -41,6 +41,8 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Dialect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
@@ -95,6 +97,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
     SegmentStoreAttemptsExhaustedError,
+    SegmentStoreEventAlreadyStoredError,
     SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
     SegmentStorePartitionConfigMismatchError,
@@ -103,6 +106,7 @@ from memmachine_server.episodic_memory.event_memory.segment_store.data_types imp
 from memmachine_server.episodic_memory.event_memory.segment_store.segment_store import (
     SegmentStore,
     SegmentStorePartition,
+    SegmentStorePartitionWriter,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     validate_partition_key,
@@ -195,6 +199,21 @@ class PartitionRow(BaseSegmentStore):
     )
 
 
+class EventRow(BaseSegmentStore):
+    """One row per event the partition holds.
+
+    The primary key is what makes an event addable once: a second
+    `add_events` naming it conflicts here, before any segment is written.
+    Deleting the row cascades to the event's segments and, through them,
+    their derivative links.
+    """
+
+    __tablename__ = "segment_store_ev"
+
+    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+
+
 class SegmentRow(BaseSegmentStore):
     """Persisted segment."""
 
@@ -221,6 +240,15 @@ class SegmentRow(BaseSegmentStore):
     # deliberately decoupled so that partition deletion is a registry write
     # (O(1)) and the purge queue reclaims data rows asynchronously.
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["incarnation", "event_uuid"],
+            [
+                "segment_store_ev.incarnation",
+                "segment_store_ev.uuid",
+            ],
+            ondelete="CASCADE",
+        ),
+        # Serves the event lookups and the cascade from the event row.
         Index(
             "segment_store_sg__in_ev",
             "incarnation",
@@ -272,7 +300,11 @@ class PurgeQueueRow(BaseSegmentStore):
     same tick are unordered among themselves. The incarnation identifies
     the rows to reclaim; the logical key is carried for forensics. Every
     segment row of the incarnation keyed at or below purged_through is
-    deleted; NULL until the first full batch.
+    deleted, NULL until the first full batch of segments; every event row
+    keyed at or below events_purged_through is, NULL until the first full
+    batch of events. Events have a cursor of their own because a batch
+    that ends exactly on the last segment leaves purged_through naming a
+    segment, which says nothing about how far the events got.
     """
 
     __tablename__ = "segment_store_gc"
@@ -283,6 +315,9 @@ class PurgeQueueRow(BaseSegmentStore):
         DateTime(timezone=True), nullable=False
     )
     purged_through: MappedColumn[UUID | None] = mapped_column(Uuid, nullable=True)
+    events_purged_through: MappedColumn[UUID | None] = mapped_column(
+        Uuid, nullable=True
+    )
 
     __table_args__ = (Index("segment_store_gc__ea", "enqueued_at"),)
 
@@ -319,12 +354,17 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     def config(self) -> SegmentStorePartitionConfig:
         return self._config
 
-    async def _lock_partition_for_write(self, session: AsyncSession) -> None:
+    async def _lock_partition_for_write(
+        self, session: AsyncSession, *, exclusive: bool = False
+    ) -> None:
         """Pin this incarnation's registry row; raise if the handle is stale.
 
         The shared row lock blocks concurrent deletion (which takes the
         exclusive row lock) until the write completes; the incarnation
-        predicate fences a handle that outlived its partition. SQLite
+        predicate fences a handle that outlived its partition. With
+        `exclusive`, the row is taken exclusively instead, which waits
+        for every shared holder, that is every write in flight, and
+        blocks new ones until the transaction ends. SQLite
         drops locking clauses and its driver defers BEGIN until the first
         data-modifying statement -- a SELECT-only fence would run outside
         the write transaction and fence nothing. The proper primitive,
@@ -345,7 +385,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             if fenced.rowcount == 0:
                 raise SegmentStorePartitionHandleStaleError(self._partition_key)
             return
-        await self._ensure_partition_live(session, pin=True)
+        await self._ensure_partition_live(session, pin=True, exclusive=exclusive)
 
     def _registry_row_query(self) -> Select[tuple[str]]:
         """This incarnation's registry row: absent once the handle is stale.
@@ -359,89 +399,42 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         )
 
     async def _ensure_partition_live(
-        self, session: AsyncSession, *, pin: bool = False
+        self, session: AsyncSession, *, pin: bool = False, exclusive: bool = False
     ) -> None:
         """Raise if this handle's incarnation is no longer registered.
 
         With `pin`, the row is read under a shared lock that blocks
-        deletion for the rest of the transaction. Reads call this without
+        deletion for the rest of the transaction, or, with `exclusive`
+        as well, under the exclusive lock. Reads call this without
         the lock, and only when their data statement returned no rows: it
         tells an empty partition from a stale handle.
         """
         query = self._registry_row_query()
         if pin:
-            query = query.with_for_update(read=True)
+            query = query.with_for_update(read=not exclusive)
         row = (await session.execute(query)).scalar_one_or_none()
         if row is None:
             raise SegmentStorePartitionHandleStaleError(self._partition_key)
 
-    # Registration
+    # Writing
 
     @override
-    async def add_segments(
-        self,
-        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
-    ) -> None:
-        if not segments_to_derivative_uuids:
-            return
-
+    @asynccontextmanager
+    async def write(
+        self, *, exclusive: bool = False
+    ) -> AsyncIterator[SegmentStorePartitionWriter]:
         async with (
-            self._tracker("add_segments"),
+            self._tracker("write"),
             self._create_session() as session,
             session.begin(),
         ):
-            await self._lock_partition_for_write(session)
-            await self._insert_segments(session, segments_to_derivative_uuids.keys())
-            await self._insert_derivative_links(session, segments_to_derivative_uuids)
-
-    async def _insert_segments(
-        self,
-        session: AsyncSession,
-        segments: Iterable[Segment],
-    ) -> None:
-        """Insert segment rows."""
-        segment_row_values = [
-            {
-                "uuid": segment.uuid,
-                "incarnation": self._incarnation,
-                "event_uuid": segment.event_uuid,
-                "index": segment.index,
-                "offset": segment.offset,
-                # Store the UTC instant; SQLite does not persist tzinfo, so the
-                # original offset is recorded separately and reapplied on read.
-                "timestamp": segment.timestamp,
-                "timestamp_timezone_offset": utc_offset_seconds(segment.timestamp),
-                "source_id": segment.source_id,
-                "context": self._payload_codec.encode(
-                    json.dumps(encode_context(segment.context)).encode("utf-8")
-                ),
-                "block": self._payload_codec.encode(
-                    json.dumps(encode_block(segment.block)).encode("utf-8")
-                ),
-                "properties": encode_properties(segment.properties),
-            }
-            for segment in segments
-        ]
-        if segment_row_values:
-            await session.execute(insert(SegmentRow), segment_row_values)
-
-    async def _insert_derivative_links(
-        self,
-        session: AsyncSession,
-        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
-    ) -> None:
-        """Insert derivative rows."""
-        derivative_row_values = [
-            {
-                "uuid": derivative_uuid,
-                "incarnation": self._incarnation,
-                "segment_uuid": segment.uuid,
-            }
-            for segment, derivative_uuids in segments_to_derivative_uuids.items()
-            for derivative_uuid in derivative_uuids
-        ]
-        if derivative_row_values:
-            await session.execute(insert(DerivativeLinkRow), derivative_row_values)
+            await self._lock_partition_for_write(session, exclusive=exclusive)
+            yield SQLAlchemySegmentStorePartitionWriter(
+                session,
+                incarnation=self._incarnation,
+                is_sqlite=self._is_sqlite,
+                payload_codec=self._payload_codec,
+            )
 
     # Retrieval
 
@@ -860,7 +853,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         return conditions
 
     @override
-    async def get_segment_uuids_by_event_uuids(
+    async def get_derivative_uuids_by_event_uuids(
         self,
         event_uuids: Iterable[UUID],
     ) -> dict[UUID, list[UUID]]:
@@ -869,51 +862,38 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             return {}
 
         async with (
-            self._tracker("get_segment_uuids_by_event_uuids"),
+            self._tracker("get_derivative_uuids_by_event_uuids"),
             self._create_session() as session,
         ):
-            query = select(SegmentRow.event_uuid, SegmentRow.uuid).where(
-                SegmentRow.incarnation == self._incarnation,
-                SegmentRow.event_uuid.in_(event_uuids),
-                self._registry_row_query().exists(),
+            # Outer joins, so an event with no derivatives still answers.
+            query = (
+                select(EventRow.uuid, DerivativeLinkRow.uuid)
+                .outerjoin(
+                    SegmentRow,
+                    (SegmentRow.incarnation == EventRow.incarnation)
+                    & (SegmentRow.event_uuid == EventRow.uuid),
+                )
+                .outerjoin(
+                    DerivativeLinkRow,
+                    (DerivativeLinkRow.incarnation == SegmentRow.incarnation)
+                    & (DerivativeLinkRow.segment_uuid == SegmentRow.uuid),
+                )
+                .where(
+                    EventRow.incarnation == self._incarnation,
+                    EventRow.uuid.in_(event_uuids),
+                    self._registry_row_query().exists(),
+                )
             )
             rows = (await session.execute(query)).all()
             if not rows:
                 await self._ensure_partition_live(session)
 
-        result: defaultdict[UUID, list[UUID]] = defaultdict(list)
-        for event_uuid, segment_uuid in rows:
-            result[event_uuid].append(segment_uuid)
-        return dict(result)
-
-    @override
-    async def get_derivative_uuids_by_segment_uuids(
-        self,
-        segment_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        segment_uuids = set(segment_uuids)
-        if not segment_uuids:
-            return {}
-
-        async with (
-            self._tracker("get_derivative_uuids_by_segment_uuids"),
-            self._create_session() as session,
-        ):
-            query = select(
-                DerivativeLinkRow.segment_uuid, DerivativeLinkRow.uuid
-            ).where(
-                DerivativeLinkRow.incarnation == self._incarnation,
-                DerivativeLinkRow.segment_uuid.in_(segment_uuids),
-                self._registry_row_query().exists(),
-            )
-            rows = (await session.execute(query)).all()
-            if not rows:
-                await self._ensure_partition_live(session)
-
-        result: defaultdict[UUID, list[UUID]] = defaultdict(list)
-        for segment_uuid, derivative_uuid in rows:
-            result[segment_uuid].append(derivative_uuid)
-        return dict(result)
+        result: dict[UUID, list[UUID]] = {}
+        for event_uuid, derivative_uuid in rows:
+            derivative_uuids = result.setdefault(event_uuid, [])
+            if derivative_uuid is not None:
+                derivative_uuids.append(derivative_uuid)
+        return result
 
     @override
     async def get_segment_uuids_by_derivative_uuids(
@@ -928,15 +908,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("get_segment_uuids_by_derivative_uuids"),
             self._create_session() as session,
         ):
-            # Served by the primary key, which leads on the same two columns
-            # this filters: the mapping is the derivative row itself.
-            query = select(
-                DerivativeLinkRow.uuid, DerivativeLinkRow.segment_uuid
-            ).where(
-                DerivativeLinkRow.incarnation == self._incarnation,
-                DerivativeLinkRow.uuid.in_(derivative_uuids),
-                self._registry_row_query().exists(),
-            )
+            query = _segment_uuids_by_derivative_uuids_query(
+                self._incarnation, derivative_uuids
+            ).where(self._registry_row_query().exists())
             rows = (await session.execute(query)).all()
             if not rows:
                 await self._ensure_partition_live(session)
@@ -944,6 +918,54 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         return {row.uuid: row.segment_uuid for row in rows}
 
     # Deletion
+
+    @override
+    async def delete_events(
+        self,
+        event_uuids: Iterable[UUID],
+    ) -> None:
+        event_uuids = set(event_uuids)
+        if not event_uuids:
+            return
+
+        async with (
+            self._tracker("delete_events"),
+            self._create_session() as session,
+            session.begin(),
+        ):
+            await self._lock_partition_for_write(session)
+            if not self._is_sqlite:
+                # Lock the event rows, then their segment rows, in
+                # deterministic order, so concurrent deletions with
+                # overlapping sets cannot deadlock: the cascade alone would
+                # take the segment locks in table order. SQLite relies on
+                # write serialization by the database.
+                await session.execute(
+                    select(EventRow.uuid)
+                    .where(
+                        EventRow.incarnation == self._incarnation,
+                        EventRow.uuid.in_(event_uuids),
+                    )
+                    .order_by(EventRow.uuid)
+                    .with_for_update()
+                )
+                await session.execute(
+                    select(SegmentRow.uuid)
+                    .where(
+                        SegmentRow.incarnation == self._incarnation,
+                        SegmentRow.event_uuid.in_(event_uuids),
+                    )
+                    .order_by(SegmentRow.uuid)
+                    .with_for_update()
+                )
+
+            # CASCADE deletes segments, and through them derivatives.
+            await session.execute(
+                delete(EventRow).where(
+                    EventRow.incarnation == self._incarnation,
+                    EventRow.uuid.in_(event_uuids),
+                )
+            )
 
     @override
     async def delete_segments(
@@ -1017,6 +1039,153 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             block=block,
             properties=properties,
         )
+
+
+class SQLAlchemySegmentStorePartitionWriter(SegmentStorePartitionWriter):
+    """The transaction `SQLAlchemySegmentStorePartition.write` opens."""
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        incarnation: UUID,
+        is_sqlite: bool,
+        payload_codec: PayloadCodec,
+    ) -> None:
+        """Bind the writer to an open session and the partition's identity."""
+        self._session = session
+        self._incarnation = incarnation
+        self._is_sqlite = is_sqlite
+        self._payload_codec = payload_codec
+
+    @override
+    async def add_events(
+        self,
+        events: Mapping[UUID, Mapping[Segment, Iterable[UUID]]],
+    ) -> None:
+        events = {
+            event_uuid: {
+                segment: list(derivative_uuids)
+                for segment, derivative_uuids in segments.items()
+            }
+            for event_uuid, segments in events.items()
+        }
+        for event_uuid, segments in events.items():
+            for segment in segments:
+                if segment.event_uuid != event_uuid:
+                    raise ValueError(
+                        f"segment {segment.uuid} names event {segment.event_uuid}, "
+                        f"listed under {event_uuid}"
+                    )
+        if not events:
+            return
+
+        stored = await self._insert_event_rows(events.keys())
+        already_stored = events.keys() - stored
+        if already_stored:
+            raise SegmentStoreEventAlreadyStoredError(already_stored)
+
+        segments_to_derivative_uuids = {
+            segment: derivative_uuids
+            for segments in events.values()
+            for segment, derivative_uuids in segments.items()
+        }
+        await self._insert_segments(segments_to_derivative_uuids.keys())
+        await self._insert_derivative_links(segments_to_derivative_uuids)
+
+    async def _insert_event_rows(self, event_uuids: Iterable[UUID]) -> set[UUID]:
+        """Insert an event row per uuid, skipping those already held.
+
+        Returns the uuids inserted. A concurrent transaction inserting the
+        same row is waited for: if it commits, its uuid is missing from
+        the result; if it rolls back, the row is ours.
+        """
+        insert_rows = sqlite_insert if self._is_sqlite else postgresql_insert
+        statement = (
+            insert_rows(EventRow)
+            .values(
+                [
+                    {"incarnation": self._incarnation, "uuid": event_uuid}
+                    for event_uuid in event_uuids
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=["incarnation", "uuid"])
+            .returning(EventRow.uuid)
+        )
+        return set((await self._session.execute(statement)).scalars())
+
+    async def _insert_segments(self, segments: Iterable[Segment]) -> None:
+        """Insert segment rows."""
+        segment_row_values = [
+            {
+                "uuid": segment.uuid,
+                "incarnation": self._incarnation,
+                "event_uuid": segment.event_uuid,
+                "index": segment.index,
+                "offset": segment.offset,
+                # Store the UTC instant; SQLite does not persist tzinfo, so the
+                # original offset is recorded separately and reapplied on read.
+                "timestamp": segment.timestamp,
+                "timestamp_timezone_offset": utc_offset_seconds(segment.timestamp),
+                "source_id": segment.source_id,
+                "context": self._payload_codec.encode(
+                    json.dumps(encode_context(segment.context)).encode("utf-8")
+                ),
+                "block": self._payload_codec.encode(
+                    json.dumps(encode_block(segment.block)).encode("utf-8")
+                ),
+                "properties": encode_properties(segment.properties),
+            }
+            for segment in segments
+        ]
+        if segment_row_values:
+            await self._session.execute(insert(SegmentRow), segment_row_values)
+
+    async def _insert_derivative_links(
+        self,
+        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
+    ) -> None:
+        """Insert derivative rows."""
+        derivative_row_values = [
+            {
+                "uuid": derivative_uuid,
+                "incarnation": self._incarnation,
+                "segment_uuid": segment.uuid,
+            }
+            for segment, derivative_uuids in segments_to_derivative_uuids.items()
+            for derivative_uuid in derivative_uuids
+        ]
+        if derivative_row_values:
+            await self._session.execute(
+                insert(DerivativeLinkRow), derivative_row_values
+            )
+
+    @override
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        derivative_uuids = set(derivative_uuids)
+        if not derivative_uuids:
+            return {}
+        rows = (
+            await self._session.execute(
+                _segment_uuids_by_derivative_uuids_query(
+                    self._incarnation, derivative_uuids
+                )
+            )
+        ).all()
+        return {row.uuid: row.segment_uuid for row in rows}
+
+
+def _segment_uuids_by_derivative_uuids_query(
+    incarnation: UUID, derivative_uuids: Iterable[UUID]
+) -> Select[tuple[UUID, UUID]]:
+    """The link rows of the given derivatives: served by the primary key."""
+    return select(DerivativeLinkRow.uuid, DerivativeLinkRow.segment_uuid).where(
+        DerivativeLinkRow.incarnation == incarnation,
+        DerivativeLinkRow.uuid.in_(derivative_uuids),
+    )
 
 
 class SQLAlchemySegmentStoreParams(BaseModel):
@@ -1434,7 +1603,9 @@ class SQLAlchemySegmentStore(SegmentStore):
                         .where(PurgeQueueRow.incarnation == oldest)
                         .values(incarnation=PurgeQueueRow.incarnation)
                         .returning(
-                            PurgeQueueRow.incarnation, PurgeQueueRow.purged_through
+                            PurgeQueueRow.incarnation,
+                            PurgeQueueRow.purged_through,
+                            PurgeQueueRow.events_purged_through,
                         )
                     )
                 else:
@@ -1442,7 +1613,11 @@ class SQLAlchemySegmentStore(SegmentStore):
                     # call has already claimed cannot come back, each
                     # being deleted before the next claim.
                     claim = (
-                        select(PurgeQueueRow.incarnation, PurgeQueueRow.purged_through)
+                        select(
+                            PurgeQueueRow.incarnation,
+                            PurgeQueueRow.purged_through,
+                            PurgeQueueRow.events_purged_through,
+                        )
                         .order_by(PurgeQueueRow.enqueued_at)
                         .limit(1)
                         .with_for_update(skip_locked=True)
@@ -1450,7 +1625,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                 entry = (await connection.execute(claim)).one_or_none()
                 if entry is None:
                     return False
-                incarnation, purged_through = entry
+                incarnation, purged_through, events_purged_through = entry
 
                 # The batch continues after the cursor, so it never reads
                 # rows an earlier batch deleted: PostgreSQL keeps them in
@@ -1496,6 +1671,50 @@ class SQLAlchemySegmentStore(SegmentStore):
                     return True
 
                 remaining -= deleted
+                # Event rows are reclaimed after their segments, so the
+                # cascade from an event row never runs on the budgeted path.
+                # They draw on the same budget, continue after their own
+                # cursor for the reason the segments do, and a full batch
+                # records how far it got and leaves the entry for the next
+                # call.
+                after_event_cursor = (
+                    []
+                    if events_purged_through is None
+                    else [EventRow.uuid > events_purged_through]
+                )
+                event_batch = (
+                    select(EventRow.uuid)
+                    .where(EventRow.incarnation == incarnation, *after_event_cursor)
+                    .order_by(EventRow.uuid)
+                    .limit(remaining)
+                    .subquery()
+                )
+                last_event = (
+                    await connection.execute(
+                        select(event_batch.c.uuid)
+                        .order_by(event_batch.c.uuid.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                purged_events = 0
+                if last_event is not None:
+                    purged_events = (
+                        await connection.execute(
+                            delete(EventRow).where(
+                                EventRow.incarnation == incarnation,
+                                *after_event_cursor,
+                                EventRow.uuid <= last_event,
+                            )
+                        )
+                    ).rowcount
+                if purged_events >= remaining:
+                    await connection.execute(
+                        update(PurgeQueueRow)
+                        .where(PurgeQueueRow.incarnation == incarnation)
+                        .values(events_purged_through=last_event)
+                    )
+                    return True
+                remaining -= purged_events
                 await connection.execute(
                     delete(PurgeQueueRow).where(
                         PurgeQueueRow.incarnation == incarnation

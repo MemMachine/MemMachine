@@ -41,20 +41,26 @@ One physical schema on every dialect; the ORM models are the tables.
 - `segment_store_pt`, the tenant registry: one row per live tenant, holding
   the logical partition key (primary key), an `incarnation` (a random UUID
   minted at creation, unique-constrained), and the payload codec config.
-- `segment_store_sg` and `segment_store_dv_ln`, the segment and
-  derivative-link tables, shared by all tenants and not partitioned. Rows
-  carry no logical key; they are keyed by the incarnation alone, so a data
+- `segment_store_ev`, `segment_store_sg` and `segment_store_dv_ln`, the
+  event, segment and derivative-link tables, shared by all tenants and not
+  partitioned. The event row is one per event the partition holds, keyed
+  by incarnation and event uuid, and is what makes an event addable once:
+  a second `add_events` naming it conflicts on the primary key before any
+  segment is written, so a repeated encoding never stores a second copy.
+  Rows carry no logical key; they are keyed by the incarnation alone, so a data
   query cannot be built without resolving the registry first, and
   addressing the wrong tenant is structurally impossible rather than
   guarded against. A 16-byte UUID also keeps index entries narrower than a
   composite string key, and random UUIDs are unique across nodes without
   coordination, so a tenant's rows move between databases verbatim.
 - `segment_store_gc`, the purge queue: one row per dead incarnation, with
-  the logical key kept for forensics and the purge's cursor, the last
-  segment key purged.
+  the logical key kept for forensics and the purge's two cursors, the last
+  segment key purged and the last event key purged.
 
-The link table keeps its foreign key to the segment table (`ON DELETE
-CASCADE`), both sides keyed by incarnation. The segment table has no
+The segment table keeps a foreign key to the event table and the link
+table to the segment table (both `ON DELETE CASCADE`), every side keyed by
+incarnation, so deleting an event removes its segments and their links.
+The event table has no
 foreign key to the registry: registry rows and data rows are decoupled so
 that registry deletion is O(1), and the rows left behind are exactly what
 the purge queue tracks.
@@ -121,6 +127,14 @@ on random-UUID collision resistance.
     one link per segment, 46k at 64), so heavily linked partitions still
     purge in sub-second calls. Link fan-out is set by the deriver, not
     something the store can reject after derivation.
+  - Event rows are reclaimed after the segments, so their cascade never
+    runs on the budgeted path. They draw on the same budget, count for
+    count, and continue from a cursor of their own,
+    `events_purged_through`, for the same reason the segments do; a full
+    batch records its last key and leaves the entry for the next call.
+    The events need their own cursor because a call can end exactly on the
+    last segment, leaving `purged_through` naming a segment and saying
+    nothing about how far the events got.
   - Queue entries carry their own bound,
     `SQLAlchemySegmentStoreParams.purge_max_partitions`, because their cost
     is round trips rather than rows: empty partitions are cheap to create
@@ -176,9 +190,18 @@ on random-UUID collision resistance.
 
 ### Fencing (resolves #1549)
 
-Every write pins the registry row with `SELECT ... WHERE incarnation =
-:incarnation FOR SHARE` and raises a stale-handle error when no row
-matches. Reads add the same predicate to their data statement as an
+A write is a `write()` block. Entering it pins the registry row with
+`SELECT ... WHERE incarnation = :incarnation FOR SHARE` and raises a
+stale-handle error when no row matches; exiting it commits, and an
+exception rolls the whole block back. The caller may do work of its own
+inside the block and make the write conditional on it: the event memory
+upserts its vector records there, so its segments commit only once the
+vector store has acknowledged them. `write(exclusive=True)` takes the row
+`FOR UPDATE` instead, which waits for every write in flight and excludes
+new ones until the block exits; a reader that must see the partition
+settled uses it, and the event memory's read repair does, to tell a
+record whose write is in flight from an orphan. Reads add the same
+predicate to their data statement as an
 `EXISTS`, so one statement (one snapshot) checks liveness and reads: a
 stale handle reads nothing, at no extra round trip, and a read that returns
 no rows issues the registry check on its own to tell an empty partition
@@ -204,7 +227,8 @@ previously had no mechanism for this at all.
 ### Locking model
 
 Row locks only. Writers hold `FOR SHARE` on their registry row for the
-write transaction; deletion takes `FOR UPDATE` on the same row; the purger
+write transaction, an exclusive writer `FOR UPDATE` for its short block;
+deletion takes `FOR UPDATE` on the same row; the purger
 claims queue rows with `FOR UPDATE SKIP LOCKED` and never waits; the mint's
 queue re-check takes `FOR SHARE` on a queue row only in the collision case.
 No table-level lock, no DDL, and no lock upgrade anywhere in the store,

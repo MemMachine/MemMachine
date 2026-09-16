@@ -1,7 +1,8 @@
 """Data types for segment store."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from uuid import UUID
 
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, field_validator
 
@@ -94,3 +95,13 @@ class SegmentStorePartitionAlreadyExistsError(Exception):
         """Initialize with the key of the existing partition."""
         self.partition_key = partition_key
         super().__init__(f"Partition {partition_key!r} already exists.")
+
+
+class SegmentStoreEventAlreadyStoredError(Exception):
+    """A batch named an event the partition already holds; nothing was stored."""
+
+    def __init__(self, event_uuids: Iterable[UUID]) -> None:
+        """Record the uuids of the events the partition already holds."""
+        self.event_uuids = frozenset(event_uuids)
+        listed = ", ".join(str(uuid) for uuid in sorted(self.event_uuids))
+        super().__init__(f"Events already stored: {listed}.")

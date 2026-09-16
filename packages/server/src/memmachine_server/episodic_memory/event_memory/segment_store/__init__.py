@@ -2,6 +2,7 @@
 
 from .data_types import (
     SegmentStoreAttemptsExhaustedError,
+    SegmentStoreEventAlreadyStoredError,
     SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
     SegmentStorePartitionConfigMismatchError,
@@ -10,14 +11,17 @@ from .data_types import (
 from .segment_store import (
     SegmentStore,
     SegmentStorePartition,
+    SegmentStorePartitionWriter,
 )
 
 __all__ = [
     "SegmentStore",
     "SegmentStoreAttemptsExhaustedError",
+    "SegmentStoreEventAlreadyStoredError",
     "SegmentStorePartition",
     "SegmentStorePartitionAlreadyExistsError",
     "SegmentStorePartitionConfig",
     "SegmentStorePartitionConfigMismatchError",
     "SegmentStorePartitionHandleStaleError",
+    "SegmentStorePartitionWriter",
 ]
