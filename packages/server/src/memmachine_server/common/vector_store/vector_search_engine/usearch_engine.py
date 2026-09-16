@@ -11,6 +11,7 @@ from usearch.index import Index, MetricKind
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.rw_locks import AsyncRWLock
 
+from .index_persistence import atomic_index_write, clear_stale_index_temp
 from .vector_search_engine import SearchMatch, SearchResult, VectorSearchEngine
 
 
@@ -186,9 +187,17 @@ class USearchVectorSearchEngine(VectorSearchEngine):
     @override
     async def save(self, path: str) -> None:
         async with self._lock.write_lock():
-            await asyncio.to_thread(self._index.save, path)
+            await asyncio.to_thread(self._sync_save, path)
+
+    def _sync_save(self, path: str) -> None:
+        with atomic_index_write(path) as temp_path:
+            self._index.save(temp_path)
 
     @override
     async def load(self, path: str) -> None:
         async with self._lock.write_lock():
-            await asyncio.to_thread(self._index.load, path)
+            await asyncio.to_thread(self._sync_load, path)
+
+    def _sync_load(self, path: str) -> None:
+        clear_stale_index_temp(path)
+        self._index.load(path)

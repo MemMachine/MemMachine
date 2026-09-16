@@ -616,13 +616,28 @@ class VectorStoreSemanticStorage(SemanticStorage):
         )
 
     async def _get_existing_vector_record(self, feature_id: FeatureIdT) -> Record:
+        """Read back a feature's stored embedding.
+
+        A vector store publishes its index atomically but not durably (see
+        `common.vector_store.sqlite_vector_store`), so a power failure can
+        leave a record the store still knows about but whose vector the index
+        no longer holds. The two cases are reported apart because the caller
+        can act on them differently: a missing embedding is repaired by
+        passing a fresh one to `update_feature`, while a missing record is
+        not.
+        """
         records = await self._vector_collection.get(
             record_uuids=[feature_vector_uuid(feature_id)],
             return_vector=True,
             return_properties=False,
         )
-        if not records or records[0].vector is None:
+        if not records:
             raise ResourceNotFoundError(f"Vector record not found: {feature_id}")
+        if records[0].vector is None:
+            raise ResourceNotFoundError(
+                f"Vector record {feature_id} has no stored embedding; "
+                "pass an embedding to update this feature"
+            )
         return records[0]
 
     async def _delete_vector_records(self, feature_ids: Sequence[FeatureIdT]) -> None:
