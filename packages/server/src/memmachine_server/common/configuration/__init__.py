@@ -183,39 +183,41 @@ class SemanticMemoryConf(YamlSerializableMixin):
         self.auto_disable_when_incomplete()
         return self
 
-    def auto_disable_when_incomplete(self) -> bool:
+    def missing_required_fields(self) -> list[str]:
+        """Names of the fields that must be set for semantic memory to run."""
+        missing: list[str] = []
+        if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+            if not self.feature_store:
+                missing.append("feature_store")
+            if not self.vector_collection:
+                missing.append("vector_collection")
+        elif not self.database:
+            missing.append("database")
+        missing.extend(
+            name
+            for name in ("config_database", "llm_model", "embedding_model")
+            if not getattr(self, name)
+        )
+        return missing
+
+    def auto_disable_when_incomplete(self) -> list[str]:
         """Disable semantic memory if a required field is missing.
 
         Runs at validation time and again after in-place updates (the runtime
-        config API assigns fields without re-validating). Returns True when
-        this call flipped ``enabled`` to False.
+        config API assigns fields without re-validating). Returns the missing
+        field names when this call flipped ``enabled`` to False, else ``[]``.
         """
-        if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
-            has_required_storage = bool(self.feature_store) and bool(
-                self.vector_collection
-            )
-        else:
-            has_required_storage = bool(self.database)
-        if self.enabled and not (
-            has_required_storage
-            and self.config_database
-            and self.llm_model
-            and self.embedding_model
-        ):
-            logger.warning(
-                "Semantic memory auto-disabled: missing required fields "
-                "(database=%r, feature_store=%r, vector_collection=%r, "
-                "config_database=%r, llm_model=%r, embedding_model=%r).",
-                self.database,
-                self.feature_store,
-                self.vector_collection,
-                self.config_database,
-                self.llm_model,
-                self.embedding_model,
-            )
-            self.enabled = False
-            return True
-        return False
+        if not self.enabled:
+            return []
+        missing = self.missing_required_fields()
+        if not missing:
+            return []
+        logger.warning(
+            "Semantic memory auto-disabled: missing required fields (%s).",
+            ", ".join(missing),
+        )
+        self.enabled = False
+        return missing
 
 
 def _read_txt(filename: str) -> str:
@@ -403,10 +405,26 @@ class Configuration(BaseModel):
     @field_validator("semantic_memory", mode="before")
     @classmethod
     def _empty_semantic_section_disables(cls, value: object) -> object:
-        """Treat a bare ``semantic_memory:`` key (YAML null) as a disabled section."""
-        if value is None:
+        """Treat a bare ``semantic_memory:`` key (YAML null or ``{}``) as disabled."""
+        if value is None or value == {}:
             return {"enabled": False}
         return value
+
+    def auto_disable_semantic_memory(self) -> str | None:
+        """Re-run the load-time semantic memory checks after an in-place update.
+
+        The runtime config API assigns fields without re-validating, so both
+        load-time guards (required fields, OpenAI credentials) are re-applied
+        here. Returns the reason when this call disabled semantic memory.
+        """
+        missing = self.semantic_memory.auto_disable_when_incomplete()
+        if missing:
+            return "missing required fields: " + ", ".join(missing)
+        was_enabled = self.semantic_memory.enabled
+        self._maybe_disable_semantic_memory()
+        if was_enabled and not self.semantic_memory.enabled:
+            return "an OpenAI resource has empty credentials and no base_url"
+        return None
 
     @model_validator(mode="after")
     def _auto_disable_when_openai_incomplete(self) -> Configuration:

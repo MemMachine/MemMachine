@@ -86,7 +86,7 @@ class SemanticResourceManager:
 
         database = self._conf.database
 
-        if database is None:
+        if not database:
             raise ResourceNotReadyError(
                 "No database configured for semantic storage.", "semantic_memory"
             )

@@ -25,6 +25,7 @@ from memmachine_common.api.config_spec import (
 from pydantic import SecretStr
 
 from memmachine_server.common.configuration import (
+    Configuration,
     SemanticMemoryConf,
     SemanticMemoryStorageBackend,
 )
@@ -352,14 +353,14 @@ def _apply_semantic_memory_updates(
             f"semantic_memory.ingestion_trigger_age={spec.ingestion_trigger_age_seconds}s"
         )
 
-    # Field assignment above bypasses validation; re-run the completeness check so
-    # an enable request on an incomplete config cannot persist enabled=True.
-    if sm.auto_disable_when_incomplete() is True:
-        changes.append(
-            "semantic_memory.enabled=False (auto-disabled: required fields missing)"
-        )
-
     return changes
+
+
+def _revalidate_semantic_memory(config: Configuration, changes: list[str]) -> None:
+    """Re-run the load-time semantic checks; field assignment bypasses validation."""
+    reason = config.auto_disable_semantic_memory()
+    if reason:
+        changes.append(f"semantic_memory.enabled=False (auto-disabled: {reason})")
 
 
 def _apply_semantic_vector_updates(
@@ -627,6 +628,7 @@ class ConfigService:
             changes.extend(
                 _apply_semantic_memory_updates(config.semantic_memory, semantic_memory)
             )
+            _revalidate_semantic_memory(config, changes)
 
         if changes:
             self._persist_config()
@@ -781,6 +783,7 @@ class ConfigService:
         changes: list[str] = []
 
         changes.extend(_apply_semantic_memory_updates(sm, spec))
+        _revalidate_semantic_memory(config, changes)
 
         if changes:
             self._persist_config()

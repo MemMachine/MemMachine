@@ -1,6 +1,7 @@
 """Tests for the configuration service."""
 
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,8 +10,9 @@ from memmachine_common.api.config_spec import (
     UpdateEpisodicMemorySpec,
     UpdateSemanticMemorySpec,
 )
+from pydantic import SecretStr
 
-from memmachine_server.common.configuration import SemanticMemoryConf
+from memmachine_server.common.configuration import Configuration, SemanticMemoryConf
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConfPartial,
     LongTermMemoryConfPartial,
@@ -193,6 +195,7 @@ def memory_resource_manager():
     resource_manager = MagicMock()
     resource_manager.config.config_file_path = "/tmp/test_config.yml"
     resource_manager.save_config = MagicMock()
+    resource_manager.config.auto_disable_semantic_memory.return_value = None
 
     # Use real config objects so field assignment works
     resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(
@@ -322,26 +325,57 @@ def test_update_semantic_memory_fields(memory_resource_manager):
     memory_resource_manager.save_config.assert_called_once()
 
 
-def test_enable_semantic_memory_without_config_database_is_auto_disabled(
-    memory_resource_manager,
-):
+def _sample_configuration() -> Configuration:
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "sample_configs" / "episodic_memory_config.cpu.sample"
+        if candidate.is_file():
+            return Configuration.load_yml_file(str(candidate))
+    raise FileNotFoundError("episodic_memory_config.cpu.sample not found")
+
+
+def _service_with(config: Configuration) -> tuple[ConfigService, MagicMock]:
+    resource_manager = MagicMock()
+    resource_manager.config = config
+    resource_manager.save_config = MagicMock()
+    return ConfigService(resource_manager), resource_manager
+
+
+def test_enable_semantic_memory_without_config_database_is_auto_disabled():
     """An API enable on a config with no config_database must not persist enabled=True."""
-    memory_resource_manager.config.semantic_memory = SemanticMemoryConf(enabled=False)
+    config = _sample_configuration()
+    config.semantic_memory = SemanticMemoryConf(enabled=False)
+    service, resource_manager = _service_with(config)
     spec = UpdateSemanticMemorySpec.model_validate(
         {
             "enabled": True,
-            "database": "db",
-            "llm_model": "llm",
-            "embedding_model": "embedder",
+            "database": "profile_storage",
+            "llm_model": "openai_model",
+            "embedding_model": "openai_embedder",
         }
     )
-    service = ConfigService(memory_resource_manager)
+
     message = service.update_semantic_memory_config(spec)
 
-    sm = memory_resource_manager.config.semantic_memory
-    assert sm.enabled is False
-    assert sm.config_database is None
-    assert "auto-disabled" in message
+    assert config.semantic_memory.enabled is False
+    assert config.semantic_memory.config_database is None
+    assert "auto-disabled: missing required fields: config_database" in message
+    resource_manager.save_config.assert_called_once()
+
+
+def test_enable_semantic_memory_with_empty_openai_credentials_is_auto_disabled():
+    """The load-time credential guard also applies to an API enable."""
+    config = _sample_configuration()
+    embedder = config.resources.embedders.openai["openai_embedder"]
+    embedder.api_key = SecretStr("")
+    embedder.base_url = None
+    config.semantic_memory.enabled = False
+    service, _ = _service_with(config)
+    spec = UpdateSemanticMemorySpec.model_validate({"enabled": True})
+
+    message = service.update_memory_config(None, spec)
+
+    assert config.semantic_memory.enabled is False
+    assert "auto-disabled: an OpenAI resource has empty credentials" in message
 
 
 def test_update_semantic_ingestion_settings(memory_resource_manager):
