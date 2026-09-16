@@ -62,7 +62,12 @@ hnswlib = [
     "hnswlib>=0.8.0",
 ]
 nebula = [
-    "nebula5-python>=5.2.1",
+    # 5.3 removed the public async client this backend is written against:
+    # NebulaAsyncClient, SessionConfig and SessionPoolConfig are gone, and the
+    # AsyncNebulaClient that replaces NebulaAsyncClient has no public way to
+    # open a connection -- only the private _init_client(). Until it does, the
+    # async backend cannot move past 5.2.
+    "nebula5-python>=5.2.1,<5.3",
 ]
 qdrant = [
     "qdrant-client>=1.17.0",

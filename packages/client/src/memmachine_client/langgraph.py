@@ -306,10 +306,8 @@ class MemMachineTools:
                 if episodes:
                     summary_parts.append(f"Found {len(episodes)} episodic memories:")
                     for i, mem in enumerate(episodes[:3], 1):
-                        content = (
-                            mem.get("content", "")
-                            if isinstance(mem, dict)
-                            else str(mem)
+                        content = str(
+                            mem.get("content", "") if isinstance(mem, dict) else mem
                         )
                         summary_parts.append(f"  {i}. {content[:100]}...")
             elif isinstance(episodic_memories, list) and episodic_memories:
@@ -317,8 +315,8 @@ class MemMachineTools:
                     f"Found {len(episodic_memories)} episodic memories:"
                 )
                 for i, mem in enumerate(episodic_memories[:3], 1):
-                    content = (
-                        mem.get("content", "") if isinstance(mem, dict) else str(mem)
+                    content = str(
+                        mem.get("content", "") if isinstance(mem, dict) else mem
                     )
                     summary_parts.append(f"  {i}. {content[:100]}...")
 
