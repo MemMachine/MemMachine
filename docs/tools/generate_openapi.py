@@ -31,7 +31,7 @@ TAG_DESCRIPTIONS = {
     "Semantic Memory: Categories": "Category, template, and tag management for semantic sets.",
     "System": "Infrastructure, health, and observability.",
     "v1 Tenants": "Lifecycle of a v1 tenant, the memory an agent writes into.",
-    "v1 Episodic Memory": "Search of a tenant's event memory, and expansion along its timeline.",
+    "v1 Episodic Memory": "Queries of a tenant's event memory, and expansion along its timeline.",
     "v1 Events": "Ingestion and removal of the events a tenant remembers.",
     UNTAGGED_LABEL: "Endpoints missing an explicit tag — please add one.",
 }
