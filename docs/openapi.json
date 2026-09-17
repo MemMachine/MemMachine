@@ -49,7 +49,7 @@
     },
     {
       "name": "v1 Episodic Memory",
-      "description": "Search of a tenant's event memory, and expansion along its timeline."
+      "description": "Queries of a tenant's event memory, and expansion along its timeline."
     },
     {
       "name": "v1 Events",
@@ -2128,7 +2128,7 @@
           "v1 Episodic Memory"
         ],
         "summary": "Expand Episodic Memory",
-        "description": "Walk the timeline out from one segment, backward and forward.\n\nThe anchor is a segment uuid, the hex a `[segment:...]` marker carries.\nThe walk stays inside the anchor's session and never returns the anchor\nitself; a side that comes back empty means the session ran out that way.\nEach side is rendered with the same id markers a search renders, so its\nedges carry the handles a further step continues from.",
+        "description": "Walk the timeline out from one segment, backward and forward.\n\nThe anchor is a segment uuid, the hex a `[segment:...]` marker carries.\nThe walk stays inside the anchor's session and never returns the anchor\nitself; a side that comes back empty means the session ran out that way.\nEach side is rendered with the same id markers a query renders, so its\nedges carry the handles a further step continues from.",
         "operationId": "expand_episodic_memory",
         "parameters": [
           {
@@ -2197,14 +2197,14 @@
         }
       }
     },
-    "/v1/tenants/{tenant}/episodic-memory/search": {
+    "/v1/tenants/{tenant}/episodic-memory/query": {
       "post": {
         "tags": [
           "v1 Episodic Memory"
         ],
-        "summary": "Search Episodic Memory",
-        "description": "Search the tenant's memory, and render the window around every hit.\n\nThe vector search runs first, then the reranker when the request asks\nfor one and the tenant has one, and the hits are cut to `limit`. Each\nhit's `text` is its window rendered with the id markers a further\nrequest continues from: `[session:\"<id>\"]` heads each block, and\n`[segment:<hex32>]` -- or `[segments:<first>..<last>]` for a line built\nfrom more than one segment -- starts each line. `seed` is the index in\n`segments` of the segment the query matched.\n\nA segment carries no `position`: this deployment has no event store, so\nthere is no ingestion order to report. `filter` is an expression in the\nserver's filter grammar rather than a JSON tree, for the same reason:\nthe grammar is what this deployment parses.",
-        "operationId": "search_episodic_memory",
+        "summary": "Query Episodic Memory",
+        "description": "Query the tenant's memory, and render the window around every hit.\n\nThe vector search runs first, then the reranker when the request asks\nfor one and the tenant has one, and the hits are cut to `limit`. Each\nhit's `text` is its window rendered with the id markers a further\nrequest continues from: `[session:\"<id>\"]` heads each block, and\n`[segment:<hex32>]` -- or `[segments:<first>..<last>]` for a line built\nfrom more than one segment -- starts each line. `seed` is the index in\n`segments` of the segment the query matched.\n\nA segment carries no `position`: this deployment has no event store, so\nthere is no ingestion order to report. `filter` is an expression in the\nserver's filter grammar rather than a JSON tree, for the same reason:\nthe grammar is what this deployment parses.",
+        "operationId": "query_episodic_memory",
         "parameters": [
           {
             "name": "tenant",
@@ -2223,7 +2223,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SearchRequest"
+                "$ref": "#/components/schemas/QueryRequest"
               }
             }
           }
@@ -2234,7 +2234,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SearchResponse"
+                  "$ref": "#/components/schemas/QueryResponse"
                 }
               }
             }
@@ -5552,6 +5552,225 @@
         "title": "ProjectResponse",
         "description": "Response model returned after project operations (e.g., creation, update, fetch).\n\nContains the resolved identifiers and configuration of the project as stored\nin the system. Field formats follow the same validation rules as in\n`CreateProjectSpec`."
       },
+      "QueryHitBody": {
+        "properties": {
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Relevance of the seed segment; higher is better"
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "description": "The index in `segments` of the matched segment"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentBody"
+            },
+            "type": "array",
+            "title": "Segments",
+            "description": "The seed and its neighbors, in the store's order"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The window, rendered with its session and segment ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "seed",
+          "segments",
+          "text"
+        ],
+        "title": "QueryHitBody",
+        "description": "A segment a query matched, with the window rendered around it."
+      },
+      "QueryRequest": {
+        "properties": {
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since",
+            "description": "Inclusive lower bound on the events' timestamps, with offset"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until",
+            "description": "Exclusive upper bound on the events' timestamps, with offset"
+          },
+          "source_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ids",
+            "description": "Keep only the segments of these sources; an empty list keeps none, and null keeps every source"
+          },
+          "block_kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Kinds",
+            "description": "Keep only the segments whose block is of these kinds; an empty list keeps none, and null keeps every kind"
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter",
+            "description": "A filter over the events' own properties, in the server's filter grammar, for example `m.project = \"memmachine\" and m.tool != \"bash\"`"
+          },
+          "datetime_format": {
+            "$ref": "#/components/schemas/DateTimeFormatSpec",
+            "description": "How a timestamp is written into the rendered text"
+          },
+          "parts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Parts",
+            "description": "The context part kinds composed into the rendered text, in the order they are written",
+            "default": [
+              "author"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Query",
+            "description": "The text to query for"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit",
+            "description": "How many hits to answer with; null takes the tenant's default"
+          },
+          "min_cosine_similarity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": -1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Cosine Similarity",
+            "description": "Drop the matches whose cosine similarity is below this; null drops none"
+          },
+          "expand_context": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expand Context",
+            "description": "How many neighbors to render around each hit; null takes the tenant's default"
+          },
+          "rerank": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How to rerank the candidates; null reranks nothing, and omitting it reranks with the tenant's reranker when it has one"
+          },
+          "session_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Ids",
+            "description": "Keep only the segments of these sessions; an empty list keeps none, and null keeps every session"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "QueryRequest",
+        "description": "What a query asks for."
+      },
+      "QueryResponse": {
+        "properties": {
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/QueryHitBody"
+            },
+            "type": "array",
+            "title": "Hits",
+            "description": "The hits, in descending score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hits"
+        ],
+        "title": "QueryResponse",
+        "description": "What a query answers with."
+      },
       "RerankSpec": {
         "properties": {
           "reranker": {
@@ -5594,7 +5813,7 @@
         },
         "type": "object",
         "title": "RerankSpec",
-        "description": "How the candidates of a search are reranked before it answers."
+        "description": "How the candidates of a query are reranked before it answers."
       },
       "ResourceInfo": {
         "properties": {
@@ -5682,42 +5901,6 @@
         "type": "object",
         "title": "ResourcesStatus",
         "description": "Status of all configured resources."
-      },
-      "SearchHit": {
-        "properties": {
-          "score": {
-            "type": "number",
-            "title": "Score",
-            "description": "Relevance of the seed segment; higher is better"
-          },
-          "seed": {
-            "type": "integer",
-            "title": "Seed",
-            "description": "The index in `segments` of the matched segment"
-          },
-          "segments": {
-            "items": {
-              "$ref": "#/components/schemas/SegmentBody"
-            },
-            "type": "array",
-            "title": "Segments",
-            "description": "The seed and its neighbors, in the store's order"
-          },
-          "text": {
-            "type": "string",
-            "title": "Text",
-            "description": "The window, rendered with its session and segment ids"
-          }
-        },
-        "type": "object",
-        "required": [
-          "score",
-          "seed",
-          "segments",
-          "text"
-        ],
-        "title": "SearchHit",
-        "description": "A segment a search matched, with the window rendered around it."
       },
       "SearchMemoriesSpec": {
         "properties": {
@@ -5845,189 +6028,6 @@
         ],
         "title": "SearchMemoriesSpec",
         "description": "Specification model for searching memories."
-      },
-      "SearchRequest": {
-        "properties": {
-          "since": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Since",
-            "description": "Inclusive lower bound on the events' timestamps, with offset"
-          },
-          "until": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Until",
-            "description": "Exclusive upper bound on the events' timestamps, with offset"
-          },
-          "source_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Ids",
-            "description": "Keep only the segments of these sources; an empty list keeps none, and null keeps every source"
-          },
-          "block_kinds": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Block Kinds",
-            "description": "Keep only the segments whose block is of these kinds; an empty list keeps none, and null keeps every kind"
-          },
-          "filter": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filter",
-            "description": "A filter over the events' own properties, in the server's filter grammar, for example `m.project = \"memmachine\" and m.tool != \"bash\"`"
-          },
-          "datetime_format": {
-            "$ref": "#/components/schemas/DateTimeFormatSpec",
-            "description": "How a timestamp is written into the rendered text"
-          },
-          "parts": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Parts",
-            "description": "The context part kinds composed into the rendered text, in the order they are written",
-            "default": [
-              "author"
-            ]
-          },
-          "query": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Query",
-            "description": "The text to search for"
-          },
-          "limit": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "exclusiveMinimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Limit",
-            "description": "How many hits to answer with; null takes the tenant's default"
-          },
-          "min_cosine_similarity": {
-            "anyOf": [
-              {
-                "type": "number",
-                "maximum": 1.0,
-                "minimum": -1.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Min Cosine Similarity",
-            "description": "Drop the matches whose cosine similarity is below this; null drops none"
-          },
-          "expand_context": {
-            "anyOf": [
-              {
-                "type": "integer",
-                "minimum": 0.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expand Context",
-            "description": "How many neighbors to render around each hit; null takes the tenant's default"
-          },
-          "rerank": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RerankSpec"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "How to rerank the candidates; null reranks nothing, and omitting it reranks with the tenant's reranker when it has one"
-          },
-          "session_ids": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Session Ids",
-            "description": "Keep only the segments of these sessions; an empty list keeps none, and null keeps every session"
-          }
-        },
-        "type": "object",
-        "required": [
-          "query"
-        ],
-        "title": "SearchRequest",
-        "description": "What a search asks for."
-      },
-      "SearchResponse": {
-        "properties": {
-          "hits": {
-            "items": {
-              "$ref": "#/components/schemas/SearchHit"
-            },
-            "type": "array",
-            "title": "Hits",
-            "description": "The hits, in descending score"
-          }
-        },
-        "type": "object",
-        "required": [
-          "hits"
-        ],
-        "title": "SearchResponse",
-        "description": "What a search answers with."
       },
       "SearchResult": {
         "properties": {

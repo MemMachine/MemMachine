@@ -95,7 +95,7 @@ class DateTimeFormatSpec(BaseModel):
 
 
 class SegmentSelection(BaseModel):
-    """What both a search and an expansion select and render with.
+    """What both a query and an expansion select and render with.
 
     The filters narrow the segments a request may reach; the format and
     the parts decide how the ones it reaches are written.
@@ -144,7 +144,7 @@ class SegmentSelection(BaseModel):
 
 
 class RerankSpec(BaseModel):
-    """How the candidates of a search are reranked before it answers."""
+    """How the candidates of a query are reranked before it answers."""
 
     reranker: str | None = Field(
         None,
@@ -167,10 +167,10 @@ class RerankSpec(BaseModel):
     )
 
 
-class SearchRequest(SegmentSelection):
-    """What a search asks for."""
+class QueryRequest(SegmentSelection):
+    """What a query asks for."""
 
-    query: str = Field(min_length=1, description="The text to search for")
+    query: str = Field(min_length=1, description="The text to query for")
     limit: int | None = Field(
         None,
         gt=0,
@@ -269,8 +269,8 @@ class SegmentBody(BaseModel):
         )
 
 
-class SearchHit(BaseModel):
-    """A segment a search matched, with the window rendered around it."""
+class QueryHitBody(BaseModel):
+    """A segment a query matched, with the window rendered around it."""
 
     score: float = Field(description="Relevance of the seed segment; higher is better")
     seed: int = Field(description="The index in `segments` of the matched segment")
@@ -282,10 +282,10 @@ class SearchHit(BaseModel):
     )
 
 
-class SearchResponse(BaseModel):
-    """What a search answers with."""
+class QueryResponse(BaseModel):
+    """What a query answers with."""
 
-    hits: list[SearchHit] = Field(description="The hits, in descending score")
+    hits: list[QueryHitBody] = Field(description="The hits, in descending score")
 
 
 class ExpandResponse(BaseModel):

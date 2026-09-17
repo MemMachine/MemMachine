@@ -29,13 +29,13 @@ class ComponentNotEnabledError(Exception):
 
 
 class EpisodicMemoryDefaults(BaseModel):
-    """The values a search or an expansion takes when the request omits them.
+    """The values a query or an expansion takes when the request omits them.
 
     Attributes:
-        search_limit (int):
-            The number of hits a search answers with (default: 10).
+        query_limit (int):
+            The number of hits a query answers with (default: 10).
         expand_context (int):
-            The number of neighbors around each hit a search renders
+            The number of neighbors around each hit a query renders
             into the hit's text (default: 2).
         rerank_candidates (int):
             The number of hits the vector search fetches for the reranker
@@ -48,13 +48,13 @@ class EpisodicMemoryDefaults(BaseModel):
             (default: 5).
     """
 
-    search_limit: int = Field(
-        10, gt=0, description="The number of hits a search answers with"
+    query_limit: int = Field(
+        10, gt=0, description="The number of hits a query answers with"
     )
     expand_context: int = Field(
         2,
         ge=0,
-        description="The number of neighbors around each hit a search renders",
+        description="The number of neighbors around each hit a query renders",
     )
     rerank_candidates: int = Field(
         40,

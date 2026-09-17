@@ -1,4 +1,4 @@
-"""The v1 event-memory routes: tenants, search, expansion, events.
+"""The v1 event-memory routes: tenants, queries, expansion, events.
 
 Every route addresses a tenant by name and reaches that tenant's
 `EventMemory` through `TenantEventMemories`, so what a name resolves to
@@ -30,10 +30,10 @@ from .models import (
     ExpandRequest,
     ExpandResponse,
     ForgetEventsRequest,
+    QueryHitBody,
+    QueryRequest,
+    QueryResponse,
     RerankSpec,
-    SearchHit,
-    SearchRequest,
-    SearchResponse,
     SegmentBody,
     StoredEvents,
     TenantBody,
@@ -136,8 +136,8 @@ async def delete_tenant(
     await memories.delete(tenant)
 
 
-SEARCH_DESCRIPTION: Final[str] = """
-Search the tenant's memory, and render the window around every hit.
+QUERY_DESCRIPTION: Final[str] = """
+Query the tenant's memory, and render the window around every hit.
 
 The vector search runs first, then the reranker when the request asks
 for one and the tenant has one, and the hits are cut to `limit`. Each
@@ -155,19 +155,19 @@ the grammar is what this deployment parses.
 
 
 @router.post(
-    "/tenants/{tenant}/episodic-memory/search",
-    description=SEARCH_DESCRIPTION,
+    "/tenants/{tenant}/episodic-memory/query",
+    description=QUERY_DESCRIPTION,
     tags=["v1 Episodic Memory"],
 )
-async def search_episodic_memory(
+async def query_episodic_memory(
     tenant: TenantName,
-    spec: SearchRequest,
+    spec: QueryRequest,
     memories: TenantEventMemoriesDependency,
-) -> SearchResponse:
-    """Search the tenant's event memory."""
+) -> QueryResponse:
+    """Query the tenant's event memory."""
     resolved = await memories.resolve(tenant)
     defaults = resolved.defaults
-    limit = spec.limit if spec.limit is not None else defaults.search_limit
+    limit = spec.limit if spec.limit is not None else defaults.query_limit
     expand_context = (
         spec.expand_context
         if spec.expand_context is not None
@@ -196,7 +196,7 @@ async def search_episodic_memory(
         )
         if reranking.min_score is not None:
             hits = [hit for hit in hits if hit.score >= reranking.min_score]
-    return SearchResponse(
+    return QueryResponse(
         hits=[
             _hit_body(hit, datetime_format=datetime_format, parts=spec.parts)
             for hit in hits[:limit]
@@ -206,7 +206,7 @@ async def search_episodic_memory(
 
 @dataclass(frozen=True)
 class _Reranking:
-    """The reranking stage of one search: what scores it, and how widely."""
+    """The reranking stage of one query: what scores it, and how widely."""
 
     reranker: Reranker
     candidates: int
@@ -219,9 +219,9 @@ def _reranking(
     *,
     limit: int,
 ) -> _Reranking | None:
-    """How this search reranks, or None when nothing reranks it.
+    """How this query reranks, or None when nothing reranks it.
 
-    The candidates are never fewer than the hits the search answers with.
+    The candidates are never fewer than the hits the query answers with.
 
     Raises:
         ValueError:
@@ -254,10 +254,10 @@ def _hit_body(
     *,
     datetime_format: DateTimeFormat,
     parts: Iterable[str],
-) -> SearchHit:
+) -> QueryHitBody:
     """One hit: its window, its seed's place in it, and the rendered text."""
     window = hit.window()
-    return SearchHit(
+    return QueryHitBody(
         score=hit.score,
         seed=len(hit.neighborhood.before),
         segments=[SegmentBody.from_segment(segment) for segment in window],
@@ -276,7 +276,7 @@ Walk the timeline out from one segment, backward and forward.
 The anchor is a segment uuid, the hex a `[segment:...]` marker carries.
 The walk stays inside the anchor's session and never returns the anchor
 itself; a side that comes back empty means the session ran out that way.
-Each side is rendered with the same id markers a search renders, so its
+Each side is rendered with the same id markers a query renders, so its
 edges carry the handles a further step continues from.
 """.strip()
 

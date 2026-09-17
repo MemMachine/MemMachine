@@ -1,4 +1,4 @@
-"""Tests for the v1 routes: tenants, events, search and expansion."""
+"""Tests for the v1 routes: tenants, events, queries and expansion."""
 
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -58,9 +58,9 @@ def _ingest(client, events, tenant=_TENANT):
     return response.json()["stored"]
 
 
-def _search(client, tenant=_TENANT, **body):
+def _query(client, tenant=_TENANT, **body):
     body.setdefault("query", "query")
-    return client.post(f"/v1/tenants/{tenant}/episodic-memory/search", json=body)
+    return client.post(f"/v1/tenants/{tenant}/episodic-memory/query", json=body)
 
 
 def _error(response):
@@ -122,10 +122,10 @@ class TestEvents:
         assert stored[0] == given
         assert UUID(stored[1]) != UUID(given)
 
-    def test_ingest_is_reachable_by_search(self, client):
+    def test_ingest_is_reachable_by_a_query(self, client):
         _create(client)
         _ingest(client, [_event("near one", author="Alice")])
-        hits = _search(client).json()["hits"]
+        hits = _query(client).json()["hits"]
         assert len(hits) == 1
         assert "near one" in hits[0]["text"]
 
@@ -177,14 +177,14 @@ class TestEvents:
         assert response.status_code == 422
         assert _error(response)["code"] == "invalid_request"
 
-    def test_forget_removes_the_event_from_search(self, client):
+    def test_forget_removes_the_event_from_a_query(self, client):
         _create(client)
         stored = _ingest(client, [_event("near one")])
         forgotten = client.post(
             f"/v1/tenants/{_TENANT}/events/delete", json={"ids": stored}
         )
         assert forgotten.status_code == 200
-        assert _search(client).json()["hits"] == []
+        assert _query(client).json()["hits"] == []
 
     def test_forgetting_an_unheld_id_changes_nothing(self, client):
         _create(client)
@@ -193,15 +193,15 @@ class TestEvents:
             f"/v1/tenants/{_TENANT}/events/delete", json={"ids": [str(uuid4())]}
         )
         assert response.status_code == 200
-        assert len(_search(client).json()["hits"]) == 1
+        assert len(_query(client).json()["hits"]) == 1
 
 
 # ===================================================================
-# search
+# query
 # ===================================================================
 
 
-class TestSearch:
+class TestQuery:
     def test_a_hit_carries_its_window_its_seed_and_the_id_markers(
         self, client, memories
     ):
@@ -216,7 +216,7 @@ class TestSearch:
             ],
         )
         # An expansion budget of 3 is one neighbor back and two forward.
-        hits = _search(client, limit=1, expand_context=3).json()["hits"]
+        hits = _query(client, limit=1, expand_context=3).json()["hits"]
         assert len(hits) == 1
         hit = hits[0]
         assert [segment["block"]["text"] for segment in hit["segments"]] == [
@@ -242,7 +242,7 @@ class TestSearch:
     def test_parts_choose_what_the_header_carries(self, client):
         _create(client)
         _ingest(client, [_event("near one", author="Alice")])
-        hits = _search(client, parts=[]).json()["hits"]
+        hits = _query(client, parts=[]).json()["hits"]
         assert "Alice" not in hits[0]["text"]
 
     def test_limit_caps_the_hits(self, client):
@@ -251,7 +251,7 @@ class TestSearch:
             client,
             [_event(f"near {index}", minute=index) for index in range(4)],
         )
-        assert len(_search(client, limit=2).json()["hits"]) == 2
+        assert len(_query(client, limit=2).json()["hits"]) == 2
 
     def test_session_ids_and_source_ids_select(self, client):
         _create(client)
@@ -262,10 +262,10 @@ class TestSearch:
                 _event("near two", session_id="s2", source_id="codex", minute=1),
             ],
         )
-        one = _search(client, session_ids=["s1"]).json()["hits"]
+        one = _query(client, session_ids=["s1"]).json()["hits"]
         assert [hit["segments"][hit["seed"]]["session_id"] for hit in one] == ["s1"]
 
-        two = _search(client, source_ids=["codex"]).json()["hits"]
+        two = _query(client, source_ids=["codex"]).json()["hits"]
         assert [hit["segments"][hit["seed"]]["source_id"] for hit in two] == ["codex"]
 
     def test_the_filter_expression_selects_by_property(self, client):
@@ -277,7 +277,7 @@ class TestSearch:
                 _event("near two", minute=1, properties={"color": "blue"}),
             ],
         )
-        hits = _search(client, filter='m.color = "red"').json()["hits"]
+        hits = _query(client, filter='m.color = "red"').json()["hits"]
         assert len(hits) == 1
         assert hits[0]["segments"][hits[0]["seed"]]["properties"] == {"color": "red"}
 
@@ -287,25 +287,25 @@ class TestSearch:
             client,
             [_event("near one", minute=0), _event("near two", minute=2)],
         )
-        hits = _search(client, since="2025-06-01T12:01:00+00:00").json()["hits"]
+        hits = _query(client, since="2025-06-01T12:01:00+00:00").json()["hits"]
         assert len(hits) == 1
         assert "near two" in hits[0]["text"]
 
     def test_an_unknown_timezone_is_rejected(self, client):
         _create(client)
-        response = _search(client, datetime_format={"timezone": "Mars/Olympus"})
+        response = _query(client, datetime_format={"timezone": "Mars/Olympus"})
         assert response.status_code == 422
         assert "Mars/Olympus" in _error(response)["message"]
 
     def test_an_unknown_tenant_answers_404(self, client):
-        response = _search(client)
+        response = _query(client)
         assert response.status_code == 404
         assert _error(response)["code"] == "tenant_not_found"
 
     def test_a_tenant_without_the_component_answers_404(self, client, memories):
         _create(client)
         memories.enabled = False
-        response = _search(client)
+        response = _query(client)
         assert response.status_code == 404
         assert _error(response)["code"] == "component_not_enabled"
 
@@ -313,7 +313,7 @@ class TestSearch:
         self, client, memories
     ):
         memories.failure = RuntimeError("the store fell over")
-        response = _search(client)
+        response = _query(client)
         assert response.status_code == 500
         error = _error(response)
         assert error["code"] == "internal"
@@ -331,7 +331,7 @@ class TestReranking:
     def reranking_client(self, client, memories):
         memories.embedder = AngleEmbedder({"near": 0.0, "far": 1.2, "query": 0.0})
         memories.reranker = FakeReranker()
-        memories.defaults = EpisodicMemoryDefaults(search_limit=10)
+        memories.defaults = EpisodicMemoryDefaults(query_limit=10)
         return client
 
     @staticmethod
@@ -347,34 +347,34 @@ class TestReranking:
 
     def test_the_reranker_reorders_the_hits(self, reranking_client):
         self._ingest_two(reranking_client)
-        hits = _search(reranking_client).json()["hits"]
+        hits = _query(reranking_client).json()["hits"]
         assert "far" in hits[0]["text"]
         assert hits[0]["score"] > hits[1]["score"]
 
     def test_a_null_rerank_leaves_the_vector_order(self, reranking_client):
         self._ingest_two(reranking_client)
-        hits = _search(reranking_client, rerank=None).json()["hits"]
+        hits = _query(reranking_client, rerank=None).json()["hits"]
         assert "near short" in hits[0]["text"]
 
     def test_min_score_drops_the_hits_below_it(self, reranking_client):
         self._ingest_two(reranking_client)
-        scored = _search(reranking_client).json()["hits"]
+        scored = _query(reranking_client).json()["hits"]
         assert len(scored) == 2
         between = (scored[0]["score"] + scored[1]["score"]) / 2
 
-        hits = _search(reranking_client, rerank={"min_score": between}).json()["hits"]
+        hits = _query(reranking_client, rerank={"min_score": between}).json()["hits"]
         assert len(hits) == 1
         assert "far" in hits[0]["text"]
 
     def test_a_tenant_without_a_reranker_ranks_by_similarity(self, client, memories):
         memories.embedder = AngleEmbedder({"near": 0.0, "far": 1.2, "query": 0.0})
         self._ingest_two(client)
-        hits = _search(client).json()["hits"]
+        hits = _query(client).json()["hits"]
         assert "near short" in hits[0]["text"]
 
     def test_naming_a_reranker_is_rejected(self, reranking_client):
         self._ingest_two(reranking_client)
-        response = _search(reranking_client, rerank={"reranker": "cohere"})
+        response = _query(reranking_client, rerank={"reranker": "cohere"})
         assert response.status_code == 422
         assert "reranker" in _error(response)["message"]
 
@@ -395,7 +395,7 @@ class TestExpand:
 
     @staticmethod
     def _anchor(client, text):
-        hits = _search(client, limit=5, expand_context=0).json()["hits"]
+        hits = _query(client, limit=5, expand_context=0).json()["hits"]
         for hit in hits:
             segment = hit["segments"][hit["seed"]]
             if segment["block"]["text"] == text:
