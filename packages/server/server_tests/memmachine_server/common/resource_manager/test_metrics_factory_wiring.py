@@ -14,6 +14,7 @@ and event memory — where a regression would otherwise go unseen until somebody
 configured that backend and wondered where the numbers were.
 """
 
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -86,10 +87,12 @@ def test_get_segment_store_supplies_a_factory(monkeypatch, mock_metrics_factory)
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
-    async def fake_engine(_name):
-        return MagicMock(spec=AsyncEngine)
+    async def fake_engine(
+        _self: rm.ResourceManagerImpl, _name: str, validate: bool = False
+    ) -> AsyncEngine:
+        return cast(AsyncEngine, MagicMock(spec=AsyncEngine))
 
-    manager.get_sql_engine = fake_engine
+    monkeypatch.setattr(rm.ResourceManagerImpl, "get_sql_engine", fake_engine)
 
     asyncio.run(manager.get_segment_store("profile_storage"))
 
