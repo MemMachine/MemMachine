@@ -172,6 +172,14 @@ def _prepare_multiproc_dir() -> None:
     path = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
     chosen = False
     if not path:
+        # The worker count gates only the choice of a default. When a directory
+        # *is* configured the setup below runs whatever the count, because
+        # prometheus_client selects its multiprocess value class from the
+        # environment variable alone and then mmaps a file into the directory -
+        # so one worker with the variable set still needs the directory to exist
+        # and to be clear of a previous run's files, or the first metric raises
+        # FileNotFoundError. test_an_explicit_directory_is_honoured_for_one_worker
+        # pins that.
         if _worker_count() <= 1:
             return
         path = str(Path(tempfile.gettempdir()) / "memmachine-prometheus-multiproc")
