@@ -33,6 +33,7 @@ from memmachine_server.semantic_memory.storage.storage_base import SemanticStora
 logger = logging.getLogger(__name__)
 
 _MAX_CONSOLIDATION_ATTEMPTS = 2
+_MAX_FEATURE_UPDATE_ATTEMPTS = 2
 
 
 class _ConsolidationContextLengthError(Exception):
@@ -211,32 +212,14 @@ class IngestionService:
                     )
                 ]
 
-                try:
-                    commands = await llm_feature_update(
-                        features=features,
-                        message_content=message.content,
-                        model=resources.language_model,
-                        update_prompt=semantic_category.prompt.update_prompt,
-                    )
-                except Exception as err:
-                    if _is_context_length_exceeded_error(err):
-                        logger.warning(
-                            "Skipping message %s for semantic type %s due to non-retryable context length error",
-                            message.uid,
-                            semantic_category.name,
-                        )
-                        if message.uid not in mark_messages:
-                            mark_messages.append(message.uid)
-                        continue
-
-                    logger.exception(
-                        "Failed to process message %s for semantic type %s",
-                        message.uid,
-                        semantic_category.name,
-                    )
-                    if self._debug_fail_loudly:
-                        raise
-
+                commands = await self._try_feature_update(
+                    features=features,
+                    message=message,
+                    semantic_category=semantic_category,
+                    resources=resources,
+                    mark_messages=mark_messages,
+                )
+                if commands is None:
                     continue
 
                 await self._apply_commands(
@@ -276,6 +259,74 @@ class IngestionService:
             set_id=set_id,
             resources=resources,
         )
+
+    async def _try_feature_update(
+        self,
+        *,
+        features: list[SemanticFeature],
+        message: Episode,
+        semantic_category: InstanceOf[SemanticCategory],
+        resources: InstanceOf[Resources],
+        mark_messages: list[EpisodeIdT],
+    ) -> list[SemanticCommand] | None:
+        """Call llm_feature_update with bounded retry on transient failures.
+
+        Mirrors ``_try_consolidate``: a context-length error is non-retryable
+        and gives up immediately. A generic exception is retried up to
+        ``_MAX_FEATURE_UPDATE_ATTEMPTS`` times. In both give-up cases the
+        message is still appended to ``mark_messages`` so a persistently
+        failing ("poison") message is not re-fetched and re-sent to the LLM
+        on every background poll cycle forever — without this, a message
+        that fails deterministically would retry unbounded at the fast
+        idle-polling interval instead of the outer loop's error backoff.
+        Raises instead of giving up when ``debug_fail_loudly`` is set and
+        the final failure was not a context-length error.
+        """
+        for attempt in range(1, _MAX_FEATURE_UPDATE_ATTEMPTS + 1):
+            try:
+                return await llm_feature_update(
+                    features=features,
+                    message_content=message.content,
+                    model=resources.language_model,
+                    update_prompt=semantic_category.prompt.update_prompt,
+                )
+            except Exception as err:
+                if _is_context_length_exceeded_error(err):
+                    logger.warning(
+                        "Skipping message %s for semantic type %s due to non-retryable context length error",
+                        message.uid,
+                        semantic_category.name,
+                    )
+                    if message.uid not in mark_messages:
+                        mark_messages.append(message.uid)
+                    return None
+
+                if attempt < _MAX_FEATURE_UPDATE_ATTEMPTS:
+                    logger.warning(
+                        "Feature update raised %s on attempt %d/%d for message %s, semantic type %s, retrying",
+                        type(err).__name__,
+                        attempt,
+                        _MAX_FEATURE_UPDATE_ATTEMPTS,
+                        message.uid,
+                        semantic_category.name,
+                    )
+                    continue
+
+                logger.exception(
+                    "Failed to process message %s for semantic type %s after %d attempts; "
+                    "marking as ingested to stop repeated background retries",
+                    message.uid,
+                    semantic_category.name,
+                    _MAX_FEATURE_UPDATE_ATTEMPTS,
+                )
+                if self._debug_fail_loudly:
+                    raise
+
+                if message.uid not in mark_messages:
+                    mark_messages.append(message.uid)
+                return None
+
+        return None  # pragma: no cover - loop always returns or raises above
 
     async def _apply_commands(
         self,
