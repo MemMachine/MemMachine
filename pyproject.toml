@@ -35,6 +35,8 @@ dev = [
     "pytest-xdist>=3.8.0",
     "httpx>=0.25.1",
     "python-dateutil>=2.9.0",
+    # The v1 MCP tests drive the mounted app through an ASGI transport.
+    "httpx2>=2.0.0",
 ]
 # Optional spaCy deps for the non-LLM multi-hop decomposer. Not a hard runtime
 # dependency of memmachine-server: when spaCy is absent, RaragQueryAgent falls
