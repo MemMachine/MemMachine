@@ -319,8 +319,8 @@ class LongTermMemory:
         assert self._episode_storage is not None
         self._validate_event_backend_filter(property_filter)
         # `expand_context` is a window of segments, the unit EventMemory and
-        # the event memory store work in: neither knows episodes. Under the
-        # passthrough segmenter one segment is one episode, and the window is
+        # the event memory store work in: neither knows episodes. With no
+        # segmenter handler one segment is one episode, and the window is
         # the declarative backend's window of neighbor episodes; under a
         # splitting segmenter the same window covers fewer episodes, the ones
         # its segments belong to. The window can never exceed the remaining
@@ -329,10 +329,11 @@ class LongTermMemory:
         # would ask the event memory store for a negative window, which the
         # EventMemoryStorePartition contract does not define.
         expand_context = max(0, min(expand_context, num_episodes_limit - 1))
-        # Over-fetch from EventMemory: the per-segment results can have many
-        # segments per episode under non-passthrough segmenters, and we dedup
-        # them by `_episode_uid` below. Without headroom, the dedup loop can
-        # return fewer than `num_episodes_limit` distinct episodes.
+        # Over-fetch from EventMemory: a segmenter can cut an episode into
+        # many segments, so the per-segment results can carry one episode
+        # several times, and we dedup them by `_episode_uid` below. Without
+        # headroom, the dedup loop can return fewer than `num_episodes_limit`
+        # distinct episodes.
         vector_search_limit = max(
             num_episodes_limit * _EVENT_BACKEND_DEDUP_OVERFETCH,
             num_episodes_limit,
