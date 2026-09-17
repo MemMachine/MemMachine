@@ -189,6 +189,7 @@ class ResourceManagerImpl:
                 if self._episodic_memory_manager is None:
                     session_data_manager = await self.get_session_data_manager()
                     params = EpisodicMemoryManagerParams(
+                        instance_cache_size=self._conf.session_manager.instance_cache_size,
                         resource_manager=self,
                         session_data_manager=session_data_manager,
                     )

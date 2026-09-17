@@ -124,6 +124,44 @@ async def manager(mock_episodic_memory_manager_param):
 
 
 @pytest.mark.asyncio
+async def test_default_cache_shares_only_while_requests_are_active(
+    mock_session_storage, mock_resource_manager, mock_episodic_memory_conf
+):
+    """The default zero capacity closes an instance after its last user exits."""
+    params = EpisodicMemoryManagerParams(
+        resource_manager=mock_resource_manager,
+        session_data_manager=mock_session_storage,
+    )
+    manager = EpisodicMemoryManager(params)
+    memories = [AsyncMock(spec=EpisodicMemory) for _ in range(2)]
+
+    with (
+        patch(
+            "memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory",
+            side_effect=memories,
+        ),
+        patch(
+            "memmachine_server.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
+            new_callable=AsyncMock,
+            return_value=MagicMock(spec=EpisodicMemoryParams),
+        ),
+    ):
+        async with manager.create_episodic_memory(
+            "session", mock_episodic_memory_conf, "", {}
+        ) as first:
+            async with manager.open_episodic_memory("session") as shared:
+                assert shared is first
+            memories[0].close.assert_not_awaited()
+        memories[0].close.assert_awaited_once()
+
+        async with manager.open_episodic_memory("session") as reopened:
+            assert reopened is memories[1]
+        memories[1].close.assert_awaited_once()
+
+    await manager.close()
+
+
+@pytest.mark.asyncio
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_create_episodic_memory_success(
     mock_episodic_memory_cls,

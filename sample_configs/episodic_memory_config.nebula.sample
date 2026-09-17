@@ -37,6 +37,7 @@ semantic_memory:
 
 session_manager:
   database: profile_storage
+  instance_cache_size: 0  # Set above 0 to retain idle episodic memory instances.
 
 prompt:
   session:

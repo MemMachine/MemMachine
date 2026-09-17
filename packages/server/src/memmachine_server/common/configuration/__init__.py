@@ -72,6 +72,11 @@ class SessionManagerConf(YamlSerializableMixin):
         default="",
         description="The database ID to use for session manager",
     )
+    instance_cache_size: int = Field(
+        default=0,
+        ge=0,
+        description="Maximum number of episodic memory instances to cache; 0 disables idle caching",
+    )
 
 
 class EpisodeStoreConf(YamlSerializableMixin):

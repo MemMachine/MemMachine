@@ -1,5 +1,7 @@
 """tests for resource_manager.py"""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from pydantic import SecretStr
 
@@ -33,6 +35,9 @@ from memmachine_server.common.errors import (
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
+)
+from memmachine_server.common.session_manager.session_data_manager import (
+    SessionDataManager,
 )
 
 RERANKER_ID = "my_reranker"
@@ -179,3 +184,21 @@ def test_resource_manager_config_property(invalid_configure):
     """Test that config property returns the configuration."""
     resource_manager = ResourceManagerImpl(invalid_configure)
     assert resource_manager.config == invalid_configure
+
+
+@pytest.mark.asyncio
+async def test_session_cache_size_configures_episodic_manager(invalid_configure):
+    """The configured capacity reaches the manager created by the resource manager."""
+    invalid_configure.session_manager.instance_cache_size = 3
+    resource_manager = ResourceManagerImpl(invalid_configure)
+    session_storage = AsyncMock(spec=SessionDataManager)
+
+    with patch.object(
+        resource_manager,
+        "get_session_data_manager",
+        new=AsyncMock(return_value=session_storage),
+    ):
+        manager = await resource_manager.get_episodic_memory_manager()
+
+    assert manager._instance_cache.capacity == 3
+    await manager.close()
