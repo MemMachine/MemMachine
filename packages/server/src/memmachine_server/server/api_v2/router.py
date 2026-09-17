@@ -29,6 +29,8 @@ from memmachine_common.api.spec import (
     DeleteSemanticSetTypeSpec,
     DeleteSemanticTagSpec,
     DisableSemanticCategorySpec,
+    EnableFtsIndexResponse,
+    EnableFtsIndexSpec,
     EpisodeCountResponse,
     EpisodicMemoryConfigEntry,
     GetEpisodicMemoryConfigSpec,
@@ -87,6 +89,7 @@ from memmachine_server.server.api_v2.service import (
     _list_target_memories,
     _search_target_memories,
     _SessionData,
+    enable_fts_index,
     get_memmachine,
 )
 
@@ -240,6 +243,32 @@ async def get_episode_count(
     except Exception as e:
         raise RestError(code=500, message="Internal server error", ex=e) from e
     return EpisodeCountResponse(count=count)
+
+
+@router.post(
+    "/fts-index/enable",
+    description="Create the FTS index for a project's long-term memory on demand.",
+    tags=["Projects"],
+)
+async def enable_fts_index_endpoint(
+    spec: EnableFtsIndexSpec,
+    memmachine: Annotated[MemMachine, Depends(get_memmachine)],
+) -> EnableFtsIndexResponse:
+    """Manually create the Neo4j Full-Text Search index.
+
+    The FTS index is auto-created at session creation by default. This endpoint
+    creates it on demand — for example when FTS was disabled at creation time
+    or when an existing Neo4j vector store should gain FTS without re-ingesting.
+    Returns ``status='unsupported'`` for backends without FTS (Nebula / event).
+    """
+    try:
+        return await enable_fts_index(
+            spec_org_id=spec.org_id,
+            spec_project_id=spec.project_id,
+            memmachine=memmachine,
+        )
+    except Exception as e:
+        raise RestError(code=500, message="Unable to create FTS index", ex=e) from e
 
 
 @router.post("/projects/list", description=RouterDoc.LIST_PROJECTS, tags=["Projects"])

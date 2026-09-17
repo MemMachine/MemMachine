@@ -1,11 +1,13 @@
 """Long-term memory facade with declarative + event backends."""
 
+import asyncio  # For parallel execution in Hybrid Search
 import datetime
 import logging
 from collections.abc import Iterable
 from typing import Annotated, Literal, cast
 from uuid import UUID, uuid4, uuid5
 
+from memmachine_common.api.spec import FTS_APPEND_COUNT_DEFAULT, RRF_K, FtsMode
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
@@ -24,6 +26,13 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+
+# Converts content to SANITIZED_property_u5f_content
+from memmachine_server.common.vector_graph_store.data_types import mangle_property_name
+from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
+    Neo4jVectorGraphStore,
+    _neo4j_query,
+)
 from memmachine_server.common.vector_store import (
     VectorStore,
     VectorStoreCollection,
@@ -115,6 +124,13 @@ class DeclarativeBackendParams(BaseModel):
     embedder: InstanceOf[Embedder] = Field(...)
     reranker: InstanceOf[Reranker] = Field(...)
     message_sentence_chunking: bool = Field(False)
+    fts_enabled: bool = Field(
+        True,
+        description=(
+            "Whether to auto-create the Neo4j FTS index for this session at "
+            "session creation. Default True. Ignored on non-declarative backends."
+        ),
+    )
 
 
 class EventBackendParams(BaseModel):
@@ -208,6 +224,7 @@ class LongTermMemory:
                         message_sentence_chunking=params.message_sentence_chunking,
                     ),
                 )
+                self._fts_enabled: bool = params.fts_enabled
             case EventBackendParams():
                 self._event_memory = EventMemory(
                     EventMemoryParams(
@@ -229,6 +246,103 @@ class LongTermMemory:
                     or params.vector_store_collection.config.similarity_metric.higher_is_better
                 )
                 self._user_property_keys = params.user_property_keys
+                # FTS is a declarative-backend-only feature; the event backend
+                # has no Neo4j derivative collection to index.
+                self._fts_enabled = False
+
+    async def initialize_fts(self) -> None:
+        """Create the FTS index up front, at session creation.
+
+        Creates the Neo4j Full-Text Search index on the derivative collection so
+        that the very first ingest is immediately searchable via hybrid
+        (Vector+FTS) search, instead of waiting for the node-count threshold
+        that triggers lazy index creation inside `add_nodes`.
+
+        No-op when FTS is disabled (`fts_enabled=False`), on the event backend,
+        or on a non-Neo4j `VectorGraphStore` (e.g. Nebula, which has no FTS).
+        Never raises on the unsupported cases — skipping is the desired
+        behavior, mirroring how `_search_fts` guards its own Neo4j assumption.
+        """
+        if not self._fts_enabled or self._backend != "declarative":
+            return
+        assert self._declarative_memory is not None
+
+        vector_graph_store = self._declarative_memory._vector_graph_store  # noqa: SLF001
+        if not isinstance(vector_graph_store, Neo4jVectorGraphStore):
+            # Nebula (or any non-Neo4j store): FTS is not supported. Skip
+            # silently rather than raising — FTS initialization is opt-in and
+            # must not break session creation on backends without FTS.
+            logger.warning(
+                "Skipping FTS initialization: backend %s is not Neo4j.",
+                type(vector_graph_store).__name__,
+            )
+            return
+
+        derivative_collection = self._declarative_memory._derivative_collection  # noqa: SLF001
+        sanitized_collection = vector_graph_store._sanitize_name(  # noqa: SLF001
+            derivative_collection
+        )
+        await vector_graph_store._create_fts_index_if_not_exists(  # noqa: SLF001
+            sanitized_collection=sanitized_collection,
+        )
+        logger.info(
+            "FTS index initialized at session creation for collection '%s'.",
+            derivative_collection,
+        )
+
+    async def create_fts_index(self) -> tuple[str, str | None]:
+        """Manually create the FTS index on demand.
+
+        Unlike `initialize_fts` (which runs at session creation and skips
+        silently on unsupported backends), this is the explicit user-triggered
+        command. It creates the index regardless of `fts_enabled` and reports
+        whether the backend supports FTS.
+
+        Returns:
+            A `(status, index_name)` tuple where `status` is one of:
+            - ``"created"``: the index is now online (newly created or already
+              existed — `_create_fts_index_if_not_exists` is idempotent).
+            - ``"unsupported"``: the backend has no FTS (event backend or a
+              non-Neo4j store such as Nebula). `index_name` is ``None``.
+
+        Raises:
+            NotImplementedError: never — unsupported backends return the
+            ``"unsupported"`` status instead of raising, so the API layer can
+            surface a consistent response without try/except branching.
+        """
+        if self._backend != "declarative":
+            logger.info(
+                "create_fts_index: event backend has no FTS; returning 'unsupported'."
+            )
+            return ("unsupported", None)
+        assert self._declarative_memory is not None
+
+        vector_graph_store = self._declarative_memory._vector_graph_store  # noqa: SLF001
+        if not isinstance(vector_graph_store, Neo4jVectorGraphStore):
+            logger.info(
+                "create_fts_index: backend %s is not Neo4j; returning 'unsupported'.",
+                type(vector_graph_store).__name__,
+            )
+            return ("unsupported", None)
+
+        derivative_collection = self._declarative_memory._derivative_collection  # noqa: SLF001
+        sanitized_collection = vector_graph_store._sanitize_name(  # noqa: SLF001
+            derivative_collection
+        )
+        fts_index_name = f"fts_{sanitized_collection}_content"
+
+        # `_create_fts_index_if_not_exists` is idempotent: it short-circuits
+        # when the index is already online, so calling this on an existing
+        # index is a safe no-op that still reports "created".
+        await vector_graph_store._create_fts_index_if_not_exists(  # noqa: SLF001
+            sanitized_collection=sanitized_collection,
+        )
+        logger.info(
+            "create_fts_index: index=%s online, collection=%s",
+            fts_index_name,
+            derivative_collection,
+        )
+        return ("created", fts_index_name)
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
@@ -251,6 +365,8 @@ class LongTermMemory:
         expand_context: int = 0,
         score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
+        use_fts: FtsMode = False,  # Full-Text Search flag for hybrid search
+        append_n: int = FTS_APPEND_COUNT_DEFAULT,  # FTS results to append (append mode)
     ) -> list[tuple[float, Episode]]:
         """Score-thresholded query.
 
@@ -262,6 +378,18 @@ class LongTermMemory:
         which silently inverted to "drop everything" under euclidean.
         """
         if self._backend == "declarative":
+            # Full-Text Search is enabled
+            if use_fts:
+                # Perform hybrid search: Vector + Full-Text Search
+                return await self._search_scored_hybrid(
+                    query,
+                    num_episodes_limit=num_episodes_limit,
+                    expand_context=expand_context,
+                    score_threshold=score_threshold,
+                    property_filter=property_filter,
+                    use_fts=use_fts,
+                    append_n=append_n,
+                )
             return await self._search_scored_declarative(
                 query,
                 num_episodes_limit=num_episodes_limit,
@@ -276,6 +404,310 @@ class LongTermMemory:
             score_threshold=score_threshold,
             property_filter=property_filter,
         )
+
+    async def _search_scored_hybrid(
+        self,
+        query: str,
+        *,
+        num_episodes_limit: int,
+        expand_context: int,
+        score_threshold: float | None,
+        property_filter: FilterExpr | None,
+        use_fts: FtsMode = True,
+        append_n: int = FTS_APPEND_COUNT_DEFAULT,
+    ) -> list[tuple[float, Episode]]:
+        """Hybrid search combining Vector results with FTS (keyword) results.
+
+        Modes (selected via `use_fts`):
+        - True / "rrf": Reciprocal Rank Fusion — vector and FTS results are each
+          ranked, then fused by RRF score 1/(RRF_K + rank); returns top
+          `num_episodes_limit` results, re-sorted by timestamp (the default
+          MemMachine ordering) to match the vector-only path.
+        - "append": Appends up to `append_n` FTS results (deduplicated by episode
+          uid) after the vector results; no reranking. Returns up to
+          `num_episodes_limit + append_n` results.
+
+        Any other value raises ValueError.
+
+        Vector results are already reranked (e.g. via RRFHybridReranker) by
+        `_search_scored_declarative`; only their rank order is used here.
+        """
+        assert self._declarative_memory is not None
+
+        # Both RRF and append modes need vector + FTS results; fetch them in
+        # parallel. The threshold is applied *after* the merge/fusion so that
+        # the two result sets are compared on a common footing.
+        vector_results, fts_results_full = await asyncio.gather(
+            self._search_scored_declarative(
+                query,
+                num_episodes_limit=num_episodes_limit,
+                expand_context=expand_context,
+                score_threshold=None,  # Apply threshold after merge
+                property_filter=property_filter,
+            ),
+            self._search_fts(query, num_episodes_limit=num_episodes_limit),
+        )
+
+        # RRF fusion mode: rank vector + FTS results, fuse by 1/(RRF_K + rank),
+        # take the top `num_episodes_limit`, then re-sort by timestamp (the
+        # MemMachine-default ordering, matching the vector-only path).
+        if use_fts is True or use_fts == "rrf":
+            return self._fuse_rrf(
+                vector_results,
+                fts_results_full,
+                num_episodes_limit=num_episodes_limit,
+                score_threshold=score_threshold,
+            )
+
+        # Append mode: keep vector results (timestamp order) and append up to
+        # `append_n` unique FTS (keyword) results after them, deduplicated by
+        # uid. No re-ordering — vector-first then FTS, not a global sort.
+        if use_fts == "append":
+            fts_top_n = fts_results_full[:append_n]
+
+            merged_results = list(vector_results)
+            seen_uids = {ep.uid for _, ep in merged_results}
+            for score, episode in fts_top_n:
+                if episode.uid not in seen_uids:
+                    merged_results.append((score, episode))
+                    seen_uids.add(episode.uid)
+
+            # Apply score threshold
+            if score_threshold is not None:
+                merged_results = [
+                    (score, episode)
+                    for score, episode in merged_results
+                    if score >= score_threshold
+                ]
+            return merged_results
+
+        # Unreachable under FtsMode typing, but guards against unexpected runtime
+        # values that bypass the type system (e.g. via MCP/HTTP string args).
+        raise ValueError(
+            f"Invalid use_fts value: {use_fts!r}. Expected True, 'rrf', or 'append'."
+        )
+
+    @staticmethod
+    def _fuse_rrf(
+        vector_results: list[tuple[float, Episode]],
+        fts_results: list[tuple[float, Episode]],
+        *,
+        num_episodes_limit: int,
+        score_threshold: float | None,
+    ) -> list[tuple[float, Episode]]:
+        """Fuse vector and FTS result lists via Reciprocal Rank Fusion.
+
+        Each input list is treated as a ranking (highest-relevance first). For
+        every candidate, RRF accumulates `1/(RRF_K + rank)` across the lists it
+        appears in. Candidates seen in both lists therefore score higher than
+        those seen in only one — the fusion reward for agreement.
+
+        After fusion:
+        1. Take the top `num_episodes_limit` candidates by RRF score.
+        2. Re-sort those top candidates by (timestamp, uid) — the default
+           MemMachine ordering, matching the vector-only path. The RRF score is
+           only used to *select* the winners, not to order the final output.
+        3. Apply `score_threshold` to the RRF score (higher-is-better).
+
+        Deduplication is by episode uid: if the same episode appears in both
+        lists, its RRF contributions are summed under one entry.
+
+        Note: the RRF score lives on a small fixed scale (a single hit at rank 1
+        is `1/(RRF_K + 1)` ≈ 0.0164; a hit in both lists tops out near `2/61` ≈
+        0.0328). A `score_threshold` calibrated for the 0-1 vector/reranker
+        scale will therefore filter *every* RRF candidate out — callers using
+        RRF should pass `score_threshold=None` or rescale accordingly.
+        """
+        rrf_scores: dict[str, float] = {}
+        episodes_by_uid: dict[str, Episode] = {}
+
+        def add_ranking(ranking: list[tuple[float, Episode]]) -> None:
+            for rank, (_score, episode) in enumerate(ranking, start=1):
+                uid = episode.uid
+                episodes_by_uid.setdefault(uid, episode)
+                rrf_scores[uid] = rrf_scores.get(uid, 0.0) + 1.0 / (RRF_K + rank)
+
+        add_ranking(vector_results)
+        add_ranking(fts_results)
+
+        # Select the top candidates by RRF score (descending). Ties broken by
+        # uid for determinism.
+        ranked = sorted(
+            rrf_scores.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+        top = ranked[:num_episodes_limit]
+
+        # Drop below threshold (RRF score is higher-is-better).
+        if score_threshold is not None:
+            top = [(uid, score) for uid, score in top if score >= score_threshold]
+
+        # Final ordering: timestamp then uid (the MemMachine default), not RRF.
+        fused = [(score, episodes_by_uid[uid]) for uid, score in top]
+        fused.sort(
+            key=lambda scored: (scored[1].created_at, scored[1].uid),
+        )
+        return fused
+
+    @staticmethod
+    def _escape_lucene_query(query: str) -> str:
+        r"""Escape Lucene special characters in an FTS query.
+
+        Lucene special characters: + - = && || > < ! ( ) { } [ ] ^ " ~ * ? : \ /
+        """
+        lucene_special_chars = [
+            "+",
+            "-",
+            "=",
+            "&",
+            "|",
+            ">",
+            "<",
+            "!",
+            "(",
+            ")",
+            "{",
+            "}",
+            "[",
+            "]",
+            "^",
+            '"',
+            "~",
+            "*",
+            "?",
+            ":",
+            "\\",
+            "/",
+        ]
+        escaped_query = query
+        for char in lucene_special_chars:
+            escaped_query = escaped_query.replace(char, f"\\{char}")
+        return escaped_query
+
+    async def _search_fts(
+        self,
+        query: str,
+        *,
+        num_episodes_limit: int,
+    ) -> list[tuple[float, Episode]]:
+        """Search using Neo4j Full-Text Search only."""
+        assert self._declarative_memory is not None
+
+        declarative_memory = self._declarative_memory
+        vector_graph_store = declarative_memory._vector_graph_store  # noqa: SLF001
+
+        # FTS is Neo4j-only
+        if not isinstance(vector_graph_store, Neo4jVectorGraphStore):
+            raise NotImplementedError("FTS is only supported with the Neo4j backend")
+
+        derivative_collection = declarative_memory._derivative_collection  # noqa: SLF001
+        episode_collection = declarative_memory._episode_collection  # noqa: SLF001
+        derivative_episode_relation = declarative_memory._derived_from_relation  # noqa: SLF001
+        driver = vector_graph_store._driver  # noqa: SLF001
+        sanitize_name = vector_graph_store._sanitize_name  # noqa: SLF001
+
+        # Generate FTS index name (auto-created during ingest)
+        fts_index_name = f"fts_{sanitize_name(derivative_collection)}_content"
+
+        logger.info("FTS Search: index=%s, query=%s", fts_index_name, query)
+
+        fts_query_terms = query.lower().split()
+        # Escape Lucene special characters
+        fts_query_string = " ".join(
+            self._escape_lucene_query(term) for term in fts_query_terms
+        )
+
+        # Use sanitized property name
+        # FTS index is on content field, stored as SANITIZED_property_u5f_content after mangle_property_name
+        sanitized_content = sanitize_name(mangle_property_name("content"))
+        # Timestamp is stored on every node (episode + derivative) under the same
+        # mangled+sanitized key as content. Reading it here lets FTS results carry
+        # the SAME timestamp as the vector-search path, so RRF/append can sort by
+        # timestamp just like vector-only results do.
+        sanitized_timestamp = sanitize_name(mangle_property_name("timestamp"))
+
+        # FTS query: Follow DERIVED_FROM relation to get Episode Node uid directly
+        # Returns same Episode.uid as Vector Search for correct dedup
+        sanitized_derived_from_relation = sanitize_name(derivative_episode_relation)
+        # Episode label also needs sanitization (same as collection name)
+        sanitized_episode_collection = sanitize_name(episode_collection)
+
+        records, _, _ = await driver.execute_query(
+            _neo4j_query(f"""
+            CALL db.index.fulltext.queryNodes(
+                '{fts_index_name}',
+                $query,
+                {{ limit: $limit }}
+            )
+            YIELD node AS derivative, score
+            MATCH (derivative)-[:{sanitized_derived_from_relation}]->(episode:{sanitized_episode_collection})
+            RETURN episode.uid AS uid,
+                   derivative.{sanitized_content} AS content,
+                   derivative.{sanitized_timestamp} AS timestamp,
+                   derivative.SANITIZED_property_u5f_filterable_u5f_metadata_u2e_lme_u5f_session_u5f_id AS lme_session_id,
+                   derivative.SANITIZED_property_u5f_filterable_u5f_metadata_u2e_lme_u5f_turn_u5f_idx AS lme_turn_idx,
+                   score
+            ORDER BY score DESC
+            """),
+            query=fts_query_string,
+            limit=num_episodes_limit * 5,
+        )
+
+        # Convert to Episode objects
+        # FTS now returns the stored timestamp (same value as vector-search uses),
+        # so results can be sorted by timestamp consistently across hybrid modes.
+        fts_episodes = []
+        for record in records:
+            uid = record.get("uid")
+            if uid:
+                content = record.get("content", "")
+                # Timestamp stored on the derivative node; falls back to now()
+                # only if the node somehow lacks the property (shouldn't happen).
+                timestamp = record.get("timestamp")
+                if timestamp is None:
+                    timestamp = datetime.datetime.now(datetime.UTC)
+                elif hasattr(timestamp, "to_native"):
+                    # The Neo4j driver returns neo4j.time.DateTime for stored
+                    # timestamps. Convert it to a native python datetime so
+                    # pydantic's Episode.created_at accepts it (the vector path
+                    # already gets a native datetime via the declarative-memory
+                    # layer's dm.timestamp).
+                    timestamp = timestamp.to_native()
+                # Get metadata explicitly from Neo4j (using sanitized property names)
+                lme_session_id = record.get("lme_session_id")
+                lme_turn_idx = record.get("lme_turn_idx")
+                metadata = {}
+                if lme_session_id is not None and lme_turn_idx is not None:
+                    metadata["lme_session_id"] = lme_session_id
+                    metadata["lme_turn_idx"] = lme_turn_idx
+                # Extract source from content (format: "User: ..." or "Assistant: ...")
+                producer_id = ""
+                producer_role = ""
+                if content.startswith("User:"):
+                    producer_id = "User"
+                    producer_role = "user"
+                elif content.startswith("Assistant:"):
+                    producer_id = "Assistant"
+                    producer_role = "assistant"
+
+                episode = Episode(
+                    uid=uid,  # Now Episode Node uid (session_id:turn_idx format)
+                    sequence_num=0,
+                    session_key="",
+                    episode_type=EpisodeType.MESSAGE,
+                    content_type=ContentType.STRING,
+                    content=content,
+                    created_at=timestamp,  # Stored timestamp, same as vector path
+                    producer_id=producer_id,
+                    producer_role=producer_role,
+                    produced_for_id=None,
+                    metadata=metadata,  # Use metadata from Neo4j
+                    filterable_metadata=None,
+                )
+                fts_episodes.append((record.get("score", 0.0), episode))
+
+        logger.info("FTS returned %d results", len(fts_episodes))
+        return fts_episodes
 
     async def _search_scored_declarative(
         self,

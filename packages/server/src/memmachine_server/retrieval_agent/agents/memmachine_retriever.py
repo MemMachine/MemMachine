@@ -64,6 +64,8 @@ class MemMachineAgent(AgentToolBase):
             expand_context=query.expand_context,
             score_threshold=query.score_threshold,
             property_filter=query.property_filter,
+            use_fts=query.use_fts,  # Full-Text Search flag for hybrid search
+            append_n=query.append_n,  # Number of FTS results to append (append mode)
             mode=EpisodicMemory.QueryMode.LONG_TERM_ONLY,
         )
         if query_response is None:

@@ -196,6 +196,18 @@ class DeclarativeLongTermMemoryConf(BaseModel):
         False,
         description="Whether to chunk message episodes into sentences for embedding",
     )
+    fts_enabled: bool = Field(
+        True,
+        description=(
+            "Whether to auto-create the Neo4j Full-Text Search (FTS) index for "
+            "this session at session creation. Default True: the FTS index is "
+            "created up front so the first ingest is immediately searchable via "
+            "hybrid (Vector+FTS) search. Set False to skip FTS initialization "
+            "(e.g. on a non-Neo4j backend or when FTS is not wanted). Only "
+            "effective with the declarative backend; silently ignored on the "
+            "event backend."
+        ),
+    )
 
 
 class EventLongTermMemoryConf(BaseModel):
@@ -282,6 +294,14 @@ class LongTermMemoryConfPartial(BaseModel):
     message_sentence_chunking: bool | None = Field(
         default=None,
         description="Sentence-chunk message episodes (declarative backend only)",
+    )
+    fts_enabled: bool | None = Field(
+        default=None,
+        description=(
+            "Whether to auto-create the FTS index at session creation "
+            "(declarative backend only). None defers to the resolved default "
+            "(True). Set False to skip FTS initialization."
+        ),
     )
 
     # Event-backend fields.

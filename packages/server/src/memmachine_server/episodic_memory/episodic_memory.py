@@ -23,6 +23,7 @@ from collections.abc import Coroutine, Iterable
 from enum import StrEnum
 from typing import cast, get_args
 
+from memmachine_common.api.spec import FtsMode
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
 from memmachine_server.common.data_types import PropertyValue
@@ -205,6 +206,21 @@ class EpisodicMemory:
         """
         return self._session_key
 
+    async def create_fts_index(self) -> tuple[str, str | None]:
+        """Manually create the FTS index for this session's long-term memory.
+
+        Delegates to `LongTermMemory.create_fts_index`. Returns ``("unsupported",
+        None)`` when long-term memory is disabled or has no FTS backend, so the
+        API layer can report a consistent status without branching.
+
+        Returns:
+            A `(status, index_name)` tuple (see `LongTermMemory.create_fts_index`).
+
+        """
+        if self._long_term_memory is None:
+            return ("unsupported", None)
+        return await self._long_term_memory.create_fts_index()
+
     async def add_memory_episodes(self, episodes: list[Episode]) -> None:
         """
         Add a new memory episode to both session and declarative memory.
@@ -336,6 +352,8 @@ class EpisodicMemory:
         expand_context: int,
         score_threshold: float,
         property_filter: FilterExpr | None,
+        use_fts: FtsMode = False,  # Full-Text Search flag for hybrid search
+        append_n: int = 10,  # Number of FTS results to append (append mode)
     ) -> list[tuple[float, Episode]]:
         """Query long-term memory or return an empty result if unavailable."""
         if self._long_term_memory is None:
@@ -347,6 +365,8 @@ class EpisodicMemory:
             expand_context=expand_context,
             score_threshold=score_threshold,
             property_filter=property_filter,
+            use_fts=use_fts,  # Full-Text Search flag for hybrid search
+            append_n=append_n,  # Number of FTS results to append (append mode)
         )
 
     async def query_memory(
@@ -357,6 +377,8 @@ class EpisodicMemory:
         expand_context: int = 0,
         score_threshold: float = -float("inf"),
         property_filter: FilterExpr | None = None,
+        use_fts: FtsMode = False,  # Full-Text Search flag for hybrid search
+        append_n: int = 10,  # Number of FTS results to append (append mode)
         mode: QueryMode = QueryMode.BOTH,
     ) -> QueryResponse | None:
         """
@@ -375,6 +397,8 @@ class EpisodicMemory:
                             around each matched episode from long term memory.
             score_threshold: Minimum score to consider a match.
             property_filter: Properties to filter declarative memory searches.
+            use_fts: Full-Text Search flag for hybrid search
+            append_n: Number of FTS results to append (only used in 'append' mode)
             mode: Which memory backends to query.
 
         Returns:
@@ -400,6 +424,8 @@ class EpisodicMemory:
                     expand_context=expand_context,
                     score_threshold=score_threshold,
                     property_filter=property_filter,
+                    use_fts=use_fts,  # Full-Text Search flag for hybrid search
+                    append_n=append_n,  # Number of FTS results to append (append mode)
                 )
             elif self._long_term_memory is None:
                 short_episode, short_summary = await self._query_short_term_memory(
@@ -421,6 +447,8 @@ class EpisodicMemory:
                         expand_context=expand_context,
                         score_threshold=score_threshold,
                         property_filter=property_filter,
+                        use_fts=use_fts,  # Full-Text Search flag for hybrid search
+                        append_n=append_n,  # Number of FTS results to append (append mode)
                     ),
                 )
                 short_episode, short_summary = session_result
@@ -431,6 +459,8 @@ class EpisodicMemory:
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=property_filter,
+                use_fts=use_fts,  # Full-Text Search flag for hybrid search
+                append_n=append_n,  # Number of FTS results to append (append mode)
             )
         elif mode is EpisodicMemory.QueryMode.SHORT_TERM_ONLY:
             short_episode, short_summary = await self._query_short_term_memory(

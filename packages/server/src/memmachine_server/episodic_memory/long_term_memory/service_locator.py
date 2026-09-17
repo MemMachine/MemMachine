@@ -86,6 +86,7 @@ async def _declarative_params(
         embedder=embedder,
         reranker=reranker,
         message_sentence_chunking=config.message_sentence_chunking,
+        fts_enabled=config.fts_enabled,
     )
 
 

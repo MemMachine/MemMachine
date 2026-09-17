@@ -26,6 +26,19 @@ UTC = timezone.utc
 PropertyValue = bool | int | float | str | datetime
 """Type for stored property values (duplicated here to avoid server dependency)."""
 
+# FTS (Full-Text Search) hybrid search configuration.
+# use_fts modes:
+#   False           -> vector search only
+#   True / "rrf"    -> hybrid search fused via Reciprocal Rank Fusion (returns top_k)
+#   "append"        -> hybrid search that appends FTS results after vector results
+FtsMode = Literal["rrf", "append"] | bool
+
+# RRF score formula constant (1 / (RRF_K + rank)); NOT a result-count.
+RRF_K = 60
+
+# Default number of FTS results appended in "append" mode.
+FTS_APPEND_COUNT_DEFAULT = 10
+
 # Canonical type-name set accepted in `properties_schema`. Mirrors
 # `memmachine_server.common.data_types.PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE` but
 # lives here so the API contract validates types at request time rather than
@@ -204,6 +217,39 @@ class _WithOrgAndProj(BaseModel):
     project_id: Annotated[
         SafeIdWithDefault,
         Field(description=SpecDoc.PROJECT_ID, examples=Examples.PROJECT_ID),
+    ]
+
+
+class EnableFtsIndexSpec(_WithOrgAndProj):
+    """Specification model for manually creating the FTS index.
+
+    The FTS index is auto-created at session creation by default (see
+    `DeclarativeLongTermMemoryConf.fts_enabled`). This request creates it on
+    demand — useful when FTS was disabled at creation time, or when an
+    existing Neo4j vector store should gain FTS without re-ingesting.
+    """
+
+
+class EnableFtsIndexResponse(BaseModel):
+    """Response model for the FTS index creation request."""
+
+    status: Annotated[
+        str,
+        Field(
+            description=(
+                "Result status: 'created' when the index is now online "
+                "(newly created or already existed — the operation is "
+                "idempotent); 'unsupported' when the backend has no FTS "
+                "(e.g. Nebula / event backend)."
+            ),
+        ),
+    ]
+    index_name: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Name of the FTS index, or None if unsupported.",
+        ),
     ]
 
 
@@ -618,6 +664,35 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             default=False,
             description=SpecDoc.AGENT_MODE,
             examples=Examples.AGENT_MODE,
+        ),
+    ]
+
+    # Flags for using Hybrid Search(Vector + Full-Text Search)
+    use_fts: Annotated[
+        FtsMode,
+        Field(
+            default=False,
+            description=(
+                "Full-Text Search (keyword) mode combined with Vector Search. "
+                "False: vector search only; "
+                "True or 'rrf': hybrid search fused via Reciprocal Rank Fusion "
+                "(vector and FTS each ranked then fused, returns top_k); "
+                "'append': hybrid search that appends FTS results after vector "
+                "results (deduplicated, no reranking; count set by append_n)."
+            ),
+            examples=[False, True, "rrf", "append"],
+        ),
+    ]
+    append_n: Annotated[
+        int,
+        Field(
+            default=FTS_APPEND_COUNT_DEFAULT,
+            ge=1,
+            description=(
+                "Number of FTS (keyword) results to append after vector results. "
+                "Only used when use_fts='append'. Ignored for 'rrf' and False."
+            ),
+            examples=[10, 5],
         ),
     ]
 
