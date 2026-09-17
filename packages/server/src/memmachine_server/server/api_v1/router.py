@@ -328,10 +328,9 @@ Remember a batch of events.
 
 An event's `id` is the client's dedupe key: a client that retries a
 batch supplies the ids it used, and a batch without them is stored
-again. This deployment holds no event store yet, so a repeated id
-stores a second copy rather than being rejected; the rejection arrives
-with the store's write transaction, and a client that supplies ids
-needs no change when it does.
+again. A tenant holds an event once: a batch naming an id the tenant
+already holds is rejected whole with `event_exists`, and nothing in it
+is stored. Forget the event to store it again.
 
 Ingest is synchronous: the segments and the vector records are written
 before this answers. `wait` is accepted so that a client written
@@ -342,6 +341,7 @@ against the asynchronous contract works unchanged, and is ignored.
 @router.post(
     "/tenants/{tenant}/events",
     description=ADD_EVENTS_DESCRIPTION,
+    responses={409: {"model": ErrorResponse}},
     tags=["v1 Events"],
 )
 async def add_events(
@@ -355,7 +355,11 @@ async def add_events(
         ),
     ] = None,
 ) -> StoredEvents:
-    """Encode a batch of events into the tenant's memory."""
+    """Encode a batch of events into the tenant's memory.
+
+    A batch naming an event the tenant already holds is rejected whole,
+    as `event_exists`, and stores nothing.
+    """
     if wait is not None:
         logger.debug("Ignoring wait=%s seconds: v1 ingest is synchronous", wait)
     resolved = await memories.resolve(tenant)

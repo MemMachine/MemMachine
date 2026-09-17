@@ -16,6 +16,10 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStoreEventAlreadyStoredError,
+)
+
 from .tenant_event_memories import ComponentNotEnabledError, TenantNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -23,6 +27,7 @@ logger = logging.getLogger(__name__)
 ErrorCode = Literal[
     "tenant_not_found",
     "component_not_enabled",
+    "event_exists",
     "invalid_request",
     "internal",
 ]
@@ -63,6 +68,10 @@ class ErrorEnvelopeRoute(APIRoute):
                 return _envelope(404, "tenant_not_found", str(error))
             except ComponentNotEnabledError as error:
                 return _envelope(404, "component_not_enabled", str(error))
+            except EventMemoryStoreEventAlreadyStoredError as error:
+                # The batch named events the tenant already holds and was
+                # rejected whole; the message names them.
+                return _envelope(409, "event_exists", str(error))
             except RequestValidationError as error:
                 return _envelope(422, "invalid_request", _validation_message(error))
             except (ValueError, LookupError) as error:

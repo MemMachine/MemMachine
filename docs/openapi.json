@@ -2278,7 +2278,7 @@
           "v1 Events"
         ],
         "summary": "Add Events",
-        "description": "Remember a batch of events.\n\nAn event's `id` is the client's dedupe key: a client that retries a\nbatch supplies the ids it used, and a batch without them is stored\nagain. This deployment holds no event store yet, so a repeated id\nstores a second copy rather than being rejected; the rejection arrives\nwith the store's write transaction, and a client that supplies ids\nneeds no change when it does.\n\nIngest is synchronous: the segments and the vector records are written\nbefore this answers. `wait` is accepted so that a client written\nagainst the asynchronous contract works unchanged, and is ignored.",
+        "description": "Remember a batch of events.\n\nAn event's `id` is the client's dedupe key: a client that retries a\nbatch supplies the ids it used, and a batch without them is stored\nagain. A tenant holds an event once: a batch naming an id the tenant\nalready holds is rejected whole with `event_exists`, and nothing in it\nis stored. Forget the event to store it again.\n\nIngest is synchronous: the segments and the vector records are written\nbefore this answers. `wait` is accepted so that a client written\nagainst the asynchronous contract works unchanged, and is ignored.",
         "operationId": "add_events",
         "parameters": [
           {
@@ -2365,6 +2365,16 @@
               }
             },
             "description": "Internal Server Error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
           }
         }
       }
@@ -4177,6 +4187,7 @@
             "enum": [
               "tenant_not_found",
               "component_not_enabled",
+              "event_exists",
               "invalid_request",
               "internal"
             ],

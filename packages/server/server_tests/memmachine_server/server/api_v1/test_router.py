@@ -137,6 +137,27 @@ class TestEvents:
         assert response.status_code == 200
         assert len(response.json()["stored"]) == 1
 
+    def test_reingesting_a_held_id_answers_409_naming_it(self, client):
+        _create(client)
+        held = str(uuid4())
+        _ingest(client, [_event("near one", event_id=held)])
+
+        response = client.post(
+            f"/v1/tenants/{_TENANT}/events",
+            json=[
+                _event("near two", event_id=held, minute=1),
+                _event("near three", minute=2),
+            ],
+        )
+
+        assert response.status_code == 409
+        error = _error(response)
+        assert error["code"] == "event_exists"
+        assert held in error["message"]
+        # The batch was rejected whole: the event beside it is not stored.
+        texts = [hit["text"] for hit in _query(client).json()["hits"]]
+        assert not any("near three" in text for text in texts)
+
     def test_ingest_into_an_unknown_tenant_answers_404(self, client):
         response = client.post(f"/v1/tenants/{_TENANT}/events", json=[_event("hi")])
         assert response.status_code == 404
