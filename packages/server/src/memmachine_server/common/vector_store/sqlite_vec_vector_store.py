@@ -424,6 +424,32 @@ class SQLiteVecVectorStoreCollection(VectorStoreCollection):
             )
 
 
+def load_sqlite_vec_extension(engine: AsyncEngine) -> None:
+    """Load the sqlite-vec extension on every connection of a SQLite engine.
+
+    Loadable extensions are per-connection state. Registering the loader
+    at engine creation, before any connection is pooled, is the only
+    placement that covers every connection: a listener added later
+    misses already-pooled connections, which then serve vec queries
+    without the extension, and mutating a live pool's listeners races
+    its event dispatch.
+    """
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _load_sqlite_vec(
+        dbapi_connection: DBAPIConnection,
+        _connection_record: ConnectionPoolEntry,
+    ) -> None:
+        async def _load_extension(
+            aio_connection: aiosqlite.Connection,
+        ) -> None:
+            await aio_connection.enable_load_extension(True)
+            await aio_connection.load_extension(sqlite_vec.loadable_path())
+            await aio_connection.enable_load_extension(False)
+
+        dbapi_connection.run_async(_load_extension)
+
+
 class SQLiteVecVectorStoreParams(BaseModel):
     """
     Parameters for constructing a SQLiteVecVectorStore.
@@ -471,23 +497,32 @@ class SQLiteVecVectorStore(VectorStore):
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
         self._sa_metadata = MetaData()
 
-        @event.listens_for(self._engine.sync_engine, "connect")
-        def _load_sqlite_vec(
-            dbapi_connection: DBAPIConnection,
-            _connection_record: ConnectionPoolEntry,
-        ) -> None:
-            async def _load_extension(
-                aio_connection: aiosqlite.Connection,
-            ) -> None:
-                await aio_connection.enable_load_extension(True)
-                await aio_connection.load_extension(sqlite_vec.loadable_path())
-                await aio_connection.enable_load_extension(False)
-
-            dbapi_connection.run_async(_load_extension)
-
     @override
     async def startup(self) -> None:
         async with self._engine.begin() as connection:
+            # The sqlite-vec extension is per-connection state and must be
+            # loaded at ENGINE creation: a listener added by this store
+            # would miss connections the caller's engine pooled earlier --
+            # which then fail every vec statement -- and registering
+            # listeners on a live pool races its event dispatch. The store
+            # therefore verifies rather than mutates. Probing the function
+            # list keeps the check a scalar; calling vec_version() would
+            # need its failure told apart from other OperationalErrors.
+            loaded = (
+                await connection.execute(
+                    text(
+                        "SELECT count(*) FROM pragma_function_list "
+                        "WHERE name = 'vec_version'"
+                    )
+                )
+            ).scalar()
+            if not loaded:
+                raise RuntimeError(
+                    "SQLite engine does not load the sqlite-vec extension, so "
+                    "every vec statement would fail. Register the loader at "
+                    "engine creation (load_sqlite_vec_extension) before "
+                    "constructing the store."
+                )
             await connection.run_sync(BaseSQLiteVecVectorStore.metadata.create_all)
 
     @override
