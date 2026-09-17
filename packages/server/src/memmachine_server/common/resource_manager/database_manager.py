@@ -67,6 +67,9 @@ def _sql_engine_kwargs(conf: SqlAlchemyConf) -> dict[str, Any]:
         if conf.command_timeout is not None:
             connect_args["command_timeout"] = conf.command_timeout
         if conf.connect_timeout is not None:
+            # asyncpg names the connect deadline `timeout`, and has no
+            # `connect_timeout` parameter, so this key cannot be qualified
+            # further - it is their spelling, not ours.
             connect_args["timeout"] = conf.connect_timeout
         if connect_args:
             kwargs["connect_args"] = connect_args

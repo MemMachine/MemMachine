@@ -54,6 +54,8 @@ postgres:
   pool_timeout: 30      # SQLAlchemy default (seconds to wait for a connection)
   pool_recycle: -1      # SQLAlchemy default (disabled; set to e.g. 3000 for idle-timeout avoidance)
   pool_pre_ping: false  # SQLAlchemy default; set to true to test connections before checkout
+  command_timeout: 60   # asyncpg only: seconds a statement may run before it is cancelled; null for unbounded
+  connect_timeout: 10   # asyncpg only: seconds to wait for a new connection; null to wait indefinitely
   resources:
     requests:
       cpu: 250m
