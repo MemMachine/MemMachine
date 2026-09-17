@@ -1015,11 +1015,13 @@ async def test_query_search_skips_semantic_memory_when_disabled(
 async def test_query_search_uses_semantic_memory_when_enabled(
     minimal_conf, patched_resource_manager, monkeypatch
 ):
-    """The enabled counterpart, so the pair discriminates on the flag alone.
+    """The enabled counterpart of the disabled tests above.
 
-    ``minimal_conf.semantic_memory`` is a ``MagicMock``, whose attributes are
-    truthy by default; setting ``enabled`` explicitly here keeps this control
-    from passing for that reason instead of the one it names.
+    ``minimal_conf.semantic_memory`` is a ``MagicMock``, so ``enabled`` is
+    already truthy and the assignment below states intent rather than changing
+    state. The discrimination therefore comes from the disabled siblings, which
+    set the flag to ``False``; this test only pins that an enabled server still
+    reaches semantic memory.
     """
     minimal_conf.semantic_memory.enabled = True
     dummy_session = DummySessionData("enabled-search")
@@ -1086,3 +1088,101 @@ async def test_list_search_skips_semantic_memory_when_disabled(
     patched_resource_manager.get_semantic_session_manager.assert_not_called()
     assert result.episodic_memory == episodes
     assert result.semantic_memory is None
+
+
+@pytest.mark.asyncio
+async def test_list_search_uses_semantic_memory_when_enabled(
+    minimal_conf, patched_resource_manager
+):
+    """The enabled counterpart for `list_search`.
+
+    Without this, removing the semantic branch at the `list_search` call site
+    leaves the suite green: the only other `list_search` test asks for
+    episodic memory alone.
+    """
+    minimal_conf.semantic_memory.enabled = True
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("enabled-list")
+
+    episode_storage = MagicMock()
+    episode_storage.get_episode_messages = AsyncMock(return_value=[])
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    semantic_features = [
+        SemanticFeature(
+            category="profile",
+            tag="name",
+            feature_name="value",
+            value="semantic-response",
+        )
+    ]
+
+    async def mock_get_set_features(*args, **kwargs):
+        for feature in semantic_features:
+            yield feature
+
+    semantic_manager = MagicMock()
+    semantic_manager.get_set_features = mock_get_set_features
+    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+        return_value=semantic_manager
+    )
+
+    result = await memmachine.list_search(session)
+
+    patched_resource_manager.get_semantic_session_manager.assert_awaited_once()
+    assert result.semantic_memory == semantic_features
+
+
+@pytest.mark.asyncio
+async def test_delete_episodes_skips_semantic_memory_when_disabled(
+    minimal_conf, patched_resource_manager
+):
+    """An episodic delete must still delete while semantic memory is disabled.
+
+    `delete_episodes` resolved the semantic service before building any task,
+    so with semantic memory disabled the whole call raised and the episodes
+    were never removed from storage either - on `POST /memories/episodic/delete`,
+    a route that names no semantic memory at all.
+    """
+    minimal_conf.semantic_memory.enabled = False
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    episode_storage = MagicMock()
+    episode_storage.delete_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    patched_resource_manager.get_semantic_service = AsyncMock()
+
+    await memmachine.delete_episodes(["e1"])
+
+    patched_resource_manager.get_semantic_service.assert_not_called()
+    episode_storage.delete_episodes.assert_awaited_once_with(["e1"])
+
+
+@pytest.mark.asyncio
+async def test_delete_episodes_uses_semantic_memory_when_enabled(
+    minimal_conf, patched_resource_manager
+):
+    """The enabled counterpart, so the guard discriminates on the flag."""
+    minimal_conf.semantic_memory.enabled = True
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    episode_storage = MagicMock()
+    episode_storage.delete_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    semantic_service = MagicMock()
+    semantic_service.delete_history = AsyncMock()
+    patched_resource_manager.get_semantic_service = AsyncMock(
+        return_value=semantic_service
+    )
+
+    await memmachine.delete_episodes(["e1"])
+
+    semantic_service.delete_history.assert_awaited_once_with(["e1"])
+    episode_storage.delete_episodes.assert_awaited_once_with(["e1"])

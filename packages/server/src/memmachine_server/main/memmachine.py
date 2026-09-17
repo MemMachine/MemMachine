@@ -679,7 +679,9 @@ class MemMachine:
             return left
         return FilterAnd(left=left, right=right)
 
-    def _semantic_memory_targeted(self, target_memories: list[MemoryType]) -> bool:
+    def _should_dispatch_to_semantic_memory(
+        self, target_memories: list[MemoryType]
+    ) -> bool:
         """
         Report whether a request should reach semantic memory.
 
@@ -697,12 +699,10 @@ class MemMachine:
             `True` when semantic memory is both requested and enabled.
 
         """
-        if MemoryType.Semantic not in target_memories:
-            return False
-        if not self._conf.semantic_memory.enabled:
-            logger.debug("Semantic memory is disabled; skipping it for this request.")
-            return False
-        return True
+        return (
+            MemoryType.Semantic in target_memories
+            and self._conf.semantic_memory.enabled
+        )
 
     async def add_episodes(
         self,
@@ -746,7 +746,7 @@ class MemMachine:
             ) as episodic_session:
                 tasks.append(episodic_session.add_memory_episodes(episodes))
 
-        if self._semantic_memory_targeted(target_memories):
+        if self._should_dispatch_to_semantic_memory(target_memories):
             semantic_session_manager = (
                 await self._resources.get_semantic_session_manager()
             )
@@ -1021,7 +1021,7 @@ class MemMachine:
                 )
             )
 
-        if self._semantic_memory_targeted(target_memories):
+        if self._should_dispatch_to_semantic_memory(target_memories):
             semantic_session = await self._resources.get_semantic_session_manager()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
@@ -1098,7 +1098,7 @@ class MemMachine:
                 )
             )
 
-        if self._semantic_memory_targeted(target_memories):
+        if self._should_dispatch_to_semantic_memory(target_memories):
             semantic_session = await self._resources.get_semantic_session_manager()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
@@ -1172,7 +1172,6 @@ class MemMachine:
 
         """
         episode_storage = await self._resources.get_episode_storage()
-        semantic_service = await self._resources.get_semantic_service()
 
         tasks: list[Coroutine[Any, Any, Any]] = []
 
@@ -1187,7 +1186,9 @@ class MemMachine:
                 tasks.append(t)
 
         tasks.append(episode_storage.delete_episodes(episode_ids))
-        tasks.append(semantic_service.delete_history(episode_ids))
+        if self._conf.semantic_memory.enabled:
+            semantic_service = await self._resources.get_semantic_service()
+            tasks.append(semantic_service.delete_history(episode_ids))
         await asyncio.gather(*tasks)
 
     async def _cleanup_semantic_history(self, episode_ids: list[str]) -> None:
