@@ -1,5 +1,6 @@
 """Data types for EventMemory."""
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -126,12 +127,101 @@ class TextBlock(Block):
         return self.text
 
 
+TOOL_NAME_MAX_BYTES = 255
+"""Bound on the name of a tool a block names, in bytes, as on a source id."""
+
+
+def _bounded_tool_name(value: str) -> str:
+    size = len(value.encode())
+    if size > TOOL_NAME_MAX_BYTES:
+        raise ValueError(f"is {size} bytes; the maximum is {TOOL_NAME_MAX_BYTES}")
+    return value
+
+
+_ToolName = Annotated[
+    str, StringConstraints(min_length=1), AfterValidator(_bounded_tool_name)
+]
+
+
+class ToolCallBlock(Block):
+    """A tool an agent invoked, with the input it was invoked with.
+
+    This kind declares no segmenter and no deriver: a call is one segment
+    however long its input, and it is on the timeline and off the search
+    surface, reached by expansion from a message and never by a query.
+
+    The input is a JSON object, the shape a tool's arguments have, rather
+    than a mapping of property values: it is content the block carries,
+    not something an event is filtered by, and a tool's arguments nest.
+    """
+
+    kind: Literal["tool_call"] = "tool_call"
+    name: _ToolName = Field(description="The name of the tool the agent invoked")
+    input: dict[str, JsonValue] = Field(
+        description="The arguments the tool was invoked with"
+    )
+
+    @override
+    def render(self, datetime_format: DateTimeFormat) -> str | None:
+        arguments = json.dumps(self.input, ensure_ascii=False, separators=(",", ":"))
+        return f"tool_call {self.name}: {arguments}"
+
+
+class ToolResultBlock(Block):
+    """What a tool returned to the agent that invoked it.
+
+    This kind declares no segmenter and no deriver: a result is one
+    segment however long its output, so one expansion step reaches all of
+    it, and it is on the timeline and off the search surface, reached by
+    expansion from a message and never by a query.
+    """
+
+    kind: Literal["tool_result"] = "tool_result"
+    name: _ToolName = Field(description="The name of the tool that returned this")
+    output: str = Field(description="The text the tool returned")
+    error: bool = Field(
+        default=False, description="Whether the tool failed instead of returning"
+    )
+
+    @override
+    def render(self, datetime_format: DateTimeFormat) -> str | None:
+        marker = " [error]" if self.error else ""
+        return f"tool_result {self.name}{marker}: {self.output}"
+
+
+InjectionSource = Literal["hook", "skill", "compaction", "reminder", "command", "other"]
+"""What put text into a conversation that no user typed."""
+
+
+class InjectedBlock(Block):
+    """Text that entered the conversation without a user typing it.
+
+    A hook's context, a skill's body, a compaction summary, a reminder, a
+    command's expansion: `source` says which.
+
+    This kind declares no segmenter and no deriver: injected text is one
+    segment however long it is, and it is on the timeline and off the
+    search surface, reached by expansion from a message and never by a
+    query.
+    """
+
+    kind: Literal["injected"] = "injected"
+    text: str = Field(description="The text that entered the conversation")
+    source: InjectionSource = Field(
+        description="What put the text into the conversation"
+    )
+
+    @override
+    def render(self, datetime_format: DateTimeFormat) -> str | None:
+        return f"injected {self.source}: {self.text}"
+
+
 RegisteredBlock = Annotated[
-    TextBlock,
+    TextBlock | ToolCallBlock | ToolResultBlock | InjectedBlock,
     Field(discriminator="kind"),
 ]
-"""The union of registered block kinds; closed over `TextBlock` until the
-kind table lands."""
+"""The union of registered block kinds; closed over the built-in kinds
+until the kind table lands."""
 
 _BLOCK_ADAPTER = TypeAdapter(RegisteredBlock)
 
