@@ -679,6 +679,31 @@ class MemMachine:
             return left
         return FilterAnd(left=left, right=right)
 
+    def _semantic_memory_targeted(self, target_memories: list[MemoryType]) -> bool:
+        """
+        Report whether a request should reach semantic memory.
+
+        Requests default `target_memories` to every memory type, so the type
+        list alone says nothing about whether semantic memory is configured.
+        Dispatching on it while semantic memory is disabled reaches a backend
+        whose required fields are legally unset and raises
+        `ResourceNotReadyError`; skip it instead, as the startup, shutdown, and
+        session-deletion paths already do.
+
+        Args:
+            target_memories: Memory types this request asked for.
+
+        Returns:
+            `True` when semantic memory is both requested and enabled.
+
+        """
+        if MemoryType.Semantic not in target_memories:
+            return False
+        if not self._conf.semantic_memory.enabled:
+            logger.debug("Semantic memory is disabled; skipping it for this request.")
+            return False
+        return True
+
     async def add_episodes(
         self,
         session_data: InstanceOf[SessionData],
@@ -721,7 +746,7 @@ class MemMachine:
             ) as episodic_session:
                 tasks.append(episodic_session.add_memory_episodes(episodes))
 
-        if MemoryType.Semantic in target_memories:
+        if self._semantic_memory_targeted(target_memories):
             semantic_session_manager = (
                 await self._resources.get_semantic_session_manager()
             )
@@ -996,7 +1021,7 @@ class MemMachine:
                 )
             )
 
-        if MemoryType.Semantic in target_memories:
+        if self._semantic_memory_targeted(target_memories):
             semantic_session = await self._resources.get_semantic_session_manager()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
@@ -1073,7 +1098,7 @@ class MemMachine:
                 )
             )
 
-        if MemoryType.Semantic in target_memories:
+        if self._semantic_memory_targeted(target_memories):
             semantic_session = await self._resources.get_semantic_session_manager()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:

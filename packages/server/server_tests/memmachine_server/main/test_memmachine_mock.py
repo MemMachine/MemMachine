@@ -933,3 +933,156 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
     )
 
     session_manager.delete_session.assert_awaited_once_with(session_key=session_key)
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_skips_semantic_memory_when_disabled(
+    minimal_conf, patched_resource_manager
+):
+    """A write must not reach semantic memory while it is disabled.
+
+    ``target_memories`` defaults to every memory type, so a plain
+    ``POST /memories`` asks for semantic memory without knowing whether it is
+    configured. Reaching the backend here raises ``ResourceNotReadyError``,
+    which no route handles.
+    """
+    minimal_conf.semantic_memory.enabled = False
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("disabled-write")
+
+    entries = [
+        EpisodeEntry(content="hello", producer_id="user", producer_role="assistant"),
+    ]
+    stored_episodes = [_make_episode("e1", session.session_key)]
+
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock(return_value=stored_episodes)
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    episodic_session = AsyncMock()
+    episodic_manager = MagicMock()
+    episodic_manager.open_episodic_memory.return_value = _async_cm(episodic_session)
+    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
+        episodic_session
+    )
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+    patched_resource_manager.get_semantic_session_manager = AsyncMock()
+
+    episode_ids = await memmachine.add_episodes(session, entries)
+
+    patched_resource_manager.get_semantic_session_manager.assert_not_called()
+    episodic_session.add_memory_episodes.assert_awaited_once_with(stored_episodes)
+    assert episode_ids == [episode.uid for episode in stored_episodes]
+
+
+@pytest.mark.asyncio
+async def test_query_search_skips_semantic_memory_when_disabled(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """A search must degrade to episodic-only while semantic memory is disabled."""
+    minimal_conf.semantic_memory.enabled = False
+    dummy_session = DummySessionData("disabled-search")
+
+    async_episodic = AsyncMock(
+        return_value=EpisodicMemory.QueryResponse(
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[],
+            ),
+        )
+    )
+    monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
+    patched_resource_manager.get_semantic_session_manager = AsyncMock()
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    result = await memmachine.query_search(dummy_session, query="find")
+
+    patched_resource_manager.get_semantic_session_manager.assert_not_called()
+    async_episodic.assert_awaited_once()
+    assert result.semantic_memory is None
+    assert result.episodic_memory is not None
+
+
+@pytest.mark.asyncio
+async def test_query_search_uses_semantic_memory_when_enabled(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """The enabled counterpart, so the pair discriminates on the flag alone.
+
+    ``minimal_conf.semantic_memory`` is a ``MagicMock``, whose attributes are
+    truthy by default; setting ``enabled`` explicitly here keeps this control
+    from passing for that reason instead of the one it names.
+    """
+    minimal_conf.semantic_memory.enabled = True
+    dummy_session = DummySessionData("enabled-search")
+
+    async_episodic = AsyncMock(
+        return_value=EpisodicMemory.QueryResponse(
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[],
+                episode_summary=[],
+            ),
+        )
+    )
+    monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
+
+    semantic_features = [
+        SemanticFeature(
+            category="profile",
+            tag="name",
+            feature_name="value",
+            value="semantic-response",
+        )
+    ]
+
+    async def mock_search(*args, **kwargs):
+        for feature in semantic_features:
+            yield feature
+
+    semantic_manager = MagicMock()
+    semantic_manager.search = mock_search
+    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+        return_value=semantic_manager
+    )
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    result = await memmachine.query_search(dummy_session, query="find")
+
+    patched_resource_manager.get_semantic_session_manager.assert_awaited_once()
+    assert result.semantic_memory == semantic_features
+
+
+@pytest.mark.asyncio
+async def test_list_search_skips_semantic_memory_when_disabled(
+    minimal_conf, patched_resource_manager
+):
+    """A list must degrade to episodic-only while semantic memory is disabled."""
+    minimal_conf.semantic_memory.enabled = False
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("disabled-list")
+
+    episode_storage = MagicMock()
+    episodes = [_make_episode("e1", session.session_key)]
+    episode_storage.get_episode_messages = AsyncMock(return_value=episodes)
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    patched_resource_manager.get_semantic_session_manager = AsyncMock()
+
+    result = await memmachine.list_search(session)
+
+    patched_resource_manager.get_semantic_session_manager.assert_not_called()
+    assert result.episodic_memory == episodes
+    assert result.semantic_memory is None
