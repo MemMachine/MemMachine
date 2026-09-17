@@ -234,6 +234,21 @@ class LongTermMemory:
                 self._partition_key = params.partition_key
                 self._episode_storage = params.episode_storage
 
+    @property
+    def event_memory(self) -> EventMemory | None:
+        """The memory of the event backend, for a caller that speaks events.
+
+        None on the declarative backend, and once
+        `drop_session_partition` has deleted the collection and the
+        partition this memory held.
+        """
+        return self._event_memory
+
+    @property
+    def reranker(self) -> Reranker | None:
+        """The reranker this memory scores hits with, or None when it has none."""
+        return self._reranker
+
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
         if self._backend == "declarative":
