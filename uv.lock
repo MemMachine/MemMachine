@@ -2408,7 +2408,7 @@ requires-dist = [
     { name = "milvus-lite", marker = "extra == 'milvus'", specifier = ">=3.0.0" },
     { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1,<5.3" },
     { name = "neo4j", specifier = ">=5.28.2" },
-    { name = "nltk", specifier = ">=3.9.4" },
+    { name = "nltk", specifier = ">=3.10.3" },
     { name = "openai", specifier = ">=2.21.0" },
     { name = "pgvector", specifier = ">=0.4.2" },
     { name = "prometheus-client", specifier = ">=0.22.1" },
