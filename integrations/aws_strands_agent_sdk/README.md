@@ -75,12 +75,11 @@ tool_handler = create_tool_handler(tools)
 # Use tools directly
 result = tools.add_memory(
     content="User prefers Python for backend development",
-    metadata={"category": "preference"}
+    metadata={"category": "preference"},
 )
 
 search_result = tools.search_memory(
-    query="What does the user prefer for development?",
-    limit=5
+    query="What does the user prefer for development?", limit=5
 )
 ```
 
@@ -107,6 +106,7 @@ if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
 from strands_tools import add_memory, search_memory, get_context
+
 set_tools_instance(tools)
 
 # Create tool handler for manual execution
@@ -115,7 +115,7 @@ tool_handler = create_tool_handler(tools)
 # Create Strands Agent with function objects
 agent = Agent(
     tools=[add_memory, search_memory, get_context],  # Pass function objects
-    system_prompt="You are a helpful assistant with memory capabilities."
+    system_prompt="You are a helpful assistant with memory capabilities.",
 )
 
 # The agent can now use the memory tools automatically
@@ -148,14 +148,11 @@ tools = MemMachineTools(
 # Add a memory
 result = tools.add_memory(
     content="User mentioned they have a meeting tomorrow at 10 AM",
-    metadata={"type": "reminder", "time": "10:00 AM"}
+    metadata={"type": "reminder", "time": "10:00 AM"},
 )
 
 # Search memories
-search_result = tools.search_memory(
-    query="What meetings does the user have?",
-    limit=5
-)
+search_result = tools.search_memory(query="What meetings does the user have?", limit=5)
 
 # Get context
 context = tools.get_context()

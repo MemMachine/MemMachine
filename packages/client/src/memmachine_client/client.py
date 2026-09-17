@@ -338,7 +338,7 @@ class MemMachineClient:
         if error.response.status_code == 404:
             # 404 is expected when project doesn't exist - re-raise HTTPError
             # (tests expect HTTPError, not ValueError)
-            raise
+            raise error
         if error.response.status_code == 422:
             # Try to get detailed error message from response
             try:
@@ -349,12 +349,16 @@ class MemMachineClient:
                     "Validation error (422): Invalid org_id or project_id format. "
                     "Ensure they don't contain '/' and are non-empty strings."
                 )
-            logger.exception(
-                "Failed to get project %s/%s: %s", org_id, project_id, error_msg
+            logger.error(
+                "Failed to get project %s/%s: %s",
+                org_id,
+                project_id,
+                error_msg,
+                exc_info=error,
             )
             raise ValueError(error_msg) from error
-        logger.exception("Failed to get project %s/%s", org_id, project_id)
-        raise
+        logger.error("Failed to get project %s/%s", org_id, project_id, exc_info=error)
+        raise error
 
     def _validate_project_ids(self, org_id: str, project_id: str) -> None:
         """Validate org_id and project_id."""

@@ -81,6 +81,7 @@ The generated tools support:
 ```python
 from langgraph.graph import StateGraph, END
 
+
 def memory_node(state: AgentState):
     # Search for relevant memories
     search_result = search_memory(
@@ -101,6 +102,7 @@ def memory_node(state: AgentState):
         "memory_tool_results": [search_result],
     }
 
+
 # Build graph
 workflow = StateGraph(AgentState)
 workflow.add_node("memory", memory_node)
@@ -112,12 +114,14 @@ workflow.add_edge("memory", END)
 
 ```python
 app = workflow.compile()
-result = app.invoke({
-    "messages": [{"content": "I like Python"}],
-    "user_id": "user123",
-    "context": "",
-    "memory_tool_results": [],
-})
+result = app.invoke(
+    {
+        "messages": [{"content": "I like Python"}],
+        "user_id": "user123",
+        "context": "",
+        "memory_tool_results": [],
+    }
+)
 ```
 
 ## Requirements

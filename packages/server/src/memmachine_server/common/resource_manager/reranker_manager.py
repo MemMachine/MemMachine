@@ -5,11 +5,10 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 import boto3
 from pydantic import InstanceOf, SecretStr
-from typing_extensions import runtime_checkable
 
 from memmachine_server.common.configuration.reranker_conf import RerankersConf
 from memmachine_server.common.embedder import Embedder

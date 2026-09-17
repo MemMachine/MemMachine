@@ -318,7 +318,7 @@ class OpenAIEmbedder(Embedder):
                 f"Received embedding dimensionality {len(response.data[0].embedding)} "
                 f"does not match expected dimensionality {self._dimensions}"
             )
-            logger.exception(error_message)
+            logger.error(error_message)
             raise ExternalServiceAPIError(error_message)
 
         return [datum.embedding for datum in response.data]

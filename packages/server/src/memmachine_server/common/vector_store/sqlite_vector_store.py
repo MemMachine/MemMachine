@@ -759,7 +759,9 @@ class SQLiteVectorStore(VectorStore):
         for operation in operations:
             if operation.operation_type == "upsert" and operation.vector is not None:
                 vector = np.frombuffer(operation.vector, dtype=np.float32)
-                upserted_vectors[operation.record_row_id] = list(vector.flat)
+                upserted_vectors[operation.record_row_id] = [
+                    float(value) for value in vector.flat
+                ]
             elif operation.operation_type == "delete":
                 deleted_row_ids.append(operation.record_row_id)
 
