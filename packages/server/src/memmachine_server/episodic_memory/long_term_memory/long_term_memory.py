@@ -169,6 +169,21 @@ class LongTermMemory:
                 reranker is not None or memory.similarity_metric.higher_is_better
             )
 
+    @property
+    def event_memory_partition(self) -> EventMemoryPartition | None:
+        """The event backend's handle on this session's partition, for a caller that speaks events.
+
+        None on the declarative backend.
+        """
+        if isinstance(self._memory, EventMemoryPartition):
+            return self._memory
+        return None
+
+    @property
+    def reranker(self) -> Reranker | None:
+        """The reranker this memory scores hits with, or None when it has none."""
+        return self._reranker
+
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
         match self._memory:
