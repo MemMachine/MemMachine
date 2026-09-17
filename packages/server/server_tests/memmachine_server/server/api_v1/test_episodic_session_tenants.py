@@ -204,7 +204,7 @@ class TestResolution:
 
         assert resolved.event_memory is event_memory
         assert resolved.reranker is reranker
-        assert resolved.defaults.search_limit > 0
+        assert resolved.defaults.query_limit > 0
         manager = await _episodic_memory_manager(memmachine)
         manager.open_episodic_memory.assert_called_once_with(_SESSION_KEY)
 

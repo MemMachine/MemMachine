@@ -78,7 +78,7 @@ class EpisodicSessionTenantEventMemories(TenantEventMemories):
             ) from error
         # Resolving materializes the event memory store partition and the
         # vector store partition, so a deployment that cannot serve the tenant
-        # says so here rather than at the tenant's first search.
+        # says so here rather than at the tenant's first query.
         await self.resolve(tenant)
         return created
 
