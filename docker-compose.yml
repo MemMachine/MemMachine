@@ -56,6 +56,31 @@ services:
     networks:
       - memmachine-network
 
+  # Qdrant vector database for the event-backed long-term memory
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    container_name: memmachine-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"  # REST
+      - "${QDRANT_GRPC_PORT:-6334}:6334"  # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # The image ships bash but no curl/wget, and /bin/sh is dash (no /dev/tcp),
+      # so the check is spelled as an explicit bash command rather than CMD-SHELL.
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q "healthz check passed" <&3'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - memmachine-network
+
   # MemMachine application
   memmachine:
     image: ${MEMMACHINE_IMAGE:-memmachine/memmachine}
@@ -78,6 +103,11 @@ services:
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_password}
 
+      # Qdrant configuration
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      QDRANT_GRPC_PORT: ${QDRANT_GRPC_PORT:-6334}
+
       # Application configuration
       MEMORY_CONFIG: ${MEMORY_CONFIG:-/app/configuration.yml}
       MCP_BASE_URL: ${MCP_BASE_URL:-http://memmachine:8080}
@@ -95,6 +125,8 @@ services:
       postgres:
         condition: service_healthy
       neo4j:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/api/v2/health"]
@@ -126,6 +158,8 @@ volumes:
   neo4j_import:
     driver: local
   neo4j_plugins:
+    driver: local
+  qdrant_data:
     driver: local
   memmachine_logs:
     driver: local
