@@ -592,6 +592,7 @@ class DatabaseManager:
                 client=client,
                 is_distributed=conf.is_distributed,
                 registry_replication_factor=conf.registry_replication_factor,
+                metrics_factory=conf.get_metrics_factory(),
             )
             try:
                 store = QdrantVectorStore(params)
