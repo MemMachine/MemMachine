@@ -11,7 +11,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import ColumnElement, and_, false, or_
+from sqlalchemy import ColumnElement, DateTime, and_, false, or_
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
@@ -62,6 +62,26 @@ def _get_op(op: str) -> Callable[[ColumnElement, object], ColumnElement[bool]]:
     return op_fn
 
 
+def _check_column_value(
+    field: str,
+    column: ColumnElement,
+    value: PropertyValue,
+) -> None:
+    """Require a datetime value on a datetime column, and only there."""
+    # A bind takes the type of its Python value, not of the column, so a
+    # mismatched pair reaches the database as a comparison it cannot type
+    # (PostgreSQL) or answers as text (SQLite).
+    column_holds_datetime = isinstance(column.type, DateTime)
+    value_is_datetime = isinstance(value, datetime)
+    if column_holds_datetime and not value_is_datetime:
+        raise ValueError(
+            f"Field {field!r} holds a datetime; compare it with date('...'), "
+            f"not {type(value).__name__}"
+        )
+    if value_is_datetime and not column_holds_datetime:
+        raise ValueError(f"Field {field!r} does not hold a datetime")
+
+
 def _compile_column_leaf(
     expr: IsNull | In | Comparison,
     column: ColumnElement,
@@ -71,7 +91,9 @@ def _compile_column_leaf(
     if isinstance(expr, In):
         if not expr.values:
             return false()
+        _check_column_value(expr.field, column, expr.values[0])
         return column.in_(expr.values)
+    _check_column_value(expr.field, column, expr.value)
     return _get_op(expr.op)(column, expr.value)
 
 
@@ -186,7 +208,9 @@ def compile_sql_filter(
     Datetime values arrive already normalized -- `Comparison`/`In` nodes
     convert them to UTC-aware instants at construction -- so
     column-encoded leaves bind them as-is, and the JSON-text encodings
-    only choose a representation.
+    only choose a representation. A column-encoded leaf pairs a datetime
+    column with a datetime value and nothing else; any other pairing
+    raises `ValueError` before a statement is built.
     """
     if isinstance(expr, Comparison | In | IsNull):
         column, kind = resolve_field(expr.field)

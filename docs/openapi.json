@@ -3960,7 +3960,7 @@
           "filter": {
             "type": "string",
             "title": "Filter",
-            "description": "\n    An optional string filter applied to the memory metadata. This uses a\n    simple query language (e.g., 'metadata.user_id=123') for exact matches.\n    Multiple conditions can be combined using AND operators.  The metadata\n    fields are prefixed with 'metadata.' to distinguish them from other fields.\n    ",
+            "description": "\n    An optional string filter applied to the memory metadata. This uses a\n    simple query language (e.g., 'metadata.user_id=123') for exact matches.\n    Multiple conditions can be combined using AND operators.  The metadata\n    fields are prefixed with 'metadata.' to distinguish them from other fields.\n    A datetime field such as 'created_at' compares only with a date() literal\n    (e.g., \"created_at > date('2026-01-01T00:00:00Z')\"); a quoted string or a\n    number there is rejected as an invalid argument.\n    ",
             "default": "",
             "examples": [
               "metadata.user_id=123 AND metadata.session_id=abc"
@@ -4665,7 +4665,7 @@
           "filter": {
             "type": "string",
             "title": "Filter",
-            "description": "\n    An optional string filter applied to the memory metadata. This uses a\n    simple query language (e.g., 'metadata.user_id=123') for exact matches.\n    Multiple conditions can be combined using AND operators.  The metadata\n    fields are prefixed with 'metadata.' to distinguish them from other fields.\n    ",
+            "description": "\n    An optional string filter applied to the memory metadata. This uses a\n    simple query language (e.g., 'metadata.user_id=123') for exact matches.\n    Multiple conditions can be combined using AND operators.  The metadata\n    fields are prefixed with 'metadata.' to distinguish them from other fields.\n    A datetime field such as 'created_at' compares only with a date() literal\n    (e.g., \"created_at > date('2026-01-01T00:00:00Z')\"); a quoted string or a\n    number there is rejected as an invalid argument.\n    ",
             "default": "",
             "examples": [
               "metadata.user_id=123 AND metadata.session_id=abc"

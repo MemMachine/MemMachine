@@ -333,9 +333,12 @@ async def list_memories(
 ) -> ListResult:
     """List memories in a project."""
     target_memories = [spec.type] if spec.type is not None else [MemoryType.Episodic]
-    return await _list_target_memories(
-        target_memories=target_memories, spec=spec, memmachine=memmachine
-    )
+    try:
+        return await _list_target_memories(
+            target_memories=target_memories, spec=spec, memmachine=memmachine
+        )
+    except ValueError as e:
+        raise RestError(code=422, message="invalid argument", ex=e) from e
 
 
 @router.post(

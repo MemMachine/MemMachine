@@ -230,6 +230,9 @@ class SpecDoc:
     simple query language (e.g., 'metadata.user_id=123') for exact matches.
     Multiple conditions can be combined using AND operators.  The metadata
     fields are prefixed with 'metadata.' to distinguish them from other fields.
+    A datetime field such as 'created_at' compares only with a date() literal
+    (e.g., "created_at > date('2026-01-01T00:00:00Z')"); a quoted string or a
+    number there is rejected as an invalid argument.
     """
 
     MEMORY_TYPES = """

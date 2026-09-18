@@ -536,6 +536,22 @@ def test_list_memories(client, mock_memmachine):
     mock_memmachine.list_search.assert_awaited_once()
 
 
+def test_list_memories_invalid_filter(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "type": "episodic",
+        "filter": "created_at > '2026-01-01T00:00:00Z'",
+    }
+
+    mock_memmachine.list_search.side_effect = ValueError(
+        "Field 'created_at' holds a datetime"
+    )
+    response = client.post("/api/v2/memories/list", json=payload)
+    assert response.status_code == 422
+    assert "invalid argument" in response.json()["detail"]["message"]
+
+
 def test_list_memories_with_set_metadata(client, mock_memmachine):
     """set_metadata in the request body is forwarded to list_search via _list_target_memories."""
     payload = {

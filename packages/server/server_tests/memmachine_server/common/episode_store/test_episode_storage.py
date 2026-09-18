@@ -281,6 +281,28 @@ async def test_history_time_filters(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "spec",
+    [
+        "created_at > '2026-01-01T00:00:00Z'",
+        "created_at = '2026-01-01T00:00:00Z'",
+        "created_at > 5",
+    ],
+)
+async def test_created_at_filter_rejects_non_datetime_value(
+    episode_storage: EpisodeStorage,
+    timestamped_history,
+    spec,
+):
+    """created_at compares only with a date() literal; another value type
+    is refused as an invalid argument instead of reaching the database."""
+    with pytest.raises(ValueError, match="holds a datetime"):
+        await episode_storage.get_episode_messages(filter_expr=_filter(spec))
+    with pytest.raises(ValueError, match="holds a datetime"):
+        await episode_storage.get_episode_messages_count(filter_expr=_filter(spec))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "tz",
     [
         timezone(timedelta(hours=-8)),
