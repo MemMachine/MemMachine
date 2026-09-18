@@ -1,10 +1,10 @@
-"""Timestamp formatting shared by EventMemory ingestion and query paths."""
+"""Timestamp formatting."""
 
 import datetime
 
 from babel.dates import format_date, format_time, get_datetime_format
 
-from .data_types import DateTimeStyle, FormatOptions
+from .data_types import DateTimeFormat, DateTimeStyle
 
 # CLDR datetime style levels, ordered from compact to verbose.
 _DATETIME_STYLE_LEVELS: tuple[DateTimeStyle, ...] = ("short", "medium", "long", "full")
@@ -12,17 +12,17 @@ _DATETIME_STYLE_LEVELS: tuple[DateTimeStyle, ...] = ("short", "medium", "long", 
 
 def format_timestamp(
     timestamp: datetime.datetime,
-    format_options: FormatOptions,
+    datetime_format: DateTimeFormat,
 ) -> str:
     """
-    Format a timestamp per the given options.
+    Write a timestamp per the given format.
 
     Returns the empty string when both the date and time styles are None.
     """
-    date_style = format_options.date_style
-    time_style = format_options.time_style
-    locale = format_options.locale
-    timezone = format_options.timezone
+    date_style = datetime_format.date_style
+    time_style = datetime_format.time_style
+    locale = datetime_format.locale
+    timezone = datetime_format.timezone
 
     if date_style is None and time_style is None:
         return ""

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Block,
-    FormatOptions,
+    DateTimeFormat,
     NullContext,
     ProducerContext,
     Segment,
@@ -32,6 +32,8 @@ def _make_segment(
     properties=None,
 ) -> Segment:
     return Segment(
+        session_id="s",
+        source_id="src",
         uuid=uuid4(),
         event_uuid=uuid4(),
         index=0,
@@ -71,9 +73,9 @@ class TestWholeTextDeriver:
     async def test_none_prepends_full_date_by_default(self):
         seg = _make_segment(block=TextBlock(text="hello world"))
 
-        # No format_options -> the deriver picks its nonempty default
+        # No format options: the deriver's default, a full date and no time
         # (full date, no time); the prefix is NOT omitted.
-        result = await WholeTextDeriver().derive(seg, format_options=None)
+        result = await WholeTextDeriver().derive(seg)
 
         assert len(result) == 1
         derivative = result[0]
@@ -82,7 +84,6 @@ class TestWholeTextDeriver:
         )
         assert derivative.segment_uuid == seg.uuid
         assert derivative.timestamp == seg.timestamp
-        assert derivative.context == seg.context
 
     async def test_producer_context_prefixes_text(self):
         seg = _make_segment(
@@ -97,15 +98,13 @@ class TestWholeTextDeriver:
             text='[Thursday, January 15, 2026] Alice: "hi there"'
         )
 
-    async def test_format_options_with_time_includes_time(self):
+    async def test_datetime_format_with_time_includes_time(self):
         seg = _make_segment(
             block=TextBlock(text="hi there"),
             context=ProducerContext(producer="Alice"),
         )
 
-        result = await WholeTextDeriver().derive(
-            seg, format_options=FormatOptions(time_style="short")
-        )
+        result = await WholeTextDeriver(DateTimeFormat(time_style="short")).derive(seg)
 
         text = _block_text(result[0].block)
         assert text.startswith("[Thursday, January 15, 2026")
@@ -117,21 +116,11 @@ class TestWholeTextDeriver:
 
         # The prefix is dropped ONLY when both styles are explicitly None;
         # the message text is still JSON-dumped.
-        result = await WholeTextDeriver().derive(
-            seg, format_options=FormatOptions(date_style=None, time_style=None)
-        )
+        result = await WholeTextDeriver(
+            DateTimeFormat(date_style=None, time_style=None)
+        ).derive(seg)
 
         assert result[0].block == TextBlock(text='"hello world"')
-
-    async def test_propagates_segment_properties(self):
-        seg = _make_segment(
-            block=TextBlock(text="x"),
-            properties={"color": "red", "score": 7},
-        )
-
-        result = await WholeTextDeriver().derive(seg)
-
-        assert result[0].properties == {"color": "red", "score": 7}
 
     async def test_non_text_block_raises(self):
         seg = _make_segment_with_unsupported_block()
@@ -188,19 +177,16 @@ class TestSentenceTextDeriver:
             '[Thursday, January 15, 2026] Bob: "Two."',
         }
 
-    async def test_propagates_segment_metadata(self):
-        seg = _make_segment(
-            block=TextBlock(text="A. B."),
-            properties={"k": "v"},
-        )
+    async def test_carries_the_segment_fields_a_record_needs(self):
+        seg = _make_segment(block=TextBlock(text="A. B."))
 
         result = await SentenceTextDeriver().derive(seg)
 
         for derivative in result:
             assert derivative.segment_uuid == seg.uuid
             assert derivative.timestamp == seg.timestamp
-            assert derivative.context == seg.context
-            assert derivative.properties == {"k": "v"}
+            assert derivative.session_id == seg.session_id
+            assert derivative.source_id == seg.source_id
 
     async def test_non_text_block_raises(self):
         seg = _make_segment_with_unsupported_block()

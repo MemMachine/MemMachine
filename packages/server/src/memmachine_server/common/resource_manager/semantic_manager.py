@@ -152,7 +152,6 @@ class SemanticResourceManager:
             name=_VECTOR_STORE_COLLECTION_NAME,
             config=VectorStoreCollectionConfig(
                 vector_dimensions=vector_dimensions,
-                similarity_metric=self._conf.vector_similarity_metric,
                 indexed_properties_schema={
                     "feature_id": str,
                     "set_id": str,

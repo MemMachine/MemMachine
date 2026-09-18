@@ -7,8 +7,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import ConnectionPoolEntry
 
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
@@ -16,7 +18,6 @@ from memmachine_server.common.configuration.database_conf import (
     SQLiteVectorStoreConf,
     SQLiteVectorStoreEngine,
 )
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.errors import (
     MilvusConfigurationError,
     Neo4JConfigurationError,
@@ -43,6 +44,28 @@ if TYPE_CHECKING:
     from qdrant_client import AsyncQdrantClient
 
 logger = logging.getLogger(__name__)
+
+
+def enable_sqlite_foreign_keys(engine: AsyncEngine) -> None:
+    """Enforce foreign keys on every connection of a SQLite engine.
+
+    SQLite defaults foreign_keys to OFF, per connection. Registering the
+    pragma at engine creation, before any connection is pooled, is the
+    only placement that covers every connection: a listener added later
+    misses already-pooled connections, and mutating a live pool's
+    listeners races its event dispatch. No-op for other dialects.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_foreign_keys(
+        dbapi_connection: DBAPIConnection,
+        _connection_record: ConnectionPoolEntry,
+    ) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 class DatabaseManager:
@@ -341,6 +364,7 @@ class DatabaseManager:
                 engine_kwargs["pool_pre_ping"] = conf.pool_pre_ping
 
             engine = create_async_engine(conf.uri, **engine_kwargs)
+            enable_sqlite_foreign_keys(engine)
             if validate:
                 await self.validate_sql_engine(name, engine)
             self.sql_engines[name] = engine
@@ -574,6 +598,7 @@ class DatabaseManager:
                 "grpc_port": conf.grpc_port,
                 "prefer_grpc": conf.prefer_grpc,
                 "https": conf.https,
+                "timeout": conf.request_timeout_seconds,
             }
             if conf.api_key.get_secret_value():
                 client_kwargs["api_key"] = conf.api_key.get_secret_value()
@@ -590,8 +615,8 @@ class DatabaseManager:
 
             params = QdrantVectorStoreParams(
                 client=client,
-                is_distributed=conf.is_distributed,
                 registry_replication_factor=conf.registry_replication_factor,
+                metrics_factory=conf.get_metrics_factory(),
             )
             try:
                 store = QdrantVectorStore(params)
@@ -650,7 +675,12 @@ class DatabaseManager:
 
             from pymilvus import MilvusClient
 
-            client_kwargs: dict[str, Any] = {"uri": conf.uri}
+            # The constructor's timeout bounds connecting and reconnecting;
+            # the store passes the same bound to every request it makes.
+            client_kwargs: dict[str, Any] = {
+                "uri": conf.uri,
+                "timeout": conf.request_timeout_seconds,
+            }
             token = conf.token.get_secret_value()
             if token:
                 client_kwargs["token"] = token
@@ -670,6 +700,7 @@ class DatabaseManager:
             params = MilvusVectorStoreParams(
                 client=client,
                 consistency_level=conf.consistency_level,
+                request_timeout_seconds=conf.request_timeout_seconds,
             )
             try:
                 store = MilvusVectorStore(params)
@@ -713,8 +744,8 @@ class DatabaseManager:
     @staticmethod
     def _make_sqlite_search_engine_factory(
         conf: SQLiteVectorStoreConf,
-    ) -> Callable[[int, SimilarityMetric], VectorSearchEngine]:
-        """Build a (ndim, metric) -> VectorSearchEngine factory from config.
+    ) -> Callable[[int], VectorSearchEngine]:
+        """Build a ndim -> VectorSearchEngine factory from config.
 
         Imports are deferred so the engine packages remain optional unless
         their backend is actually used.
@@ -725,13 +756,8 @@ class DatabaseManager:
                     USearchVectorSearchEngine,
                 )
 
-                def usearch_factory(
-                    num_dimensions: int, similarity_metric: SimilarityMetric
-                ) -> VectorSearchEngine:
-                    return USearchVectorSearchEngine(
-                        num_dimensions=num_dimensions,
-                        similarity_metric=similarity_metric,
-                    )
+                def usearch_factory(num_dimensions: int) -> VectorSearchEngine:
+                    return USearchVectorSearchEngine(num_dimensions=num_dimensions)
 
                 return usearch_factory
             case SQLiteVectorStoreEngine.HNSWLIB:
@@ -739,13 +765,8 @@ class DatabaseManager:
                     HnswlibVectorSearchEngine,
                 )
 
-                def hnswlib_factory(
-                    num_dimensions: int, similarity_metric: SimilarityMetric
-                ) -> VectorSearchEngine:
-                    return HnswlibVectorSearchEngine(
-                        num_dimensions=num_dimensions,
-                        similarity_metric=similarity_metric,
-                    )
+                def hnswlib_factory(num_dimensions: int) -> VectorSearchEngine:
+                    return HnswlibVectorSearchEngine(num_dimensions=num_dimensions)
 
                 return hnswlib_factory
 
