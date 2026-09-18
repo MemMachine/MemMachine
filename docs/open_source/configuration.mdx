@@ -82,8 +82,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           segment_store: profile_storage
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
-          properties_schema:
-            source_role: str
         short_term_memory:
           session_key: user-session-id
           llm_model: my-summarization-llm
@@ -107,8 +105,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           segment_store: profile_storage # ID of the SQL database used by SegmentStore
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
-          properties_schema: # Optional filterable event-memory properties
-            source_role: str
         short_term_memory: # Configuration for short-term memory
           session_key: user-session-id # Reuses parent session_key
           llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
@@ -137,7 +133,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. Event backend can omit it to use embedding scores directly. | Depends on backend |
     | `long_term_memory.session_id`   | The same `session_key` used for long-term memory operations.               | *Inherited from `session_key`* |
-    | `long_term_memory.properties_schema` | Event backend only: user-defined filterable properties and their type names. | `{}` |
     | `short_term_memory.session_key` | Session key for short-term memory summarization.                           | *Inherited from `session_key`* |
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
     | `short_term_memory.summary_prompt_system` | System prompt ID for short-term summarization. | *Required* |
@@ -337,6 +332,18 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite
             config:
               path: sqlite_test.db
+          qdrant_vector_store:
+            provider: qdrant
+            config:
+              host: localhost
+              port: 6333
+              grpc_port: 6334
+              prefer_grpc: false
+              https: false
+              request_timeout_seconds: 30
+              registry_database: sqlite_test
+              tombstone_retention_seconds: 86400
+              # api_key: $QDRANT_API_KEY
           milvus_vector_store:
             provider: milvus
             config:
@@ -345,6 +352,9 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # token: $MILVUS_TOKEN
               # db_name: default
               consistency_level: Session
+              request_timeout_seconds: 30
+              registry_database: sqlite_test
+              tombstone_retention_seconds: 86400
       ```
     </Tab>
     <Tab title="With Comments">
@@ -369,6 +379,18 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite # Local relational database provider
             config: # A dictionary containing provider-specific configuration
               path: sqlite_test.db. # The path for the given database
+          qdrant_vector_store: # VectorStore for event or vector-backed semantic memory
+            provider: qdrant # Qdrant server or Qdrant Cloud
+            config:
+              host: localhost # Qdrant host
+              port: 6333 # REST port
+              grpc_port: 6334 # gRPC port
+              prefer_grpc: false # Use gRPC instead of REST
+              https: false # Use TLS
+              request_timeout_seconds: 30 # Bounds every request to Qdrant
+              registry_database: sqlite_test # Relational database (a name above) holding the partition registry; required
+              tombstone_retention_seconds: 86400 # A deleted partition's tombstone outlives its first clean purge round this long
+              # api_key: $QDRANT_API_KEY # Required for Qdrant Cloud
           milvus_vector_store: # VectorStore for event or vector-backed semantic memory
             provider: milvus # Milvus Lite by default, or Milvus server / Zilliz Cloud
             config:
@@ -376,6 +398,9 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # token: $MILVUS_TOKEN # Required for Zilliz Cloud or auth-enabled Milvus
               # db_name: default # Optional Milvus database name
               consistency_level: Session # Strong, Session, Bounded, or Eventually
+              request_timeout_seconds: 30 # Bounds every request to Milvus
+              registry_database: sqlite_test # Relational database (a name above) holding the partition registry; required
+              tombstone_retention_seconds: 86400 # A deleted partition's tombstone outlives its first clean purge round this long
       ```
     </Tab>
     </Tabs>
@@ -392,6 +417,13 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.uri`  | The URI for the given database.                                      | Depends on provider |
       | `config.token` | Milvus auth token for Zilliz Cloud or auth-enabled Milvus server.   | `""` |
       | `config.consistency_level` | Milvus collection consistency level: `Strong`, `Session`, `Bounded`, or `Eventually`. | `Session` |
+      | `config.request_timeout_seconds` | Qdrant and Milvus: whole seconds a request to the vector store may take before the client gives up; must be positive. | `30` |
+      | `config.registry_database` | Qdrant and Milvus: the name of a relational database under `resources.databases` that holds the store's partition registry and purge queue. | *Required* |
+      | `config.tombstone_retention_seconds` | Qdrant and Milvus: whole seconds a deleted partition's tombstone is kept after a purge round found nothing left of it, before the tombstone itself is removed. | `86400` |
+      | `config.hnsw_config` | Qdrant: HNSW tuning of the store's collection in YAML form of `qdrant_client.models.HnswConfigDiff` (e.g. `payload_m`, `ef_construct`); `m` must be 0 or omitted. | unset |
+      | `config.optimizers_config` | Qdrant: optimizer tuning of the store's collection, the YAML form of `qdrant_client.models.OptimizersConfigDiff`. | unset |
+      | `config.quantization_config` | Qdrant: quantization of the store's collection, a single-key map selecting the method (`scalar`, `product`, `binary`, `turbo`) in the YAML form of `qdrant_client.models.QuantizationConfig`. | unset |
+      | `config.metrics_factory_id` | Qdrant: ID of the metrics exporter factory the store reports its operation latencies to. | `prometheus` |
       | `config.path`  | The path for the given database.                                    | Depends on provider |
       | `config.username` | Username for internal graph store authentication.                | Depends on provider |
       | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |
@@ -419,7 +451,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               aws_access_key_id: <AWS_ACCESS_KEY_ID>
               aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
               model_id: "amazon.titan-embed-text-v2:0"
-              similarity_metric: "cosine"
           ollama_embedder: # The embedder Service ID
             provider: openai
             config:
@@ -447,7 +478,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
                     aws_access_key_id: <AWS_ACCESS_KEY_ID> # AWS access key ID for Bedrock
                     aws_secret_access_key: <AWS_SECRET_ACCESS_KEY> # AWS secret access key for Bedrock
                     model_id: "amazon.titan-embed-text-v2:0" # Bedrock model ID
-                    similarity_metric: "cosine" # Defines the mathematical method used to compare two vectors for relevance (e.g., cosine).
                 ollama_embedder: # The embedder ID
                   provider: openai # The embedder provider type
                   config: # A dictionary containing provider-specific configuration
@@ -472,7 +502,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
     | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                      | *Required for Bedrock*   |
     | `config.model_id` | Bedrock model ID.                                                    | *Required for Bedrock*   |
-    | `similarity_metric` | Defines the mathematical method used to compare two vectors for relevance (e.g., cosine). | *Required for Bedrock*   |
 
   ### Language Models
     Defines various language models for tasks like summarization and generation.

@@ -84,6 +84,11 @@ def test_get_segment_store_supplies_a_factory(monkeypatch, mock_metrics_factory)
     manager = rm.ResourceManagerImpl.__new__(rm.ResourceManagerImpl)
     manager._segment_stores = {}
     manager._segment_store_lock = asyncio.Lock()
+    # __init__ is bypassed, so every attribute get_segment_store touches has
+    # to be set here: it refuses to build once closed, and it parks the
+    # store's purge task in this list.
+    manager._closed = False
+    manager._segment_store_purge_tasks = []
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
