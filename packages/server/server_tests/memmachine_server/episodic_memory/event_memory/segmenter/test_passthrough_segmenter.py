@@ -22,6 +22,8 @@ _TS = datetime(2026, 1, 15, 10, 30, tzinfo=UTC)
 
 async def test_passthrough_emits_one_segment_per_block():
     event = Event(
+        session_id="s",
+        source_id="src",
         uuid=uuid4(),
         timestamp=_TS,
         context=ProducerContext(producer="alice"),
@@ -51,6 +53,8 @@ async def test_passthrough_does_not_split_long_text():
     """Each block is preserved verbatim, regardless of length."""
     long_text = "lorem ipsum " * 1000
     event = Event(
+        session_id="s",
+        source_id="src",
         uuid=uuid4(),
         timestamp=_TS,
         context=NullContext(),
@@ -66,6 +70,8 @@ async def test_passthrough_does_not_split_long_text():
 
 async def test_passthrough_empty_blocks_yields_no_segments():
     event = Event(
+        session_id="s",
+        source_id="src",
         uuid=uuid4(),
         timestamp=_TS,
         context=NullContext(),
@@ -80,6 +86,8 @@ async def test_passthrough_empty_blocks_yields_no_segments():
 
 async def test_passthrough_each_segment_has_unique_uuid():
     event = Event(
+        session_id="s",
+        source_id="src",
         uuid=uuid4(),
         timestamp=_TS,
         context=NullContext(),

@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
-    FormatOptions,
     Segment,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.segmenter import (
@@ -17,12 +16,7 @@ class PassthroughSegmenter(Segmenter):
     """Emit one segment per block; do not split text."""
 
     @override
-    async def segment(
-        self,
-        event: Event,
-        *,
-        format_options: FormatOptions | None = None,
-    ) -> list[Segment]:
+    async def segment(self, event: Event) -> list[Segment]:
         return [
             Segment(
                 uuid=uuid4(),
@@ -30,6 +24,8 @@ class PassthroughSegmenter(Segmenter):
                 index=index,
                 offset=0,
                 timestamp=event.timestamp,
+                session_id=event.session_id,
+                source_id=event.source_id,
                 block=block,
                 context=event.context,
                 properties=event.properties,

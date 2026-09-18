@@ -9,7 +9,7 @@ for a metric that should exist.
 That is not hypothetical: the Neo4j store, the episode store and the session
 store each shipped instrumented and unwired, which is why database latency
 appeared to be unmeasurable. These tests pin the wiring for the components that
-cannot be reached from a default deployment — the event backend's segment store
+cannot be reached from a default deployment — the event backend's event memory store
 and event memory — where a regression would otherwise go unseen until somebody
 configured that backend and wondered where the numbers were.
 """
@@ -54,8 +54,8 @@ def mock_metrics_factory():
     return MockMetricsFactory()
 
 
-def test_get_segment_store_supplies_a_factory(monkeypatch, mock_metrics_factory):
-    """The resource manager must hand the segment store a factory.
+def test_get_event_memory_store_supplies_a_factory(monkeypatch, mock_metrics_factory):
+    """The resource manager must hand the event memory store a factory.
 
     Constructed directly, the store honours whatever it is given — so a test
     that passes a factory in proves nothing. The defect was here, at the call
@@ -74,7 +74,7 @@ def test_get_segment_store_supplies_a_factory(monkeypatch, mock_metrics_factory)
         async def startup(self):
             return None
 
-    monkeypatch.setattr(rm, "SQLAlchemySegmentStore", CapturingStore)
+    monkeypatch.setattr(rm, "SQLAlchemyEventMemoryStore", CapturingStore)
     monkeypatch.setattr(
         rm.ResourceManagerImpl,
         "get_metrics_factory",
@@ -82,8 +82,13 @@ def test_get_segment_store_supplies_a_factory(monkeypatch, mock_metrics_factory)
     )
 
     manager = rm.ResourceManagerImpl.__new__(rm.ResourceManagerImpl)
-    manager._segment_stores = {}
-    manager._segment_store_lock = asyncio.Lock()
+    manager._event_memory_stores = {}
+    manager._event_memory_store_lock = asyncio.Lock()
+    # __init__ is bypassed, so every attribute get_event_memory_store touches has
+    # to be set here: it refuses to build once closed, and it parks the
+    # store's purge task in this list.
+    manager._closed = False
+    manager._event_memory_store_purge_tasks = []
 
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -94,10 +99,10 @@ def test_get_segment_store_supplies_a_factory(monkeypatch, mock_metrics_factory)
 
     monkeypatch.setattr(rm.ResourceManagerImpl, "get_sql_engine", fake_engine)
 
-    asyncio.run(manager.get_segment_store("profile_storage"))
+    asyncio.run(manager.get_event_memory_store("profile_storage"))
 
     assert captured["params"].metrics_factory is not None, (
-        "get_segment_store built the store without a metrics factory, so its "
+        "get_event_memory_store built the store without a metrics factory, so its "
         "OperationTracker discards every timing silently"
     )
 
@@ -107,17 +112,17 @@ async def _resolved(value):
     return value
 
 
-def test_segment_store_params_accepts_a_factory():
+def test_event_memory_store_params_accepts_a_factory():
     """The params model must carry the field at all.
 
     Guards the shape rather than the value: if the field is dropped, callers
     that pass it start failing loudly instead of wiring nothing.
     """
-    from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
-        SQLAlchemySegmentStoreParams,
+    from memmachine_server.episodic_memory.event_memory.event_memory_store.sqlalchemy_event_memory_store import (
+        SQLAlchemyEventMemoryStoreParams,
     )
 
-    assert "metrics_factory" in SQLAlchemySegmentStoreParams.model_fields
+    assert "metrics_factory" in SQLAlchemyEventMemoryStoreParams.model_fields
 
 
 def test_event_backend_params_carries_a_factory_through(mock_metrics_factory):
