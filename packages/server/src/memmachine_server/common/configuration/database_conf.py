@@ -229,7 +229,7 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
         return self.hosts
 
 
-class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
+class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
     """Configuration options for a Qdrant instance."""
 
     host: str = Field(
@@ -252,18 +252,60 @@ class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
     )
-    is_distributed: bool = Field(
-        default=False,
+    registry_database: str = Field(
+        ...,
         description=(
-            "Whether the Qdrant cluster is running in distributed mode. "
-            "If True, native collections use custom sharding."
+            "The relational database (a name under resources.databases) that "
+            "holds this backend's partition registry. Required: Qdrant cannot "
+            "arbitrate partition creation or deletion across server processes; "
+            "the registry lives where a primary key and a transaction can."
         ),
     )
-    registry_replication_factor: int = Field(
-        default=1,
+    request_timeout_seconds: int = Field(
+        default=30,
+        gt=0,
+        description="Seconds a request to Qdrant may take before the client gives up.",
+    )
+    tombstone_retention_seconds: int = Field(
+        default=86400,
+        gt=0,
         description=(
-            "Replication factor for registry collections. Write consistency factor "
-            "is set to match so all replicas confirm writes."
+            "Seconds a deleted partition's registry entry outlives the first purge "
+            "round that finds nothing under it, so a write to Qdrant that landed "
+            "after that round is still reclaimed; keep it orders of magnitude "
+            "above request_timeout_seconds."
+        ),
+    )
+    # The following mirror qdrant_client.models config objects as plain mappings
+    # (their natural serialized form) so qdrant-client stays an optional
+    # dependency here. They are validated against the real qdrant models when
+    # passed to QdrantVectorStoreParams. All apply to the store's one
+    # collection; the partition registry is relational tables, not a collection.
+    hnsw_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "HNSW index tuning for the store's collection, mirroring "
+            "qdrant_client.models.HnswConfigDiff (e.g. ef_construct, payload_m). "
+            "'m' must be 0 or omitted because the collection holds every "
+            "partition and relies on per-partition payload indexing."
+        ),
+    )
+    optimizers_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optimizer tuning for the store's collection, mirroring "
+            "qdrant_client.models.OptimizersConfigDiff "
+            "(e.g. indexing_threshold, default_segment_number)."
+        ),
+    )
+    quantization_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Quantization for the store's collection, mirroring "
+            "qdrant_client.models.QuantizationConfig. Provide a single-key map "
+            "selecting the method, e.g. "
+            "{'turbo': {'always_ram': true, 'bits': 'bits2'}} for TurboQuant, "
+            "or a 'scalar' / 'product' / 'binary' map."
         ),
     )
 
@@ -294,6 +336,30 @@ class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
         description=(
             "Milvus consistency level for newly created collections. "
             "Supported values: Strong, Session, Bounded, Eventually."
+        ),
+    )
+    registry_database: str = Field(
+        ...,
+        description=(
+            "The relational database (a name under resources.databases) that "
+            "holds this backend's partition registry. Required: Milvus cannot "
+            "arbitrate partition creation or deletion across server processes; "
+            "the registry lives where a primary key and a transaction can."
+        ),
+    )
+    request_timeout_seconds: int = Field(
+        default=30,
+        gt=0,
+        description="Seconds a request to Milvus may take before the client gives up.",
+    )
+    tombstone_retention_seconds: int = Field(
+        default=86400,
+        gt=0,
+        description=(
+            "Seconds a deleted partition's registry entry outlives the first purge "
+            "round that finds nothing under it, so a write to Milvus that landed "
+            "after that round is still reclaimed; keep it orders of magnitude "
+            "above request_timeout_seconds."
         ),
     )
 
