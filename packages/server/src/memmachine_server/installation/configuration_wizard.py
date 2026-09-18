@@ -494,13 +494,18 @@ class ConfigurationWizard:
             case self.QDRANT_VECTOR_STORE_ID:
                 # Localhost defaults assume `docker run -p 6333:6333 qdrant/qdrant`
                 # or similar; user can edit cfg.yml to point at a remote Qdrant.
-                databases.qdrant_confs = {self.QDRANT_VECTOR_STORE_ID: QdrantConf()}
+                databases.qdrant_confs = {
+                    self.QDRANT_VECTOR_STORE_ID: QdrantConf(
+                        registry_database=self.SQLITE_DB_ID
+                    )
+                }
             case self.MILVUS_VECTOR_STORE_ID:
                 # Local file defaults use Milvus Lite. Users can edit cfg.yml
                 # to point at a Milvus server or Zilliz Cloud URI/token.
                 databases.milvus_confs = {
                     self.MILVUS_VECTOR_STORE_ID: MilvusConf(
                         uri="memmachine_milvus.db",
+                        registry_database=self.SQLITE_DB_ID,
                     )
                 }
             case self.SQLITE_VECTOR_STORE_ID:
