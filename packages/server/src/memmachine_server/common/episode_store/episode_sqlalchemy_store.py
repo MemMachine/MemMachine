@@ -56,6 +56,11 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
+from memmachine_server.common.metrics_factory import (
+    MetricsFactory,
+    OperationTracker,
+    timed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +145,20 @@ class Episode(BaseEpisodeStore):
 class SqlAlchemyEpisodeStore(EpisodeStorage):
     """SQLAlchemy episode store implementation."""
 
-    def __init__(self, engine: AsyncEngine) -> None:
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        metrics_factory: MetricsFactory | None = None,
+    ) -> None:
         """Initialize the store with an async SQLAlchemy engine."""
         self._engine: AsyncEngine = engine
         self._session_factory = async_sessionmaker(
             self._engine,
             expire_on_commit=False,
+        )
+        self._tracker = OperationTracker(
+            metrics_factory,
+            prefix="episode_store_sqlalchemy",
         )
 
     def _create_session(self) -> AsyncSession:
@@ -179,6 +192,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             await session.commit()
 
     @validate_call
+    @timed("add_episodes")
     async def add_episodes(
         self,
         session_key: str,
@@ -241,6 +255,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         return episode.to_typed_model() if episode else None
 
+    @timed("get_episodes")
     async def get_episodes(
         self,
         episode_ids: Iterable[EpisodeIdT],
@@ -342,6 +357,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         raise ValueError(f"Unknown filter field: {field!r}")
 
+    @timed("get_episode_messages")
     async def get_episode_messages(
         self,
         *,
@@ -376,6 +392,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         return [h.to_typed_model() for h in episode_messages]
 
+    @timed("get_episode_messages_count")
     async def get_episode_messages_count(
         self,
         *,
@@ -398,6 +415,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         return int(n_messages)
 
+    @timed("get_episode_ids")
     async def get_episode_ids(
         self,
         *,
@@ -420,6 +438,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         return [EpisodeIdT(row) for row in rows]
 
     @validate_call
+    @timed("delete_episodes")
     async def delete_episodes(self, episode_ids: list[EpisodeIdT]) -> None:
         try:
             int_episode_ids = TypeAdapter(list[int]).validate_python(episode_ids)

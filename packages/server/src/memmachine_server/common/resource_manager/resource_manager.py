@@ -144,7 +144,14 @@ class ResourceManagerImpl:
                 if name not in self._segment_stores:
                     engine = await self.get_sql_engine(name)
                     store = SQLAlchemySegmentStore(
-                        SQLAlchemySegmentStoreParams(engine=engine),
+                        SQLAlchemySegmentStoreParams(
+                            engine=engine,
+                            metrics_factory=(
+                                await ResourceManagerImpl.get_metrics_factory(
+                                    "prometheus"
+                                )
+                            ),
+                        ),
                     )
                     await store.startup()
                     self._segment_stores[name] = store
@@ -177,7 +184,12 @@ class ResourceManagerImpl:
                     database = self._conf.session_manager.database
                     engine = await self.get_sql_engine(database)
 
-                    self._session_data_manager = SessionDataManagerSQL(engine)
+                    self._session_data_manager = SessionDataManagerSQL(
+                        engine,
+                        metrics_factory=await ResourceManagerImpl.get_metrics_factory(
+                            "prometheus"
+                        ),
+                    )
                     await self._session_data_manager.create_tables()
         assert self._session_data_manager is not None
         return self._session_data_manager
@@ -208,7 +220,12 @@ class ResourceManagerImpl:
                     database = episode_storage_conf.database
                     engine = await self.get_sql_engine(database)
 
-                    episode_storage = SqlAlchemyEpisodeStore(engine)
+                    episode_storage = SqlAlchemyEpisodeStore(
+                        engine,
+                        metrics_factory=await ResourceManagerImpl.get_metrics_factory(
+                            "prometheus"
+                        ),
+                    )
                     await episode_storage.startup()
 
                     if episode_storage_conf.with_count_cache:

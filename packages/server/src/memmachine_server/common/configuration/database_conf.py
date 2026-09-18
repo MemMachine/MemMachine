@@ -9,13 +9,14 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 
 from memmachine_server.common.configuration.mixin_confs import (
     ApiKeyMixin,
+    MetricsFactoryIdMixin,
     PasswordMixin,
     WithValueFromEnv,
     YamlSerializableMixin,
 )
 
 
-class Neo4jConf(YamlSerializableMixin, PasswordMixin):
+class Neo4jConf(MetricsFactoryIdMixin, YamlSerializableMixin, PasswordMixin):
     """Configuration options for a Neo4j instance."""
 
     uri: str = Field(default="", description="Neo4j database URI")

@@ -1,6 +1,7 @@
 """API v2 router for MemMachine project and memory management endpoints."""
 
 import logging
+import os
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Response
@@ -62,7 +63,12 @@ from memmachine_common.api.spec import (
     ShortTermMemoryConfigEntry,
     UpdateFeatureSpec,
 )
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    generate_latest,
+    multiprocess,
+)
 
 from memmachine_server import MemMachine
 from memmachine_server.common.api.version import get_version
@@ -1074,7 +1080,17 @@ async def configure_long_term_memory(
 )
 async def metrics() -> Response:
     """Expose Prometheus metrics endpoint."""
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    # With MEMMACHINE_WORKERS > 1 each uvicorn worker is a separate process with
+    # its own registry, so the default generate_latest() returns whichever worker
+    # answered the scrape - about 1/N of the traffic, a different 1/N each time.
+    # Consecutive scrapes then look like counter resets and every rate or
+    # histogram derived from them is wrong.
+    multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not multiproc_dir:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    registry = CollectorRegistry()
+    multiprocess.MultiProcessCollector(registry)
+    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
 
 
 @router.get("/health", description=RouterDoc.HEALTH_CHECK, tags=["System"])
