@@ -14,7 +14,6 @@ from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
     EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
-    PassthroughSegmenterConf,
     ShortTermMemoryConfPartial,
     WholeTextDeriverConf,
 )
@@ -274,7 +273,7 @@ def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
             "backend": "event",
             "session_id": "s",
             "vector_store": "vstore",
-            "segment_store": "pg_engine",
+            "event_memory_store": "pg_engine",
             "embedder": "openai_embedder",
         },
         "short_term_memory": _ltm_minimal_short_term_block(),
@@ -283,9 +282,9 @@ def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
     conf = EpisodicMemoryConf.model_validate(data)
     assert isinstance(conf.long_term_memory, EventLongTermMemoryConf)
     assert conf.long_term_memory.vector_store == "vstore"
-    assert conf.long_term_memory.segment_store == "pg_engine"
+    assert conf.long_term_memory.event_memory_store == "pg_engine"
     # Default sub-configs.
-    assert isinstance(conf.long_term_memory.segmenter, PassthroughSegmenterConf)
+    assert conf.long_term_memory.segmenter is None
     assert isinstance(conf.long_term_memory.deriver, WholeTextDeriverConf)
     # Reranker is optional on the event backend.
     assert conf.long_term_memory.reranker is None
@@ -332,14 +331,14 @@ def test_partial_merge_with_event_backend_resolves_to_event():
         session_id="s",
         embedder="e",
         vector_store="v",
-        segment_store="seg",
+        event_memory_store="seg",
     )
     override = LongTermMemoryConfPartial()
 
     merged = override.merge(base)
     assert isinstance(merged, EventLongTermMemoryConf)
     assert merged.vector_store == "v"
-    assert merged.segment_store == "seg"
+    assert merged.event_memory_store == "seg"
     assert merged.embedder == "e"
     assert merged.reranker is None
 
@@ -363,7 +362,7 @@ def test_partial_merge_primary_backend_wins_over_fallback():
         session_id="s",
         embedder="e",
         vector_store="v",
-        segment_store="seg",
+        event_memory_store="seg",
     )
     fallback = LongTermMemoryConfPartial(
         backend="declarative",

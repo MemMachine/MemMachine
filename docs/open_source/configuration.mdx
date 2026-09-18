@@ -79,11 +79,9 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           backend: event
           session_id: user-session-id
           vector_store: my-vector-store
-          segment_store: profile_storage
+          event_memory_store: profile_storage
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
-          properties_schema:
-            source_role: str
         short_term_memory:
           session_key: user-session-id
           llm_model: my-summarization-llm
@@ -101,14 +99,12 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         session_key: user-session-id # Unique session identifier
         metrics_factory_id: prometheus # Metrics exporter ID
         long_term_memory: # Configuration for long-term memory
-          backend: event # Use VectorStore + SegmentStore. Use declarative for VectorGraphStore.
+          backend: event # Use VectorStore + EventMemoryStore. Use declarative for VectorGraphStore.
           session_id: user-session-id # Reuses parent session_key
           vector_store: my-vector-store # ID of the VectorStore from 'resources.databases'
-          segment_store: profile_storage # ID of the SQL database used by SegmentStore
+          event_memory_store: profile_storage # ID of the SQL database used by EventMemoryStore
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
-          properties_schema: # Optional filterable event-memory properties
-            source_role: str
         short_term_memory: # Configuration for short-term memory
           session_key: user-session-id # Reuses parent session_key
           llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
@@ -130,14 +126,13 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory_enabled`      | Whether long-term episodic memory is enabled.                              | `true`       |
     | `short_term_memory_enabled`     | Whether short-term episodic memory is enabled.                             | `true`       |
     | `enabled`                       | Whether episodic memory as a whole is enabled.                             | `true`       |
-    | `long_term_memory.backend`      | Long-term memory backend. Use `event` for VectorStore + SegmentStore, or `declarative` for VectorGraphStore. | `declarative` when omitted |
+    | `long_term_memory.backend`      | Long-term memory backend. Use `event` for VectorStore + EventMemoryStore, or `declarative` for VectorGraphStore. | `declarative` when omitted |
     | `long_term_memory.vector_store` | Event backend only: ID of a VectorStore defined in `resources.databases`. | *Required for event backend* |
-    | `long_term_memory.segment_store` | Event backend only: ID of a SQL database defined in `resources.databases`. | *Required for event backend* |
+    | `long_term_memory.event_memory_store` | Event backend only: ID of a SQL database defined in `resources.databases`. | *Required for event backend* |
     | `long_term_memory.vector_graph_store` | Declarative backend only: ID of a VectorGraphStore defined in `resources.databases`. | *Required for declarative backend* |
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. Event backend can omit it to use embedding scores directly. | Depends on backend |
     | `long_term_memory.session_id`   | The same `session_key` used for long-term memory operations.               | *Inherited from `session_key`* |
-    | `long_term_memory.properties_schema` | Event backend only: user-defined filterable properties and their type names. | `{}` |
     | `short_term_memory.session_key` | Session key for short-term memory summarization.                           | *Inherited from `session_key`* |
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
     | `short_term_memory.summary_prompt_system` | System prompt ID for short-term summarization. | *Required* |
@@ -337,6 +332,16 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite
             config:
               path: sqlite_test.db
+          qdrant_vector_store:
+            provider: qdrant
+            config:
+              host: localhost
+              port: 6333
+              grpc_port: 6334
+              prefer_grpc: false
+              https: false
+              request_timeout_seconds: 30
+              # api_key: $QDRANT_API_KEY
           milvus_vector_store:
             provider: milvus
             config:
@@ -345,6 +350,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # token: $MILVUS_TOKEN
               # db_name: default
               consistency_level: Session
+              request_timeout_seconds: 30
       ```
     </Tab>
     <Tab title="With Comments">
@@ -369,6 +375,16 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite # Local relational database provider
             config: # A dictionary containing provider-specific configuration
               path: sqlite_test.db. # The path for the given database
+          qdrant_vector_store: # VectorStore for event or vector-backed semantic memory
+            provider: qdrant # Qdrant server or Qdrant Cloud
+            config:
+              host: localhost # Qdrant host
+              port: 6333 # REST port
+              grpc_port: 6334 # gRPC port
+              prefer_grpc: false # Use gRPC instead of REST
+              https: false # Use TLS
+              request_timeout_seconds: 30 # Bounds every request to Qdrant
+              # api_key: $QDRANT_API_KEY # Required for Qdrant Cloud
           milvus_vector_store: # VectorStore for event or vector-backed semantic memory
             provider: milvus # Milvus Lite by default, or Milvus server / Zilliz Cloud
             config:
@@ -376,6 +392,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # token: $MILVUS_TOKEN # Required for Zilliz Cloud or auth-enabled Milvus
               # db_name: default # Optional Milvus database name
               consistency_level: Session # Strong, Session, Bounded, or Eventually
+              request_timeout_seconds: 30 # Bounds every request to Milvus
       ```
     </Tab>
     </Tabs>
@@ -392,6 +409,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.uri`  | The URI for the given database.                                      | Depends on provider |
       | `config.token` | Milvus auth token for Zilliz Cloud or auth-enabled Milvus server.   | `""` |
       | `config.consistency_level` | Milvus collection consistency level: `Strong`, `Session`, `Bounded`, or `Eventually`. | `Session` |
+      | `config.request_timeout_seconds` | Qdrant and Milvus: whole seconds a request to the vector store may take before the client gives up; must be positive. | `30` |
+      | `config.metrics_factory_id` | Qdrant: ID of the metrics exporter factory the store reports its operation latencies to. | `prometheus` |
       | `config.path`  | The path for the given database.                                    | Depends on provider |
       | `config.username` | Username for internal graph store authentication.                | Depends on provider |
       | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |
@@ -419,7 +438,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               aws_access_key_id: <AWS_ACCESS_KEY_ID>
               aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
               model_id: "amazon.titan-embed-text-v2:0"
-              similarity_metric: "cosine"
           ollama_embedder: # The embedder Service ID
             provider: openai
             config:
@@ -447,7 +465,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
                     aws_access_key_id: <AWS_ACCESS_KEY_ID> # AWS access key ID for Bedrock
                     aws_secret_access_key: <AWS_SECRET_ACCESS_KEY> # AWS secret access key for Bedrock
                     model_id: "amazon.titan-embed-text-v2:0" # Bedrock model ID
-                    similarity_metric: "cosine" # Defines the mathematical method used to compare two vectors for relevance (e.g., cosine).
                 ollama_embedder: # The embedder ID
                   provider: openai # The embedder provider type
                   config: # A dictionary containing provider-specific configuration
@@ -472,7 +489,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
     | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                      | *Required for Bedrock*   |
     | `config.model_id` | Bedrock model ID.                                                    | *Required for Bedrock*   |
-    | `similarity_metric` | Defines the mathematical method used to compare two vectors for relevance (e.g., cosine). | *Required for Bedrock*   |
 
   ### Language Models
     Defines various language models for tasks like summarization and generation.

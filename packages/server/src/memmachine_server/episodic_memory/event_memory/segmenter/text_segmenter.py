@@ -1,23 +1,23 @@
-"""Segmenters for events containing TextBlocks."""
+"""Segmenter for text blocks."""
 
 from typing import override
-from uuid import uuid4
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
-    FormatOptions,
-    Segment,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.segmenter import (
-    Segmenter,
+    BlockSegmenter,
+    Piece,
 )
 
 
-class TextSegmenter(Segmenter):
-    """Segments events via recursive character splitting."""
+class TextSegmenter(BlockSegmenter[TextBlock]):
+    """Splits text blocks by recursive character splitting."""
+
+    kind = "text"
 
     def __init__(self, max_chunk_length: int = 500) -> None:
         """
@@ -67,32 +67,9 @@ class TextSegmenter(Segmenter):
         )
 
     @override
-    async def segment(
-        self,
-        event: Event,
-        *,
-        format_options: FormatOptions | None = None,
-    ) -> list[Segment]:
-        segments: list[Segment] = []
-        for index, block in enumerate(event.blocks):
-            match block:
-                case TextBlock(text=text):
-                    chunks = self._text_splitter.split_text(text)
-                    segments.extend(
-                        Segment(
-                            uuid=uuid4(),
-                            event_uuid=event.uuid,
-                            index=index,
-                            offset=offset,
-                            timestamp=event.timestamp,
-                            block=TextBlock(text=chunk),
-                            context=event.context,
-                            properties=event.properties,
-                        )
-                        for offset, chunk in enumerate(chunks)
-                    )
-                case _:
-                    raise NotImplementedError(
-                        f"Unsupported block type: {type(block).__name__}"
-                    )
-        return segments
+    async def split(self, event: Event, block: TextBlock) -> list[Piece]:
+        _ = event
+        return [
+            Piece(offset=offset, block=TextBlock(text=chunk))
+            for offset, chunk in enumerate(self._text_splitter.split_text(block.text))
+        ]

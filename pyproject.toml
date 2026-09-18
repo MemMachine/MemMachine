@@ -33,6 +33,8 @@ dev = [
     "tomli>=2.4.1",
     "pytest-cov>=7.0.0",
     "pytest-xdist>=3.8.0",
+    # The v1 MCP tests drive the mounted app through an ASGI transport.
+    "httpx2>=2.0.0",
 ]
 # Optional spaCy deps for the non-LLM multi-hop decomposer. Not a hard runtime
 # dependency of memmachine-server: when spaCy is absent, RaragQueryAgent falls

@@ -1,7 +1,6 @@
 """Long-term memory abstractions."""
 
 from .long_term_memory import (
-    EVENT_BACKEND_SYSTEM_FIELDS,
     DeclarativeBackendParams,
     EventBackendParams,
     LongTermMemory,
@@ -9,7 +8,6 @@ from .long_term_memory import (
 )
 
 __all__ = [
-    "EVENT_BACKEND_SYSTEM_FIELDS",
     "DeclarativeBackendParams",
     "EventBackendParams",
     "LongTermMemory",

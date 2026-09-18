@@ -46,6 +46,18 @@
     {
       "name": "System",
       "description": "Infrastructure, health, and observability."
+    },
+    {
+      "name": "v1 Episodic Memory",
+      "description": "Queries of a tenant's event memory, and expansion along its timeline."
+    },
+    {
+      "name": "v1 Events",
+      "description": "Ingestion and removal of the events a tenant remembers."
+    },
+    {
+      "name": "v1 Tenants",
+      "description": "Lifecycle of a v1 tenant, the memory an agent writes into."
     }
   ],
   "paths": {
@@ -620,7 +632,7 @@
           "Memories"
         ],
         "summary": "Add Memories",
-        "description": "Add memory messages to a project.\n\n    The `types` field in the request specifies which memory types to add to:\n    - If `types` is empty or not provided, memories are added to all types (episodic and semantic)\n    - If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n    - If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n    - If `types` contains both, memories are added to both types\n\n    Each memory message represents a discrete piece of information to be stored\n    in the project's memory system. Messages can include content, metadata,\n    timestamps, and other contextual details.\n\n    The producer field indicates who created the message, while the\n    produced_for field specifies the intended recipient. These fields help\n    provide context for the memory and if provided should be user-friendly names.\n\n    The endpoint accepts a batch of messages to be added in a single request.",
+        "description": "Add memory messages to a project. The project must exist; an unknown\n    project is not created, and the request is answered with 404. The default\n    project, used when `org_id` and `project_id` are omitted, always exists.\n\n    The `types` field in the request specifies which memory types to add to:\n    - If `types` is empty or not provided, memories are added to all types (episodic and semantic)\n    - If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n    - If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n    - If `types` contains both, memories are added to both types\n\n    Each memory message represents a discrete piece of information to be stored\n    in the project's memory system. Messages can include content, metadata,\n    timestamps, and other contextual details.\n\n    The producer field indicates who created the message, while the\n    produced_for field specifies the intended recipient. These fields help\n    provide context for the memory and if provided should be user-friendly names.\n\n    The endpoint accepts a batch of messages to be added in a single request.",
         "operationId": "add_memories",
         "requestBody": {
           "content": {
@@ -2089,6 +2101,530 @@
           }
         }
       }
+    },
+    "/v1/tenants/{tenant}/episodic-memory/expand": {
+      "post": {
+        "tags": [
+          "v1 Episodic Memory"
+        ],
+        "summary": "Expand Episodic Memory",
+        "description": "Walk the timeline out from one segment, backward and forward.\n\nThe anchor is a segment uuid, the hex a `[segment:...]` marker carries.\nThe walk stays inside the anchor's session and never returns the anchor\nitself; a side that comes back empty means the session ran out that way.\nEach side is rendered with the same id markers a query renders, so its\nedges carry the handles a further step continues from.",
+        "operationId": "expand_episodic_memory",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tenant's name, an opaque string the server resolves",
+              "title": "Tenant"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpandRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpandResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/episodic-memory/query": {
+      "post": {
+        "tags": [
+          "v1 Episodic Memory"
+        ],
+        "summary": "Query Episodic Memory",
+        "description": "Query the tenant's memory, and render the window around every hit.\n\nThe vector search runs first, then the reranker when the request asks\nfor one and the tenant has one, and the hits are cut to `limit`. Each\nhit's `text` is its window rendered with the id markers a further\nrequest continues from: `[session:\"<id>\"]` heads each block, and\n`[segment:<hex32>]` -- or `[segments:<first>..<last>]` for a line built\nfrom more than one segment -- starts each line. `seed` is the index in\n`segments` of the segment the query matched.\n\nA segment carries no `position`: this deployment has no event store, so\nthere is no ingestion order to report. `filter` is an expression in the\nserver's filter grammar rather than a JSON tree, for the same reason:\nthe grammar is what this deployment parses.",
+        "operationId": "query_episodic_memory",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tenant's name, an opaque string the server resolves",
+              "title": "Tenant"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/events": {
+      "post": {
+        "tags": [
+          "v1 Events"
+        ],
+        "summary": "Add Events",
+        "description": "Remember a batch of events.\n\nAn event's `id` is the client's dedupe key: a client that retries a\nbatch supplies the ids it used, and a batch without them is stored\nagain. A tenant holds an event once: a batch naming an id the tenant\nalready holds is rejected whole with `event_exists`, and nothing in it\nis stored. Forget the event to store it again.\n\nIngest is synchronous: the segments and the vector records are written\nbefore this answers. `wait` is accepted so that a client written\nagainst the asynchronous contract works unchanged, and is ignored.",
+        "operationId": "add_events",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tenant's name, an opaque string the server resolves",
+              "title": "Tenant"
+            }
+          },
+          {
+            "name": "wait",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Seconds to wait for the batch; ignored, ingest is synchronous",
+              "title": "Wait"
+            },
+            "description": "Seconds to wait for the batch; ignored, ingest is synchronous"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/EventSpec"
+                },
+                "title": "Events"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredEvents"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}/events/delete": {
+      "post": {
+        "tags": [
+          "v1 Events"
+        ],
+        "summary": "Forget Events",
+        "description": "Forget events by their uuids, with everything derived from them. An id no event is held under forgets nothing and fails nothing.",
+        "operationId": "forget_events",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tenant's name, an opaque string the server resolves",
+              "title": "Tenant"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgetEventsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/v1/tenants/{tenant}": {
+      "put": {
+        "tags": [
+          "v1 Tenants"
+        ],
+        "summary": "Create Tenant",
+        "description": "Create the tenant, and the memory its events are held in.\n\nA tenant is named by an opaque string, not a UUID: the server resolves\nthe name, and a later release resolves it through the tenant registry\nwithout a client changing what it sends. Creation is idempotent: 201\nwhen this request created the tenant, 200 when it already existed.\n\nSessions have no lifecycle of their own. A session is the `session_id`\nan event carries, so a tenant holds as many sessions as its events name.",
+        "operationId": "create_tenant",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tenant's name, an opaque string the server resolves",
+              "title": "Tenant"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "200": {
+            "description": "The tenant already existed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "v1 Tenants"
+        ],
+        "summary": "Get Tenant",
+        "description": "The tenant, if it exists. This deployment holds no tenant registry, so a tenant is its name and the memory behind it, and nothing else is reported.",
+        "operationId": "get_tenant",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tenant's name, an opaque string the server resolves",
+              "title": "Tenant"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TenantBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "v1 Tenants"
+        ],
+        "summary": "Delete Tenant",
+        "description": "Delete the tenant and everything it holds. Deleting a tenant that does not exist changes nothing and answers the same way.",
+        "operationId": "delete_tenant",
+        "parameters": [
+          {
+            "name": "tenant",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The tenant's name, an opaque string the server resolves",
+              "title": "Tenant"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2146,7 +2682,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2287,7 +2823,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2371,7 +2907,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2431,7 +2967,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2506,7 +3042,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2554,7 +3090,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2618,7 +3154,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2658,7 +3194,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2718,7 +3254,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2766,7 +3302,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -2825,7 +3361,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2889,12 +3425,75 @@
         "title": "CreateSemanticSetTypeSpec",
         "description": "Specification model for creating a semantic set type."
       },
+      "DateTimeFormatSpec": {
+        "properties": {
+          "date_style": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "short",
+                  "medium",
+                  "long",
+                  "full"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Style",
+            "description": "The CLDR style of the date, or null to omit the date",
+            "default": "full"
+          },
+          "time_style": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "short",
+                  "medium",
+                  "long",
+                  "full"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Style",
+            "description": "The CLDR style of the time, or null to omit the time",
+            "default": "long"
+          },
+          "locale": {
+            "type": "string",
+            "title": "Locale",
+            "description": "The CLDR locale the date and time are written in",
+            "default": "en_US"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "The IANA name of the zone a timestamp is converted to before it is written, or null to write it in the zone it carries"
+          }
+        },
+        "type": "object",
+        "title": "DateTimeFormatSpec",
+        "description": "How a timestamp is written into the text a response renders."
+      },
       "DeleteEpisodicMemorySpec": {
         "properties": {
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2950,7 +3549,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -3001,7 +3600,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3037,7 +3636,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3093,7 +3692,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3129,7 +3728,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3165,7 +3764,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3555,6 +4154,356 @@
         "title": "EpisodicSearchShortTermMemory",
         "description": "Short-term episodic memory search results."
       },
+      "ErrorBody": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "tenant_not_found",
+              "component_not_enabled",
+              "event_exists",
+              "invalid_request",
+              "internal"
+            ],
+            "title": "Code",
+            "description": "The kind of failure"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "description": "What failed, in words"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "description": "What went wrong, under a code a client can branch on."
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody",
+            "description": "What went wrong"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse",
+        "description": "The body of every v1 response that is not a success."
+      },
+      "EventSpec": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "The event's uuid, which is how a client deduplicates its writes; null mints one, and a retry then stores the event again"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp",
+            "description": "When the event happened, with offset; null takes the server's current UTC time"
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Session Id",
+            "description": "The session the event belongs to"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id",
+            "description": "The source of the event, if it has one"
+          },
+          "context": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Context",
+            "description": "The context surrounding the event, its parts keyed by kind, for example `{\"author\": {\"name\": \"Alice\"}}`"
+          },
+          "blocks": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/TextBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ThinkingBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolCallBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/ToolResultBlock"
+                },
+                {
+                  "$ref": "#/components/schemas/InjectedBlock"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "kind",
+                "mapping": {
+                  "injected": "#/components/schemas/InjectedBlock",
+                  "text": "#/components/schemas/TextBlock",
+                  "thinking": "#/components/schemas/ThinkingBlock",
+                  "tool_call": "#/components/schemas/ToolCallBlock",
+                  "tool_result": "#/components/schemas/ToolResultBlock"
+                }
+              }
+            },
+            "type": "array",
+            "title": "Blocks",
+            "description": "The event's content, in order, each block of a registered kind. A `text` block is a message, and is the only kind a query matches; a `thinking`, `tool_call`, `tool_result` or `injected` block is on the session's timeline, reached by expanding from a message"
+          },
+          "properties": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Properties",
+            "description": "Scalar values the event can be filtered by"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "blocks"
+        ],
+        "title": "EventSpec",
+        "description": "An entry to remember on a session's timeline."
+      },
+      "ExpandRequest": {
+        "properties": {
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since",
+            "description": "Inclusive lower bound on the events' timestamps, with offset"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until",
+            "description": "Exclusive upper bound on the events' timestamps, with offset"
+          },
+          "source_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ids",
+            "description": "Keep only the segments of these sources; an empty list keeps none, and null keeps every source"
+          },
+          "block_kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Kinds",
+            "description": "Keep only the segments whose block is of these kinds; an empty list keeps none, and null keeps every kind"
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter",
+            "description": "A filter over the events' own properties, in the server's filter grammar, for example `m.project = \"memmachine\" and m.tool != \"bash\"`"
+          },
+          "datetime_format": {
+            "$ref": "#/components/schemas/DateTimeFormatSpec",
+            "description": "How a timestamp is written into the rendered text"
+          },
+          "parts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Parts",
+            "description": "The context part kinds composed into the rendered text, in the order they are written",
+            "default": [
+              "author"
+            ]
+          },
+          "anchor": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Anchor",
+            "description": "The uuid of the segment to expand around"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before",
+            "description": "How many segments to walk backward from the anchor; null takes the tenant's default"
+          },
+          "after": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After",
+            "description": "How many segments to walk forward from the anchor; null takes the tenant's default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "anchor"
+        ],
+        "title": "ExpandRequest",
+        "description": "What an expansion around one segment asks for."
+      },
+      "ExpandResponse": {
+        "properties": {
+          "before": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentBody"
+            },
+            "type": "array",
+            "title": "Before",
+            "description": "The segments before the anchor, in the store's order"
+          },
+          "after": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentBody"
+            },
+            "type": "array",
+            "title": "After",
+            "description": "The segments after the anchor, in the store's order"
+          },
+          "before_text": {
+            "type": "string",
+            "title": "Before Text",
+            "description": "The segments before the anchor, rendered with their ids"
+          },
+          "after_text": {
+            "type": "string",
+            "title": "After Text",
+            "description": "The segments after the anchor, rendered with their ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "before",
+          "after",
+          "before_text",
+          "after_text"
+        ],
+        "title": "ExpandResponse",
+        "description": "What an expansion answers with: the two sides of the anchor."
+      },
+      "ForgetEventsRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Ids",
+            "description": "The uuids of the events to forget"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "title": "ForgetEventsRequest",
+        "description": "Which events to forget."
+      },
       "GetConfigResponse": {
         "properties": {
           "resources": {
@@ -3582,7 +4531,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3610,7 +4559,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3652,7 +4601,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3680,7 +4629,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -3728,7 +4677,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3764,7 +4713,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3815,7 +4764,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3875,7 +4824,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3911,13 +4860,48 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "InjectedBlock": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "injected",
+            "title": "Kind",
+            "default": "injected"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The text that entered the conversation"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "hook",
+              "skill",
+              "compaction",
+              "reminder",
+              "command",
+              "other"
+            ],
+            "title": "Source",
+            "description": "What put the text into the conversation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "source"
+        ],
+        "title": "InjectedBlock",
+        "description": "Text that entered the conversation without a user typing it.\n\nA hook's context, a skill's body, a compaction summary, a reminder, a\ncommand's expansion: `source` says which.\n\nThis kind declares no segmenter and no deriver: injected text is one\nsegment however long it is, and it is on the timeline and off the\nsearch surface, reached by expansion from a message and never by a\nquery."
+      },
       "JsonValue": {},
       "ListMemoriesSpec": {
         "properties": {
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4085,7 +5069,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4139,7 +5123,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4200,7 +5184,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4304,7 +5288,7 @@
             "title": "Vector Store",
             "description": "VectorStore resource id (event backend only)"
           },
-          "segment_store": {
+          "event_memory_store": {
             "anyOf": [
               {
                 "type": "string"
@@ -4313,23 +5297,8 @@
                 "type": "null"
               }
             ],
-            "title": "Segment Store",
-            "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
+            "title": "Event Memory Store",
+            "description": "SQL engine resource id backing the event memory store (event backend only)"
           },
           "enabled": {
             "type": "boolean",
@@ -4506,24 +5475,16 @@
             "description": "VectorStore resource id (event backend only)",
             "default": ""
           },
-          "segment_store": {
+          "event_memory_store": {
             "type": "string",
-            "title": "Segment Store",
-            "description": "SQL engine resource id backing the segment store (event backend only)",
+            "title": "Event Memory Store",
+            "description": "SQL engine resource id backing the event memory store (event backend only)",
             "default": ""
-          },
-          "properties_schema": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
           }
         },
         "type": "object",
         "title": "ProjectConfig",
-        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses VectorStore +\n  SegmentStore. Requires `vector_store` and `segment_store`.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: server falls back to its parse-time default\n  (declarative, for backwards compatibility with pre-discriminator clients)."
+        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses VectorStore +\n  EventMemoryStore. Requires `vector_store` and `event_memory_store`.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: server falls back to its parse-time default\n  (declarative, for backwards compatibility with pre-discriminator clients)."
       },
       "ProjectResponse": {
         "properties": {
@@ -4555,6 +5516,269 @@
         ],
         "title": "ProjectResponse",
         "description": "Response model returned after project operations (e.g., creation, update, fetch).\n\nContains the resolved identifiers and configuration of the project as stored\nin the system. Field formats follow the same validation rules as in\n`CreateProjectSpec`."
+      },
+      "QueryHitBody": {
+        "properties": {
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Relevance of the seed segment; higher is better"
+          },
+          "seed": {
+            "type": "integer",
+            "title": "Seed",
+            "description": "The index in `segments` of the matched segment"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/SegmentBody"
+            },
+            "type": "array",
+            "title": "Segments",
+            "description": "The seed and its neighbors, in the store's order"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The window, rendered with its session and segment ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "seed",
+          "segments",
+          "text"
+        ],
+        "title": "QueryHitBody",
+        "description": "A segment a query matched, with the window rendered around it."
+      },
+      "QueryRequest": {
+        "properties": {
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since",
+            "description": "Inclusive lower bound on the events' timestamps, with offset"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until",
+            "description": "Exclusive upper bound on the events' timestamps, with offset"
+          },
+          "source_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ids",
+            "description": "Keep only the segments of these sources; an empty list keeps none, and null keeps every source"
+          },
+          "block_kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Block Kinds",
+            "description": "Keep only the segments whose block is of these kinds; an empty list keeps none, and null keeps every kind"
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter",
+            "description": "A filter over the events' own properties, in the server's filter grammar, for example `m.project = \"memmachine\" and m.tool != \"bash\"`"
+          },
+          "datetime_format": {
+            "$ref": "#/components/schemas/DateTimeFormatSpec",
+            "description": "How a timestamp is written into the rendered text"
+          },
+          "parts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Parts",
+            "description": "The context part kinds composed into the rendered text, in the order they are written",
+            "default": [
+              "author"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Query",
+            "description": "The text to query for"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit",
+            "description": "How many hits to answer with; null takes the tenant's default"
+          },
+          "min_cosine_similarity": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1.0,
+                "minimum": -1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Cosine Similarity",
+            "description": "Drop the matches whose cosine similarity is below this; null drops none"
+          },
+          "expand_context": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expand Context",
+            "description": "How many neighbors to render around each hit; null takes the tenant's default"
+          },
+          "rerank": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How to rerank the candidates; null reranks nothing, and omitting it reranks with the tenant's reranker when it has one"
+          },
+          "session_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Ids",
+            "description": "Keep only the segments of these sessions; an empty list keeps none, and null keeps every session"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query"
+        ],
+        "title": "QueryRequest",
+        "description": "What a query asks for."
+      },
+      "QueryResponse": {
+        "properties": {
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/QueryHitBody"
+            },
+            "type": "array",
+            "title": "Hits",
+            "description": "The hits, in descending score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hits"
+        ],
+        "title": "QueryResponse",
+        "description": "What a query answers with."
+      },
+      "RerankSpec": {
+        "properties": {
+          "reranker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker",
+            "description": "The reranker to score with. This server scores with the tenant's own reranker and resolves no other, so naming one is rejected"
+          },
+          "candidates": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidates",
+            "description": "How many hits the vector search fetches for the reranker to score; null takes the tenant's default"
+          },
+          "min_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Score",
+            "description": "Drop the hits the reranker scores below this; null drops none"
+          }
+        },
+        "type": "object",
+        "title": "RerankSpec",
+        "description": "How the candidates of a query are reranked before it answers."
       },
       "ResourceInfo": {
         "properties": {
@@ -4648,7 +5872,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4825,6 +6049,111 @@
         "type": "object",
         "title": "SearchResultContent",
         "description": "Payload for SearchResult.content returned by `/memories/search`."
+      },
+      "SegmentBody": {
+        "properties": {
+          "uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Uuid",
+            "description": "The uuid of the segment"
+          },
+          "event_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Event Uuid",
+            "description": "The uuid of the event it is a piece of"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "Position of the block among the event's blocks"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "description": "Position of the piece among the block's pieces"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp",
+            "description": "The event's timestamp, with offset"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "description": "The event's session id"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id",
+            "description": "The event's source id, if it has one"
+          },
+          "context": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Context",
+            "description": "The event's context, its parts keyed by kind"
+          },
+          "block": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Block",
+            "description": "The piece of the event's block"
+          },
+          "properties": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Properties",
+            "description": "The event's own properties"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uuid",
+          "event_uuid",
+          "index",
+          "offset",
+          "timestamp",
+          "session_id",
+          "source_id",
+          "context",
+          "block",
+          "properties"
+        ],
+        "title": "SegmentBody",
+        "description": "One piece of one of an event's blocks, carrying the event's fields.\n\nA segment carries no ingestion position: this deployment holds no\nevent store, so there is no ingestion order to report."
       },
       "SemanticCategoryEntry": {
         "properties": {
@@ -5228,6 +6557,146 @@
         "title": "ShortTermMemoryConfigResponse",
         "description": "Response model for short-term memory configuration."
       },
+      "StoredEvents": {
+        "properties": {
+          "stored": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Stored",
+            "description": "The uuids of the events stored, in the order they were given"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stored"
+        ],
+        "title": "StoredEvents",
+        "description": "What an ingest answers with."
+      },
+      "TenantBody": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The tenant's name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TenantBody",
+        "description": "A tenant, as v1 knows it: a name, and nothing else yet."
+      },
+      "TextBlock": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "text",
+            "title": "Kind",
+            "default": "text"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "TextBlock",
+        "description": "Plain text block."
+      },
+      "ThinkingBlock": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "thinking",
+            "title": "Kind",
+            "default": "thinking"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "The reasoning the transcript recorded"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "ThinkingBlock",
+        "description": "The agent's reasoning, as the transcript recorded it.\n\nThis kind declares no segmenter and no deriver: reasoning is one\nsegment however long it is, and it is on the timeline and off the\nsearch surface, reached by expansion from a message and never by a\nquery."
+      },
+      "ToolCallBlock": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "tool_call",
+            "title": "Kind",
+            "default": "tool_call"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name",
+            "description": "The name of the tool the agent invoked"
+          },
+          "input": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Input",
+            "description": "The arguments the tool was invoked with"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "input"
+        ],
+        "title": "ToolCallBlock",
+        "description": "A tool an agent invoked, with the input it was invoked with.\n\nThis kind declares no segmenter and no deriver: a call is one segment\nhowever long its input, and it is on the timeline and off the search\nsurface, reached by expansion from a message and never by a query.\n\nThe input is a JSON object, the shape a tool's arguments have, rather\nthan a mapping of property values: it is content the block carries,\nnot something an event is filtered by, and a tool's arguments nest."
+      },
+      "ToolResultBlock": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "tool_result",
+            "title": "Kind",
+            "default": "tool_result"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Name",
+            "description": "The name of the tool that returned this"
+          },
+          "output": {
+            "type": "string",
+            "title": "Output",
+            "description": "The text the tool returned"
+          },
+          "error": {
+            "type": "boolean",
+            "title": "Error",
+            "description": "Whether the tool failed instead of returning",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "output"
+        ],
+        "title": "ToolResultBlock",
+        "description": "What a tool returned to the agent that invoked it.\n\nThis kind declares no segmenter and no deriver: a result is one\nsegment however long its output, so one expansion step reaches all of\nit, and it is on the timeline and off the search surface, reached by\nexpansion from a message and never by a query."
+      },
       "UpdateEpisodicMemorySpec": {
         "properties": {
           "long_term_memory": {
@@ -5298,7 +6767,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -5458,7 +6927,7 @@
             "title": "Vector Store",
             "description": "VectorStore resource id (event backend only)"
           },
-          "segment_store": {
+          "event_memory_store": {
             "anyOf": [
               {
                 "type": "string"
@@ -5467,23 +6936,8 @@
                 "type": "null"
               }
             ],
-            "title": "Segment Store",
-            "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only)"
+            "title": "Event Memory Store",
+            "description": "SQL engine resource id backing the event memory store (event backend only)"
           },
           "enabled": {
             "anyOf": [
@@ -5567,7 +7021,7 @@
             "title": "Vector Store",
             "description": "VectorStore resource id (event backend only)"
           },
-          "segment_store": {
+          "event_memory_store": {
             "anyOf": [
               {
                 "type": "string"
@@ -5576,23 +7030,8 @@
                 "type": "null"
               }
             ],
-            "title": "Segment Store",
-            "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only)"
+            "title": "Event Memory Store",
+            "description": "SQL engine resource id backing the event memory store (event backend only)"
           }
         },
         "type": "object",
@@ -5909,6 +7348,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",
