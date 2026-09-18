@@ -1,7 +1,8 @@
-"""Data types for segment store."""
+"""Data types for event memory store."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from uuid import UUID
 
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, field_validator
 
@@ -15,8 +16,8 @@ from memmachine_server.common.payload_codec.payload_codec_config import (
 _JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
 
-class SegmentStorePartitionConfig(BaseModel):
-    """Configuration for a logical partition in a segment store."""
+class EventMemoryStorePartitionConfig(BaseModel):
+    """Configuration for a logical partition in a event memory store."""
 
     payload_codec_config: PayloadCodecConfig = Field(
         default_factory=PlaintextPayloadCodecConfig,
@@ -46,14 +47,14 @@ class SegmentStorePartitionConfig(BaseModel):
         return value
 
 
-class SegmentStorePartitionConfigMismatchError(Exception):
+class EventMemoryStorePartitionConfigMismatchError(Exception):
     """Raised when opening a partition with a different configuration than it was created with."""
 
     def __init__(
         self,
         partition_key: str,
-        existing_config: SegmentStorePartitionConfig,
-        requested_config: SegmentStorePartitionConfig,
+        existing_config: EventMemoryStorePartitionConfig,
+        requested_config: EventMemoryStorePartitionConfig,
     ) -> None:
         """Initialize with the partition key and configurations."""
         self.partition_key = partition_key
@@ -66,10 +67,41 @@ class SegmentStorePartitionConfigMismatchError(Exception):
         )
 
 
-class SegmentStorePartitionAlreadyExistsError(Exception):
+class EventMemoryStoreAttemptsExhaustedError(Exception):
+    """The store exhausted its internal attempts; diagnose the cause.
+
+    Raised when an operation kept failing in a way that should not recur
+    under normal operation. An immediate retry is unlikely to succeed;
+    the underlying database error is chained as the cause.
+    """
+
+
+class EventMemoryStorePartitionHandleStaleError(Exception):
+    """A partition handle outlived the partition incarnation it was opened on."""
+
+    def __init__(self, partition_key: str) -> None:
+        """Record the logical partition key the stale handle belonged to."""
+        super().__init__(
+            f"Stale handle for partition {partition_key!r}: the partition was "
+            "deleted (or re-created) after this handle was opened"
+        )
+        self.partition_key = partition_key
+
+
+class EventMemoryStorePartitionAlreadyExistsError(Exception):
     """Raised when creating a partition that already exists."""
 
     def __init__(self, partition_key: str) -> None:
         """Initialize with the key of the existing partition."""
         self.partition_key = partition_key
         super().__init__(f"Partition {partition_key!r} already exists.")
+
+
+class EventMemoryStoreEventAlreadyStoredError(Exception):
+    """A batch named an event the partition already holds; nothing was stored."""
+
+    def __init__(self, event_uuids: Iterable[UUID]) -> None:
+        """Record the uuids of the events the partition already holds."""
+        self.event_uuids = frozenset(event_uuids)
+        listed = ", ".join(str(uuid) for uuid in sorted(self.event_uuids))
+        super().__init__(f"Events already stored: {listed}.")

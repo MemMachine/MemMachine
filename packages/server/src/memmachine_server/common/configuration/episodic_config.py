@@ -132,12 +132,6 @@ class ShortTermMemoryConfPartial(BaseModel):
 # Segmenter / Deriver sub-configurations for the event-backed long-term memory.
 
 
-class PassthroughSegmenterConf(BaseModel):
-    """One segment per block; no splitting."""
-
-    type: Literal["passthrough"] = "passthrough"
-
-
 class TextSegmenterConf(BaseModel):
     """Recursive-character text segmenter."""
 
@@ -148,10 +142,9 @@ class TextSegmenterConf(BaseModel):
     )
 
 
-SegmenterConf = Annotated[
-    PassthroughSegmenterConf | TextSegmenterConf,
-    Field(discriminator="type"),
-]
+SegmenterConf = TextSegmenterConf
+"""The segmenter's one configurable handler, for text blocks; a block of any
+kind with no handler is one segment, unchanged."""
 
 
 class WholeTextDeriverConf(BaseModel):
@@ -199,7 +192,7 @@ class DeclarativeLongTermMemoryConf(BaseModel):
 
 
 class EventLongTermMemoryConf(BaseModel):
-    """Event-backend long-term memory (VectorStore + SegmentStore)."""
+    """Event-backend long-term memory (VectorStore + EventMemoryStore)."""
 
     backend: Literal["event"] = "event"
     session_id: str = Field(
@@ -210,11 +203,11 @@ class EventLongTermMemoryConf(BaseModel):
         ...,
         description="ID of the VectorStore instance backing the derivative index",
     )
-    segment_store: str = Field(
+    event_memory_store: str = Field(
         ...,
         description=(
-            "ID of the SQL engine resource backing the segment store. "
-            "The SegmentStore is constructed implicitly from the engine."
+            "ID of the SQL engine resource backing the event memory store. "
+            "The EventMemoryStore is constructed implicitly from the engine."
         ),
     )
     embedder: str = Field(
@@ -228,16 +221,9 @@ class EventLongTermMemoryConf(BaseModel):
             "are used for ordering."
         ),
     )
-    properties_schema: dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "User-defined filterable properties and their type names "
-            '(e.g. {"my_field": "str"}). Type names: bool, int, float, str, datetime.'
-        ),
-    )
-    segmenter: SegmenterConf = Field(
-        default_factory=PassthroughSegmenterConf,
-        description="Segmenter sub-configuration (default: passthrough)",
+    segmenter: SegmenterConf | None = Field(
+        default=None,
+        description="Text segmenter; omitted, every block is one segment",
     )
     deriver: DeriverConf = Field(
         default_factory=WholeTextDeriverConf,
@@ -266,7 +252,7 @@ class LongTermMemoryConfPartial(BaseModel):
         description=(
             "Long-term memory backend. None or 'declarative' uses the legacy "
             "VectorGraphStore-backed declarative memory. 'event' uses the "
-            "VectorStore + SegmentStore event memory."
+            "VectorStore + EventMemoryStore event memory."
         ),
     )
     session_id: str | None = Field(
@@ -289,13 +275,9 @@ class LongTermMemoryConfPartial(BaseModel):
         default=None,
         description="ID of the VectorStore (event backend only)",
     )
-    segment_store: str | None = Field(
+    event_memory_store: str | None = Field(
         default=None,
-        description="ID of the SQL engine resource for the segment store (event backend only)",
-    )
-    properties_schema: dict[str, str] | None = Field(
-        default=None,
-        description="User-defined filterable properties (event backend only)",
+        description="ID of the SQL engine resource for the event memory store (event backend only)",
     )
     segmenter: SegmenterConf | None = Field(
         default=None,

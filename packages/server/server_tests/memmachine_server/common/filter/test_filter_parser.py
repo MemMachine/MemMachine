@@ -226,6 +226,37 @@ def test_datetime_parsing_with_equality() -> None:
     )
 
 
+def test_comparison_normalizes_datetime_values_at_construction() -> None:
+    """The language owns datetime semantics: instants, naive means UTC."""
+    offset_aware = Comparison(
+        field="created_at",
+        op=">=",
+        value=datetime.datetime.fromisoformat("2024-01-01T13:30:45-08:00"),
+    )
+    assert isinstance(offset_aware.value, datetime.datetime)
+    assert offset_aware.value == datetime.datetime(
+        2024, 1, 1, 21, 30, 45, tzinfo=datetime.UTC
+    )
+    assert offset_aware.value.tzinfo == datetime.UTC
+
+    naive = Comparison(
+        field="created_at",
+        op=">=",
+        value=datetime.datetime.fromisoformat("2024-01-01T13:30:45"),
+    )
+    assert isinstance(naive.value, datetime.datetime)
+    assert naive.value == datetime.datetime(2024, 1, 1, 13, 30, 45, tzinfo=datetime.UTC)
+
+
+def test_parsed_date_literals_carry_utc_instants() -> None:
+    """A date() literal's offset is consumed into a UTC instant."""
+    expr = parse_filter("created_at >= date('2024-01-01T13:30:45-08:00')")
+    assert isinstance(expr, Comparison)
+    assert isinstance(expr.value, datetime.datetime)
+    assert expr.value == datetime.datetime(2024, 1, 1, 21, 30, 45, tzinfo=datetime.UTC)
+    assert expr.value.tzinfo == datetime.UTC
+
+
 def test_datetime_parsing_invalid_format() -> None:
     with pytest.raises(FilterParseError, match="Invalid ISO format date string"):
         parse_filter("created_at<date('invalid-date')")
