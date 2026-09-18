@@ -230,6 +230,10 @@ class DatabaseManager:
                 "driver": driver,
                 "force_exact_similarity_search": conf.force_exact_similarity_search,
                 "range_index_hierarchies": [["uid"], ["timestamp", "uid"]],
+                # Without this the store's OperationTracker receives no factory and
+                # every one of its timed operations is silently a no-op, which is
+                # why no database latency was observable.
+                "metrics_factory": conf.get_metrics_factory(),
             }
             if conf.range_index_creation_threshold is not None:
                 params_kwargs["range_index_creation_threshold"] = (

@@ -37,12 +37,18 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
+from memmachine_server.common.metrics_factory import (
+    MetricsFactory,
+    OperationTracker,
+    timed,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 
-
 # Base class for declarative class definitions
+
+
 class Base(DeclarativeBase):  # pylint: disable=too-few-public-methods
     """Base class for declarative class definitions."""
 
@@ -91,9 +97,18 @@ class SessionDataManagerSQL(SessionDataManager):
             ForeignKeyConstraint(["session_key"], ["sessions.session_key"]),
         )
 
-    def __init__(self, engine: AsyncEngine, schema: str | None = None) -> None:
+    def __init__(
+        self,
+        engine: AsyncEngine,
+        schema: str | None = None,
+        metrics_factory: MetricsFactory | None = None,
+    ) -> None:
         """Initialize with an async engine and optional schema."""
         self._engine = engine
+        self._tracker = OperationTracker(
+            metrics_factory,
+            prefix="session_store_sqlalchemy",
+        )
         self._async_session = async_sessionmaker(
             bind=self._engine,
             expire_on_commit=False,
@@ -212,6 +227,7 @@ class SessionDataManagerSQL(SessionDataManager):
                 )
             )
 
+    @timed("create_or_validate_session")
     async def create_or_validate_session(
         self,
         session_key: str,
@@ -256,6 +272,7 @@ class SessionDataManagerSQL(SessionDataManager):
             dbsession.add(new_session)
             await dbsession.commit()
 
+    @timed("update_session_status")
     async def update_session_status(
         self,
         session_key: str,
@@ -292,6 +309,7 @@ class SessionDataManagerSQL(SessionDataManager):
             await dbsession.commit()
             return
 
+    @timed("get_session_info")
     async def get_session_info(
         self,
         session_key: str,
@@ -343,6 +361,7 @@ class SessionDataManagerSQL(SessionDataManager):
             f"json_contains not supported for dialect '{self._engine.dialect.name}'",
         )
 
+    @timed("get_sessions")
     async def get_sessions(
         self,
         filters: dict[str, PropertyValue | None] | None = None,
@@ -360,6 +379,7 @@ class SessionDataManagerSQL(SessionDataManager):
             sessions = await dbsession.execute(stmt)
             return list(sessions.scalars().all())
 
+    @timed("save_short_term_memory")
     async def save_short_term_memory(
         self,
         session_key: str,
@@ -407,6 +427,7 @@ class SessionDataManagerSQL(SessionDataManager):
                 await dbsession.execute(insert_stmt)
             await dbsession.commit()
 
+    @timed("get_short_term_memory")
     async def get_short_term_memory(self, session_key: str) -> tuple[str, int, int]:
         """Retrieve the short-term memory data for a session."""
         async with self._async_session() as dbsession:
