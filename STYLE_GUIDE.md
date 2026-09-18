@@ -38,5 +38,5 @@ They can be installed easily as part of the `dev` group using `uv sync`.
 ## Formatting
 
 - **Automated Formatting:** We use automated tools to format our code. Please run the formatter (e.g., Ruff for Python) before committing to ensure all code is correctly styled.
-- **Linting:** Our CI pipeline runs a linter (e.g., Ruff or ESLint) on every pull request. Your changes must pass these checks to be merged.
+- **Linting:** Our CI pipeline runs a linter (e.g., Ruff or ESLint) on every pull request that is not a draft. Your changes must pass these checks to be merged.
 - **Editor Configuration:** We highly recommend configuring your editor (e.g., VS Code) with the appropriate extensions to automatically format and lint code on save. This makes following the style guide effortless.

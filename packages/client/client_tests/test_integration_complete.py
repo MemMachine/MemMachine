@@ -769,20 +769,20 @@ class TestMemMachineIntegration:
         assert exc_info.value.response.status_code == 404
 
     def test_create_duplicate_project(self, client, unique_test_ids):
-        """Test creating a project that already exists."""
-        # Create project first
-        client.create_project(
+        """Creating the same project twice returns the existing project."""
+        first_project = client.create_project(
             org_id=unique_test_ids["org_id"],
             project_id=unique_test_ids["project_id"],
         )
 
-        # Try to create again - should raise error
-        with pytest.raises(requests.HTTPError) as exc_info:
-            client.create_project(
-                org_id=unique_test_ids["org_id"],
-                project_id=unique_test_ids["project_id"],
-            )
-        assert exc_info.value.response.status_code == 409
+        duplicate_project = client.create_project(
+            org_id=unique_test_ids["org_id"],
+            project_id=unique_test_ids["project_id"],
+        )
+
+        assert duplicate_project.org_id == first_project.org_id
+        assert duplicate_project.project_id == first_project.project_id
+        assert duplicate_project.config == first_project.config
 
     def test_invalid_org_id_format(self, client):
         """Test creating project with invalid org_id format."""

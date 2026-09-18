@@ -185,7 +185,7 @@ class EpisodicMemoryManager:
         config: dict[str, JsonValue] | None = None,
     ) -> AsyncIterator[EpisodicMemory]:
         """
-        Create a new episodic memory instance and store its configuration.
+        Create or reuse an episodic memory instance with matching session data.
 
         Args:
             session_key: The unique identifier for the session.
@@ -195,7 +195,7 @@ class EpisodicMemoryManager:
             config: Additional configuration values for the session metadata.
 
         Raises:
-            ValueError: If a session with the given session_key already exists.
+            SessionAlreadyExistsError: If stored session data conflicts with the request.
 
         """
         instance: EpisodicMemory | None = None
@@ -205,17 +205,19 @@ class EpisodicMemoryManager:
             if self._closed:
                 raise EpisodicMemoryManagerClosedError
             async with self._session_locks[session_key].write_lock():
-                await self._session_data_manager.create_new_session(
+                await self._session_data_manager.create_or_validate_session(
                     session_key,
                     config,
                     episodic_memory_config,
                     description,
                     metadata,
                 )
-                instance = await self._create_episodic_memory(
-                    session_key,
-                    episodic_memory_config,
-                )
+                instance = await self._instance_cache.get(session_key)
+                if instance is None:
+                    instance = await self._create_episodic_memory(
+                        session_key,
+                        episodic_memory_config,
+                    )
         try:
             yield instance
         finally:
@@ -268,7 +270,7 @@ class EpisodicMemoryManager:
 
                     if instance is None:
                         # session does not exist, create it
-                        await self._session_data_manager.create_new_session(
+                        await self._session_data_manager.create_or_validate_session(
                             session_key,
                             config,
                             episodic_memory_config,

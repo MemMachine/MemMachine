@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
 from memmachine_server.common.errors import (
     EpisodicMemoryManagerClosedError,
-    SessionAlreadyExistsError,
     SessionDeletedError,
     SessionInUseError,
 )
@@ -206,28 +205,28 @@ async def test_create_episodic_memory_success(
 
 
 @pytest.mark.asyncio
-async def test_create_episodic_memory_already_exists(
+async def test_create_episodic_memory_matching_session_succeeds(
     manager: EpisodicMemoryManager,
     mock_episodic_memory_conf,
 ):
-    """Test that creating a session that already exists raises an error."""
+    """Creating an episodic memory twice accepts matching session data."""
     session_key = "existing_session"
-    async with manager.create_episodic_memory(
-        session_key,
-        mock_episodic_memory_conf,
-        "",
-        {},
+    async with (
+        manager.create_episodic_memory(
+            session_key,
+            mock_episodic_memory_conf,
+            "",
+            {},
+        ) as original,
+        manager.create_episodic_memory(
+            session_key,
+            mock_episodic_memory_conf,
+            "",
+            {},
+        ) as repeated,
     ):
-        with pytest.raises(
-            SessionAlreadyExistsError, match=f"Session '{session_key}' already exists"
-        ):
-            async with manager.create_episodic_memory(
-                session_key,
-                mock_episodic_memory_conf,
-                "",
-                {},
-            ):
-                pass  # This part should not be reached
+        assert repeated is original
+        assert await manager.get_session_info(session_key) is not None
 
 
 @pytest.mark.asyncio

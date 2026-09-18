@@ -532,7 +532,7 @@ class MemMachine:
             )
 
         session_data_manager = await self._resources.get_session_data_manager()
-        await session_data_manager.create_new_session(
+        await session_data_manager.create_or_validate_session(
             session_key=session_key,
             configuration={},
             param=episodic_memory_conf,
@@ -679,6 +679,31 @@ class MemMachine:
             return left
         return FilterAnd(left=left, right=right)
 
+    def _should_dispatch_to_semantic_memory(
+        self, target_memories: list[MemoryType]
+    ) -> bool:
+        """
+        Report whether a request should reach semantic memory.
+
+        Requests default `target_memories` to every memory type, so the type
+        list alone says nothing about whether semantic memory is configured.
+        Dispatching on it while semantic memory is disabled reaches a backend
+        whose required fields are legally unset and raises
+        `ResourceNotReadyError`; skip it instead, as the startup, shutdown, and
+        session-deletion paths already do.
+
+        Args:
+            target_memories: Memory types this request asked for.
+
+        Returns:
+            `True` when semantic memory is both requested and enabled.
+
+        """
+        return (
+            MemoryType.Semantic in target_memories
+            and self._conf.semantic_memory.enabled
+        )
+
     async def add_episodes(
         self,
         session_data: InstanceOf[SessionData],
@@ -725,7 +750,7 @@ class MemMachine:
 
             tasks.append(add_to_episodic_memory())
 
-        if MemoryType.Semantic in target_memories:
+        if self._should_dispatch_to_semantic_memory(target_memories):
             semantic_session_manager = (
                 await self._resources.get_semantic_session_manager()
             )
@@ -1000,7 +1025,7 @@ class MemMachine:
                 )
             )
 
-        if MemoryType.Semantic in target_memories:
+        if self._should_dispatch_to_semantic_memory(target_memories):
             semantic_session = await self._resources.get_semantic_session_manager()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
@@ -1077,7 +1102,7 @@ class MemMachine:
                 )
             )
 
-        if MemoryType.Semantic in target_memories:
+        if self._should_dispatch_to_semantic_memory(target_memories):
             semantic_session = await self._resources.get_semantic_session_manager()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
@@ -1151,7 +1176,6 @@ class MemMachine:
 
         """
         episode_storage = await self._resources.get_episode_storage()
-        semantic_service = await self._resources.get_semantic_service()
 
         tasks: list[Coroutine[Any, Any, Any]] = []
 
@@ -1169,7 +1193,9 @@ class MemMachine:
             tasks.append(delete_from_episodic_memory())
 
         tasks.append(episode_storage.delete_episodes(episode_ids))
-        tasks.append(semantic_service.delete_history(episode_ids))
+        if self._conf.semantic_memory.enabled:
+            semantic_service = await self._resources.get_semantic_service()
+            tasks.append(semantic_service.delete_history(episode_ids))
         await asyncio.gather(*tasks)
 
     async def _cleanup_semantic_history(self, episode_ids: list[str]) -> None:
