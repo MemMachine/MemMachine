@@ -51,12 +51,13 @@ resources:
         # token: $MILVUS_TOKEN
         # db_name: default
         consistency_level: Session
+        request_timeout_seconds: 30
 
 episodic_memory:
   long_term_memory:
     backend: event
     vector_store: milvus_vector_store
-    segment_store: profile_storage
+    event_memory_store: profile_storage
 ```
 
 ## neo4j

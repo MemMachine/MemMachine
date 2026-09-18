@@ -1,7 +1,6 @@
 """Common data types for MemMachine."""
 
 from datetime import datetime
-from enum import Enum
 from typing import Final
 
 PropertyValue = bool | int | float | str | datetime
@@ -24,20 +23,6 @@ FilterValue = bool | int | float | str | datetime | list[int] | list[str]
 
 OrderedValue = int | float | datetime
 """Type for values that can be ordered/sorted."""
-
-
-class SimilarityMetric(Enum):
-    """Similarity metrics supported by embedding operations."""
-
-    COSINE = "cosine"
-    DOT = "dot"
-    EUCLIDEAN = "euclidean"
-    MANHATTAN = "manhattan"
-
-    @property
-    def higher_is_better(self) -> bool:
-        """Whether a higher score indicates a better match."""
-        return self in (SimilarityMetric.COSINE, SimilarityMetric.DOT)
 
 
 class ExternalServiceAPIError(Exception):

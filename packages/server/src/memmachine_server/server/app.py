@@ -29,12 +29,14 @@ from starlette.responses import JSONResponse
 from starlette.types import ExceptionHandler, Lifespan
 
 from memmachine_server.common.api.version import get_version
+from memmachine_server.server.api_v1.router import load_v1_api_router
 from memmachine_server.server.api_v2.mcp import (
-    initialize_resource,
+    init_global_memory,
     load_configuration,
     mcp,
     mcp_app,
     mcp_http_lifespan,
+    shutdown_global_memory,
 )
 from memmachine_server.server.api_v2.router import RestError, load_v2_api_router
 from memmachine_server.server.diagnostics import dump_traceback, install_sigusr1_handler
@@ -71,6 +73,7 @@ class MemMachineAPI(FastAPI):
         )
         self.mount("/mcp", mcp_app)
         load_v2_api_router(self, with_config_api=self._with_config_api)
+        load_v1_api_router(self)
 
     @staticmethod
     def _validation_error_handler_factory(error_code: int) -> ExceptionHandler:
@@ -258,9 +261,13 @@ def main() -> None:
                 """Initialize resources and run MCP server in the same event loop."""
                 install_sigusr1_handler()
                 try:
-                    await initialize_resource()
+                    # The same startup as the HTTP servers: the tools read the
+                    # module-level MemMachine, which only this call sets and
+                    # starts, and the default project is created here too.
+                    await init_global_memory()
                     await mcp.run_stdio_async()
                 finally:
+                    await shutdown_global_memory()
                     dump_traceback()
 
             asyncio.run(run_mcp_server())

@@ -15,8 +15,8 @@ from memmachine_server.common.session_manager.session_data_manager import (
 )
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStore
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStore,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
 )
 
 
@@ -48,8 +48,8 @@ class CommonResourceManager(Protocol):
         """Return the vector store by name."""
         raise NotImplementedError
 
-    async def get_segment_store(self, name: str) -> SegmentStore:
-        """Return the segment store by name."""
+    async def get_event_memory_store(self, name: str) -> EventMemoryStore:
+        """Return the event memory store by name."""
         raise NotImplementedError
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
