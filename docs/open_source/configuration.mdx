@@ -337,6 +337,16 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite
             config:
               path: sqlite_test.db
+          qdrant_vector_store:
+            provider: qdrant
+            config:
+              host: localhost
+              port: 6333
+              grpc_port: 6334
+              prefer_grpc: false
+              https: false
+              request_timeout_seconds: 30
+              # api_key: $QDRANT_API_KEY
           milvus_vector_store:
             provider: milvus
             config:
@@ -345,6 +355,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # token: $MILVUS_TOKEN
               # db_name: default
               consistency_level: Session
+              request_timeout_seconds: 30
       ```
     </Tab>
     <Tab title="With Comments">
@@ -369,6 +380,16 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite # Local relational database provider
             config: # A dictionary containing provider-specific configuration
               path: sqlite_test.db. # The path for the given database
+          qdrant_vector_store: # VectorStore for event or vector-backed semantic memory
+            provider: qdrant # Qdrant server or Qdrant Cloud
+            config:
+              host: localhost # Qdrant host
+              port: 6333 # REST port
+              grpc_port: 6334 # gRPC port
+              prefer_grpc: false # Use gRPC instead of REST
+              https: false # Use TLS
+              request_timeout_seconds: 30 # Bounds every request to Qdrant
+              # api_key: $QDRANT_API_KEY # Required for Qdrant Cloud
           milvus_vector_store: # VectorStore for event or vector-backed semantic memory
             provider: milvus # Milvus Lite by default, or Milvus server / Zilliz Cloud
             config:
@@ -376,6 +397,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # token: $MILVUS_TOKEN # Required for Zilliz Cloud or auth-enabled Milvus
               # db_name: default # Optional Milvus database name
               consistency_level: Session # Strong, Session, Bounded, or Eventually
+              request_timeout_seconds: 30 # Bounds every request to Milvus
       ```
     </Tab>
     </Tabs>
@@ -392,6 +414,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.uri`  | The URI for the given database.                                      | Depends on provider |
       | `config.token` | Milvus auth token for Zilliz Cloud or auth-enabled Milvus server.   | `""` |
       | `config.consistency_level` | Milvus collection consistency level: `Strong`, `Session`, `Bounded`, or `Eventually`. | `Session` |
+      | `config.request_timeout_seconds` | Qdrant and Milvus: whole seconds a request to the vector store may take before the client gives up; must be positive. | `30` |
+      | `config.metrics_factory_id` | Qdrant: ID of the metrics exporter factory the store reports its operation latencies to. | `prometheus` |
       | `config.path`  | The path for the given database.                                    | Depends on provider |
       | `config.username` | Username for internal graph store authentication.                | Depends on provider |
       | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |
@@ -419,7 +443,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               aws_access_key_id: <AWS_ACCESS_KEY_ID>
               aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
               model_id: "amazon.titan-embed-text-v2:0"
-              similarity_metric: "cosine"
           ollama_embedder: # The embedder Service ID
             provider: openai
             config:
@@ -447,7 +470,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
                     aws_access_key_id: <AWS_ACCESS_KEY_ID> # AWS access key ID for Bedrock
                     aws_secret_access_key: <AWS_SECRET_ACCESS_KEY> # AWS secret access key for Bedrock
                     model_id: "amazon.titan-embed-text-v2:0" # Bedrock model ID
-                    similarity_metric: "cosine" # Defines the mathematical method used to compare two vectors for relevance (e.g., cosine).
                 ollama_embedder: # The embedder ID
                   provider: openai # The embedder provider type
                   config: # A dictionary containing provider-specific configuration
@@ -472,7 +494,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
     | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                      | *Required for Bedrock*   |
     | `config.model_id` | Bedrock model ID.                                                    | *Required for Bedrock*   |
-    | `similarity_metric` | Defines the mathematical method used to compare two vectors for relevance (e.g., cosine). | *Required for Bedrock*   |
 
   ### Language Models
     Defines various language models for tasks like summarization and generation.

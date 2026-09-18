@@ -108,11 +108,10 @@ class EventMemory:
     """Event memory system."""
 
     # System-defined metadata field names. Reserved.
-    _SEGMENT_UUID_FIELD_NAME = "_segment_uuid"
     _TIMESTAMP_FIELD_NAME = "_timestamp"
 
     _BASE_EVENT_MEMORY_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {_SEGMENT_UUID_FIELD_NAME, _TIMESTAMP_FIELD_NAME}
+        {_TIMESTAMP_FIELD_NAME}
     )
 
     @classmethod
@@ -124,7 +123,6 @@ class EventMemory:
         when creating the collection so that EventMemory's reserved fields are efficiently filterable.
         """
         return {
-            cls._SEGMENT_UUID_FIELD_NAME: cast(type[PropertyValue], str),
             cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
         }
 
@@ -325,7 +323,6 @@ class EventMemory:
         properties: dict[str, PropertyValue] = {}
 
         # System-defined metadata (underscore-prefixed).
-        properties[cls._SEGMENT_UUID_FIELD_NAME] = str(derivative.segment_uuid)
         properties[cls._TIMESTAMP_FIELD_NAME] = derivative.timestamp
 
         # User-defined properties.
@@ -424,28 +421,27 @@ class EventMemory:
             query_vectors=[query_embedding],
             limit=vector_search_limit,
             property_filter=collection_filter,
-            return_vector=False,
-            return_properties=True,
         )
         t_vector_query = time.monotonic()
 
-        # Extract seed segment UUIDs and their best embedding scores.
+        segment_by_derivative = (
+            await self._segment_store_partition.get_segment_uuids_by_derivative_uuids(
+                match.record_uuid for match in query_result.matches
+            )
+        )
+
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
         # First occurrence has the best score since matches are ordered best-to-worst.
-        seed_embedding_scores: dict[UUID, float] = {}
+        seed_cosine_similarities: dict[UUID, float] = {}
         for match in query_result.matches:
-            segment_uuid = UUID(
-                str(
-                    cast(
-                        dict[str, PropertyValue],
-                        match.record.properties,
-                    )[EventMemory._SEGMENT_UUID_FIELD_NAME]
-                )
-            )
-            if segment_uuid not in seed_embedding_scores:
-                seed_embedding_scores[segment_uuid] = match.score
+            segment_uuid = segment_by_derivative.get(match.record_uuid)
+            if segment_uuid is None:
+                # The derivative's segment is gone; its vector outlived it.
+                continue
+            if segment_uuid not in seed_cosine_similarities:
+                seed_cosine_similarities[segment_uuid] = match.cosine_similarity
 
-        seed_segment_uuids = list(seed_embedding_scores)
+        seed_segment_uuids = list(seed_cosine_similarities)
 
         max_backward_segments = expand_context // 3
         max_forward_segments = expand_context - max_backward_segments
@@ -474,7 +470,7 @@ class EventMemory:
         # Use embedding scores if reranker is not available.
         if self._reranker is None:
             scores = [
-                seed_embedding_scores[seed_uuid]
+                seed_cosine_similarities[seed_uuid]
                 for seed_uuid in kept_seed_segment_uuids
             ]
         else:
@@ -485,13 +481,6 @@ class EventMemory:
                 query, segment_contexts, reranker_format_options
             )
         t_scoring = time.monotonic()
-
-        # Reranker scores are always higher-is-better.
-        # Embedding scores depend on the similarity metric.
-        higher_is_better = (
-            self._reranker is not None
-            or self._vector_store_collection.config.similarity_metric.higher_is_better
-        )
 
         # Return scored contexts ordered by score.
         scored_segment_contexts = [
@@ -506,7 +495,7 @@ class EventMemory:
                     strict=True,
                 ),
                 key=lambda triple: triple[0],
-                reverse=higher_is_better,
+                reverse=True,
             )
         ]
 

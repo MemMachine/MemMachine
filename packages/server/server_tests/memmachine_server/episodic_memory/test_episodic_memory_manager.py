@@ -12,6 +12,7 @@ from memmachine_server.common.errors import (
     EpisodicMemoryManagerClosedError,
     SessionDeletedError,
     SessionInUseError,
+    SessionNotFoundError,
 )
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
@@ -192,55 +193,37 @@ async def test_create_episodic_memory_matching_session_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_create_or_open_episodic_memory_success(
+async def test_open_after_create_and_after_close(
     manager: EpisodicMemoryManager,
     mock_episodic_memory_conf,
 ):
-    """Test successfully creating or opening an episodic memory instance."""
-    session_key = "create_or_open_session"
-    description = "A test session"
-    metadata: dict[str, JsonValue] = {"owner": "tester"}
-
-    # Create a new session
-    async with manager.open_or_create_episodic_memory(
-        session_key,
-        mock_episodic_memory_conf,
-        description,
-        metadata,
-    ) as instance:
-        assert instance is not None
-        assert (
-            await manager._instance_cache.get_ref_count(session_key) == 1
-        )  # 1 from add
-
-    # Open the same session again
-    async with manager.open_or_create_episodic_memory(
-        session_key,
-        mock_episodic_memory_conf,
-        description,
-        metadata,
-    ) as instance:
-        assert instance is not None
-        assert (
-            await manager._instance_cache.get_ref_count(session_key) == 1
-        )  # 1 from open
-
-    assert (
-        await manager._instance_cache.get_ref_count(session_key) == 0
-    )  # put is called
+    """A created session opens from the cache, and from storage after a close."""
+    session_key = "created_session"
+    async with manager.create_episodic_memory(
+        session_key, mock_episodic_memory_conf, "", {}
+    ):
+        pass
     await manager.close_session(session_key)
 
-    # Open the same session again, should load from storage
-    async with manager.open_or_create_episodic_memory(
-        session_key,
-        mock_episodic_memory_conf,
-        description,
-        metadata,
-    ) as instance:
+    async with manager.open_episodic_memory(session_key) as instance:
         assert instance is not None
-        assert (
-            await manager._instance_cache.get_ref_count(session_key) == 1
-        )  # 1 from add
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
+
+    assert await manager._instance_cache.get_ref_count(session_key) == 0
+    await manager.close_session(session_key)
+
+    # Loads from storage again.
+    async with manager.open_episodic_memory(session_key) as instance:
+        assert instance is not None
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
+
+
+@pytest.mark.asyncio
+async def test_open_never_creates_a_session(manager: EpisodicMemoryManager):
+    with pytest.raises(SessionNotFoundError):
+        async with manager.open_episodic_memory("never_created"):
+            pass
+    assert await manager.get_session_info("never_created") is None
 
 
 @pytest.mark.asyncio
@@ -559,16 +542,4 @@ async def test_open_deleted_session_raises_error(
         SessionDeletedError, match=f"Session '{session_key}' has been deleted"
     ):
         async with manager.open_episodic_memory(session_key):
-            pass
-
-    # Try to open via open_or_create_episodic_memory
-    with pytest.raises(
-        SessionDeletedError, match=f"Session '{session_key}' has been deleted"
-    ):
-        async with manager.open_or_create_episodic_memory(
-            session_key,
-            mock_episodic_memory_conf,
-            "",
-            {},
-        ):
             pass
