@@ -203,6 +203,11 @@ resources:
         model: "qwen-flash"
         api_key: <YOUR_API_KEY>
         base_url: "https://api.openai.com/v1"
+    orcarouter_model:
+      provider: orcarouter
+      config:
+        model: "orcarouter/auto"
+        api_key: <ORCAROUTER_API_KEY>
   rerankers:
     my_reranker_id:
       provider: "rrf-hybrid"

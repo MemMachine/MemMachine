@@ -189,6 +189,11 @@ resources:
         model: "llama3"
         api_key: "EMPTY"
         base_url: "http://host.docker.internal:11434/v1"
+    orcarouter_model:
+      provider: orcarouter
+      config:
+        model: "orcarouter/auto"
+        api_key: <ORCAROUTER_API_KEY>
   rerankers:
     my_reranker_id:
       provider: "rrf-hybrid"
@@ -306,6 +311,11 @@ resources:
         model: "llama3"
         api_key: "EMPTY"
         base_url: "http://host.docker.internal:11434/v1"
+    orcarouter_model:
+      provider: orcarouter
+      config:
+        model: "orcarouter/auto"
+        api_key: <ORCAROUTER_API_KEY>
   rerankers:
     my_reranker_id:
       provider: "rrf-hybrid"
