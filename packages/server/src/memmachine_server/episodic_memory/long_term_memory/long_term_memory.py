@@ -18,7 +18,6 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
-    demangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
@@ -27,7 +26,7 @@ from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import (
     VectorStore,
-    VectorStoreCollection,
+    VectorStorePartition,
 )
 from memmachine_server.episodic_memory.declarative_memory import (
     DeclarativeMemory,
@@ -43,6 +42,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
     NullContext,
     ProducerContext,
+    QueryResult,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
@@ -127,11 +127,10 @@ class EventBackendParams(BaseModel):
         ...,
         description="Parent VectorStore (for partition lifecycle)",
     )
-    vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
+    vector_store_partition: InstanceOf[VectorStorePartition] = Field(
         ...,
-        description="Already-opened VectorStore collection",
+        description="The session's VectorStore partition",
     )
-    vector_store_collection_namespace: str = Field(...)
     segment_store: InstanceOf[SegmentStore] = Field(
         ...,
         description="Parent SegmentStore (for partition lifecycle)",
@@ -156,15 +155,6 @@ class EventBackendParams(BaseModel):
             "it the tracker discards every timing it takes, silently."
         ),
     )
-    user_property_keys: frozenset[str] = Field(
-        default_factory=frozenset,
-        description=(
-            "Configured user-property names (from properties_schema). When "
-            "non-empty, filter expressions on `m.<key>` are validated against "
-            "this set; empty means no validation (any user-metadata key "
-            "accepted)."
-        ),
-    )
 
 
 LongTermMemoryParams = Annotated[
@@ -187,22 +177,9 @@ class LongTermMemory:
         self._declarative_memory: DeclarativeMemory | None = None
         self._event_memory: EventMemory | None = None
         self._vector_store: VectorStore | None = None
-        self._vector_store_namespace: str | None = None
         self._segment_store: SegmentStore | None = None
         self._partition_key: str | None = None
         self._episode_storage: EpisodeStorage | None = None
-        # Event backend only: whether scores from `EventMemory.query` are
-        # higher-is-better. Matches the same derivation inside EventMemory.query
-        # (reranker scores are higher-is-better; raw vector scores depend on the
-        # collection's similarity metric — cosine is higher-is-better, euclidean
-        # is lower-is-better). Used to apply `score_threshold` in the correct
-        # direction so it doesn't invert under euclidean with no reranker.
-        self._score_higher_is_better: bool = True
-        # Event backend only: configured user-property names from
-        # properties_schema. Empty means "no validation"; non-empty means the
-        # set is closed and filter expressions referencing `m.<unknown>` raise
-        # ValueError at the LongTermMemory layer.
-        self._user_property_keys: frozenset[str] = frozenset()
         self._session_id: str = params.session_id
 
         match params:
@@ -220,7 +197,7 @@ class LongTermMemory:
                 self._event_memory = EventMemory(
                     EventMemoryParams(
                         segment_store_partition=params.segment_store_partition,
-                        vector_store_collection=params.vector_store_collection,
+                        vector_store_partition=params.vector_store_partition,
                         segmenter=params.segmenter,
                         deriver=params.deriver,
                         embedder=params.embedder,
@@ -229,15 +206,9 @@ class LongTermMemory:
                     ),
                 )
                 self._vector_store = params.vector_store
-                self._vector_store_namespace = params.vector_store_collection_namespace
                 self._segment_store = params.segment_store
                 self._partition_key = params.partition_key
                 self._episode_storage = params.episode_storage
-                self._score_higher_is_better = (
-                    params.reranker is not None
-                    or params.vector_store_collection.config.similarity_metric.higher_is_better
-                )
-                self._user_property_keys = params.user_property_keys
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
@@ -263,12 +234,11 @@ class LongTermMemory:
     ) -> list[tuple[float, Episode]]:
         """Score-thresholded query.
 
-        `score_threshold=None` (default) keeps every result. With a numeric
-        value, the comparison direction matches the scoring metric:
-        higher-is-better metrics (cosine, dot, any reranker) drop scores BELOW
-        the threshold; lower-is-better metrics (raw euclidean / manhattan with
-        no reranker) drop scores ABOVE it. Avoids the prior `-inf` sentinel,
-        which silently inverted to "drop everything" under euclidean.
+        `score_threshold=None` (default) keeps every result. A numeric value
+        drops scores below it: every score here is a cosine similarity or a
+        reranker score, and both are higher-is-better, so the comparison needs
+        no direction. Avoids the prior `-inf` sentinel, which silently
+        inverted to "drop everything" under a lower-is-better metric.
         """
         if self._backend == "declarative":
             return await self._search_scored_declarative(
@@ -325,6 +295,11 @@ class LongTermMemory:
         event_memory = self._require_event_backend_live()
         assert self._episode_storage is not None
         self._validate_event_backend_filter(property_filter)
+        # Context can never exceed the remaining quota (declarative parity),
+        # and can never go negative: with `num_episodes_limit == 0` the quota
+        # clamp on its own would ask the segment store for a window of -1,
+        # which the SegmentStorePartition contract does not define.
+        expand_context = max(0, min(expand_context, num_episodes_limit - 1))
         # Over-fetch from EventMemory: the per-segment results can have many
         # segments per episode under non-passthrough segmenters, and we dedup
         # them by `_episode_uid` below. Without headroom, the dedup loop can
@@ -340,13 +315,22 @@ class LongTermMemory:
             property_filter=property_filter,
         )
 
+        if expand_context > 0:
+            # The expanded windows carry timeline-neighbor segments; fold
+            # their episodes into the result the same way the declarative
+            # backend folds neighbor episodes around its matches: contexts
+            # of the best matches first, filled until the limit is met.
+            return await self._unified_scored_event_episodes(
+                result,
+                num_episodes_limit=num_episodes_limit,
+                score_threshold=score_threshold,
+            )
+
         # Map seed segment -> _episode_uid (system field already lives on
         # event/segment.properties under the underscore-prefixed key). Keep
         # first-seen score per episode_uid; preserve query result ordering.
-        # The threshold comparison direction depends on the scoring metric:
-        # higher-is-better (cosine + any reranker) → drop scores BELOW threshold;
-        # lower-is-better (raw euclidean without a reranker) → drop scores
-        # ABOVE threshold.
+        # Cosine similarities and reranker scores are both higher-is-better,
+        # so the threshold always drops scores below it.
         ordered_uids: list[str] = []
         scores_by_uid: dict[str, float] = {}
         for scored_context in result.scored_segment_contexts:
@@ -400,14 +384,13 @@ class LongTermMemory:
     async def drop_session_partition(self) -> None:
         """Delete all data for this session/partition.
 
-        On the event backend, this drops the underlying VectorStore collection
-        and SegmentStore partition. After this returns the instance is no
+        On the event backend, this drops the session's VectorStore and
+        SegmentStore partitions. After this returns the instance is no
         longer usable — `EventMemory` still holds handles to the deleted
-        collection and partition, and any reuse would talk to deleted
-        resources. We null those handles so subsequent calls fail loudly
-        rather than silently corrupt state. If the caller needs the same
-        session_id again, build a fresh LongTermMemory (which will open or
-        create a new collection/partition).
+        partitions, and any reuse would talk to deleted resources. We null
+        those handles so subsequent calls fail loudly rather than silently
+        corrupt state. The session's partitions are created with the
+        session; a new LongTermMemory for the same session finds none.
         """
         if self._backend == "declarative":
             assert self._declarative_memory is not None
@@ -418,13 +401,9 @@ class LongTermMemory:
             return
 
         assert self._vector_store is not None
-        assert self._vector_store_namespace is not None
         assert self._segment_store is not None
         assert self._partition_key is not None
-        await self._vector_store.delete_collection(
-            namespace=self._vector_store_namespace,
-            name=self._partition_key,
-        )
+        await self._vector_store.delete_partition(self._partition_key)
         await self._segment_store.delete_partition(self._partition_key)
         # Drop references to the now-deleted resources so any further
         # add_episodes / search_scored / delete_episodes calls raise
@@ -432,6 +411,9 @@ class LongTermMemory:
         self._event_memory = None
         self._vector_store = None
         self._segment_store = None
+        # Physical reclamation is the sweeper's, which the resource manager
+        # runs: the partition is unreachable now, and its rows are reclaimed
+        # within the sweeper's interval.
 
     async def close(self) -> None:
         # Backends do not own resources we can close at this layer; the
@@ -441,17 +423,13 @@ class LongTermMemory:
     def _score_passes_threshold(
         self, score: float, score_threshold: float | None
     ) -> bool:
-        """Apply `score_threshold` in the correct direction for the metric.
+        """Drop scores below `score_threshold`; None never drops.
 
-        higher-is-better → drop scores BELOW threshold;
-        lower-is-better  → drop scores ABOVE threshold;
-        None             → never drop.
+        Reranker scores and cosine similarities are both higher-is-better.
         """
         if score_threshold is None:
             return True
-        if self._score_higher_is_better:
-            return score >= score_threshold
-        return score <= score_threshold
+        return score >= score_threshold
 
     def _require_event_backend_live(self) -> EventMemory:
         """Return the EventMemory or raise if the instance was dropped."""
@@ -585,32 +563,17 @@ class LongTermMemory:
         self,
         property_filter: FilterExpr | None,
     ) -> None:
-        """Reject filter fields not known to the event-backend schema.
+        """Reject bare filter fields that name no system field.
 
-        Bare names are matched against system-defined fields
-        (`_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES`); `m.<key>` / `metadata.<key>`
-        names are matched against `user_property_keys`, if non-empty.
-
-        Validation lives here rather than in the segment store / vector store
-        because this is the only layer that knows both the system field set
-        and the configured user `properties_schema`. The stores themselves
-        treat unknown property keys as empty matches (correct generic JSON
-        semantics) — without this check a typo'd filter field would silently
-        return zero results.
+        A `m.<key>` / `metadata.<key>` name may be any caller key; a bare
+        name is a system field or a mistake.
         """
         if property_filter is None:
             return
 
         def _check(field: str) -> str:
-            internal_name, is_user_metadata = normalize_filter_field(field)
+            _internal_name, is_user_metadata = normalize_filter_field(field)
             if is_user_metadata:
-                key = demangle_user_metadata_key(internal_name)
-                if self._user_property_keys and key not in self._user_property_keys:
-                    raise ValueError(
-                        f"Unknown user-metadata filter field {field!r}. "
-                        "Configured user properties: "
-                        f"{sorted(self._user_property_keys)}"
-                    )
                 return field
             if field not in _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES:
                 raise ValueError(
@@ -624,6 +587,129 @@ class LongTermMemory:
         # effect of invoking `_check` on every leaf field. The returned tree
         # is discarded.
         map_filter_fields(property_filter, _check)
+
+    async def _unified_scored_event_episodes(
+        self,
+        result: QueryResult,
+        *,
+        num_episodes_limit: int,
+        score_threshold: float | None,
+    ) -> list[tuple[float, Episode]]:
+        """Fold expanded segment windows into a unified episode context.
+
+        Event-backend analog of DeclarativeMemory's context unification:
+        each scored window contributes the episodes its segments belong to
+        (chronological within the window, the seed's episode as nucleus),
+        best-scoring windows first, whole while they fit and by proximity to
+        the nucleus when they no longer do. The unified context is returned
+        chronologically, as the declarative backend returns its own.
+        """
+        assert self._episode_storage is not None
+        scored_uid_contexts: list[tuple[float, str, list[str]]] = []
+        for scored_context in result.scored_segment_contexts:
+            if not self._score_passes_threshold(scored_context.score, score_threshold):
+                continue
+            nuclear_uid, context_uids = LongTermMemory._episode_uid_context(
+                scored_context
+            )
+            if nuclear_uid is None:
+                continue
+            scored_uid_contexts.append(
+                (scored_context.score, nuclear_uid, context_uids)
+            )
+
+        episode_scores = LongTermMemory._unify_scored_uid_contexts(
+            scored_uid_contexts,
+            max_num_episodes=num_episodes_limit,
+        )
+        if not episode_scores:
+            return []
+
+        episodes = await self._episode_storage.get_episodes(list(episode_scores))
+        episodes_by_uid: dict[str, Episode] = {ep.uid: ep for ep in episodes}
+        missing = [uid for uid in episode_scores if uid not in episodes_by_uid]
+        if missing:
+            logger.warning(
+                "search_scored dropped %d episode(s) found in the event index "
+                "but missing from EpisodeStorage (likely index/storage drift): %s",
+                len(missing),
+                missing,
+            )
+        return sorted(
+            (
+                (episode_scores[uid], episodes_by_uid[uid])
+                for uid in episode_scores
+                if uid in episodes_by_uid
+            ),
+            key=lambda scored_episode: (
+                scored_episode[1].created_at,
+                scored_episode[1].uid,
+            ),
+        )
+
+    @staticmethod
+    def _episode_uid_context(scored_context: object) -> tuple[str | None, list[str]]:
+        """Episode uids covered by one segment window.
+
+        Returns the seed segment's episode uid (the nucleus) and the deduped
+        episode uids of every segment in the window, in the window's
+        chronological order.
+        """
+        segments = getattr(scored_context, "segments", [])
+        seed_uuid = getattr(scored_context, "seed_segment_uuid", None)
+        nuclear_uid: str | None = None
+        context_uids: list[str] = []
+        seen: set[str] = set()
+        for segment in segments:
+            episode_uid = segment.properties.get(_EPISODE_UID_FIELD)
+            if episode_uid is None:
+                continue
+            episode_uid = str(episode_uid)
+            if episode_uid not in seen:
+                seen.add(episode_uid)
+                context_uids.append(episode_uid)
+            if segment.uuid == seed_uuid:
+                nuclear_uid = episode_uid
+        return nuclear_uid, context_uids
+
+    @staticmethod
+    def _unify_scored_uid_contexts(
+        scored_uid_contexts: Iterable[tuple[float, str, list[str]]],
+        max_num_episodes: int,
+    ) -> dict[str, float]:
+        """Unify episode-uid contexts into a limited set, best windows first.
+
+        Mirror of DeclarativeMemory._unify_scored_anchored_episode_contexts:
+        a window is taken whole while it fits within the limit; a window
+        that would overflow contributes episodes by weighted index-proximity
+        to its nucleus (forward recall preferred over backward) until the
+        limit is met. An episode keeps the score of the first window that
+        contributed it.
+        """
+        episode_scores: dict[str, float] = {}
+        for score, nuclear_uid, context in scored_uid_contexts:
+            if len(episode_scores) >= max_num_episodes:
+                break
+            if (len(episode_scores) + len(context)) <= max_num_episodes:
+                for episode_uid in context:
+                    episode_scores.setdefault(episode_uid, score)
+                continue
+            nuclear_index = context.index(nuclear_uid)
+
+            def weighted_index_proximity(
+                index: int, anchor: int = nuclear_index
+            ) -> float:
+                proximity = index - anchor
+                if proximity >= 0:
+                    # Forward recall is better than backward recall.
+                    return (proximity - 0.5) / 2
+                return float(-proximity)
+
+            for index in sorted(range(len(context)), key=weighted_index_proximity):
+                if len(episode_scores) >= max_num_episodes:
+                    break
+                episode_scores.setdefault(context[index], score)
+        return episode_scores
 
     @staticmethod
     def _scored_context_episode_uid(scored_context: object) -> str | None:

@@ -610,3 +610,19 @@ class TestPropsJsonCompileErrors:
             await _query_props_names(
                 properties_session, Comparison("count", cast(Any, "LIKE"), 10)
             )
+
+
+class TestColumnDatetimeNormalization:
+    """Datetime bounds against columns are always normalized to UTC."""
+
+    def test_bounds_are_normalized_to_utc(self):
+        bound = datetime(2024, 1, 1, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        column = Column("ts", String)
+
+        def resolve(field: str):
+            return column, "column"
+
+        clause = compile_sql_filter(Comparison("ts", "<=", bound), resolve)
+        value = clause.right.value
+        assert value.hour == 0
+        assert value.utcoffset() == timedelta(0)
