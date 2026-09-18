@@ -118,7 +118,7 @@ See the [MCP documentation](https://docs.memmachine.ai/integrations/mcp) for set
 
 - **Multiple Memory Types**: Working (short-term), Episodic (long-term conversational), and Profile (user facts) memory
 - **Developer-Friendly APIs**: Python SDK, RESTful API, TypeScript SDK, and MCP server interfaces
-- **Flexible Storage**: Graph database (Neo4j) for episodic memory, SQL for profiles
+- **Flexible Storage**: Vector store (Qdrant, Milvus, or SQLite) plus SQL for episodic memory, SQL for profiles; a graph database (Neo4j or NebulaGraph) backend is also available
 - **LLM Agnostic**: Works with OpenAI, Anthropic, Bedrock, Ollama, and any LLM provider
 - **Self-Hosted or Cloud**: Run locally, in Docker, or use our managed service
 

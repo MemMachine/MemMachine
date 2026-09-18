@@ -6,18 +6,27 @@
 # secrets out-of-band (e.g., Vault, sealed-secrets); see README.
 #
 # Sections:
-#   storageClass / accessMode / pvcSize     - shared PVC settings for all three volumes
+#   storageClass / accessMode / pvcSize     - shared PVC settings for all volumes
 #   neo4j.*                    - Neo4j image, auth, JVM heap, and connection pool
 #   postgres.*                 - PostgreSQL image, credentials, and pool settings
+#   qdrant.*                   - Qdrant image and connection settings
 #   memmachine.*               - App image, LLM/embedder backend, and app config
 #   nodePorts.*                - NodePort assignments for external access
+#
+# Long-term memory backend: memmachine.longTermMemory.backend selects between
+# the event backend (default; Qdrant + PostgreSQL) and the declarative backend
+# (Neo4j). Switching to "declarative" also requires neo4j.enabled: true (or an
+# external Neo4j via neo4j.host).
 
 storageClass: nfs-client
 accessMode: ReadWriteMany
 pvcSize: 5Gi
 
 neo4j:
-  enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
+  # Only needed by the declarative long-term memory backend, which is no longer
+  # the default -- set memmachine.longTermMemory.backend: declarative and flip
+  # this to true (or point neo4j.host at an external instance) to use it.
+  enabled: false             # false = skip in-cluster Deployment/Service/PVC, use external host
   host: memmachine-neo4j     # internal service name (default); override when enabled: false
   port: 7687                 # default Bolt port; override if external uses different port
   image: neo4j:5.23-community
@@ -61,6 +70,21 @@ postgres:
     limits:
       memory: 2Gi
 
+qdrant:
+  enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
+  host: memmachine-qdrant    # internal service name (default); override when enabled: false
+  port: 6333                 # REST port
+  grpcPort: 6334             # gRPC port
+  image: qdrant/qdrant:v1.19.0
+  preferGrpc: false
+  https: false
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
 memmachine:
   image: docker.io/memmachine/memmachine
   tag: latest-cpu
@@ -72,6 +96,10 @@ memmachine:
     limits:
       memory: 2Gi
   openaiApiKey: <OPENAI_API_KEY>
+  longTermMemory:
+    # "event" (default): VectorStore + SegmentStore, i.e. Qdrant + PostgreSQL.
+    # "declarative": VectorGraphStore, i.e. Neo4j (also set neo4j.enabled: true).
+    backend: event
   config:
     loggingLevel: INFO
     memoryConfigPath: /app/configuration.yml

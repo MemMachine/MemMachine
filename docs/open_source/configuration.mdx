@@ -130,7 +130,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory_enabled`      | Whether long-term episodic memory is enabled.                              | `true`       |
     | `short_term_memory_enabled`     | Whether short-term episodic memory is enabled.                             | `true`       |
     | `enabled`                       | Whether episodic memory as a whole is enabled.                             | `true`       |
-    | `long_term_memory.backend`      | Long-term memory backend. Use `event` for VectorStore + SegmentStore, or `declarative` for VectorGraphStore. | `declarative` when omitted |
+    | `long_term_memory.backend`      | Long-term memory backend. Use `event` for VectorStore + SegmentStore, or `declarative` for VectorGraphStore. The shipped sample configurations and the configuration wizard set `event` explicitly; omitting the field still falls back to `declarative` for backwards compatibility with pre-discriminator configs. | `declarative` when omitted |
     | `long_term_memory.vector_store` | Event backend only: ID of a VectorStore defined in `resources.databases`. | *Required for event backend* |
     | `long_term_memory.segment_store` | Event backend only: ID of a SQL database defined in `resources.databases`. | *Required for event backend* |
     | `long_term_memory.vector_graph_store` | Declarative backend only: ID of a VectorGraphStore defined in `resources.databases`. | *Required for declarative backend* |

@@ -7,18 +7,13 @@ episode_store:
 
 episodic_memory:
   long_term_memory:
-    # Default backend: a VectorGraphStore-backed declarative memory.
-    # backend: declarative                  # explicit; same as omitting the field
+    # Default backend: event memory (VectorStore + SegmentStore).
+    # See `event_vector_store` and `profile_storage` under resources.databases below.
+    backend: event
     embedder: openai_embedder
-    reranker: my_reranker_id
-    vector_graph_store: my_storage_id
-    #
-    # Alternative backend: event memory (VectorStore + SegmentStore).
-    # backend: event
-    # embedder: openai_embedder
-    # reranker: my_reranker_id              # optional; omit to use embedding scores
-    # vector_store: event_vector_store      # references resources.databases
-    # segment_store: profile_storage        # references a relational DB; segment store is created from it
+    reranker: my_reranker_id                # optional; omit to use embedding scores
+    vector_store: event_vector_store        # references resources.databases (qdrant, milvus, sqlite_vector_store, ...)
+    segment_store: profile_storage          # references a relational DB; segment store is created from it
     # properties_schema:                    # optional — user-defined filterable properties
     #   source_role: str
     #   target_id: str
@@ -26,6 +21,13 @@ episodic_memory:
     #   type: passthrough                   # or: text (with max_chunk_length)
     # deriver:                              # optional — defaults to whole-text deriver
     #   type: whole_text                    # or: sentence_text
+    #
+    # Alternative backend: a VectorGraphStore-backed declarative memory.
+    # Uncomment `my_storage_id` under resources.databases below as well.
+    # backend: declarative
+    # embedder: openai_embedder
+    # reranker: my_reranker_id
+    # vector_graph_store: my_storage_id
   short_term_memory:
     llm_model: openai_model
     message_capacity: 500
@@ -72,26 +74,30 @@ resources:
         pool_timeout: 30      # max seconds to wait for a pool connection (default: 30)
         pool_recycle: -1      # max connection age in seconds; -1 = disabled (default: -1)
         pool_pre_ping: false  # test connections for liveness before use (default: false)
-    my_storage_id:
-      provider: neo4j
-      config:
-        uri: 'bolt://localhost:7687'
-        user: neo4j
-        password: <YOUR_PASSWORD_HERE>
-        max_connection_pool_size: 100
-        connection_acquisition_timeout: 60.0
-        range_index_creation_threshold: 10000
-        vector_index_creation_threshold: 10000
-        max_connection_lifetime: 3600  # max connection age in seconds; lower for AuraDB (e.g. 3000) (default: 3600)
-        # liveness_check_timeout: ~    # test idle connections after N seconds; 0 = always (default: disabled)
+    # VectorGraphStore for the declarative long-term memory backend.
+    # Every configured resource is connected and validated at startup, so this
+    # stays commented out while `long_term_memory` uses the event backend --
+    # otherwise a Neo4j server would be required even though nothing uses it.
+    # my_storage_id:
+    #   provider: neo4j
+    #   config:
+    #     uri: 'bolt://localhost:7687'
+    #     user: neo4j
+    #     password: <YOUR_PASSWORD_HERE>
+    #     max_connection_pool_size: 100
+    #     connection_acquisition_timeout: 60.0
+    #     range_index_creation_threshold: 10000
+    #     vector_index_creation_threshold: 10000
+    #     max_connection_lifetime: 3600  # max connection age in seconds; lower for AuraDB (e.g. 3000) (default: 3600)
+    #     # liveness_check_timeout: ~    # test idle connections after N seconds; 0 = always (default: disabled)
     sqlite_test:
       provider: sqlite
       config:
         path: sqlite_test.db
-    # VectorStore for the event-backed long-term memory.
-    # Wire it via `episodic_memory.long_term_memory.vector_store`.
-    # Qdrant is the recommended default for server deployments (concurrent
-    # access, scaling). Run a local instance with:
+    # VectorStore backing the event long-term memory (the default backend).
+    # Wired via `episodic_memory.long_term_memory.vector_store` above.
+    # Qdrant is the default for server deployments (concurrent access, scaling)
+    # and is started for you by docker-compose. To run one by hand:
     #   docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
     event_vector_store:
       provider: qdrant

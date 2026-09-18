@@ -17,7 +17,8 @@ Before you install the MemMachine software itself, you'll need to set up a few t
 
 - **Python 3.12+**: MemMachine requires Python version 3.12 or newer.
 - **PostgreSQL**: You will need a local PostgreSQL instance with the `pgvector` extension. You can find installation instructions on the official [PostgreSQL Downloads page](https://www.postgresql.org/download/). Once installed, create a new database and a user with full privileges for that database.
-- **Graph Database** (choose one):
+- **Vector Store**: The default long-term memory backend (`backend: event`) stores derivative embeddings in a vector store. [Qdrant](https://qdrant.tech/documentation/guides/installation/) is the default and can be started with `docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant`. Milvus and a file-backed SQLite vector store are also supported -- see the commented alternatives in the sample configuration.
+- **Graph Database** (only for the declarative backend, i.e. `backend: declarative`; choose one):
   - **Neo4j**: You can find installation instructions on the official [Neo4j Documentation page](https://neo4j.com/docs/). After installation, start the Neo4j server and set a password for the default `neo4j` user.
   - **NebulaGraph Enterprise**: An alternative to Neo4j with native vector support. See the [NebulaGraph Integration Guide](./integrate/nebula_graph_integration_guide) for setup instructions.
 
@@ -107,9 +108,11 @@ episode_store:
 
 episodic_memory:
   long_term_memory:
+    backend: event
     embedder: openai_embedder
     reranker: my_reranker_id
-    vector_graph_store: my_storage_id
+    vector_store: event_vector_store
+    segment_store: profile_storage
   short_term_memory:
     llm_model: openai_model
     message_capacity: 500
@@ -136,12 +139,12 @@ resources:
         user: postgres
         password: <YOUR_PASSWORD_HERE>
         db_name: postgres
-    my_storage_id:
-      provider: neo4j
+    event_vector_store:
+      provider: qdrant
       config:
-        uri: 'bolt://localhost:7687'
-        username: neo4j
-        password: <YOUR_PASSWORD_HERE>
+        host: localhost
+        port: 6333
+        grpc_port: 6334
     sqlite_test:
       provider: sqlite
       config:
@@ -224,9 +227,11 @@ episode_store:
 
 episodic_memory:
   long_term_memory:
+    backend: event
     embedder: openai_embedder
     reranker: my_reranker_id
-    vector_graph_store: my_storage_id
+    vector_store: event_vector_store
+    segment_store: profile_storage
   short_term_memory:
     llm_model: openai_model
     message_capacity: 500
@@ -253,12 +258,12 @@ resources:
         user: postgres
         db_name: postgres
         password: <YOUR_PASSWORD_HERE>
-    my_storage_id:
-      provider: neo4j
+    event_vector_store:
+      provider: qdrant
       config:
-        uri: 'bolt://localhost:7687'
-        username: neo4j
-        password: <YOUR_PASSWORD_HERE>
+        host: localhost
+        port: 6333
+        grpc_port: 6334
     sqlite_test:
       provider: sqlite
       config:

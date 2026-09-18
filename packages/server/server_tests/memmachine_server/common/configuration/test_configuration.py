@@ -376,10 +376,35 @@ def test_partial_merge_primary_backend_wins_over_fallback():
     assert isinstance(merged, EventLongTermMemoryConf)
 
 
-def test_existing_sample_yaml_loads_as_declarative_via_full_configuration():
-    """Existing sample YAMLs (no `backend` field) load through Configuration."""
+def test_sample_yaml_loads_as_event_via_full_configuration():
+    """The shipped sample YAMLs declare the event backend explicitly."""
     config_path = find_config_file("episodic_memory_config.cpu.sample")
     conf = Configuration.load_yml_file(str(config_path))
+    assert conf.episodic_memory.long_term_memory is not None
+    assert conf.episodic_memory.long_term_memory.backend == "event"
+    ltm_merged = LongTermMemoryConfPartial(session_id="test_session").merge(
+        conf.episodic_memory.long_term_memory
+    )
+    assert isinstance(ltm_merged, EventLongTermMemoryConf)
+    assert ltm_merged.embedder == "openai_embedder"
+    assert ltm_merged.vector_store == "event_vector_store"
+    assert ltm_merged.segment_store == "profile_storage"
+
+
+def test_backendless_yaml_loads_as_declarative_via_full_configuration(tmp_path: Path):
+    """A config written before the discriminator still resolves to declarative."""
+    config_path = find_config_file("episodic_memory_config.cpu.sample")
+    raw = yaml.safe_load(config_path.read_text())
+    # Rewrite the episodic block into its pre-discriminator shape.
+    raw["episodic_memory"]["long_term_memory"] = {
+        "embedder": "openai_embedder",
+        "reranker": "my_reranker_id",
+        "vector_graph_store": "my_storage_id",
+    }
+    legacy_path = tmp_path / "legacy_config.yml"
+    legacy_path.write_text(yaml.safe_dump(raw))
+
+    conf = Configuration.load_yml_file(str(legacy_path))
     assert conf.episodic_memory.long_term_memory is not None
     # Configuration.episodic_memory is the partial; backend stays None on load.
     assert conf.episodic_memory.long_term_memory.backend is None

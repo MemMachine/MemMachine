@@ -1,0 +1,24 @@
+{{- if .Values.qdrant.enabled }}
+# qdrant-service.yaml
+# ClusterIP Service for internal access to Qdrant.
+# Exposes two ports:
+#   - 6333 (REST — used by MemMachine unless prefer_grpc is set)
+#   - 6334 (gRPC)
+# DNS inside the cluster: memmachine-qdrant.<namespace>.svc.cluster.local
+# The MemMachine configuration.yml connects to memmachine-qdrant:6333
+apiVersion: v1
+kind: Service
+metadata:
+  name: memmachine-qdrant
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: 6333
+    - name: grpc
+      port: 6334
+      targetPort: 6334
+{{- end }}

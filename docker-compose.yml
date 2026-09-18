@@ -22,8 +22,13 @@ services:
     networks:
       - memmachine-network
 
-  # Neo4j database for graph storage
+  # Neo4j database for graph storage.
+  # Only the declarative long-term memory backend uses it, and that is no longer
+  # the default, so it sits behind a compose profile. To run it, switch
+  # configuration.yml back to `backend: declarative` and start with:
+  #   docker compose --profile declarative up
   neo4j:
+    profiles: ["declarative"]
     image: neo4j:5.23-community
     container_name: memmachine-neo4j
     restart: unless-stopped
@@ -53,6 +58,27 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - memmachine-network
+
+  # Qdrant vector store for the event-backed episodic memory
+  qdrant:
+    image: ${QDRANT_IMAGE:-qdrant/qdrant:v1.19.0}
+    container_name: memmachine-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"  # HTTP / REST
+      - "${QDRANT_GRPC_PORT:-6334}:6334"  # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # The Qdrant image ships neither curl nor wget, so probe the HTTP port
+      # with bash's /dev/tcp instead.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     networks:
       - memmachine-network
 
@@ -94,7 +120,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      neo4j:
+      qdrant:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/api/v2/health"]
@@ -126,6 +152,8 @@ volumes:
   neo4j_import:
     driver: local
   neo4j_plugins:
+    driver: local
+  qdrant_data:
     driver: local
   memmachine_logs:
     driver: local
