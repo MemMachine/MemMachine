@@ -390,3 +390,68 @@ def test_existing_sample_yaml_loads_as_declarative_via_full_configuration():
     assert isinstance(ltm_merged, DeclarativeLongTermMemoryConf)
     assert ltm_merged.embedder == "openai_embedder"
     assert ltm_merged.vector_graph_store == "my_storage_id"
+
+
+def _sample_config_data() -> dict:
+    config_path = find_config_file("episodic_memory_config.cpu.sample")
+    return yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+
+def test_configuration_loads_without_semantic_memory_section():
+    data = _sample_config_data()
+    data.pop("semantic_memory")
+
+    conf = Configuration(**data)
+
+    assert conf.semantic_memory.enabled is False
+    assert conf.semantic_memory.config_database is None
+
+
+def test_configuration_semantic_memory_disabled_with_enabled_false_alone():
+    data = _sample_config_data()
+    data["semantic_memory"] = {"enabled": False}
+
+    conf = Configuration(**data)
+
+    assert conf.semantic_memory.enabled is False
+
+
+@pytest.mark.parametrize("section", [None, {}])
+def test_configuration_empty_semantic_section_is_disabled(section, caplog):
+    """A null or empty section is disabled silently, like an omitted one."""
+    data = _sample_config_data()
+    data["semantic_memory"] = section
+
+    with caplog.at_level(logging.WARNING):
+        conf = Configuration(**data)
+
+    assert conf.semantic_memory.enabled is False
+    assert "auto-disabled" not in caplog.text
+
+
+def test_disabled_semantic_memory_round_trips_through_yaml():
+    """A complete-but-disabled section keeps enabled: false across save + reload."""
+    data = _sample_config_data()
+    data["semantic_memory"]["enabled"] = False
+    conf = Configuration(**data)
+
+    dumped = yaml.safe_load(conf.to_yaml())
+    conf_cp = Configuration(**dumped)
+
+    assert dumped["semantic_memory"]["enabled"] is False
+    assert dumped["semantic_memory"]["config_database"] == "profile_storage"
+    assert conf_cp.semantic_memory.enabled is False
+
+
+def test_bare_disabled_semantic_memory_round_trips_through_yaml():
+    """The minimal {enabled: false} section survives the serializer's empty-value drop."""
+    data = _sample_config_data()
+    data["semantic_memory"] = {"enabled": False}
+    conf = Configuration(**data)
+
+    dumped = yaml.safe_load(conf.to_yaml())
+    conf_cp = Configuration(**dumped)
+
+    assert dumped["semantic_memory"]["enabled"] is False
+    assert "config_database" not in dumped["semantic_memory"]
+    assert conf_cp.semantic_memory.enabled is False
