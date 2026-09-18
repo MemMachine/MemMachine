@@ -174,6 +174,38 @@ def _async_cm(value):
     return _manager()
 
 
+class _ClosingEpisodicSession:
+    """Fail if an episodic operation runs after its context closes."""
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.operations: list[str] = []
+
+    async def add_memory_episodes(self, episodes: list[Episode]) -> None:
+        assert not self.closed
+        await asyncio.sleep(0)
+        assert not self.closed
+        self.operations.append("add")
+
+    async def delete_episodes(self, episode_ids: list[str]) -> None:
+        assert not self.closed
+        await asyncio.sleep(0)
+        assert not self.closed
+        self.operations.append("delete")
+
+    async def close(self) -> None:
+        self.closed = True
+        self.operations.append("close")
+
+
+@asynccontextmanager
+async def _closing_episodic_cm(memory: _ClosingEpisodicSession):
+    try:
+        yield memory
+    finally:
+        await memory.close()
+
+
 def test_with_default_episodic_memory_conf_uses_fallbacks(
     minimal_conf, patched_resource_manager
 ):
@@ -654,6 +686,37 @@ async def test_add_episodes_dispatches_to_all_memories(
 
 
 @pytest.mark.asyncio
+async def test_add_episodes_finishes_episodic_write_before_closing(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("session-add-close")
+    memory = _ClosingEpisodicSession()
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock(
+        return_value=[_make_episode("ep1", session.session_key)]
+    )
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    episodic_manager = MagicMock()
+    episodic_manager.open_or_create_episodic_memory.side_effect = lambda **kwargs: (
+        _closing_episodic_cm(memory)
+    )
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    await memmachine.add_episodes(
+        session,
+        [EpisodeEntry(content="hello", producer_id="user", producer_role="user")],
+        target_memories=[MemoryType.Episodic],
+    )
+
+    assert memory.operations == ["add", "close"]
+
+
+@pytest.mark.asyncio
 async def test_add_episodes_skips_memories_not_requested(
     minimal_conf, patched_resource_manager
 ):
@@ -806,6 +869,36 @@ async def test_delete_episodes_forwards_to_storage_and_memories(
 
     episode_storage.delete_episodes.assert_awaited_once_with(["ep1", "ep2"])
     episodic_session.delete_episodes.assert_awaited_once_with(["ep1", "ep2"])
+
+
+@pytest.mark.asyncio
+async def test_delete_episodes_finishes_episodic_write_before_closing(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("session-delete-close")
+    memory = _ClosingEpisodicSession()
+    episode_storage = MagicMock()
+    episode_storage.delete_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    semantic_service = MagicMock()
+    semantic_service.delete_history = AsyncMock()
+    patched_resource_manager.get_semantic_service = AsyncMock(
+        return_value=semantic_service
+    )
+    episodic_manager = MagicMock()
+    episodic_manager.open_episodic_memory.side_effect = lambda session_key: (
+        _closing_episodic_cm(memory)
+    )
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    await memmachine.delete_episodes(["ep1"], session_data=session)
+
+    assert memory.operations == ["delete", "close"]
 
 
 @pytest.mark.asyncio

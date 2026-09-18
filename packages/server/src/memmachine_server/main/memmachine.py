@@ -711,15 +711,19 @@ class MemMachine:
             episodic_memory_manager = (
                 await self._resources.get_episodic_memory_manager()
             )
-            async with episodic_memory_manager.open_or_create_episodic_memory(
-                session_key=session_data.session_key,
-                description="",
-                episodic_memory_config=self._with_default_episodic_memory_conf(
-                    session_key=session_data.session_key
-                ),
-                metadata={},
-            ) as episodic_session:
-                tasks.append(episodic_session.add_memory_episodes(episodes))
+
+            async def add_to_episodic_memory() -> None:
+                async with episodic_memory_manager.open_or_create_episodic_memory(
+                    session_key=session_data.session_key,
+                    description="",
+                    episodic_memory_config=self._with_default_episodic_memory_conf(
+                        session_key=session_data.session_key
+                    ),
+                    metadata={},
+                ) as episodic_session:
+                    await episodic_session.add_memory_episodes(episodes)
+
+            tasks.append(add_to_episodic_memory())
 
         if MemoryType.Semantic in target_memories:
             semantic_session_manager = (
@@ -1155,11 +1159,14 @@ class MemMachine:
             episodic_memory_manager = (
                 await self._resources.get_episodic_memory_manager()
             )
-            async with episodic_memory_manager.open_episodic_memory(
-                session_data.session_key
-            ) as episodic_session:
-                t = episodic_session.delete_episodes(episode_ids)
-                tasks.append(t)
+
+            async def delete_from_episodic_memory() -> None:
+                async with episodic_memory_manager.open_episodic_memory(
+                    session_data.session_key
+                ) as episodic_session:
+                    await episodic_session.delete_episodes(episode_ids)
+
+            tasks.append(delete_from_episodic_memory())
 
         tasks.append(episode_storage.delete_episodes(episode_ids))
         tasks.append(semantic_service.delete_history(episode_ids))
