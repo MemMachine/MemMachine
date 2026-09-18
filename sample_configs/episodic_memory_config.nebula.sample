@@ -57,6 +57,8 @@ resources:
         pool_timeout: 30      # max seconds to wait for a pool connection (default: 30)
         pool_recycle: -1      # max connection age in seconds; -1 = disabled (default: -1)
         pool_pre_ping: false  # test connections for liveness before use (default: false)
+        command_timeout: 60.0  # max seconds a statement may run; ~ = unbounded (asyncpg only, default: 60)
+        connect_timeout: 10.0  # max seconds to establish a connection; ~ = wait forever (asyncpg only, default: 10)
 
     # NebulaGraph Enterprise 5.2.1 Configuration
     nebula_storage:
