@@ -5,7 +5,7 @@ import operator
 from collections.abc import Iterable, Sequence
 from uuid import UUID
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -79,28 +79,13 @@ def _dot(a: Sequence[float], b: Sequence[float]) -> float:
     return sum(x * y for x, y in zip(a, b, strict=True))
 
 
-def _score(metric: SimilarityMetric, a: Sequence[float], b: Sequence[float]) -> float:
-    """Compute the similarity/distance score for the given metric."""
-    match metric:
-        case SimilarityMetric.COSINE:
-            norm_a = math.sqrt(sum(x * x for x in a))
-            norm_b = math.sqrt(sum(x * x for x in b))
-            if norm_a == 0.0 or norm_b == 0.0:
-                return 0.0
-            return _dot(a, b) / (norm_a * norm_b)
-        case SimilarityMetric.DOT:
-            return _dot(a, b)
-        case SimilarityMetric.EUCLIDEAN:
-            return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b, strict=True)))
-        case SimilarityMetric.MANHATTAN:
-            return sum(abs(x - y) for x, y in zip(a, b, strict=True))
-
-
-def _passes_threshold(score: float, threshold: float, higher_is_better: bool) -> bool:
-    """Check whether a score passes the threshold for the metric direction."""
-    if higher_is_better:
-        return score >= threshold
-    return score <= threshold
+def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
+    """Cosine similarity between two vectors; 0.0 if either has no magnitude."""
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return _dot(a, b) / (norm_a * norm_b)
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +96,7 @@ def _passes_threshold(score: float, threshold: float, higher_is_better: bool) ->
 class InMemoryVectorStoreCollection(VectorStoreCollection):
     """In-memory VectorStoreCollection for testing.
 
-    Supports all similarity metrics (cosine, dot, euclidean, manhattan)
-    and full FilterExpr evaluation on record properties.
+    Scores by cosine similarity and evaluates FilterExpr on record properties.
     """
 
     def __init__(self, collection_config: VectorStoreCollectionConfig) -> None:
@@ -135,15 +119,10 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
         self,
         *,
         query_vectors: Iterable[Sequence[float]],
-        score_threshold: float | None = None,
+        min_cosine_similarity: float | None = None,
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
-        metric = self.collection_config.similarity_metric
-        higher_is_better = metric.higher_is_better
-
         results: list[QueryResult] = []
         for query_vector in query_vectors:
             qv = list(query_vector)
@@ -155,59 +134,24 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
                     property_filter, record.properties or {}
                 ):
                     continue
-                score = _score(metric, qv, record.vector)
-                if score_threshold is not None and not _passes_threshold(
-                    score, score_threshold, higher_is_better
+                cosine_similarity = _cosine_similarity(qv, record.vector)
+                if (
+                    min_cosine_similarity is not None
+                    and cosine_similarity < min_cosine_similarity
                 ):
                     continue
                 matches.append(
                     QueryMatch(
-                        score=score,
-                        record=self._project_record(
-                            record, return_vector, return_properties
-                        ),
+                        cosine_similarity=cosine_similarity,
+                        record_uuid=record.uuid,
                     )
                 )
-            matches.sort(key=lambda m: m.score, reverse=higher_is_better)
+            matches.sort(key=lambda m: m.cosine_similarity, reverse=True)
             if limit is not None:
                 matches = matches[:limit]
             results.append(QueryResult(matches=matches))
         return results
 
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        out: list[Record] = []
-        for uid in record_uuids:
-            record = self.records.get(uid)
-            if record is None:
-                continue
-            out.append(self._project_record(record, return_vector, return_properties))
-        return out
-
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         for uid in record_uuids:
             self.records.pop(uid, None)
-
-    @staticmethod
-    def _project_record(
-        record: Record, return_vector: bool, return_properties: bool
-    ) -> Record:
-        """Return a copy of the record with only the requested fields."""
-        return Record(
-            uuid=record.uuid,
-            vector=(
-                list(record.vector)
-                if return_vector and record.vector is not None
-                else None
-            ),
-            properties=(
-                dict(record.properties)
-                if return_properties and record.properties
-                else None
-            ),
-        )

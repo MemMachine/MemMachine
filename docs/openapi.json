@@ -620,7 +620,7 @@
           "Memories"
         ],
         "summary": "Add Memories",
-        "description": "Add memory messages to a project.\n\n    The `types` field in the request specifies which memory types to add to:\n    - If `types` is empty or not provided, memories are added to all types (episodic and semantic)\n    - If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n    - If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n    - If `types` contains both, memories are added to both types\n\n    Each memory message represents a discrete piece of information to be stored\n    in the project's memory system. Messages can include content, metadata,\n    timestamps, and other contextual details.\n\n    The producer field indicates who created the message, while the\n    produced_for field specifies the intended recipient. These fields help\n    provide context for the memory and if provided should be user-friendly names.\n\n    The endpoint accepts a batch of messages to be added in a single request.",
+        "description": "Add memory messages to a project. The project must exist; an unknown\n    project is not created, and the request is answered with 404. The default\n    project, used when `org_id` and `project_id` are omitted, always exists.\n\n    The `types` field in the request specifies which memory types to add to:\n    - If `types` is empty or not provided, memories are added to all types (episodic and semantic)\n    - If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n    - If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n    - If `types` contains both, memories are added to both types\n\n    Each memory message represents a discrete piece of information to be stored\n    in the project's memory system. Messages can include content, metadata,\n    timestamps, and other contextual details.\n\n    The producer field indicates who created the message, while the\n    produced_for field specifies the intended recipient. These fields help\n    provide context for the memory and if provided should be user-friendly names.\n\n    The endpoint accepts a batch of messages to be added in a single request.",
         "operationId": "add_memories",
         "requestBody": {
           "content": {
@@ -2146,7 +2146,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2287,7 +2287,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2371,7 +2371,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2431,7 +2431,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2506,7 +2506,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2554,7 +2554,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2618,7 +2618,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2658,7 +2658,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2718,7 +2718,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2766,7 +2766,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -2825,7 +2825,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2894,7 +2894,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -2950,7 +2950,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -3001,7 +3001,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3037,7 +3037,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3093,7 +3093,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3129,7 +3129,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3165,7 +3165,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3582,7 +3582,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3610,7 +3610,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3652,7 +3652,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3680,7 +3680,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "examples": [
               "MemVerge",
               "AI_Labs"
@@ -3728,7 +3728,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3764,7 +3764,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3815,7 +3815,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3875,7 +3875,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -3917,7 +3917,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4085,7 +4085,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4139,7 +4139,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4200,7 +4200,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -4315,21 +4315,6 @@
             ],
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
           },
           "enabled": {
             "type": "boolean",
@@ -4511,14 +4496,6 @@
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)",
             "default": ""
-          },
-          "properties_schema": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
           }
         },
         "type": "object",
@@ -4648,7 +4625,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -5298,7 +5275,7 @@
           "org_id": {
             "type": "string",
             "title": "Org Id",
-            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to. When\n    omitted, `universal`: the server creates the project `universal/universal`\n    at startup, so a request that names no project always has one.\n    ",
             "default": "universal",
             "examples": [
               "MemVerge",
@@ -5470,21 +5447,6 @@
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
           },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only)"
-          },
           "enabled": {
             "anyOf": [
               {
@@ -5578,21 +5540,6 @@
             ],
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only)"
           }
         },
         "type": "object",
@@ -5909,6 +5856,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

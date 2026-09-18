@@ -18,7 +18,15 @@ from memmachine_server.episodic_memory.event_memory.segment_store.data_types imp
 
 
 class SegmentStorePartition(ABC):
-    """Partition-scoped handle for a segment store."""
+    """Partition-scoped handle for a segment store.
+
+    A handle is bound to the partition incarnation it was opened on:
+    deleting the partition permanently invalidates the handle, and its
+    data operations raise `SegmentStorePartitionHandleStaleError` from
+    then on, even if a partition is later created under the same key.
+    A call with empty input may do no work and return without checking
+    the handle.
+    """
 
     @property
     @abstractmethod
@@ -105,6 +113,28 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        """
+        Get the segment each of the given derivatives belongs to.
+
+        A derivative belongs to exactly one segment, so this is the inverse of
+        `get_derivative_uuids_by_segment_uuids` and answers one UUID rather
+        than a list. UUIDs the partition does not hold are omitted.
+
+        Args:
+            derivative_uuids (Iterable[UUID]):
+                The UUIDs of the derivatives whose owning segments to look up.
+
+        Returns:
+            dict[UUID, UUID]:
+                A mapping from each derivative UUID to its segment's UUID.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def delete_segments(
         self,
         segment_uuids: Iterable[UUID],
@@ -157,6 +187,10 @@ class SegmentStore(ABC):
 
         Raises:
             SegmentStorePartitionAlreadyExistsError: If the partition already exists.
+            SegmentStoreAttemptsExhaustedError:
+                If creation exhausted its internal attempts on a
+                failure that should not recur; an immediate retry is
+                unlikely to succeed -- diagnose the chained cause.
         """
         raise NotImplementedError
 
@@ -197,6 +231,10 @@ class SegmentStore(ABC):
         Raises:
             SegmentStorePartitionConfigMismatchError:
                 If the partition already exists with a different configuration.
+            SegmentStoreAttemptsExhaustedError:
+                If creation exhausted its internal attempts on a
+                failure that should not recur; an immediate retry is
+                unlikely to succeed -- diagnose the chained cause.
         """
         raise NotImplementedError
 
@@ -218,11 +256,39 @@ class SegmentStore(ABC):
         """
         Delete a partition.
 
-        This will delete all data in the partition.
-        for the given partition. It is idempotent.
+        The partition becomes unreachable immediately: it can no longer be
+        opened, and handles opened on it raise from then on.
+        Implementations may defer physically reclaiming its rows to
+        `purge_deleted_partitions`. Idempotent.
 
         Args:
             partition_key (str):
                 The key of the partition to delete.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def purge_deleted_partitions(self) -> bool:
+        """
+        Physically reclaim storage for deleted partitions, bounded per call.
+
+        The sweeper: reclaims what `delete_partition` deferred, for every
+        partition, oldest deletion first at the database clock's
+        resolution. Each call does a bounded amount
+        of work, sized so it does not noticeably degrade concurrent
+        request serving, commits what it did or nothing, and is safe to
+        repeat, including after a failure on backend contention with
+        another writer, and to run concurrently from any process. The
+        store never schedules
+        it; a deployment must run it somewhere (the server's resource
+        manager runs it in the background). Implementations that reclaim
+        physically in
+        `delete_partition` may return False without doing anything.
+
+        Returns:
+            bool:
+                True if another call may reclaim more. False if this call
+                found nothing to claim; entries a concurrent purger holds
+                are that purger's to finish, so the caller may back off.
         """
         raise NotImplementedError

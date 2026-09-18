@@ -2,7 +2,6 @@
 
 import hashlib
 import logging
-import re
 
 from pydantic import InstanceOf
 
@@ -17,10 +16,6 @@ from memmachine_server.common.configuration.episodic_config import (
     TextSegmenterConf,
     WholeTextDeriverConf,
 )
-from memmachine_server.common.data_types import (
-    PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
-    PropertyValue,
-)
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStoreCollectionConfig
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
@@ -31,6 +26,10 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
 from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartitionConfig,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+    PARTITION_KEY_MAX_BYTES,
+    validate_partition_key,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
@@ -50,9 +49,6 @@ from .long_term_memory import (
 logger = logging.getLogger(__name__)
 
 _EVENT_BACKEND_NAMESPACE = "long_term_memory"
-
-_PARTITION_KEY_RE = re.compile(r"^[a-z0-9_]+$")
-_PARTITION_KEY_MAX_LEN = 32
 
 
 async def long_term_memory_params_from_config(
@@ -112,14 +108,11 @@ async def _event_params(
         name=partition_key,
     )
     if collection is None:
-        user_schema = _resolve_user_properties_schema(config.properties_schema)
         collection_config = VectorStoreCollectionConfig(
             vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
             indexed_properties_schema={
                 **EventMemory.expected_vector_store_collection_schema(),
                 **EVENT_BACKEND_SYSTEM_FIELDS,
-                **user_schema,
             },
         )
         await vector_store.create_collection(
@@ -158,27 +151,28 @@ async def _event_params(
         reranker=reranker,
         segmenter=segmenter,
         deriver=deriver,
-        user_property_keys=frozenset(config.properties_schema),
         metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
     )
 
 
 def partition_key_for_session(session_id: str) -> str:
     """
-    Derive a partition key matching `[a-z0-9_]+` (≤32 chars) from a session id.
+    Derive a partition key satisfying the segment store's contract.
 
-    If the session_id already satisfies the constraint, use it directly to keep
-    debug paths legible. Otherwise hash to a stable 32-char hex digest and emit
-    a DEBUG log of the original→hashed mapping so operators can correlate
-    partition keys back to sessions during incident response.
+    If the session_id already satisfies it (checked by the store's own
+    validator, so the two can never disagree), use it directly to keep
+    debug paths legible. Otherwise hash to a stable 32-char hex digest and
+    emit a DEBUG log of the original→hashed mapping so operators can
+    correlate partition keys back to sessions during incident response.
     """
-    if (
-        _PARTITION_KEY_RE.match(session_id)
-        and len(session_id) <= _PARTITION_KEY_MAX_LEN
-    ):
+    try:
+        validate_partition_key(session_id)
+    except ValueError:
+        pass
+    else:
         return session_id
     partition_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[
-        :_PARTITION_KEY_MAX_LEN
+        :PARTITION_KEY_MAX_BYTES
     ]
     logger.debug(
         "partition_key_for_session: hashed session_id %r -> partition_key %r",
@@ -186,29 +180,6 @@ def partition_key_for_session(session_id: str) -> str:
         partition_key,
     )
     return partition_key
-
-
-def _resolve_user_properties_schema(
-    raw: dict[str, str],
-) -> dict[str, type[PropertyValue]]:
-    resolved: dict[str, type[PropertyValue]] = {}
-    for key, type_name in raw.items():
-        if key.startswith("_"):
-            # `_`-prefixed keys are reserved for system-defined event fields
-            # (`_episode_uid`, `_session_key`, `_producer_id`, ...). Allowing a
-            # user property to share that namespace would let it overwrite the
-            # system slot in the merged collection schema (dict-spread is last-
-            # wins) and silently change its declared type.
-            raise ValueError(
-                f"Property {key!r}: keys starting with '_' are reserved for "
-                "system-defined event fields and cannot be used as user "
-                "property names."
-            )
-        prop_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
-        if prop_type is None:
-            raise ValueError(f"Property {key!r}: unknown type name {type_name!r}")
-        resolved[key] = prop_type
-    return resolved
 
 
 def _build_segmenter(conf: SegmenterConf) -> Segmenter:
