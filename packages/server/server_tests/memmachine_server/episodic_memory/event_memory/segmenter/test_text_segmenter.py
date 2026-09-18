@@ -30,6 +30,8 @@ def _make_event(
     properties=None,
 ) -> Event:
     return Event(
+        session_id="s",
+        source_id="src",
         uuid=uuid4(),
         timestamp=_TS,
         context=context if context is not None else NullContext(),
