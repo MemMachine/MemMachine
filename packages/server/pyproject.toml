@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel", "setuptools-scm>=8.0"]
+requires = ["setuptools>=68.0", "wheel", "setuptools-scm>=10.2.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -64,7 +64,7 @@ nebula = [
     # AsyncNebulaClient that replaces NebulaAsyncClient has no public way to
     # open a connection -- only the private _init_client(). Until it does, the
     # async backend cannot move past 5.2.
-    "nebula5-python>=5.2.1,<5.3",
+    "nebula5-python>=5.2.1,<5.4",
 ]
 qdrant = [
     "qdrant-client>=1.17.0",

@@ -41,7 +41,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = "==0.16.8" },
-    { name = "testcontainers", extras = ["neo4j", "postgres", "qdrant"], specifier = ">=4.14.2" },
+    { name = "testcontainers", extras = ["neo4j", "postgres", "qdrant"], specifier = ">=4.15.0" },
     { name = "tomli", specifier = ">=2.4.1" },
     { name = "ty", specifier = "~=0.0.38" },
 ]
