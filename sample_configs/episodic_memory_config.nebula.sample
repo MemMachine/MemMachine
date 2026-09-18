@@ -118,6 +118,7 @@ resources:
         grpc_port: 6334
         prefer_grpc: false
         https: false
+        request_timeout_seconds: 30
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
     #
     # Alternative: Milvus. The local .db URI uses Milvus Lite; replace it with
@@ -129,6 +130,7 @@ resources:
     #     # token: $MILVUS_TOKEN
     #     # db_name: default
     #     consistency_level: Session       # Strong, Session, Bounded, Eventually
+    #     request_timeout_seconds: 30
     #
     # Alternative: a local file-backed SQLite vector store. Single-writer; OK
     # for embedded/dev use, not recommended for multi-process server deploys.

@@ -4,6 +4,7 @@
 
 import math
 from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -38,6 +39,7 @@ from memmachine_server.common.vector_store.milvus_vector_store import (
 NAMESPACE = "test_namespace"
 NAME = "test_name"
 VECTOR_DIM = 3
+REQUEST_TIMEOUT_SECONDS = 30
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -62,12 +64,61 @@ def _make_record(
 async def store(tmp_path):
     client = MilvusClient(uri=str(tmp_path / "test_milvus.db"))
     vector_store = MilvusVectorStore(
-        MilvusVectorStoreParams(client=client, consistency_level="Session")
+        MilvusVectorStoreParams(
+            client=client,
+            consistency_level="Session",
+            request_timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+        )
     )
     await vector_store.startup()
     yield vector_store
     await vector_store.shutdown()
     client.close()
+
+
+# MilvusClient's constructor timeout bounds only the connection; a request
+# is bounded only by the timeout passed to it, so every request must carry it.
+_CLIENT_REQUESTS = (
+    "has_collection",
+    "create_collection",
+    "insert",
+    "get",
+    "query",
+    "upsert",
+    "search",
+    "delete",
+)
+
+
+@pytest.mark.asyncio
+async def test_every_request_carries_the_timeout(store, monkeypatch):
+    spies = {}
+    for name in _CLIENT_REQUESTS:
+        spies[name] = MagicMock(wraps=getattr(store._client, name))
+        monkeypatch.setattr(store._client, name, spies[name])
+
+    await store.create_collection(
+        namespace=NAMESPACE,
+        name="timed",
+        config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+    )
+    coll = await store.open_collection(namespace=NAMESPACE, name="timed")
+    assert coll is not None
+    record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+    await coll.upsert(records=[record])
+    await coll.query(query_vectors=[record.vector], limit=1)
+    await coll.get(record_uuids=[record.uuid])
+    await coll.delete(record_uuids=[record.uuid])
+    await store.delete_collection(namespace=NAMESPACE, name="timed")
+
+    # `query` is the registry lookup's fallback for a client whose get()
+    # omits the primary key; every other request is made by this flow.
+    assert {name for name, spy in spies.items() if spy.call_count} >= set(
+        _CLIENT_REQUESTS
+    ) - {"query"}
+    for name, spy in spies.items():
+        for call in spy.call_args_list:
+            assert call.kwargs.get("timeout") == REQUEST_TIMEOUT_SECONDS, (name, call)
 
 
 @pytest_asyncio.fixture

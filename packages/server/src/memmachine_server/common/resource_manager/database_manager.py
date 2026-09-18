@@ -574,6 +574,7 @@ class DatabaseManager:
                 "grpc_port": conf.grpc_port,
                 "prefer_grpc": conf.prefer_grpc,
                 "https": conf.https,
+                "timeout": conf.request_timeout_seconds,
             }
             if conf.api_key.get_secret_value():
                 client_kwargs["api_key"] = conf.api_key.get_secret_value()
@@ -650,7 +651,12 @@ class DatabaseManager:
 
             from pymilvus import MilvusClient
 
-            client_kwargs: dict[str, Any] = {"uri": conf.uri}
+            # The constructor's timeout bounds connecting and reconnecting;
+            # the store passes the same bound to every request it makes.
+            client_kwargs: dict[str, Any] = {
+                "uri": conf.uri,
+                "timeout": conf.request_timeout_seconds,
+            }
             token = conf.token.get_secret_value()
             if token:
                 client_kwargs["token"] = token
@@ -670,6 +676,7 @@ class DatabaseManager:
             params = MilvusVectorStoreParams(
                 client=client,
                 consistency_level=conf.consistency_level,
+                request_timeout_seconds=conf.request_timeout_seconds,
             )
             try:
                 store = MilvusVectorStore(params)
