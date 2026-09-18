@@ -229,7 +229,7 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
         return self.hosts
 
 
-class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
+class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
     """Configuration options for a Qdrant instance."""
 
     host: str = Field(
@@ -252,19 +252,17 @@ class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
     )
-    is_distributed: bool = Field(
-        default=False,
-        description=(
-            "Whether the Qdrant cluster is running in distributed mode. "
-            "If True, native collections use custom sharding."
-        ),
-    )
     registry_replication_factor: int = Field(
         default=1,
         description=(
             "Replication factor for registry collections. Write consistency factor "
             "is set to match so all replicas confirm writes."
         ),
+    )
+    request_timeout_seconds: int = Field(
+        default=30,
+        gt=0,
+        description="Seconds a request to Qdrant may take before the client gives up.",
     )
 
 
@@ -295,6 +293,11 @@ class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
             "Milvus consistency level for newly created collections. "
             "Supported values: Strong, Session, Bounded, Eventually."
         ),
+    )
+    request_timeout_seconds: int = Field(
+        default=30,
+        gt=0,
+        description="Seconds a request to Milvus may take before the client gives up.",
     )
 
     @field_validator("uri", mode="before")

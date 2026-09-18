@@ -18,7 +18,6 @@ from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedR
 from memmachine_server.common.data_types import (
     OrderedValue,
     PropertyValue,
-    SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
@@ -50,7 +49,6 @@ from .data_types import (
     Record,
     VectorStoreCollectionAlreadyExistsError,
     VectorStoreCollectionConfig,
-    VectorStoreCollectionConfigMismatchError,
 )
 from .utils import validate_filter, validate_identifier
 from .vector_store import VectorStore, VectorStoreCollection
@@ -236,7 +234,6 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         partition_key: str,
         config: VectorStoreCollectionConfig,
         tracker: OperationTracker,
-        shard_key: str | None = None,
     ) -> None:
         """Initialize with a Qdrant client and collection name."""
         self._client = client
@@ -244,7 +241,6 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         self._collection_name = collection_name
         self._partition_key = partition_key
         self._config = config
-        self._shard_key = shard_key
 
     @property
     @override
@@ -301,11 +297,7 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         async with self._tracker("upsert"):
             points: list[models.PointStruct] = []
             for record in records:
-                if record.vector is None:
-                    raise ValueError(
-                        f"Record {record.uuid} has vector=None, which is not allowed on input."
-                    )
-                properties = record.properties if record.properties is not None else {}
+                properties = record.properties
                 points.append(
                     models.PointStruct(
                         id=record.uuid,
@@ -323,7 +315,6 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
             await self._client.upsert(
                 collection_name=self._collection_name,
                 points=points,
-                shard_key_selector=self._shard_key,
             )
         except (ResponseHandlingException, UnexpectedResponse):
             if len(points) <= 1:
@@ -338,10 +329,8 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         *,
         query_vectors: Iterable[Sequence[float]],
         limit: int,
-        score_threshold: float | None = None,
+        min_cosine_similarity: float | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
         """Query for records matching the criteria by query vectors."""
         async with self._tracker("query"):
@@ -364,13 +353,12 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
 
             requests = [
                 models.QueryRequest(
-                    shard_key=self._shard_key,
                     query=query_vector,
                     filter=qdrant_filter,
-                    score_threshold=score_threshold,
+                    score_threshold=min_cosine_similarity,
                     limit=limit,
-                    with_vector=return_vector,
-                    with_payload=return_properties,
+                    with_vector=False,
+                    with_payload=False,
                 )
                 for query_vector in query_vectors
             ]
@@ -382,86 +370,16 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
 
             query_results: list[QueryResult] = []
             for batch in batch_results:
-                matches: list[QueryMatch] = []
-                for point in batch.points:
-                    vector: list[float] | None = None
-                    if return_vector and point.vector is not None:
-                        vector = cast(list[float], point.vector)
-
-                    properties: dict[str, PropertyValue] | None = None
-                    if return_properties and point.payload is not None:
-                        properties = self._parse_payload(point.payload)
-
-                    matches.append(
-                        QueryMatch(
-                            score=point.score,
-                            record=Record(
-                                uuid=UUID(str(point.id)),
-                                vector=vector,
-                                properties=properties,
-                            ),
-                        ),
+                matches = [
+                    QueryMatch(
+                        cosine_similarity=point.score,
+                        record_uuid=UUID(str(point.id)),
                     )
+                    for point in batch.points
+                ]
                 query_results.append(QueryResult(matches=matches))
 
             return query_results
-
-    @override
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        """Get records from the collection by their UUIDs."""
-        async with self._tracker("get"):
-            uuid_list = list(record_uuids)
-            if not uuid_list:
-                return []
-
-            # Always get payload so we can check partition_key.
-            points = await self._client.retrieve(
-                collection_name=self._collection_name,
-                ids=list(uuid_list),
-                with_vectors=return_vector,
-                with_payload=True,
-                shard_key_selector=self._shard_key,
-            )
-
-            points_by_uuid: dict[UUID, models.Record] = {
-                UUID(str(point.id)): point
-                for point in points
-                if point.payload
-                and cast(dict[str, Any], point.payload).get(_PAYLOAD_PARTITION_KEY)
-                == self._partition_key
-            }
-
-            records: list[Record] = []
-            for point_uuid in uuid_list:
-                point = points_by_uuid.get(point_uuid)
-                if point is None:
-                    continue
-
-                vector: list[float] | None = None
-                if return_vector and point.vector is not None:
-                    vector = cast(list[float], point.vector)
-
-                properties: dict[str, PropertyValue] | None = None
-                if return_properties and point.payload is not None:
-                    properties = self._parse_payload(
-                        cast(dict[str, Any] | None, point.payload),
-                    )
-
-                records.append(
-                    Record(
-                        uuid=point_uuid,
-                        vector=vector,
-                        properties=properties,
-                    ),
-                )
-
-            return records
 
     @override
     async def delete(
@@ -487,7 +405,6 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
                         ],
                     ),
                 ),
-                shard_key_selector=self._shard_key,
             )
 
 
@@ -498,12 +415,6 @@ class QdrantVectorStoreParams(BaseModel):
     Attributes:
         client (AsyncQdrantClient):
             Async Qdrant client instance.
-        is_distributed (bool):
-            Whether the Qdrant cluster is running in distributed mode.
-            If True, native collections use custom sharding
-            so each logical collection maps to a dedicated shard key.
-            This enables logical collection deletion via shard drop
-            instead of filter-based deletion.
         registry_replication_factor (int):
             Replication factor for registry collections. Write consistency factor is
             set to match so all replicas confirm writes before returning, guaranteeing
@@ -517,16 +428,6 @@ class QdrantVectorStoreParams(BaseModel):
     client: InstanceOf[AsyncQdrantClient] = Field(
         ...,
         description="Async Qdrant client instance",
-    )
-    is_distributed: bool = Field(
-        False,
-        description=(
-            "Whether the Qdrant cluster is running in distributed mode. "
-            "If True, native collections use custom sharding "
-            "so each logical collection maps to a dedicated shard key. "
-            "This enables logical collection deletion via shard drop "
-            "instead of filter-based deletion"
-        ),
     )
     registry_replication_factor: int = Field(
         1,
@@ -545,14 +446,7 @@ class QdrantVectorStoreParams(BaseModel):
 class QdrantVectorStore(VectorStore):
     """Asynchronous Qdrant-based implementation of VectorStore."""
 
-    _SIMILARITY_METRIC_TO_QDRANT_DISTANCE: ClassVar[
-        dict[SimilarityMetric, models.Distance]
-    ] = {
-        SimilarityMetric.COSINE: models.Distance.COSINE,
-        SimilarityMetric.DOT: models.Distance.DOT,
-        SimilarityMetric.EUCLIDEAN: models.Distance.EUCLID,
-        SimilarityMetric.MANHATTAN: models.Distance.MANHATTAN,
-    }
+    _QDRANT_DISTANCE: ClassVar[models.Distance] = models.Distance.COSINE
 
     _PROPERTY_TYPE_TO_INDEX_TYPE: ClassVar[
         dict[type[PropertyValue], models.PayloadSchemaType]
@@ -568,7 +462,6 @@ class QdrantVectorStore(VectorStore):
     _REGISTRY_SUFFIX: ClassVar[str] = "__registry"
     _REGISTRY_NAME: ClassVar[str] = "name"
     _REGISTRY_VECTOR_DIMENSIONS: ClassVar[str] = "vector_dimensions"
-    _REGISTRY_SIMILARITY_METRIC: ClassVar[str] = "similarity_metric"
     _REGISTRY_INDEXED_PROPERTIES_SCHEMA: ClassVar[str] = "indexed_properties_schema"
 
     # Fixed UUID namespace for deterministic registry point IDs.
@@ -628,7 +521,6 @@ class QdrantVectorStore(VectorStore):
         """Initialize the vector store with the provided parameters."""
         super().__init__()
         self._client: AsyncQdrantClient = params.client
-        self._is_distributed = params.is_distributed
 
         self._registry_replication_factor = params.registry_replication_factor
 
@@ -711,7 +603,6 @@ class QdrantVectorStore(VectorStore):
         """Parse a VectorStoreCollectionConfig from a registry entry."""
         return VectorStoreCollectionConfig(
             vector_dimensions=entry[QdrantVectorStore._REGISTRY_VECTOR_DIMENSIONS],
-            similarity_metric=entry[QdrantVectorStore._REGISTRY_SIMILARITY_METRIC],
             indexed_properties_schema=entry[
                 QdrantVectorStore._REGISTRY_INDEXED_PROPERTIES_SCHEMA
             ],
@@ -729,7 +620,6 @@ class QdrantVectorStore(VectorStore):
             partition_key=name,
             config=config,
             tracker=self._tracker,
-            shard_key=name if self._is_distributed else None,
         )
 
     async def _create_native_collection(
@@ -739,9 +629,7 @@ class QdrantVectorStore(VectorStore):
         native_collection_name = QdrantVectorStore._build_native_collection_name(
             namespace, config
         )
-        distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
-            config.similarity_metric
-        ]
+        distance = QdrantVectorStore._QDRANT_DISTANCE
         # The collection and its indexes are created under separate guards. Sharing
         # one meant a collection that already existed - a second worker, or a retry
         # after a crash between the two calls - raised on create_collection, took
@@ -757,9 +645,6 @@ class QdrantVectorStore(VectorStore):
                 hnsw_config=models.HnswConfigDiff(
                     m=0,
                     payload_m=self._hnsw_m,
-                ),
-                sharding_method=(
-                    models.ShardingMethod.CUSTOM if self._is_distributed else None
                 ),
             )
         except (UnexpectedResponse, grpc.aio.AioRpcError, ValueError) as e:
@@ -791,18 +676,6 @@ class QdrantVectorStore(VectorStore):
                 if not QdrantVectorStore._is_already_exists_error(e):
                     raise
 
-    async def _ensure_shard_key(
-        self, native_collection_name: str, shard_key: str
-    ) -> None:
-        """Idempotently create a shard key on a native collection."""
-        try:
-            await self._client.create_shard_key(
-                native_collection_name, shard_key=shard_key
-            )
-        except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
-            if "already exists" not in str(e).lower():
-                raise
-
     async def _register_collection(
         self, namespace: str, name: str, config: VectorStoreCollectionConfig
     ) -> None:
@@ -818,7 +691,6 @@ class QdrantVectorStore(VectorStore):
                     payload={
                         QdrantVectorStore._REGISTRY_NAME: name,
                         QdrantVectorStore._REGISTRY_VECTOR_DIMENSIONS: config.vector_dimensions,
-                        QdrantVectorStore._REGISTRY_SIMILARITY_METRIC: config.similarity_metric.value,
                         QdrantVectorStore._REGISTRY_INDEXED_PROPERTIES_SCHEMA: config.model_dump(
                             mode="json"
                         )["indexed_properties_schema"],
@@ -853,52 +725,7 @@ class QdrantVectorStore(VectorStore):
             if await self._get_registry_entry(namespace, name) is not None:
                 raise VectorStoreCollectionAlreadyExistsError(namespace, name)
             await self._create_native_collection(namespace, config)
-            if self._is_distributed:
-                native_collection_name = (
-                    QdrantVectorStore._build_native_collection_name(namespace, config)
-                )
-                await self._ensure_shard_key(native_collection_name, name)
             await self._register_collection(namespace, name, config)
-
-    @override
-    async def open_or_create_collection(
-        self,
-        *,
-        namespace: str,
-        name: str,
-        config: VectorStoreCollectionConfig,
-    ) -> QdrantVectorStoreCollection:
-        """Open the collection if it exists, or create and return it."""
-        if not validate_identifier(namespace):
-            raise ValueError(
-                f"Namespace {namespace!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
-        if not validate_identifier(name):
-            raise ValueError(
-                f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
-        async with (
-            self._client_name_locks[(namespace, name)],
-            self._tracker("open_or_create_collection"),
-        ):
-            entry = await self._get_registry_entry(namespace, name)
-            if entry is not None:
-                existing_config = QdrantVectorStore._parse_entry(entry)
-                if existing_config != config:
-                    raise VectorStoreCollectionConfigMismatchError(
-                        namespace, name, existing_config, config
-                    )
-                return self._build_collection_handle(namespace, name, existing_config)
-
-            await self._ensure_namespace_registry_collection(namespace)
-            await self._create_native_collection(namespace, config)
-            if self._is_distributed:
-                native_collection_name = (
-                    QdrantVectorStore._build_native_collection_name(namespace, config)
-                )
-                await self._ensure_shard_key(native_collection_name, name)
-            await self._register_collection(namespace, name, config)
-            return self._build_collection_handle(namespace, name, config)
 
     @override
     async def open_collection(
@@ -919,10 +746,6 @@ class QdrantVectorStore(VectorStore):
         return self._build_collection_handle(
             namespace, name, QdrantVectorStore._parse_entry(entry)
         )
-
-    @override
-    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
-        """No-op; Qdrant collection handles require no explicit close."""
 
     @override
     async def delete_collection(self, *, namespace: str, name: str) -> None:
@@ -949,21 +772,12 @@ class QdrantVectorStore(VectorStore):
             )
 
             # Delete partition data, then registry entry.
-            if self._is_distributed:
-                try:
-                    await self._client.delete_shard_key(
-                        native_collection_name, shard_key=name
-                    )
-                except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
-                    if "does not exist" not in str(e).lower():
-                        raise
-            else:
-                await self._client.delete(
-                    collection_name=native_collection_name,
-                    points_selector=models.FilterSelector(
-                        filter=_partition_filter(name),
-                    ),
-                )
+            await self._client.delete(
+                collection_name=native_collection_name,
+                points_selector=models.FilterSelector(
+                    filter=_partition_filter(name),
+                ),
+            )
 
             registry_name = QdrantVectorStore._registry_collection_name(namespace)
             point_uuid = QdrantVectorStore._registry_point_uuid(name)

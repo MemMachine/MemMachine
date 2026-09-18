@@ -153,6 +153,19 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return result
 
     @override
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        wanted = set(derivative_uuids)
+        return {
+            derivative_uuid: segment_uuid
+            for segment_uuid, owned in self.segment_to_derivatives.items()
+            for derivative_uuid in owned
+            if derivative_uuid in wanted
+        }
+
+    @override
     async def delete_segments(
         self,
         segment_uuids: Iterable[UUID],
@@ -198,7 +211,6 @@ def fake_segment_store_partition():
 def fake_vector_store_collection(fake_embedder):
     config = VectorStoreCollectionConfig(
         vector_dimensions=fake_embedder.dimensions,
-        similarity_metric=fake_embedder.similarity_metric,
         indexed_properties_schema={
             **EventMemory.expected_vector_store_collection_schema(),
             "color": str,
