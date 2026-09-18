@@ -120,8 +120,8 @@ def db_conf_dict() -> dict:
                     "grpc_port": 6334,
                     "prefer_grpc": True,
                     "api_key": "test-key",
-                    "is_distributed": True,
                     "registry_replication_factor": 3,
+                    "request_timeout_seconds": 12,
                 },
             },
             "my_milvus": {
@@ -131,6 +131,7 @@ def db_conf_dict() -> dict:
                     "token": "test-token",
                     "db_name": "memory",
                     "consistency_level": "Strong",
+                    "request_timeout_seconds": 7,
                 },
             },
             "my_sqlite_vs": {
@@ -204,8 +205,8 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert qdrant_conf.grpc_port == 6334
     assert qdrant_conf.prefer_grpc is True
     assert qdrant_conf.api_key == SecretStr("test-key")
-    assert qdrant_conf.is_distributed is True
     assert qdrant_conf.registry_replication_factor == 3
+    assert qdrant_conf.request_timeout_seconds == 12
 
     # Milvus check
     milvus_conf = storage_conf.milvus_confs["my_milvus"]
@@ -214,6 +215,7 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert milvus_conf.token == SecretStr("test-token")
     assert milvus_conf.db_name == "memory"
     assert milvus_conf.consistency_level == "Strong"
+    assert milvus_conf.request_timeout_seconds == 7
 
     # SQLiteVectorStore (hnswlib engine)
     sqlite_vs_conf = storage_conf.sqlite_vector_store_confs["my_sqlite_vs"]
@@ -286,6 +288,7 @@ def test_milvus_conf_defaults():
     assert conf.token == SecretStr("")
     assert conf.db_name == ""
     assert conf.consistency_level == "Session"
+    assert conf.request_timeout_seconds == 30
 
 
 def test_milvus_conf_reads_env(monkeypatch):
@@ -307,6 +310,8 @@ def test_milvus_conf_rejects_invalid_values():
         MilvusConf(uri="")
     with pytest.raises(ValueError, match="consistency_level"):
         MilvusConf(consistency_level="Linearizable")
+    with pytest.raises(ValueError, match="request_timeout_seconds"):
+        MilvusConf(request_timeout_seconds=0)
 
 
 def test_neo4j_pool_lifecycle_fields():
@@ -364,9 +369,18 @@ def test_qdrant_conf_defaults():
     assert conf.grpc_port == 6334
     assert conf.prefer_grpc is False
     assert conf.https is False
-    assert conf.is_distributed is False
     assert conf.registry_replication_factor == 1
     assert conf.api_key.get_secret_value() == ""
+    assert conf.request_timeout_seconds == 30
+
+
+def test_qdrant_conf_rejects_a_timeout_that_is_not_a_positive_whole_second():
+    with pytest.raises(ValueError, match="request_timeout_seconds"):
+        QdrantConf(request_timeout_seconds=0)
+    with pytest.raises(ValueError, match="request_timeout_seconds"):
+        QdrantConf(request_timeout_seconds=-1)
+    with pytest.raises(ValueError, match="request_timeout_seconds"):
+        QdrantConf(request_timeout_seconds=1.5)
 
 
 def test_qdrant_conf_api_key_from_env(monkeypatch):
@@ -377,12 +391,18 @@ def test_qdrant_conf_api_key_from_env(monkeypatch):
 
 def test_qdrant_build_config():
     config = SupportedDB.QDRANT.build_config(
-        {"host": "qdrant.local", "port": 9333, "is_distributed": True}
+        {
+            "host": "qdrant.local",
+            "port": 9333,
+            "registry_replication_factor": 2,
+            "request_timeout_seconds": 5,
+        }
     )
     assert isinstance(config, QdrantConf)
     assert config.host == "qdrant.local"
     assert config.port == 9333
-    assert config.is_distributed is True
+    assert config.registry_replication_factor == 2
+    assert config.request_timeout_seconds == 5
 
 
 def test_sqlite_vector_store_conf_defaults():

@@ -21,7 +21,8 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
 async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_engine):
     vector_store = MagicMock()
     vector_collection = MagicMock()
-    vector_store.open_or_create_collection = AsyncMock(return_value=vector_collection)
+    vector_store.get_partition = AsyncMock(side_effect=[None, vector_collection])
+    vector_store.create_partition = AsyncMock()
 
     resource_manager = MagicMock()
     resource_manager.get_sql_engine = AsyncMock(return_value=sqlalchemy_sqlite_engine)
@@ -49,6 +50,8 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
         "semantic_db", validate=True
     )
     resource_manager.get_vector_store.assert_awaited_once_with("semantic_vectors")
-    vector_store.open_or_create_collection.assert_awaited_once()
+    # The manager owns the collection: absent at the first open, created once.
+    vector_store.create_partition.assert_awaited_once()
+    assert vector_store.get_partition.await_count == 2
 
     await storage.cleanup()
