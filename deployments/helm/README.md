@@ -1,6 +1,6 @@
 # MemMachine Helm Chart
 
-Deploys MemMachine with optional in-cluster PostgreSQL (pgvector) and Neo4j. Both databases can be replaced with external instances via `postgres.enabled=false` / `neo4j.enabled=false`.
+Deploys MemMachine with optional in-cluster PostgreSQL (pgvector), Neo4j and Qdrant. All three can be replaced with external instances via `postgres.enabled=false` / `neo4j.enabled=false` / `qdrant.enabled=false`.
 
 ## Chart Info
 
@@ -44,7 +44,7 @@ postgres-pvc         neo4j-pvc              ← only if enabled: true
  postgresql/data)
 ```
 
-**Startup order**: Two `initContainers` (`wait-for-postgres`, `wait-for-neo4j`) use `busybox` + `nc` to poll TCP connectivity before the main container starts. The host/port probed are taken from `postgres.host`/`postgres.port` and `neo4j.host`/`neo4j.port`, so they work for both in-cluster and external endpoints.
+**Startup order**: Three `initContainers` (`wait-for-postgres`, `wait-for-neo4j`, `wait-for-qdrant`) use `busybox` + `nc` to poll TCP connectivity before the main container starts. The host/port probed are taken from `postgres.host`/`postgres.port` `neo4j.host`/`neo4j.port` and `qdrant.host`/`qdrant.port`, so they work for both in-cluster and external endpoints.
 
 **Network model**: When deployed in-cluster, PostgreSQL and Neo4j are only reachable inside the cluster (ClusterIP). When `enabled: false`, MemMachine connects directly to the externally configured host. Only the MemMachine API is exposed externally via a NodePort.
 
@@ -59,6 +59,7 @@ postgres-pvc         neo4j-pvc              ← only if enabled: true
 | MemMachine           | Deployment | `memmachine-service`           | NodePort 31001 → :80 → pod:8080 | Always                 |
 | PostgreSQL (pgvector)| Deployment | `memmachine-postgres`          | ClusterIP :5432                 | `postgres.enabled=true`|
 | Neo4j                | Deployment | `memmachine-neo4j`             | ClusterIP :7687, :7474, :7473   | `neo4j.enabled=true`   |
+| Qdrant               | Deployment | `memmachine-qdrant`            | ClusterIP :6333, :6334          | `qdrant.enabled=true`  |
 
 ### Persistent Storage
 
@@ -67,6 +68,7 @@ Up to three PVCs are created, all using the same `storageClass` and `pvcSize`:
 | PVC name         | Mounted in     | Mount path                    | Purpose                         | Conditional?           |
 |------------------|----------------|-------------------------------|---------------------------------|------------------------|
 | `neo4j-pvc`      | Neo4j pod      | `/data`                       | Graph data, indexes, plugins    | `neo4j.enabled=true`   |
+| `qdrant-pvc`     | Qdrant pod     | `/qdrant/storage`             | Vector collections and payloads | `qdrant.enabled=true`  |
 | `postgres-pvc`   | PostgreSQL pod | `/var/lib/postgresql/data`    | Relational/vector data          | `postgres.enabled=true`|
 | `memmachine-pvc` | MemMachine pod | `/app/data`                   | Application logs and data files | Always                 |
 
@@ -100,9 +102,11 @@ All three secrets are always created regardless of `postgres.enabled` / `neo4j.e
 | `templates/memmachine-configmaps.yaml` | ConfigMap × 2            | `memmachine-config` (configuration.yml) and `memmachine-env-config` (.env) |
 | `templates/neo4j-deployment.yaml`      | Deployment (neo4j)       | Neo4j with APOC + GDS plugins, PVC for data                     |
 | `templates/neo4j-service.yaml`         | Service (ClusterIP)      | Internal Neo4j access (Bolt 7687, HTTP 7474, HTTPS 7473)        |
+| `templates/qdrant-deployment.yaml`     | Deployment (qdrant)      | Qdrant vector store, PVC for storage                            |
+| `templates/qdrant-service.yaml`        | Service (ClusterIP)      | Internal Qdrant access (REST 6333, gRPC 6334)                   |
 | `templates/postgres-deployment.yaml`   | Deployment (memmachine-postgres) | PostgreSQL with pgvector, credentials from Secret           |
 | `templates/postgres-service.yaml`      | Service (ClusterIP)      | Internal PostgreSQL access on port 5432                         |
-| `templates/pvc.yaml`                   | PersistentVolumeClaim × 1–3 | `memmachine-pvc` always; `neo4j-pvc` if `neo4j.enabled`; `postgres-pvc` if `postgres.enabled` |
+| `templates/pvc.yaml`                   | PersistentVolumeClaim × 1–4 | `memmachine-pvc` always; `neo4j-pvc` if `neo4j.enabled`; `postgres-pvc` if `postgres.enabled`; `qdrant-pvc` if `qdrant.enabled` |
 | `templates/secrets.yaml`               | Secret × 3               | `postgres-secret`, `memmachine-secrets`, `neo4j-secret` — all always created |
 
 ---
@@ -146,6 +150,7 @@ resources:
   databases:
     db_postgres: { provider: postgres, config: { host, port, user, password: $POSTGRES_PASSWORD, ... } }
     db_neo4j:    { provider: neo4j,    config: { uri, username: $NEO4J_USER, password: $NEO4J_PASSWORD, pool, ... } }
+    event_vector_store: { provider: qdrant, config: { host, port, grpc_port, prefer_grpc, https, api_key? } }
   embedders:
     default_embedder: { provider, config: { model, api_key: $OPENAI_API_KEY, base_url, dimensions } }
   language_models:
@@ -191,6 +196,24 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 | `neo4j.resources.requests.cpu`        | `500m`                | CPU request (JVM startup is CPU-intensive) |
 | `neo4j.resources.requests.memory`     | `1Gi`                 | Memory request (covers JVM heap initial 512m + overhead) |
 | `neo4j.resources.limits.memory`       | `2Gi`                 | Memory limit (covers heap.max 1G + page cache + OS overhead) |
+
+### Qdrant (`qdrant.*`)
+
+Vector store for the event-backed long-term memory. Wire it via
+`episodic_memory.long_term_memory.vector_store: event_vector_store`.
+
+| Key                    | Default                | Description |
+|------------------------|------------------------|-------------|
+| `qdrant.enabled`       | `true`                 | Deploy in-cluster Qdrant. Set to `false` to skip the Deployment/Service/PVC and use an external host |
+| `qdrant.host`          | `memmachine-qdrant`    | Internal service name; override when `enabled: false` |
+| `qdrant.port`          | `6333`                 | REST port |
+| `qdrant.grpcPort`      | `6334`                 | gRPC port |
+| `qdrant.image`         | `qdrant/qdrant:v1.19.1`| Container image |
+| `qdrant.prefer_grpc`   | `false`                | Talk gRPC instead of REST |
+| `qdrant.https`         | `false`                | Use TLS; set for Qdrant Cloud |
+| `qdrant.apiKey`        | unset                  | Only rendered when set; required for Qdrant Cloud |
+| `qdrant.resources`     | 250m / 512Mi, 2Gi limit| Pod resource requests and limits |
+
 
 ### PostgreSQL (`postgres.*`)
 
