@@ -1,7 +1,7 @@
 services:
   # PostgreSQL with pgvector extension for profile memory storage
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg18
     container_name: memmachine-postgres
     restart: unless-stopped
     ports:
@@ -12,7 +12,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # PG18+ stores data in a major-version subdirectory, so the mount is
+      # /var/lib/postgresql, not /var/lib/postgresql/data. The image refuses
+      # to start if the old path is mounted.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-memmachine} -d ${POSTGRES_DB:-memmachine}"]
       interval: 10s

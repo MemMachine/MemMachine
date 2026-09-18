@@ -69,7 +69,7 @@ Up to three PVCs are created, all using the same `storageClass` and `pvcSize`:
 |------------------|----------------|-------------------------------|---------------------------------|------------------------|
 | `neo4j-pvc`      | Neo4j pod      | `/data`                       | Graph data, indexes, plugins    | `neo4j.enabled=true`   |
 | `qdrant-pvc`     | Qdrant pod     | `/qdrant/storage`             | Vector collections and payloads | `qdrant.enabled=true`  |
-| `postgres-pvc`   | PostgreSQL pod | `/var/lib/postgresql/data`    | Relational/vector data          | `postgres.enabled=true`|
+| `postgres-pvc`   | PostgreSQL pod | `/var/lib/postgresql`    | Relational/vector data          | `postgres.enabled=true`|
 | `memmachine-pvc` | MemMachine pod | `/app/data`                   | Application logs and data files | Always                 |
 
 All PVCs request `ReadWriteMany` (RWX) access mode. This requires a StorageClass that supports RWX (e.g., NFS-backed provisioners like `nfs-client`).
@@ -196,6 +196,29 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 | `neo4j.resources.requests.cpu`        | `500m`                | CPU request (JVM startup is CPU-intensive) |
 | `neo4j.resources.requests.memory`     | `1Gi`                 | Memory request (covers JVM heap initial 512m + overhead) |
 | `neo4j.resources.limits.memory`       | `2Gi`                 | Memory limit (covers heap.max 1G + page cache + OS overhead) |
+
+### Upgrading PostgreSQL 16 → 18
+
+`postgres.image` is `pgvector/pgvector:pg18` and `postgres-pvc` now mounts at
+`/var/lib/postgresql`, not `/var/lib/postgresql/data`. PG18 images store data in a
+major-version subdirectory (`/var/lib/postgresql/18/docker`), so the mount point moved
+with it.
+
+**This is a breaking change for an existing deployment.** A PG16 data directory cannot be
+read by PG18; the container detects the old layout and exits with a clear error rather
+than starting, so nothing is silently lost — but nothing starts either, until the data is
+migrated.
+
+To migrate, dump from 16 and restore into 18:
+
+```bash
+# with the old chart version still running
+kubectl exec deploy/postgres -- pg_dumpall -U memmachine > dump.sql
+# upgrade the release, then load the dump into the fresh PG18 volume
+kubectl exec -i deploy/postgres -- psql -U memmachine -d memmachine < dump.sql
+```
+
+A new deployment needs none of this.
 
 ### Qdrant (`qdrant.*`)
 

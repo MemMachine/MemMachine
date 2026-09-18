@@ -1,7 +1,7 @@
 # pvc.yaml
 # Defines four PersistentVolumeClaims (all ReadWriteMany), one per stateful component:
 #   - neo4j-pvc      → mounted at /data in the Neo4j pod
-#   - postgres-pvc   → mounted at /var/lib/postgresql/data in the PostgreSQL pod
+#   - postgres-pvc   → mounted at /var/lib/postgresql in the PostgreSQL pod (PG18+ layout)
 #   - qdrant-pvc     → mounted at /qdrant/storage in the Qdrant pod
 #   - memmachine-pvc → mounted at /app/data in the MemMachine pod (logs/data)
 # All PVCs use the same storageClass and pvcSize from values.yaml.

@@ -46,7 +46,7 @@ postgres:
   enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
   host: memmachine-postgres  # internal service name (default); override when enabled: false
   port: 5432                 # default Postgres port; override if external uses different port
-  image: pgvector/pgvector:pg16
+  image: pgvector/pgvector:pg18
   user: memmachine
   password: memverge   # dev default; override in production
   database: memmachine
