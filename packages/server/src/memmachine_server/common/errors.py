@@ -258,3 +258,7 @@ class CategoryNotFoundError(MemMachineError):
     def __repr__(self) -> str:
         """Return a helpful debug representation."""
         return f"CategoryNotFoundError('{self.set_id}', '{self.category_name}')"
+
+
+class ResourceManagerClosedError(MemMachineError):
+    """The resource manager has been closed; no new resources can be built."""

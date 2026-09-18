@@ -9,7 +9,6 @@ against both SQLite and PostgreSQL (via testcontainers).
 """
 
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any, cast
 
 import pytest
 import pytest_asyncio
@@ -18,13 +17,17 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Session
 
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
+    FilterExpr,
     In,
     IsNull,
     Not,
     Or,
+    Ordering,
+)
+from memmachine_server.common.filter.filter_parser import (
     parse_filter,
 )
 from memmachine_server.common.filter.sql_filter_util import compile_sql_filter
@@ -44,6 +47,7 @@ class _Item(_JsonBase):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
+    owner = Column(String, nullable=True)
     json_metadata = Column(JSON, nullable=True)
 
 
@@ -53,6 +57,7 @@ def _resolve_json_field(field: str):
     field_mapping = {
         "id": _Item.id.expression,
         "name": _Item.name.expression,
+        "owner": _Item.owner.expression,
     }
     if normalized in field_mapping:
         return field_mapping[normalized], "column"
@@ -74,6 +79,7 @@ def json_session():
             [
                 _Item(
                     name="alpha",
+                    owner="alice",
                     json_metadata={
                         "count": 5,
                         "score": 1.5,
@@ -83,6 +89,7 @@ def json_session():
                 ),
                 _Item(
                     name="beta",
+                    owner="bob",
                     json_metadata={
                         "count": 10,
                         "score": 2.5,
@@ -118,6 +125,12 @@ def json_session():
 def _query_json_names(session: Session, filter_str: str) -> set[str]:
     """Parse filter, compile to SQL, execute, and return set of matching names."""
     expr = parse_filter(filter_str)
+    assert expr is not None
+    return _query_json_expr(session, expr)
+
+
+def _query_json_expr(session: Session, expr: FilterExpr) -> set[str]:
+    """Compile a filter tree, execute it, and return the set of matching names."""
     clause = compile_sql_filter(expr, _resolve_json_field)
     stmt = select(_Item.name).where(clause)
     return {row[0] for row in session.execute(stmt)}
@@ -158,6 +171,7 @@ def test_json_int_not_equal(json_session):
         "alpha",
         "gamma",
         "delta",
+        "epsilon",
     }
 
 
@@ -199,10 +213,12 @@ def test_json_string_equality(json_session):
 
 
 def test_json_string_not_equal(json_session):
+    # A row holding no tag is other than 'a', so negation keeps it.
     assert _query_json_names(json_session, "m.tag != 'a'") == {
         "beta",
         "gamma",
         "delta",
+        "epsilon",
     }
 
 
@@ -217,6 +233,11 @@ def test_json_string_in(json_session):
     assert _query_json_names(json_session, "m.tag IN ('a', 'b')") == {"alpha", "beta"}
 
 
+def test_json_empty_in_matches_nothing(json_session):
+    assert _query_json_expr(json_session, In("m.tag", ())) == set()
+    assert _query_json_expr(json_session, Not(In("m.tag", ()))) == _ALL_JSON_NAMES
+
+
 # --- IS NULL ---
 
 
@@ -228,14 +249,50 @@ def test_json_is_null(json_session):
 
 
 def test_json_not_comparison(json_session):
-    assert _query_json_names(json_session, "NOT m.count > 10") == {"alpha", "beta"}
+    assert _query_json_names(json_session, "NOT m.count > 10") == {
+        "alpha",
+        "beta",
+        "epsilon",
+    }
 
 
 def test_json_not_in(json_session):
     assert _query_json_names(json_session, "m.tag NOT IN ('a', 'b')") == {
         "gamma",
         "delta",
+        "epsilon",
     }
+
+
+# --- Negation is the complement ---
+
+_ALL_JSON_NAMES = {"alpha", "beta", "gamma", "delta", "epsilon"}
+
+_JSON_COMPLEMENT_FILTERS = [
+    Equals(field="name", value="alpha"),
+    Equals(field="owner", value="alice"),
+    Equals(field="m.tag", value="a"),
+    Equals(field="m.unheld", value="x"),
+    Ordering(field="m.count", op=">", value=10),
+    In(field="m.tag", values=("a", "b")),
+    IsNull(field="owner"),
+    IsNull(field="m.tag"),
+    And(
+        (
+            Ordering(field="m.count", op=">", value=10),
+            Equals(field="m.active", value=True),
+        )
+    ),
+    Or((Equals(field="m.tag", value="a"), Equals(field="m.tag", value="b"))),
+    Not(Equals(field="m.tag", value="a")),
+]
+
+
+@pytest.mark.parametrize("expr", _JSON_COMPLEMENT_FILTERS)
+def test_json_negation_is_the_complement(json_session, expr):
+    admitted = _query_json_expr(json_session, expr)
+    assert _query_json_expr(json_session, Not(expr)) == _ALL_JSON_NAMES - admitted
+    assert _query_json_expr(json_session, Not(Not(expr))) == admitted
 
 
 # --- Non-metadata column ---
@@ -252,12 +309,17 @@ def test_column_in(json_session):
     }
 
 
+def test_column_empty_in_matches_nothing(json_session):
+    assert _query_json_expr(json_session, In("name", ())) == set()
+    assert _query_json_expr(json_session, Not(In("name", ()))) == _ALL_JSON_NAMES
+
+
 # --- Compound ---
 
 
 def test_json_not_and_compound(json_session):
     result = _query_json_names(json_session, "NOT (m.count > 10 AND m.active = true)")
-    assert result == {"alpha", "beta", "delta"}
+    assert result == {"alpha", "beta", "delta", "epsilon"}
 
 
 def test_json_or(json_session):
@@ -271,6 +333,7 @@ def test_json_not_or_compound(json_session):
     assert _query_json_names(json_session, "NOT (m.tag = 'a' OR m.tag = 'b')") == {
         "gamma",
         "delta",
+        "epsilon",
     }
 
 
@@ -280,11 +343,6 @@ def test_json_not_or_compound(json_session):
 def test_unknown_field_raises(json_session):
     with pytest.raises(ValueError, match="Unknown filter field"):
         _query_json_names(json_session, "nonexistent = 1")
-
-
-def test_unsupported_expr_type():
-    with pytest.raises(TypeError, match="Unsupported filter expression type"):
-        compile_sql_filter("bad", _resolve_json_field)
 
 
 # ============================================================================
@@ -392,13 +450,13 @@ class TestPropsJsonIntFilters:
     @pytest.mark.asyncio
     async def test_eq(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("count", "=", 10)
+            properties_session, Equals(field="count", value=10)
         ) == {"beta"}
 
     @pytest.mark.asyncio
     async def test_neq(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("count", "!=", 10)
+            properties_session, Not(Equals(field="count", value=10))
         ) == {
             "alpha",
             "gamma",
@@ -409,7 +467,7 @@ class TestPropsJsonIntFilters:
     @pytest.mark.asyncio
     async def test_gt(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("count", ">", 10)
+            properties_session, Ordering(field="count", op=">", value=10)
         ) == {
             "gamma",
             "delta",
@@ -418,7 +476,7 @@ class TestPropsJsonIntFilters:
     @pytest.mark.asyncio
     async def test_gte(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("count", ">=", 10)
+            properties_session, Ordering(field="count", op=">=", value=10)
         ) == {
             "beta",
             "gamma",
@@ -428,7 +486,7 @@ class TestPropsJsonIntFilters:
     @pytest.mark.asyncio
     async def test_lt(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("count", "<", 10)
+            properties_session, Ordering(field="count", op="<", value=10)
         ) == {
             "alpha",
             "epsilon",
@@ -437,7 +495,7 @@ class TestPropsJsonIntFilters:
     @pytest.mark.asyncio
     async def test_lte(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("count", "<=", 10)
+            properties_session, Ordering(field="count", op="<=", value=10)
         ) == {
             "alpha",
             "beta",
@@ -449,7 +507,7 @@ class TestPropsJsonFloatFilters:
     @pytest.mark.asyncio
     async def test_gt(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("score", ">", 2.0)
+            properties_session, Ordering(field="score", op=">", value=2.0)
         ) == {
             "beta",
             "gamma",
@@ -459,7 +517,7 @@ class TestPropsJsonFloatFilters:
     @pytest.mark.asyncio
     async def test_lt(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("score", "<", 3.0)
+            properties_session, Ordering(field="score", op="<", value=3.0)
         ) == {
             "alpha",
             "beta",
@@ -470,7 +528,7 @@ class TestPropsJsonBoolFilters:
     @pytest.mark.asyncio
     async def test_true(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("active", "=", True)
+            properties_session, Equals(field="active", value=True)
         ) == {
             "alpha",
             "gamma",
@@ -480,7 +538,7 @@ class TestPropsJsonBoolFilters:
     @pytest.mark.asyncio
     async def test_false(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("active", "=", False)
+            properties_session, Equals(field="active", value=False)
         ) == {
             "beta",
             "delta",
@@ -491,17 +549,19 @@ class TestPropsJsonStringFilters:
     @pytest.mark.asyncio
     async def test_eq(self, properties_session):
         assert await _query_props_names(
-            properties_session, Comparison("tag", "=", "a")
+            properties_session, Equals(field="tag", value="a")
         ) == {"alpha"}
 
     @pytest.mark.asyncio
     async def test_neq(self, properties_session):
+        # A row holding no tag is other than 'a', so negation keeps it.
         assert await _query_props_names(
-            properties_session, Comparison("tag", "!=", "a")
+            properties_session, Not(Equals(field="tag", value="a"))
         ) == {
             "beta",
             "gamma",
             "delta",
+            "epsilon",
         }
 
 
@@ -510,7 +570,7 @@ class TestPropsJsonDatetimeFilters:
     async def test_gt(self, properties_session):
         cutoff = datetime(2024, 6, 1, 0, 0, 0, tzinfo=UTC)
         assert await _query_props_names(
-            properties_session, Comparison("ts", ">", cutoff)
+            properties_session, Ordering(field="ts", op=">", value=cutoff)
         ) == {
             "gamma",
             "delta",
@@ -520,7 +580,7 @@ class TestPropsJsonDatetimeFilters:
     async def test_lt(self, properties_session):
         cutoff = datetime(2024, 6, 1, 0, 0, 0, tzinfo=UTC)
         assert await _query_props_names(
-            properties_session, Comparison("ts", "<", cutoff)
+            properties_session, Ordering(field="ts", op="<", value=cutoff)
         ) == {
             "alpha",
             "beta",
@@ -531,7 +591,7 @@ class TestPropsJsonDatetimeFilters:
         jst = timezone(timedelta(hours=9))
         cutoff = datetime(2024, 3, 15, 22, 0, 0, tzinfo=jst)  # = 13:00 UTC
         assert await _query_props_names(
-            properties_session, Comparison("ts", ">=", cutoff)
+            properties_session, Ordering(field="ts", op=">=", value=cutoff)
         ) == {
             "beta",
             "gamma",
@@ -542,21 +602,25 @@ class TestPropsJsonDatetimeFilters:
 class TestPropsJsonInFilters:
     @pytest.mark.asyncio
     async def test_int_in(self, properties_session):
-        assert await _query_props_names(properties_session, In("count", [5, 15])) == {
+        assert await _query_props_names(properties_session, In("count", (5, 15))) == {
             "alpha",
             "gamma",
         }
 
     @pytest.mark.asyncio
     async def test_string_in(self, properties_session):
-        assert await _query_props_names(properties_session, In("tag", ["a", "b"])) == {
+        assert await _query_props_names(properties_session, In("tag", ("a", "b"))) == {
             "alpha",
             "beta",
         }
 
     @pytest.mark.asyncio
-    async def test_empty_in(self, properties_session):
-        assert await _query_props_names(properties_session, In("tag", [])) == set()
+    async def test_empty_in_matches_nothing(self, properties_session):
+        assert await _query_props_names(properties_session, In("tag", ())) == set()
+        assert (
+            await _query_props_names(properties_session, Not(In("tag", ())))
+            == _ALL_PROPS_NAMES
+        )
 
 
 class TestPropsJsonIsNullFilter:
@@ -570,17 +634,22 @@ class TestPropsJsonIsNullFilter:
 class TestPropsJsonLogicalFilters:
     @pytest.mark.asyncio
     async def test_and(self, properties_session):
-        expr = And(Comparison("count", ">", 10), Comparison("active", "=", True))
+        expr = And(
+            (
+                Ordering(field="count", op=">", value=10),
+                Equals(field="active", value=True),
+            )
+        )
         assert await _query_props_names(properties_session, expr) == {"gamma"}
 
     @pytest.mark.asyncio
     async def test_or(self, properties_session):
-        expr = Or(Comparison("tag", "=", "a"), Comparison("tag", "=", "c"))
+        expr = Or((Equals(field="tag", value="a"), Equals(field="tag", value="c")))
         assert await _query_props_names(properties_session, expr) == {"alpha", "gamma"}
 
     @pytest.mark.asyncio
     async def test_not(self, properties_session):
-        expr = Not(Comparison("count", ">", 10))
+        expr = Not(Ordering(field="count", op=">", value=10))
         assert await _query_props_names(properties_session, expr) == {
             "alpha",
             "beta",
@@ -589,24 +658,59 @@ class TestPropsJsonLogicalFilters:
 
     @pytest.mark.asyncio
     async def test_not_in(self, properties_session):
-        expr = Not(In("tag", ["a", "b"]))
-        assert await _query_props_names(properties_session, expr) == {"gamma", "delta"}
-
-    @pytest.mark.asyncio
-    async def test_compound_not_and(self, properties_session):
-        inner = And(Comparison("count", ">", 10), Comparison("active", "=", True))
-        assert await _query_props_names(properties_session, Not(inner)) == {
-            "alpha",
-            "beta",
+        expr = Not(In("tag", ("a", "b")))
+        assert await _query_props_names(properties_session, expr) == {
+            "gamma",
             "delta",
             "epsilon",
         }
 
 
-class TestPropsJsonCompileErrors:
+_ALL_PROPS_NAMES = {"alpha", "beta", "gamma", "delta", "epsilon"}
+
+_PROPS_COMPLEMENT_FILTERS = [
+    Equals(field="count", value=10),
+    Equals(field="tag", value="a"),
+    Equals(field="unheld", value="x"),
+    Ordering(field="score", op=">", value=2.0),
+    Ordering(field="ts", op=">", value=datetime(2024, 6, 1, tzinfo=UTC)),
+    In(field="tag", values=("a", "b")),
+    IsNull(field="tag"),
+    IsNull(field="unheld"),
+    And(
+        (
+            Ordering(field="count", op=">", value=10),
+            Equals(field="active", value=True),
+        )
+    ),
+    Or((Equals(field="tag", value="a"), Equals(field="tag", value="b"))),
+    Not(Equals(field="tag", value="a")),
+]
+
+
+class TestPropsJsonNegation:
     @pytest.mark.asyncio
-    async def test_unsupported_operator(self, properties_session):
-        with pytest.raises(ValueError, match="Unsupported operator"):
-            await _query_props_names(
-                properties_session, Comparison("count", cast(Any, "LIKE"), 10)
-            )
+    @pytest.mark.parametrize("expr", _PROPS_COMPLEMENT_FILTERS)
+    async def test_negation_is_the_complement(self, properties_session, expr):
+        admitted = await _query_props_names(properties_session, expr)
+        assert (
+            await _query_props_names(properties_session, Not(expr))
+            == _ALL_PROPS_NAMES - admitted
+        )
+        assert await _query_props_names(properties_session, Not(Not(expr))) == admitted
+
+
+class TestColumnDatetimeNormalization:
+    """Datetime bounds against columns are always normalized to UTC."""
+
+    def test_bounds_are_normalized_to_utc(self):
+        bound = datetime(2024, 1, 1, 8, 0, tzinfo=timezone(timedelta(hours=8)))
+        column = Column("ts", String)
+
+        def resolve(field: str):
+            return column, "column"
+
+        clause = compile_sql_filter(Ordering(field="ts", op="<=", value=bound), resolve)
+        value = clause.right.value
+        assert value.hour == 0
+        assert value.utcoffset() == timedelta(0)

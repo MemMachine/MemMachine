@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -14,7 +14,12 @@ from memmachine_server.common.episode_store import (
     EpisodeType,
 )
 from memmachine_server.common.errors import InvalidArgumentError
-from memmachine_server.common.filter.filter_parser import FilterExpr, parse_filter
+from memmachine_server.common.filter import (
+    FilterExpr,
+)
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 
 DEFAULT_HISTORY_ARGS = {
     "session_key": "session-default",
@@ -277,6 +282,54 @@ async def test_history_time_filters(
     assert len(window) == expected_count
     if expected_count:
         assert window[0].uid == message.uid
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tz",
+    [
+        timezone(timedelta(hours=-8)),
+        timezone(timedelta(hours=5, minutes=30)),
+    ],
+)
+async def test_created_at_roundtrips_non_utc_timezone(
+    episode_storage: EpisodeStorage,
+    tz,
+):
+    """A non-UTC created_at round-trips to the same instant and is filterable.
+
+    SQLite's DateTime(timezone=True) discards tzinfo, so an app-supplied
+    created_at must be normalized to UTC before writing or it comes back shifted
+    by its offset. Time-range bounds are likewise normalized so comparisons stay
+    consistent with the stored UTC instant.
+    """
+    created_at = datetime(2024, 1, 1, 13, 30, 45, tzinfo=tz)
+    history_id = await create_history_entry(
+        episode_storage,
+        content="tz",
+        created_at=created_at,
+    )
+
+    try:
+        stored = await episode_storage.get_episode(history_id)
+        assert stored is not None
+        # Aware-datetime equality compares absolute instants.
+        assert stored.created_at == created_at
+
+        # A window straddling the instant (bounds in the same offset) matches.
+        in_window = await episode_storage.get_episode_messages(
+            start_time=created_at - timedelta(minutes=1),
+            end_time=created_at + timedelta(minutes=1),
+        )
+        assert history_id in [m.uid for m in in_window]
+
+        # A window entirely after the instant excludes it.
+        after_only = await episode_storage.get_episode_messages(
+            start_time=created_at + timedelta(minutes=1),
+        )
+        assert history_id not in [m.uid for m in after_only]
+    finally:
+        await episode_storage.delete_episodes([history_id])
 
 
 @pytest.mark.asyncio
