@@ -202,9 +202,9 @@ def cohere_integration_config():
 
 @pytest.fixture(scope="session")
 def cohere_client(cohere_integration_config):
-    from cohere import ClientV2
+    from cohere import AsyncClientV2
 
-    return ClientV2(api_key=cohere_integration_config["api_key"])
+    return AsyncClientV2(api_key=cohere_integration_config["api_key"])
 
 
 @pytest.fixture(scope="session")
