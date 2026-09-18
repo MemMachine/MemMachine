@@ -284,8 +284,8 @@ async def test_create_session_passes_generated_config(
         user_conf=user_conf,
     )
 
-    session_manager.create_new_session.assert_awaited_once()
-    _, kwargs = session_manager.create_new_session.await_args
+    session_manager.create_or_validate_session.assert_awaited_once()
+    _, kwargs = session_manager.create_or_validate_session.await_args
     episodic_conf = kwargs["param"]
 
     assert episodic_conf.long_term_memory.embedder == "custom-embed"

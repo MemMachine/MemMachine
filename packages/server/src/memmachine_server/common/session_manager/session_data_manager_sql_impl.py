@@ -227,8 +227,8 @@ class SessionDataManagerSQL(SessionDataManager):
                 )
             )
 
-    @timed("create_new_session")
-    async def create_new_session(
+    @timed("create_or_validate_session")
+    async def create_or_validate_session(
         self,
         session_key: str,
         configuration: dict[str, JsonValue],
@@ -236,7 +236,7 @@ class SessionDataManagerSQL(SessionDataManager):
         description: str,
         metadata: dict[str, JsonValue],
     ) -> None:
-        """Create a new session entry in the database."""
+        """Create a session, or accept an existing one with matching data."""
         if hasattr(param, "model_dump"):
             param_data = param.model_dump(mode="json")
         elif hasattr(param, "dict"):
@@ -251,8 +251,14 @@ class SessionDataManagerSQL(SessionDataManager):
                     self.SessionConfig.session_key == session_key,
                 ),
             )
-            session = sessions.first()
+            session = sessions.scalars().first()
             if session is not None:
+                if (
+                    session.configuration == configuration
+                    and session.param_data == param_data
+                    and session.user_metadata == metadata
+                ):
+                    return
                 raise SessionAlreadyExistsError(session_key)
             # create a new entry
             new_session = self.SessionConfig(
