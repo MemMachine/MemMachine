@@ -27,7 +27,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "rank-bm25>=0.2.2",
     "sqlite-vec>=0.1.9",
-    "sqlalchemy[asyncio]>=2.0.43",
+    "sqlalchemy[asyncio]>=2.0.53",
     "usearch>=2.25.1",
     "uvicorn>=0.35.0",
     "tzdata>=2024.1 ; sys_platform == 'win32'",
