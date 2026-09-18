@@ -27,8 +27,10 @@ from memmachine_server.common.episode_store import (
     EpisodeResponse,
 )
 from memmachine_server.common.errors import SessionNotFoundError
-from memmachine_server.common.filter.filter_parser import And as FilterAnd
-from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
+from memmachine_server.common.filter.filter_parser import (
+    And,
+    Comparison,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -265,9 +267,9 @@ def test_with_default_long_conf_enable_status(
 async def test_create_session_passes_generated_config(
     minimal_conf, patched_resource_manager
 ):
-    session_manager = AsyncMock()
-    patched_resource_manager.get_session_data_manager = AsyncMock(
-        return_value=session_manager
+    episodic_memory_manager = AsyncMock()
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_memory_manager
     )
 
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
@@ -284,9 +286,10 @@ async def test_create_session_passes_generated_config(
         user_conf=user_conf,
     )
 
-    session_manager.create_or_validate_session.assert_awaited_once()
-    _, kwargs = session_manager.create_or_validate_session.await_args
-    episodic_conf = kwargs["param"]
+    # Creation goes through the manager, which creates the storage with the row.
+    episodic_memory_manager.create_session.assert_awaited_once()
+    _, kwargs = episodic_memory_manager.create_session.await_args
+    episodic_conf = kwargs["episodic_memory_config"]
 
     assert episodic_conf.long_term_memory.embedder == "custom-embed"
     assert episodic_conf.long_term_memory.reranker == "custom-reranker"
@@ -623,9 +626,6 @@ async def test_add_episodes_dispatches_to_all_memories(
     episodic_session = AsyncMock()
     episodic_manager = MagicMock()
     episodic_manager.open_episodic_memory.return_value = _async_cm(episodic_session)
-    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
-        episodic_session
-    )
     patched_resource_manager.get_episodic_memory_manager = AsyncMock(
         return_value=episodic_manager
     )
@@ -694,6 +694,67 @@ async def test_add_episodes_skips_memories_not_requested(
 
 
 @pytest.mark.asyncio
+async def test_add_episodes_to_an_unknown_project_persists_nothing(
+    minimal_conf, patched_resource_manager
+):
+    """A write to a project that does not exist is refused before any row is written.
+
+    The episodes are persisted before the memories are updated, and a
+    semantic-only write never opens episodic memory, so the check cannot be
+    left to the episodic open.
+    """
+    session_manager = AsyncMock()
+    session_manager.get_session_info = AsyncMock(return_value=None)
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=session_manager
+    )
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    entries = [
+        EpisodeEntry(content="hello", producer_id="user", producer_role="assistant"),
+    ]
+
+    with pytest.raises(SessionNotFoundError):
+        await memmachine.add_episodes(
+            DummySessionData("nobody/nowhere"),
+            entries,
+            target_memories=[MemoryType.Semantic],
+        )
+
+    episode_storage.add_episodes.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_semantic_only_search_of_an_unknown_project_is_refused(
+    minimal_conf, patched_resource_manager
+):
+    """A search that does not open episodic memory still refuses an unknown project."""
+    session_manager = AsyncMock()
+    session_manager.get_session_info = AsyncMock(return_value=None)
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=session_manager
+    )
+    semantic_manager = MagicMock()
+    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+        return_value=semantic_manager
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    with pytest.raises(SessionNotFoundError):
+        await memmachine.query_search(
+            DummySessionData("nobody/nowhere"),
+            target_memories=[MemoryType.Semantic],
+            query="anything",
+        )
+
+    semantic_manager.search.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_list_search_fetches_episode_history(
     minimal_conf, patched_resource_manager
 ):
@@ -735,11 +796,7 @@ async def test_count_episodes_filters_by_session_only(
 
     assert result == 7
     episode_storage.get_episode_messages_count.assert_awaited_once_with(
-        filter_expr=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        )
+        filter_expr=Comparison(field="session_key", op="=", value=session.session_key)
     )
 
 
@@ -749,7 +806,7 @@ async def test_count_episodes_combines_search_filter(
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("session-with-filter")
-    custom_filter = FilterComparison(field="topic", op="=", value="alpha")
+    custom_filter = Comparison(field="topic", op="=", value="alpha")
     parsed_specs: list[str] = []
 
     def _fake_parse(spec: str | None):
@@ -772,12 +829,8 @@ async def test_count_episodes_combines_search_filter(
     await_args = episode_storage.get_episode_messages_count.await_args
     assert await_args is not None
     combined_filter = await_args.kwargs["filter_expr"]
-    assert combined_filter == FilterAnd(
-        left=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        ),
+    assert combined_filter == And(
+        left=Comparison(field="session_key", op="=", value=session.session_key),
         right=custom_filter,
     )
 
@@ -964,9 +1017,6 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
     episodic_session = AsyncMock()
     episodic_manager = MagicMock()
     episodic_manager.open_episodic_memory.return_value = _async_cm(episodic_session)
-    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
-        episodic_session
-    )
     patched_resource_manager.get_episodic_memory_manager = AsyncMock(
         return_value=episodic_manager
     )

@@ -17,6 +17,7 @@ from memmachine_server.common.episode_store import (
 from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
     SqlAlchemyEpisodeStore,
 )
+from memmachine_server.common.errors import ResourceManagerClosedError
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
@@ -55,6 +56,40 @@ from memmachine_server.semantic_memory.semantic_session_manager import (
 
 logger = logging.getLogger(__name__)
 
+_SEGMENT_STORE_PURGE_INTERVAL_SECONDS = 60.0
+_SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
+
+
+async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
+    """Drive the store's bounded purge, paced by its backlog signal.
+
+    The store never schedules reclamation itself; this loop is the
+    deployment's scheduler. Each call is bounded, and a True return
+    means more work remains, so a backlog drains at one bounded call
+    per short pause -- the pause yields the database (and SQLite's
+    single write lock) to request serving between calls -- while an
+    idle store costs one call per tick. A failed call is logged and
+    retried a tick later, and concurrent purgers are safe by the
+    store's contract.
+
+    A module-level coroutine on purpose: the event loop keeps a pending
+    task alive while it sleeps, so the task pins whatever its frame
+    references. Referencing only the store lets a manager dropped
+    without close() be collected instead of pinned, with its loop
+    querying the engine, for the process lifetime.
+    """
+    while True:
+        try:
+            more = await store.purge_deleted_partitions()
+        except Exception:
+            logger.exception("Segment store purge failed; retrying next tick")
+            more = False
+        await asyncio.sleep(
+            _SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS
+            if more
+            else _SEGMENT_STORE_PURGE_INTERVAL_SECONDS
+        )
+
 
 class ResourceManagerImpl:
     """Concrete resource manager for MemMachine services."""
@@ -83,7 +118,9 @@ class ResourceManagerImpl:
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
+        self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
 
+        self._closed = False
         self._session_data_manager_lock = Lock()
         self._episodic_memory_manager_lock = Lock()
         self._episode_storage_lock = Lock()
@@ -105,13 +142,26 @@ class ResourceManagerImpl:
 
     async def close(self) -> None:
         """Close resources and clean up state."""
+        # The closed flag and the snapshots share the store lock with
+        # get_segment_store, so a racing get either completes before the
+        # flag flips or observes it and refuses -- no store or purge task
+        # can be created into the cleared containers.
+        async with self._segment_store_lock:
+            self._closed = True
+            purge_tasks = list(self._segment_store_purge_tasks)
+            self._segment_store_purge_tasks.clear()
+            segment_stores = list(self._segment_stores.values())
+            self._segment_stores.clear()
+
+        for purge_task in purge_tasks:
+            purge_task.cancel()
+        await asyncio.gather(*purge_tasks, return_exceptions=True)
+
         tasks = []
         if self._semantic_manager is not None:
             tasks.append(self._semantic_manager.close())
 
-        tasks.extend(
-            segment_store.shutdown() for segment_store in self._segment_stores.values()
-        )
+        tasks.extend(segment_store.shutdown() for segment_store in segment_stores)
 
         tasks.append(self._database_manager.close())
 
@@ -141,6 +191,10 @@ class ResourceManagerImpl:
         """Return a segment store by name, constructing it on first access."""
         if name not in self._segment_stores:
             async with self._segment_store_lock:
+                if self._closed:
+                    raise ResourceManagerClosedError(
+                        "Resource manager is closed; no new segment stores can be built"
+                    )
                 if name not in self._segment_stores:
                     engine = await self.get_sql_engine(name)
                     store = SQLAlchemySegmentStore(
@@ -155,6 +209,9 @@ class ResourceManagerImpl:
                     )
                     await store.startup()
                     self._segment_stores[name] = store
+                    self._segment_store_purge_tasks.append(
+                        asyncio.create_task(_purge_deleted_partitions_forever(store))
+                    )
         return self._segment_stores[name]
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
