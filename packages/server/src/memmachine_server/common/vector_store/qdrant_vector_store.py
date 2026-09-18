@@ -742,6 +742,12 @@ class QdrantVectorStore(VectorStore):
         distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
             config.similarity_metric
         ]
+        # The collection and its indexes are created under separate guards. Sharing
+        # one meant a collection that already existed - a second worker, or a retry
+        # after a crash between the two calls - raised on create_collection, took
+        # the already-exists path, and left the collection with no payload indexes
+        # at all. The lock above is keyed on the client object, so it serialises
+        # callers within a process and not across uvicorn workers.
         try:
             await self._client.create_collection(
                 collection_name=native_collection_name,
@@ -756,27 +762,34 @@ class QdrantVectorStore(VectorStore):
                     models.ShardingMethod.CUSTOM if self._is_distributed else None
                 ),
             )
-            await self._client.create_payload_index(
-                collection_name=native_collection_name,
-                field_name=_PAYLOAD_PARTITION_KEY,
-                field_schema=models.KeywordIndexParams(
+        except (UnexpectedResponse, grpc.aio.AioRpcError, ValueError) as e:
+            if not QdrantVectorStore._is_already_exists_error(e):
+                raise
+
+        indexes: list[tuple[str, Any]] = [
+            (
+                _PAYLOAD_PARTITION_KEY,
+                models.KeywordIndexParams(
                     type=models.KeywordIndexType.KEYWORD,
                     is_tenant=True,
                 ),
             )
-            for prop_name, prop_type in config.indexed_properties_schema.items():
-                index_type = QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE.get(
-                    prop_type
+        ]
+        for prop_name, prop_type in config.indexed_properties_schema.items():
+            index_type = QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE.get(prop_type)
+            if index_type is not None:
+                indexes.append((prop_name, index_type))
+
+        for field_name, field_schema in indexes:
+            try:
+                await self._client.create_payload_index(
+                    collection_name=native_collection_name,
+                    field_name=field_name,
+                    field_schema=field_schema,
                 )
-                if index_type is not None:
-                    await self._client.create_payload_index(
-                        collection_name=native_collection_name,
-                        field_name=prop_name,
-                        field_schema=index_type,
-                    )
-        except (UnexpectedResponse, grpc.aio.AioRpcError, ValueError) as e:
-            if not QdrantVectorStore._is_already_exists_error(e):
-                raise
+            except (UnexpectedResponse, grpc.aio.AioRpcError, ValueError) as e:
+                if not QdrantVectorStore._is_already_exists_error(e):
+                    raise
 
     async def _ensure_shard_key(
         self, native_collection_name: str, shard_key: str
