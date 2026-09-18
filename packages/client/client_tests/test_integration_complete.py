@@ -912,6 +912,7 @@ class TestMemMachineIntegration:
 
     def test_large_memory_content(self, memory):
         """Test adding memory with large content."""
+        memory.configure_episodic_memory(short_term_memory_enabled=False)
         large_content = "A" * 10000  # 10KB of content
         result = memory.add(large_content, role="user")
         assert isinstance(result, list)
