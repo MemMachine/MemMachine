@@ -9,6 +9,7 @@
 #   storageClass / accessMode / pvcSize     - shared PVC settings for all three volumes
 #   neo4j.*                    - Neo4j image, auth, JVM heap, and connection pool
 #   postgres.*                 - PostgreSQL image, credentials, and pool settings
+#   qdrant.*                   - Qdrant image and connection settings (event backend vector store)
 #   memmachine.*               - App image, LLM/embedder backend, and app config
 #   nodePorts.*                - NodePort assignments for external access
 
@@ -45,7 +46,7 @@ postgres:
   enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
   host: memmachine-postgres  # internal service name (default); override when enabled: false
   port: 5432                 # default Postgres port; override if external uses different port
-  image: pgvector/pgvector:pg16
+  image: pgvector/pgvector:pg18
   user: memmachine
   password: memverge   # dev default; override in production
   database: memmachine
@@ -54,6 +55,22 @@ postgres:
   pool_timeout: 30      # SQLAlchemy default (seconds to wait for a connection)
   pool_recycle: -1      # SQLAlchemy default (disabled; set to e.g. 3000 for idle-timeout avoidance)
   pool_pre_ping: false  # SQLAlchemy default; set to true to test connections before checkout
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+qdrant:
+  enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
+  host: memmachine-qdrant    # internal service name (default); override when enabled: false
+  port: 6333                 # REST port
+  grpcPort: 6334             # gRPC port
+  image: qdrant/qdrant:v1.19.1
+  prefer_grpc: false         # true = talk gRPC (grpcPort) instead of REST
+  https: false               # true when fronted by TLS, or for Qdrant Cloud
+  # apiKey: <QDRANT_API_KEY> # required for Qdrant Cloud; omit for in-cluster
   resources:
     requests:
       cpu: 250m
