@@ -30,8 +30,19 @@ keeps event segments in a relational database. Configure the VectorStore under
 `episodic_memory.long_term_memory.vector_store`.
 
 Supported VectorStore providers include Qdrant, Milvus, SQLiteVectorStore, and
-SQLiteVecVectorStore. Milvus supports three deployment shapes through the same
-configuration fields:
+SQLiteVecVectorStore. Qdrant and Milvus keep their partition registry (which
+partitions exist, and which deleted ones await reclamation) in a relational
+database named by `registry_database` (a relational database configured under
+`resources.databases`, typically the one the segment store uses), so that
+several server processes can create and delete partitions on one backend.
+Deleting a partition unregisters it at once; its records are reclaimed by a
+background purge, which keeps the partition's registry entry as a tombstone
+until a purge round finds nothing, `tombstone_retention_seconds` (default a
+day) have passed, and a round finds nothing again, so a write that landed
+after an earlier round is still reclaimed. Keep the retention orders of
+magnitude above `request_timeout_seconds`.
+Milvus supports three deployment shapes through the same configuration
+fields:
 
 - **Milvus Lite:** set `uri` to a local `.db` path such as
   `./memmachine_milvus.db`.
@@ -51,6 +62,9 @@ resources:
         # token: $MILVUS_TOKEN
         # db_name: default
         consistency_level: Session
+        request_timeout_seconds: 30
+        registry_database: profile_storage
+        tombstone_retention_seconds: 86400
 
 episodic_memory:
   long_term_memory:

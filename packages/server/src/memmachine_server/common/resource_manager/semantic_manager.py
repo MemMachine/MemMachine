@@ -10,12 +10,15 @@ from memmachine_server.common.configuration import (
     SemanticMemoryConf,
     SemanticMemoryStorageBackend,
 )
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ResourceNotReadyError
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
+from memmachine_server.common.vector_store import (
+    validate_collection_name,
+)
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -47,8 +50,38 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
     VectorStoreSemanticStorage,
 )
 
-_VECTOR_STORE_NAMESPACE = "semantic_memory"
-_VECTOR_STORE_COLLECTION_NAME = "semantic_memory"
+_VECTOR_STORE_PURPOSE = "semantic_memory"
+_VECTOR_STORE_PARTITION_KEY = "semantic_memory"
+
+
+def _semantic_collection(embedder_id: str) -> str:
+    """The collection semantic memory keeps for one embedder."""
+    collection = f"{_VECTOR_STORE_PURPOSE}__{embedder_id}"
+    try:
+        validate_collection_name(collection)
+    except ValueError as error:
+        raise ValueError(
+            f"Embedder id {embedder_id!r} cannot name a vector store collection: "
+            f"{error} Rename the embedder in the configuration."
+        ) from error
+    return collection
+
+
+# The keys semantic storage writes into every vector record; the vector
+# store is built with these plus its configured user keys.
+_SEMANTIC_INDEXED_PROPERTIES: dict[str, PropertyType] = {
+    "feature_id": str,
+    "set_id": str,
+    "set": str,
+    "semantic_category_id": str,
+    "category_name": str,
+    "category": str,
+    "tag_id": str,
+    "tag": str,
+    "feature": str,
+    "feature_name": str,
+    "value": str,
+}
 
 
 class SemanticResourceManager:
@@ -142,33 +175,23 @@ class SemanticResourceManager:
             feature_store_name,
             validate=True,
         )
-        vector_store = await self._resource_manager.get_vector_store(vector_store_name)
         vector_dimensions = self._conf.vector_dimensions
         if vector_dimensions is None:
             vector_dimensions = (await self._get_default_embedder()).dimensions
-
-        collection = await vector_store.open_or_create_collection(
-            namespace=_VECTOR_STORE_NAMESPACE,
-            name=_VECTOR_STORE_COLLECTION_NAME,
-            config=VectorStoreCollectionConfig(
-                vector_dimensions=vector_dimensions,
-                similarity_metric=self._conf.vector_similarity_metric,
-                indexed_properties_schema={
-                    "feature_id": str,
-                    "set_id": str,
-                    "set": str,
-                    "semantic_category_id": str,
-                    "category_name": str,
-                    "category": str,
-                    "tag_id": str,
-                    "tag": str,
-                    "feature": str,
-                    "feature_name": str,
-                    "value": str,
-                },
-            ),
+        vector_store = await self._resource_manager.get_vector_store(
+            vector_store_name,
+            collection=_semantic_collection(self._get_default_embedder_name()),
+            vector_dimensions=vector_dimensions,
+            indexed_properties=_SEMANTIC_INDEXED_PROPERTIES,
         )
-        storage = VectorStoreSemanticStorage(sql_engine, collection)
+        # The manager owns this partition, so creating it here, once, at the
+        # storage's first use is the owner's provisioning, not a request's.
+        partition = await vector_store.get_partition(_VECTOR_STORE_PARTITION_KEY)
+        if partition is None:
+            await vector_store.create_partition(_VECTOR_STORE_PARTITION_KEY)
+            partition = await vector_store.get_partition(_VECTOR_STORE_PARTITION_KEY)
+            assert partition is not None
+        storage = VectorStoreSemanticStorage(sql_engine, partition)
         await storage.startup()
         return storage
 
