@@ -41,6 +41,7 @@ from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.utils import ensure_tz_aware
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +367,14 @@ class ShortTermMemory:
         expected: PropertyValue,
     ) -> bool:
         """Compare a resolved value against an expected value using the given operator."""
+        # Filter values are UTC-aware instants by the filter language's
+        # contract; stored metadata is user data kept as supplied, so a
+        # naive stored datetime is tagged as UTC here (the codebase-wide
+        # rule) rather than rewritten on write. Compared raw, equality
+        # is silently False and ordering raises.
+        if isinstance(value, datetime) and isinstance(expected, datetime):
+            value = ensure_tz_aware(value)
+            expected = ensure_tz_aware(expected)
         if op == "=":
             return value == expected
         if op == "!=":
