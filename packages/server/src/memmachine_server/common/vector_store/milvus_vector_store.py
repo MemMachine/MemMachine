@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, InstanceOf
 from pymilvus import DataType, MilvusClient
 from pymilvus.exceptions import MilvusException
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -38,10 +38,9 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.properties_json import (
-    decode_properties,
     encode_properties,
 )
-from memmachine_server.common.utils import compute_similarity, ensure_tz_aware
+from memmachine_server.common.utils import compute_cosine_similarity, ensure_tz_aware
 
 from .data_types import (
     QueryMatch,
@@ -136,18 +135,6 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
         return f"{field} {operator} {_literal(comparison.value)}"
 
     @staticmethod
-    def _passes_threshold(
-        score: float,
-        threshold: float | None,
-        similarity_metric: SimilarityMetric,
-    ) -> bool:
-        if threshold is None:
-            return True
-        if similarity_metric.higher_is_better:
-            return score >= threshold
-        return score <= threshold
-
-    @staticmethod
     def _primary_id(partition_key: str, record_uuid: UUID) -> str:
         """Build a native primary key unique within a shared native collection."""
         return f"{partition_key}:{record_uuid}"
@@ -160,6 +147,7 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
         partition_key: str,
         config: VectorStoreCollectionConfig,
         tracker: OperationTracker,
+        request_timeout_seconds: int,
     ) -> None:
         """Initialize with a Milvus client and collection name."""
         self._client = client
@@ -167,6 +155,7 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
         self._partition_key = partition_key
         self._config = config
         self._tracker = tracker
+        self._request_timeout_seconds = request_timeout_seconds
 
     @property
     @override
@@ -176,11 +165,6 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
 
     def _build_entity(self, record: Record) -> dict[str, Any]:
         """Build a Milvus entity from a vector store record."""
-        if record.vector is None:
-            raise ValueError(
-                f"Record {record.uuid} has vector=None, which is not allowed on input."
-            )
-
         properties = record.properties if record.properties is not None else {}
         entity: dict[str, Any] = {
             _ID_FIELD: self._primary_id(self._partition_key, record.uuid),
@@ -196,55 +180,21 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
             entity[_property_field(key)] = _normalize_property_filter_value(value)
         return entity
 
-    @staticmethod
-    def _parse_record(
-        entity: Mapping[str, Any],
-        *,
-        return_vector: bool,
-        return_properties: bool,
-    ) -> Record:
-        """Parse a Milvus entity into a vector store record."""
-        vector: list[float] | None = None
-        if return_vector:
-            raw_vector = entity.get(_VECTOR_FIELD)
-            if raw_vector is not None:
-                vector = list(cast(Sequence[float], raw_vector))
-
-        properties: dict[str, PropertyValue] | None = None
-        if return_properties:
-            properties = decode_properties(
-                cast(Mapping | None, entity.get(_PROPERTIES_FIELD))
-            )
-
-        return Record(
-            uuid=UUID(str(entity[_RECORD_UUID_FIELD])),
-            vector=vector,
-            properties=properties,
-        )
-
-    def _output_fields(
-        self, *, return_vector: bool, return_properties: bool
-    ) -> list[str]:
-        fields = [_RECORD_UUID_FIELD]
-        if return_vector:
-            fields.append(_VECTOR_FIELD)
-        if return_properties:
-            fields.append(_PROPERTIES_FIELD)
-        return fields
+    def _output_fields(self) -> list[str]:
+        # The vector always comes back: search scores are recomputed from it.
+        return [_RECORD_UUID_FIELD, _VECTOR_FIELD]
 
     @staticmethod
-    def _score_from_entity_vector(
+    def _cosine_similarity_from_entity_vector(
         query_vector: Sequence[float],
         entity: Mapping[str, Any],
-        similarity_metric: SimilarityMetric,
     ) -> float:
         raw_vector = entity.get(_VECTOR_FIELD)
         if raw_vector is None:
             raise ValueError("Milvus search result did not include the vector field")
-        return compute_similarity(
+        return compute_cosine_similarity(
             list(query_vector),
             [list(cast(Sequence[float], raw_vector))],
-            similarity_metric,
         )[0]
 
     def _partition_filter(self) -> str:
@@ -268,6 +218,7 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
                 self._client.upsert(
                     collection_name=self._collection_name,
                     data=entities,
+                    timeout=self._request_timeout_seconds,
                 )
 
             await asyncio.to_thread(_upsert)
@@ -278,10 +229,8 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
         *,
         query_vectors: Iterable[Sequence[float]],
         limit: int,
-        score_threshold: float | None = None,
+        min_cosine_similarity: float | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
         """Query for records matching the criteria by query vectors."""
         async with self._tracker("query"):
@@ -307,11 +256,9 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
                 # Milvus Lite returns COSINE as distance, while Zilliz Cloud
                 # returns it as similarity. Fetch vectors and compute scores
                 # locally so MemMachine score semantics stay consistent.
-                output_fields=self._output_fields(
-                    return_vector=True,
-                    return_properties=return_properties,
-                ),
+                output_fields=self._output_fields(),
                 anns_field=_VECTOR_FIELD,
+                timeout=self._request_timeout_seconds,
             )
 
             results: list[QueryResult] = []
@@ -321,78 +268,27 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
                 matches: list[QueryMatch] = []
                 for raw_match in raw_matches:
                     entity = cast(Mapping[str, Any], raw_match["entity"])
-                    score = self._score_from_entity_vector(
+                    cosine_similarity = self._cosine_similarity_from_entity_vector(
                         query_vector,
                         entity,
-                        self._config.similarity_metric,
                     )
-                    if not self._passes_threshold(
-                        score, score_threshold, self._config.similarity_metric
+                    if (
+                        min_cosine_similarity is not None
+                        and cosine_similarity < min_cosine_similarity
                     ):
                         continue
 
                     matches.append(
                         QueryMatch(
-                            score=score,
-                            record=self._parse_record(
-                                entity,
-                                return_vector=return_vector,
-                                return_properties=return_properties,
-                            ),
+                            cosine_similarity=cosine_similarity,
+                            record_uuid=UUID(str(entity[_RECORD_UUID_FIELD])),
                         )
                     )
 
-                matches.sort(
-                    key=lambda match: match.score,
-                    reverse=self._config.similarity_metric.higher_is_better,
-                )
+                matches.sort(key=lambda match: match.cosine_similarity, reverse=True)
                 results.append(QueryResult(matches=matches))
 
             return results
-
-    @override
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        """Get records from the collection by their UUIDs."""
-        async with self._tracker("get"):
-            uuid_list = list(record_uuids)
-            if not uuid_list:
-                return []
-
-            primary_ids = [
-                self._primary_id(self._partition_key, uuid) for uuid in uuid_list
-            ]
-            raw_records = await asyncio.to_thread(
-                self._client.get,
-                collection_name=self._collection_name,
-                ids=primary_ids,
-                output_fields=self._output_fields(
-                    return_vector=return_vector,
-                    return_properties=return_properties,
-                ),
-            )
-
-            records_by_uuid = {
-                record.uuid: record
-                for record in (
-                    self._parse_record(
-                        cast(Mapping[str, Any], raw_record),
-                        return_vector=return_vector,
-                        return_properties=return_properties,
-                    )
-                    for raw_record in raw_records
-                )
-            }
-            return [
-                records_by_uuid[record_uuid]
-                for record_uuid in uuid_list
-                if record_uuid in records_by_uuid
-            ]
 
     @override
     async def delete(
@@ -412,6 +308,7 @@ class MilvusVectorStoreCollection(VectorStoreCollection):
                 self._client.delete,
                 collection_name=self._collection_name,
                 ids=primary_ids,
+                timeout=self._request_timeout_seconds,
             )
 
 
@@ -422,6 +319,7 @@ class MilvusVectorStoreParams(BaseModel):
     Attributes:
         client (MilvusClient): Milvus client instance.
         consistency_level (str): Collection consistency level for newly created collections.
+        request_timeout_seconds (int): Seconds any request to Milvus may take.
         metrics_factory (MetricsFactory | None): Metrics factory for collecting usage metrics.
     """
 
@@ -433,6 +331,9 @@ class MilvusVectorStoreParams(BaseModel):
         default="Session",
         description="Milvus consistency level for newly created collections",
     )
+    request_timeout_seconds: int = Field(
+        ..., gt=0, description="Seconds any request to Milvus may take"
+    )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
@@ -442,15 +343,10 @@ class MilvusVectorStoreParams(BaseModel):
 class MilvusVectorStore(VectorStore):
     """Asynchronous Milvus-based implementation of VectorStore."""
 
-    _SIMILARITY_METRIC_TO_MILVUS_METRIC: ClassVar[dict[SimilarityMetric, str]] = {
-        SimilarityMetric.COSINE: "COSINE",
-        SimilarityMetric.DOT: "IP",
-        SimilarityMetric.EUCLIDEAN: "L2",
-    }
+    _MILVUS_METRIC_TYPE: ClassVar[str] = "COSINE"
 
     _REGISTRY_SUFFIX: ClassVar[str] = "__registry"
     _REGISTRY_VECTOR_DIMENSIONS: ClassVar[str] = "vector_dimensions"
-    _REGISTRY_SIMILARITY_METRIC: ClassVar[str] = "similarity_metric"
     _REGISTRY_INDEXED_PROPERTIES_SCHEMA: ClassVar[str] = "indexed_properties_schema"
     _REGISTRY_CONFIG: ClassVar[str] = "config"
 
@@ -486,26 +382,12 @@ class MilvusVectorStore(VectorStore):
         digest = hashlib.sha256(config.model_dump_json().encode()).hexdigest()
         return f"memmachine_{namespace}__{digest}"
 
-    @staticmethod
-    def _validate_metric(similarity_metric: SimilarityMetric) -> None:
-        if (
-            similarity_metric
-            not in MilvusVectorStore._SIMILARITY_METRIC_TO_MILVUS_METRIC
-        ):
-            supported = ", ".join(
-                metric.value
-                for metric in MilvusVectorStore._SIMILARITY_METRIC_TO_MILVUS_METRIC
-            )
-            raise ValueError(
-                f"Milvus only supports {supported} similarity metrics, "
-                f"got {similarity_metric.value!r}"
-            )
-
     def __init__(self, params: MilvusVectorStoreParams) -> None:
         """Initialize the vector store with the provided parameters."""
         super().__init__()
         self._client = params.client
         self._consistency_level = params.consistency_level
+        self._request_timeout_seconds = params.request_timeout_seconds
         self._tracker = OperationTracker(
             params.metrics_factory,
             prefix="vector_store_milvus",
@@ -528,7 +410,9 @@ class MilvusVectorStore(VectorStore):
             namespace
         )
         if await asyncio.to_thread(
-            self._client.has_collection, registry_collection_name
+            self._client.has_collection,
+            registry_collection_name,
+            timeout=self._request_timeout_seconds,
         ):
             return
 
@@ -557,7 +441,7 @@ class MilvusVectorStore(VectorStore):
             index_params.add_index(
                 field_name=_VECTOR_FIELD,
                 index_type="AUTOINDEX",
-                metric_type="COSINE",
+                metric_type=MilvusVectorStore._MILVUS_METRIC_TYPE,
             )
 
             self._client.create_collection(
@@ -565,6 +449,7 @@ class MilvusVectorStore(VectorStore):
                 schema=schema,
                 index_params=index_params,
                 consistency_level=self._consistency_level,
+                timeout=self._request_timeout_seconds,
             )
 
         try:
@@ -581,7 +466,9 @@ class MilvusVectorStore(VectorStore):
             namespace
         )
         if not await asyncio.to_thread(
-            self._client.has_collection, registry_collection_name
+            self._client.has_collection,
+            registry_collection_name,
+            timeout=self._request_timeout_seconds,
         ):
             return None
 
@@ -592,6 +479,7 @@ class MilvusVectorStore(VectorStore):
                 collection_name=registry_collection_name,
                 ids=[name],
                 output_fields=[_ID_FIELD, self._REGISTRY_CONFIG],
+                timeout=self._request_timeout_seconds,
             )
         except MilvusException as exc:
             if MilvusVectorStore._is_not_found_error(exc):
@@ -613,6 +501,7 @@ class MilvusVectorStore(VectorStore):
                 collection_name=registry_collection_name,
                 filter=filter_expr,
                 output_fields=[_ID_FIELD, self._REGISTRY_CONFIG],
+                timeout=self._request_timeout_seconds,
             )
             rows = list(rows)
             if not rows:
@@ -625,7 +514,6 @@ class MilvusVectorStore(VectorStore):
         """Parse a VectorStoreCollectionConfig from a registry entry."""
         return VectorStoreCollectionConfig(
             vector_dimensions=entry[MilvusVectorStore._REGISTRY_VECTOR_DIMENSIONS],
-            similarity_metric=entry[MilvusVectorStore._REGISTRY_SIMILARITY_METRIC],
             indexed_properties_schema=entry[
                 MilvusVectorStore._REGISTRY_INDEXED_PROPERTIES_SCHEMA
             ],
@@ -643,17 +531,21 @@ class MilvusVectorStore(VectorStore):
             partition_key=name,
             config=config,
             tracker=self._tracker,
+            request_timeout_seconds=self._request_timeout_seconds,
         )
 
     async def _create_native_collection(
         self, namespace: str, config: VectorStoreCollectionConfig
     ) -> None:
         """Idempotently create the native Milvus collection."""
-        self._validate_metric(config.similarity_metric)
         native_collection_name = MilvusVectorStore._build_native_collection_name(
             namespace, config
         )
-        if await asyncio.to_thread(self._client.has_collection, native_collection_name):
+        if await asyncio.to_thread(
+            self._client.has_collection,
+            native_collection_name,
+            timeout=self._request_timeout_seconds,
+        ):
             return
 
         def _create_collection() -> None:
@@ -692,9 +584,7 @@ class MilvusVectorStore(VectorStore):
             index_params.add_index(
                 field_name=_VECTOR_FIELD,
                 index_type="AUTOINDEX",
-                metric_type=self._SIMILARITY_METRIC_TO_MILVUS_METRIC[
-                    config.similarity_metric
-                ],
+                metric_type=MilvusVectorStore._MILVUS_METRIC_TYPE,
             )
 
             self._client.create_collection(
@@ -702,6 +592,7 @@ class MilvusVectorStore(VectorStore):
                 schema=schema,
                 index_params=index_params,
                 consistency_level=self._consistency_level,
+                timeout=self._request_timeout_seconds,
             )
 
         try:
@@ -724,13 +615,13 @@ class MilvusVectorStore(VectorStore):
                     _VECTOR_FIELD: [0.0] * _REGISTRY_VECTOR_DIMENSION,
                     self._REGISTRY_CONFIG: {
                         self._REGISTRY_VECTOR_DIMENSIONS: config.vector_dimensions,
-                        self._REGISTRY_SIMILARITY_METRIC: config.similarity_metric.value,
                         self._REGISTRY_INDEXED_PROPERTIES_SCHEMA: config.model_dump(
                             mode="json"
                         )["indexed_properties_schema"],
                     },
                 }
             ],
+            timeout=self._request_timeout_seconds,
         )
 
     @override
@@ -750,7 +641,6 @@ class MilvusVectorStore(VectorStore):
             raise ValueError(
                 f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes"
             )
-        self._validate_metric(config.similarity_metric)
         async with (
             self._client_name_locks[(namespace, name)],
             self._tracker("create_collection"),
@@ -778,7 +668,6 @@ class MilvusVectorStore(VectorStore):
             raise ValueError(
                 f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes"
             )
-        self._validate_metric(config.similarity_metric)
         async with (
             self._client_name_locks[(namespace, name)],
             self._tracker("open_or_create_collection"),
@@ -850,9 +739,11 @@ class MilvusVectorStore(VectorStore):
                 self._client.delete,
                 collection_name=native_collection_name,
                 filter=f"{_PARTITION_KEY_FIELD} == {_expr_string(name)}",
+                timeout=self._request_timeout_seconds,
             )
             await asyncio.to_thread(
                 self._client.delete,
                 collection_name=registry_name,
                 ids=[name],
+                timeout=self._request_timeout_seconds,
             )

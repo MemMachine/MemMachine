@@ -26,8 +26,8 @@ class VectorStoreCollection(ABC):
     Identified by a (namespace, name) pair.
     All data operations are scoped to this logical collection.
 
-    Implementations must support storing, filtering on, and returning
-    record properties not declared in the configured indexed properties schema.
+    Implementations must support storing and filtering on record properties
+    not declared in the configured indexed properties schema.
 
     The schema exists to support indexing on fixed-type record properties.
     Record properties not declared in the schema may have mixed-type values.
@@ -66,64 +66,35 @@ class VectorStoreCollection(ABC):
         *,
         query_vectors: Iterable[Sequence[float]],
         limit: int,
-        score_threshold: float | None = None,
+        min_cosine_similarity: float | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
         """
         Query for records matching the criteria by query vectors.
+
+        Answers with UUIDs and scores. Stored properties are filterable but
+        never returned: this store is not the authority for a record's
+        content, and its copy is only as fresh as the last write to it -- a
+        caller that needs a record's fields reads them from whatever owns
+        them.
 
         Args:
             query_vectors (Iterable[Sequence[float]]):
                 The vectors to compare against.
             limit (int):
                 Maximum number of matching records to return per query vector.
-            score_threshold (float | None):
-                Score threshold to consider a match
+            min_cosine_similarity (float | None):
+                If provided, only return matches whose cosine similarity
+                is greater than or equal to this value
                 (default: None).
             property_filter (FilterExpr | None):
                 Filter expression tree.
                 If None or empty, no property filtering is applied
                 (default: None).
-            return_vector (bool):
-                Whether to include the vector in the returned records
-                (default: False).
-            return_properties (bool):
-                Whether to include the properties in the returned records
-                (default: True).
 
         Returns:
             list[QueryResult]:
                 Results for each query vector,
-                ordered as in the input iterable.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        """
-        Get records from the collection by their UUIDs.
-
-        Args:
-            record_uuids (Iterable[UUID]):
-                Iterable of UUIDs of the records to retrieve.
-            return_vector (bool):
-                Whether to include the vector in the returned records
-                (default: False).
-            return_properties (bool):
-                Whether to include the properties in the returned records
-                (default: True).
-
-        Returns:
-            list[Record]:
-                Iterable of records with the specified UUIDs,
                 ordered as in the input iterable.
         """
         raise NotImplementedError
@@ -153,7 +124,7 @@ class VectorStore(ABC):
     The consumer is responsible for sharding names across processes.
 
     Different namespaces are fully independent (separate native collections).
-    Multiple logical collections with the same (namespace, vector dimensions, similarity metric, indexed properties schema)
+    Multiple logical collections with the same (namespace, vector dimensions, indexed properties schema)
     may share a native collection to reduce overhead.
 
     Naming constraints:
@@ -184,8 +155,7 @@ class VectorStore(ABC):
         Create a logical collection in the vector store and return a handle to it.
 
         A (namespace, name) pair uniquely identifies a collection.
-        The configuration (dimensions, similarity metric, schema)
-        is fixed at creation time.
+        The configuration (dimensions, schema) is fixed at creation time.
 
         Args:
             namespace (str):
