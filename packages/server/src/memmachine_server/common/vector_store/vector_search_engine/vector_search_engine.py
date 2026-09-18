@@ -11,16 +11,13 @@ class SearchMatch:
     A single search match.
 
     Attributes:
-        score (float):
-            The meaning depends on the collection's `SimilarityMetric`:
-            - *cosine*: cosine similarity in [-1, 1].
-            - *dot*: raw dot product [0, inf).
-            - *euclidean*: Euclidean distance [0, inf).
-            - *manhattan*: Manhattan distance [0, inf).
+        cosine_similarity (float):
+            Cosine similarity between the query vector and the matched
+            vector, in [-1, 1]. Higher is a better match.
         key (int): Engine key for the matched vector.
     """
 
-    score: float
+    cosine_similarity: float
     key: int
 
 
@@ -44,7 +41,9 @@ class VectorSearchEngine(ABC):
 
     Results are returned ordered from best to worst.
 
-    Safe for concurrent use from async tasks (single event loop).
+    Not safe for concurrent use; the owner serializes calls. Searches may run
+    concurrently with each other, and every other call runs alone.
+    `SQLiteVectorStore` holds a read-write lock per engine for this.
     Not safe across threads or processes.
     """
 
@@ -93,21 +92,6 @@ class VectorSearchEngine(ABC):
         """
 
     @abstractmethod
-    async def get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        """
-        Retrieve vectors by key.
-
-        Args:
-            keys (Iterable[int]):
-                Keys of vectors to retrieve.
-
-        Returns:
-            dict[int, list[float]]:
-                Mapping of key to vector for keys that exist.
-                Missing keys are omitted.
-        """
-
-    @abstractmethod
     async def remove(self, keys: Iterable[int]) -> None:
         """
         Remove vectors by key.
@@ -122,7 +106,18 @@ class VectorSearchEngine(ABC):
     @abstractmethod
     async def save(self, path: str) -> None:
         """
-        Persist the index to disk.
+        Publish the index at `path`, replacing whatever index is there.
+
+        Returning must mean a later `load` reads this index or the one it
+        replaced, never a half-written mixture of the two. It does *not* mean
+        the publication survives a power failure: implementations may publish
+        with an atomic rename, which a power failure can roll back after this
+        returns.
+
+        Callers must therefore treat a published index as possibly stale, but
+        never as corrupt. `SQLiteVectorStore` trims its pending-operation log
+        once this returns, so a rolled-back publication leaves records whose
+        vectors are missing from the index until they are re-upserted.
 
         Args:
             path (str):

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, MutableMapping, Sequence
-from datetime import datetime
+from datetime import UTC
 from typing import Any, cast
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4
 
 import numpy as np
 from pydantic import AwareDatetime, InstanceOf, TypeAdapter, ValidationError
@@ -20,6 +20,7 @@ from sqlalchemy import (
     Integer,
     String,
     Table,
+    Uuid,
     delete,
     insert,
     select,
@@ -42,7 +43,8 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
-from memmachine_server.common.vector_store import Record, VectorStoreCollection
+from memmachine_server.common.utils import ensure_tz_aware
+from memmachine_server.common.vector_store import Record, VectorStorePartition
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -50,13 +52,7 @@ from memmachine_server.semantic_memory.storage.storage_base import (
 )
 from memmachine_server.semantic_memory.storage.text_sanitizer import sanitize_pg_text
 
-_FEATURE_VECTOR_NAMESPACE = UUID("f4f9f7b0-99dd-4a4a-9f24-682077ae1ebd")
 _DEFAULT_VECTOR_QUERY_LIMIT = 10_000
-
-
-def feature_vector_uuid(feature_id: FeatureIdT) -> UUID:
-    """Return the stable vector record UUID for a semantic feature id."""
-    return uuid5(_FEATURE_VECTOR_NAMESPACE, str(feature_id))
 
 
 class BaseVectorSemanticStorage(DeclarativeBase):
@@ -86,6 +82,10 @@ class VectorSemanticFeature(BaseVectorSemanticStorage):
     __tablename__ = "vector_semantic_feature"
 
     id = mapped_column(Integer, primary_key=True)
+    # The feature's record in the vector store. This is the mapping that lets a
+    # search hit be resolved back to a feature; the vector store holds no copy
+    # of anything this table owns.
+    vector_uuid = mapped_column(Uuid, nullable=False, unique=True, default=uuid4)
     set_id = mapped_column(String, nullable=False, index=True)
     semantic_category_id = mapped_column(String, nullable=False)
     tag_id = mapped_column(String, nullable=False)
@@ -171,18 +171,24 @@ class VectorSemanticSetIngestedHistory(BaseVectorSemanticStorage):
 
 
 class VectorStoreSemanticStorage(SemanticStorage):
-    """SemanticStorage using SQLAlchemy metadata and VectorStore embeddings."""
+    """SemanticStorage using SQLAlchemy metadata and VectorStore embeddings.
+
+    The feature row is the authority for everything but the embedding: it
+    carries `vector_uuid`, its own pointer into the collection. Vector records
+    therefore hold a vector and no properties -- every field they used to carry
+    was a copy of a column on that row, and nothing filtered on it.
+    """
 
     backend_name = "vector_store"
 
     def __init__(
         self,
         sqlalchemy_engine: AsyncEngine,
-        vector_collection: VectorStoreCollection,
+        vector_partition: VectorStorePartition,
     ) -> None:
-        """Initialize storage with an async SQLAlchemy engine and vector collection."""
+        """Initialize storage with an async SQLAlchemy engine and a vector store partition."""
         self._engine = sqlalchemy_engine
-        self._vector_collection = vector_collection
+        self._vector_partition = vector_partition
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             expire_on_commit=False,
@@ -200,12 +206,13 @@ class VectorStoreSemanticStorage(SemanticStorage):
 
     async def delete_all(self) -> None:
         feature_ids = await self._feature_ids_for_filter(None)
+        vector_uuids = await self._vector_uuids_for_features(feature_ids)
         async with self._create_session() as session:
             await session.execute(delete(vector_citation_association_table))
             await session.execute(delete(VectorSemanticSetIngestedHistory))
             await session.execute(delete(VectorSemanticFeature))
             await session.commit()
-        await self._delete_vector_records(feature_ids)
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def reset_set_ids(self, set_ids: Sequence[SetIdT]) -> None:
         del set_ids
@@ -221,9 +228,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
         embedding: InstanceOf[np.ndarray],
         metadata: Mapping[str, Any] | None = None,
     ) -> FeatureIdT:
+        vector_uuid = uuid4()
         stmt = (
             insert(VectorSemanticFeature)
             .values(
+                vector_uuid=vector_uuid,
                 set_id=set_id,
                 semantic_category_id=category_name,
                 tag_id=sanitize_pg_text(tag, context="feature.tag"),
@@ -239,15 +248,8 @@ class VectorStoreSemanticStorage(SemanticStorage):
             await session.commit()
             feature_id = FeatureIdT(str(result.scalar_one()))
 
-        await self._upsert_vector_record(
-            feature_id=feature_id,
-            set_id=set_id,
-            category_name=category_name,
-            feature=feature,
-            value=value,
-            tag=tag,
-            embedding=embedding,
-            metadata=metadata,
+        await self._vector_partition.upsert(
+            records=[Record(uuid=vector_uuid, vector=embedding.tolist())]
         )
         return feature_id
 
@@ -293,21 +295,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
         if row is None:
             raise ResourceNotFoundError(f"Feature ID not found: {feature_id}")
 
-        if values or embedding is not None:
-            existing_record = await self._get_existing_vector_record(feature_id)
-            await self._upsert_vector_record(
-                feature_id=feature_id,
-                set_id=row.set_id,
-                category_name=row.semantic_category_id,
-                feature=row.feature,
-                value=row.value,
-                tag=row.tag_id,
-                embedding=(
-                    embedding
-                    if embedding is not None
-                    else np.array(existing_record.vector, dtype=float)
-                ),
-                metadata=row.json_metadata,
+        # Only an embedding reaches the vector store; everything else this
+        # method can change lives on the row above.
+        if embedding is not None:
+            await self._vector_partition.upsert(
+                records=[Record(uuid=row.vector_uuid, vector=embedding.tolist())]
             )
 
     async def get_feature(
@@ -374,6 +366,9 @@ class VectorStoreSemanticStorage(SemanticStorage):
         except ValidationError as e:
             raise ResourceNotFoundError(f"Invalid feature IDs: {feature_ids}") from e
 
+        vector_uuids = await self._vector_uuids_for_features(
+            [FeatureIdT(str(fid)) for fid in feature_id_ints]
+        )
         async with self._create_session() as session:
             await session.execute(
                 delete(VectorSemanticFeature).where(
@@ -382,9 +377,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             )
             await session.commit()
 
-        await self._delete_vector_records(
-            [FeatureIdT(str(fid)) for fid in feature_id_ints]
-        )
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def delete_feature_set(
         self,
@@ -392,12 +385,13 @@ class VectorStoreSemanticStorage(SemanticStorage):
         filter_expr: FilterExpr | None = None,
     ) -> None:
         feature_ids = await self._feature_ids_for_filter(filter_expr)
+        vector_uuids = await self._vector_uuids_for_features(feature_ids)
         stmt = delete(VectorSemanticFeature)
         stmt = self._apply_feature_filter(stmt, filter_expr=filter_expr)
         async with self._create_session() as session:
             await session.execute(stmt)
             await session.commit()
-        await self._delete_vector_records(feature_ids)
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def add_citations(
         self,
@@ -528,7 +522,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
                     select(VectorSemanticSetIngestedHistory.set_id)
                     .where(
                         VectorSemanticSetIngestedHistory.ingested.is_(False),
-                        VectorSemanticSetIngestedHistory.created_at <= older_than,
+                        # created_at is server-generated UTC; normalize the
+                        # bound so SQLite compares instants rather than
+                        # wall clocks.
+                        VectorSemanticSetIngestedHistory.created_at
+                        <= ensure_tz_aware(older_than).astimezone(UTC),
                     )
                     .distinct()
                 )
@@ -584,53 +582,24 @@ class VectorStoreSemanticStorage(SemanticStorage):
             async for set_id in result.scalars():
                 yield SetIdT(set_id)
 
-    async def _upsert_vector_record(
-        self,
-        *,
-        feature_id: FeatureIdT,
-        set_id: SetIdT,
-        category_name: str,
-        feature: str,
-        value: str,
-        tag: str,
-        embedding: InstanceOf[np.ndarray],
-        metadata: Mapping[str, Any] | None,
-    ) -> None:
-        properties = self._vector_properties(
-            feature_id=feature_id,
-            set_id=set_id,
-            category_name=category_name,
-            feature=feature,
-            value=value,
-            tag=tag,
-            metadata=metadata,
-        )
-        await self._vector_collection.upsert(
-            records=[
-                Record(
-                    uuid=feature_vector_uuid(feature_id),
-                    vector=[float(item) for item in embedding.tolist()],
-                    properties=properties,
-                )
-            ]
-        )
+    async def _vector_uuids_for_features(
+        self, feature_ids: Sequence[FeatureIdT]
+    ) -> list[UUID]:
+        """Read the vector records these features own.
 
-    async def _get_existing_vector_record(self, feature_id: FeatureIdT) -> Record:
-        records = await self._vector_collection.get(
-            record_uuids=[feature_vector_uuid(feature_id)],
-            return_vector=True,
-            return_properties=False,
-        )
-        if not records or records[0].vector is None:
-            raise ResourceNotFoundError(f"Vector record not found: {feature_id}")
-        return records[0]
-
-    async def _delete_vector_records(self, feature_ids: Sequence[FeatureIdT]) -> None:
+        Must run before the rows are deleted: the row is what says which vector
+        record belongs to the feature, so once it is gone the mapping is too.
+        """
         if not feature_ids:
-            return
-        await self._vector_collection.delete(
-            record_uuids=[feature_vector_uuid(feature_id) for feature_id in feature_ids]
-        )
+            return []
+        feature_id_ints = [self._coerce_feature_id(f) for f in feature_ids]
+        async with self._create_session() as session:
+            result = await session.execute(
+                select(VectorSemanticFeature.vector_uuid).where(
+                    VectorSemanticFeature.id.in_(feature_id_ints)
+                )
+            )
+        return list(result.scalars().all())
 
     async def _vector_search_features(
         self,
@@ -646,17 +615,28 @@ class VectorStoreSemanticStorage(SemanticStorage):
             _DEFAULT_VECTOR_QUERY_LIMIT,
             offset + page_size if page_size is not None else 0,
         )
-        [query_result] = await self._vector_collection.query(
+        [query_result] = await self._vector_partition.query(
             query_vectors=[vector_search_opts.query_embedding.tolist()],
             limit=limit,
-            score_threshold=vector_search_opts.min_distance,
-            return_vector=False,
-            return_properties=True,
+            min_cosine_similarity=vector_search_opts.min_distance,
         )
+        matched_uuids = [match.record_uuid for match in query_result.matches]
+        # Resolve hits through the column that owns the mapping, keeping the
+        # order the search returned them in. A hit whose feature is gone is
+        # dropped: its vector outlived the row.
+        async with self._create_session() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        VectorSemanticFeature.vector_uuid, VectorSemanticFeature.id
+                    ).where(VectorSemanticFeature.vector_uuid.in_(matched_uuids))
+                )
+            ).all()
+        feature_id_by_uuid = {row.vector_uuid: row.id for row in rows}
         ordered_ids = [
-            FeatureIdT(str((match.record.properties or {})["feature_id"]))
-            for match in query_result.matches
-            if match.record.properties and "feature_id" in match.record.properties
+            FeatureIdT(str(feature_id_by_uuid[matched_uuid]))
+            for matched_uuid in matched_uuids
+            if matched_uuid in feature_id_by_uuid
         ]
         features = await self._features_by_ids(
             ordered_ids,
@@ -816,39 +796,6 @@ class VectorStoreSemanticStorage(SemanticStorage):
         for feature_id, history_id in result:
             citations.setdefault(feature_id, []).append(EpisodeIdT(history_id))
         return citations
-
-    @staticmethod
-    def _vector_properties(
-        *,
-        feature_id: FeatureIdT,
-        set_id: SetIdT,
-        category_name: str,
-        feature: str,
-        value: str,
-        tag: str,
-        metadata: Mapping[str, Any] | None,
-    ) -> dict[str, str | int | float | bool | datetime]:
-        properties: dict[str, str | int | float | bool | datetime] = {
-            "feature_id": feature_id,
-            "set_id": set_id,
-            "set": set_id,
-            "semantic_category_id": category_name,
-            "category_name": category_name,
-            "category": category_name,
-            "tag_id": tag,
-            "tag": tag,
-            "feature": feature,
-            "feature_name": feature,
-            "value": value,
-        }
-        properties.update(
-            {
-                key: item
-                for key, item in (metadata or {}).items()
-                if isinstance(item, bool | int | float | str | datetime)
-            }
-        )
-        return properties
 
     @staticmethod
     def _coerce_feature_id(feature_id: FeatureIdT) -> int:

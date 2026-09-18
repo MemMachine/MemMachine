@@ -3,10 +3,11 @@
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal, NamedTuple, Protocol, cast, runtime_checkable
 
 from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.utils import ensure_tz_aware
 
 
 class FilterParseError(ValueError):
@@ -15,7 +16,12 @@ class FilterParseError(ValueError):
 
 @runtime_checkable
 class FilterExpr(Protocol):
-    """Marker protocol for filter expression nodes."""
+    """Marker protocol for filter expression nodes.
+
+    A value-carrying node normalizes datetime values to UTC-aware
+    instants at construction (naive means UTC); compilers rely on this
+    and bind instants without re-normalizing.
+    """
 
 
 ComparisonOp = Literal["=", "!=", ">", "<", ">=", "<="]
@@ -29,6 +35,20 @@ class Comparison(FilterExpr):
     op: ComparisonOp
     value: PropertyValue
 
+    def __post_init__(self) -> None:
+        """Normalize a datetime value to a UTC-aware instant.
+
+        The filter language defines datetime semantics: a value denotes
+        an instant, and a naive value means UTC. Normalizing at node
+        construction hands every consumer -- parsed and programmatically
+        built trees alike -- UTC-aware instants; compilers only choose a
+        representation.
+        """
+        if isinstance(self.value, datetime):
+            object.__setattr__(
+                self, "value", ensure_tz_aware(self.value).astimezone(UTC)
+            )
+
 
 @dataclass(frozen=True)
 class In(FilterExpr):
@@ -36,6 +56,24 @@ class In(FilterExpr):
 
     field: str
     values: list[int] | list[str]
+
+    def __post_init__(self) -> None:
+        """Defensively normalize datetime members to UTC-aware instants.
+
+        The declared value types exclude datetimes, but runtime lists
+        are unchecked.
+        """
+        if any(isinstance(value, datetime) for value in self.values):
+            object.__setattr__(
+                self,
+                "values",
+                [
+                    ensure_tz_aware(value).astimezone(UTC)
+                    if isinstance(value, datetime)
+                    else value
+                    for value in self.values
+                ],
+            )
 
 
 @dataclass(frozen=True)
@@ -357,6 +395,32 @@ def map_filter_fields(
     if isinstance(expr, Not):
         return Not(expr=map_filter_fields(expr.expr, transform))
     raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+
+
+def filter_fields(expr: FilterExpr) -> frozenset[str]:
+    """Every field name a filter tree addresses."""
+    if isinstance(expr, (Comparison, In, IsNull)):
+        return frozenset((expr.field,))
+    if isinstance(expr, Not):
+        return filter_fields(expr.expr)
+    if isinstance(expr, (And, Or)):
+        return filter_fields(expr.left) | filter_fields(expr.right)
+    raise TypeError(f"Unsupported filter expression type: {type(expr)}")
+
+
+def filter_nodes(expr: FilterExpr) -> frozenset[type]:
+    """The node classes a filter tree is built from."""
+    if isinstance(expr, Not):
+        return frozenset((Not,)) | filter_nodes(expr.expr)
+    if isinstance(expr, (And, Or)):
+        return (
+            frozenset((type(expr),))
+            | filter_nodes(expr.left)
+            | filter_nodes(expr.right)
+        )
+    if isinstance(expr, (Comparison, In, IsNull)):
+        return frozenset((type(expr),))
+    raise TypeError(f"Unsupported filter expression type: {type(expr)}")
 
 
 def parse_filter(spec: str | None) -> FilterExpr | None:
