@@ -671,3 +671,25 @@ class TestSessionMemoryPublicAPI:
         )
         assert len(episodes) == 1
         assert episodes == [ep2]
+
+    async def test_datetime_metadata_filters_tag_naive_stored_values(self, memory):
+        """A naive stored datetime means UTC, like a filter's.
+
+        Filter values arrive UTC-aware from the filter language; a naive
+        stored value must be tagged before comparison, not compared raw
+        (which raises for ordering and is silently False for equality).
+        """
+        due = datetime.fromisoformat("2024-01-01T12:00:00")
+        episode = create_test_episode(content="a" * 6, filterable_metadata={"due": due})
+        await memory.add_episodes([episode])
+
+        for filter_str, expected in [
+            ("m.due > date('2024-01-01T00:00:00')", [episode]),
+            ("m.due < date('2024-01-01T00:00:00')", []),
+            ("m.due = date('2024-01-01T12:00:00')", [episode]),
+            ("m.due != date('2024-01-01T12:00:00')", []),
+        ]:
+            episodes, _ = await memory.get_short_term_memory_context(
+                "test", filters=parse_filter(filter_str)
+            )
+            assert episodes == expected, filter_str

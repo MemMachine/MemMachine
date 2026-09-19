@@ -2,7 +2,6 @@
 
 import hashlib
 import logging
-import re
 
 from pydantic import InstanceOf
 
@@ -32,6 +31,10 @@ from memmachine_server.episodic_memory.event_memory.event_memory import EventMem
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartitionConfig,
 )
+from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+    PARTITION_KEY_MAX_BYTES,
+    validate_partition_key,
+)
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
     PassthroughSegmenter,
@@ -50,9 +53,6 @@ from .long_term_memory import (
 logger = logging.getLogger(__name__)
 
 _EVENT_BACKEND_NAMESPACE = "long_term_memory"
-
-_PARTITION_KEY_RE = re.compile(r"^[a-z0-9_]+$")
-_PARTITION_KEY_MAX_LEN = 32
 
 
 async def long_term_memory_params_from_config(
@@ -165,20 +165,22 @@ async def _event_params(
 
 def partition_key_for_session(session_id: str) -> str:
     """
-    Derive a partition key matching `[a-z0-9_]+` (≤32 chars) from a session id.
+    Derive a partition key satisfying the segment store's contract.
 
-    If the session_id already satisfies the constraint, use it directly to keep
-    debug paths legible. Otherwise hash to a stable 32-char hex digest and emit
-    a DEBUG log of the original→hashed mapping so operators can correlate
-    partition keys back to sessions during incident response.
+    If the session_id already satisfies it (checked by the store's own
+    validator, so the two can never disagree), use it directly to keep
+    debug paths legible. Otherwise hash to a stable 32-char hex digest and
+    emit a DEBUG log of the original→hashed mapping so operators can
+    correlate partition keys back to sessions during incident response.
     """
-    if (
-        _PARTITION_KEY_RE.match(session_id)
-        and len(session_id) <= _PARTITION_KEY_MAX_LEN
-    ):
+    try:
+        validate_partition_key(session_id)
+    except ValueError:
+        pass
+    else:
         return session_id
     partition_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[
-        :_PARTITION_KEY_MAX_LEN
+        :PARTITION_KEY_MAX_BYTES
     ]
     logger.debug(
         "partition_key_for_session: hashed session_id %r -> partition_key %r",

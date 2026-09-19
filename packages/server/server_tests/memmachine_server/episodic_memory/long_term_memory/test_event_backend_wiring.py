@@ -11,6 +11,7 @@ Verifies that add_episodes / search_scored / delete_episodes /
 drop_session_partition all dispatch correctly through the event backend.
 """
 
+import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import override
@@ -159,8 +160,10 @@ def vector_store_collection(fake_embedder):
 
 @pytest.fixture
 def segment_store():
-    """Stand-in for the parent SegmentStore: only delete_partition is invoked."""
-    return create_autospec(SegmentStore, instance=True)
+    """Stand-in for the parent SegmentStore lifecycle methods."""
+    store = create_autospec(SegmentStore, instance=True)
+    store.purge_deleted_partitions.return_value = False
+    return store
 
 
 @pytest.fixture
@@ -235,7 +238,6 @@ async def test_search_warns_on_index_storage_drift(
     """If the event index references an episode UID that EpisodeStorage no
     longer has (index/storage drift), the dropped UID is logged as a warning
     and the remaining episodes are still returned."""
-    import logging
 
     await long_term_memory.add_episodes(episodes)
     # Simulate drift: index keeps ep-2's segment, but EpisodeStorage forgets it.
@@ -293,6 +295,8 @@ async def test_drop_session_partition_calls_parent_lifecycle_hooks(
         name="sess1",
     )
     segment_store.delete_partition.assert_awaited_once_with("sess1")
+    # Reclamation is the sweeper's; the delete path never purges.
+    segment_store.purge_deleted_partitions.assert_not_awaited()
 
 
 async def test_event_backend_unusable_after_drop_session_partition(

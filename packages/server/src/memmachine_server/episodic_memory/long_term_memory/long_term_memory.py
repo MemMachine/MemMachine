@@ -432,6 +432,9 @@ class LongTermMemory:
         self._event_memory = None
         self._vector_store = None
         self._segment_store = None
+        # Physical reclamation is the sweeper's, which the resource manager
+        # runs: the partition is unreachable now, and its rows are reclaimed
+        # within the sweeper's interval.
 
     async def close(self) -> None:
         # Backends do not own resources we can close at this layer; the
