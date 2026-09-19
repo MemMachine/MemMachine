@@ -64,6 +64,8 @@ data:
             pool_timeout: {{ .Values.postgres.pool_timeout }}
             pool_recycle: {{ .Values.postgres.pool_recycle }}
             pool_pre_ping: {{ .Values.postgres.pool_pre_ping }}
+            command_timeout: {{ .Values.postgres.command_timeout }}
+            connect_timeout: {{ .Values.postgres.connect_timeout }}
         db_neo4j:
           provider: neo4j
           config:
