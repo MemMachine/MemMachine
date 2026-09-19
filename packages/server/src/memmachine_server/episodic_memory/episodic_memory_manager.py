@@ -41,9 +41,9 @@ class EpisodicMemoryManagerParams(BaseModel):
     """
 
     instance_cache_size: int = Field(
-        default=100,
-        gt=0,
-        description="The maximum number of instances to cache",
+        default=0,
+        ge=0,
+        description="The maximum number of instances to cache; 0 disables idle caching",
     )
     max_life_time: int = Field(
         default=600,

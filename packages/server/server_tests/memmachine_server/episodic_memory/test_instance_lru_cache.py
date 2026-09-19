@@ -21,10 +21,8 @@ def mock_episodic_memory():
 
 
 def test_init_invalid_capacity():
-    """Test that initializing with zero or negative capacity raises ValueError."""
-    with pytest.raises(ValueError, match="Capacity must be a positive integer"):
-        MemoryInstanceCache(capacity=0, max_lifetime=60)
-    with pytest.raises(ValueError, match="Capacity must be a positive integer"):
+    """A negative capacity is invalid."""
+    with pytest.raises(ValueError, match="Capacity must be a non-negative integer"):
         MemoryInstanceCache(capacity=-1, max_lifetime=60)
 
 
@@ -34,6 +32,26 @@ async def test_init_valid_capacity():
     cache = MemoryInstanceCache(capacity=2, max_lifetime=60)
     assert cache.capacity == 2
     assert len(cache.cache) == 0
+    await cache.close()
+
+
+@pytest.mark.asyncio
+async def test_zero_capacity_shares_active_instance_and_closes_on_last_release(
+    mock_episodic_memory,
+):
+    """Zero capacity retains only instances currently used by a request."""
+    cache = MemoryInstanceCache(capacity=0, max_lifetime=60)
+    memory = mock_episodic_memory("memory")
+
+    await cache.add("session", memory)
+    assert await cache.get("session") is memory
+    await cache.release_ref("session")
+    assert await cache.get_ref_count("session") == 1
+    memory.close.assert_not_awaited()
+
+    await cache.release_ref("session")
+    assert await cache.get("session") is None
+    memory.close.assert_awaited_once()
     await cache.close()
 
 
