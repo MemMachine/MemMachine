@@ -3,6 +3,8 @@
 #   declarative -> Neo4j   docker compose --profile declarative up
 #   event       -> Qdrant  docker compose --profile event up
 # The choice must match episodic_memory.long_term_memory in configuration.yml.
+# For the event backend a ready-made config is provided:
+#   cp sample_configs/configuration.event.yml configuration.yml
 services:
   # PostgreSQL with pgvector extension for profile memory storage
   postgres:
