@@ -24,8 +24,6 @@ from memmachine_server.installation.memmachine_configure import (
     _safe_extract_zip,
 )
 
-MOCK_INSTALL_DIR = "C:\\Users\\TestUser\\MemMachine"
-MOCK_LOCALDATA_DIR = "C:\\Users\\TestUser\\AppData\\Local"
 MOCK_GPG_KEY_CONTENT = "mocked-gpg-key-content"
 
 logging.basicConfig(
@@ -45,6 +43,16 @@ def mock_wizard_init(self, args: ConfigurationWizard.Params):
     self.args = args
 
 
+@pytest.fixture(autouse=True)
+def isolated_filesystem(tmp_path, monkeypatch):
+    """Keep installer side effects (install dirs, ~/.config) inside tmp_path."""
+    home = tmp_path / "home"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+
+
 @pytest.fixture
 def mock_wizard():
     with (
@@ -55,9 +63,9 @@ def mock_wizard():
 
 
 class MockWindowsEnvironment(WindowsEnvironment):
-    def __init__(self):
+    def __init__(self, expected_install_dir: str = ""):
         super().__init__()
-        self.expected_install_dir = MOCK_INSTALL_DIR
+        self.expected_install_dir = expected_install_dir
         self.openjdk_zip_downloaded = False
         self.neo4j_zip_downloaded = False
         self.openjdk_extracted = False
@@ -100,41 +108,38 @@ class MockWindowsEnvironment(WindowsEnvironment):
 
 
 @patch("builtins.input")
-def test_install_in_windows(mock_input, mock_wizard):
+def test_install_in_windows(mock_input, mock_wizard, tmp_path):
     mock_input.side_effect = [
         "y",  # Confirm installation
     ]
-    environment = MockWindowsEnvironment()
+    install_dir = tmp_path / "MemMachine"
+    environment = MockWindowsEnvironment(str(install_dir))
     installer = WindowsInstaller(environment)
-    installer.install_dir = MOCK_INSTALL_DIR
+    installer.install_dir = str(install_dir)
     installer.install()
     assert environment.neo4j_installed
-    assert Path(MOCK_INSTALL_DIR).exists()
-    assert not (Path(MOCK_INSTALL_DIR) / WINDOWS_JDK_ZIP_NAME).exists()
-    assert not Path(MOCK_INSTALL_DIR, WINDOWS_NEO4J_ZIP_NAME).exists()
+    assert install_dir.exists()
+    assert not (install_dir / WINDOWS_JDK_ZIP_NAME).exists()
+    assert not (install_dir / WINDOWS_NEO4J_ZIP_NAME).exists()
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 
 @patch("builtins.input")
-def test_install_in_windows_default_dir(mock_input, monkeypatch, mock_wizard):
+def test_install_in_windows_default_dir(mock_input, monkeypatch, mock_wizard, tmp_path):
     mock_input.side_effect = [
         "y",  # Confirm installation
         "",  # Use default install directory
     ]
-    monkeypatch.setenv("LOCALAPPDATA", MOCK_LOCALDATA_DIR)
-    environment = MockWindowsEnvironment()
-    neo4j_path = Path(MOCK_LOCALDATA_DIR, "MemMachine", "Neo4j")
-    environment.expected_install_dir = str(neo4j_path)
+    localdata_dir = tmp_path / "AppData" / "Local"
+    monkeypatch.setenv("LOCALAPPDATA", str(localdata_dir))
+    neo4j_path = localdata_dir / "MemMachine" / "Neo4j"
+    environment = MockWindowsEnvironment(str(neo4j_path))
     installer = WindowsInstaller(environment)
     installer.install()
     assert environment.neo4j_installed
     assert neo4j_path.exists()
-    assert not Path(
-        MOCK_LOCALDATA_DIR, "MemMachine", "Neo4j", WINDOWS_JDK_ZIP_NAME
-    ).exists()
-    assert not Path(
-        MOCK_LOCALDATA_DIR, "MemMachine", "Neo4j", WINDOWS_NEO4J_ZIP_NAME
-    ).exists()
+    assert not (neo4j_path / WINDOWS_JDK_ZIP_NAME).exists()
+    assert not (neo4j_path / WINDOWS_NEO4J_ZIP_NAME).exists()
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 
