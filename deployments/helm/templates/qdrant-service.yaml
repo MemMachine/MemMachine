@@ -1,4 +1,4 @@
-{{- if .Values.qdrant.enabled }}
+{{- if and .Values.qdrant.enabled (eq .Values.episodicMemory.longTermMemory.backend "event") }}
 # qdrant-service.yaml
 # ClusterIP Service for internal access to Qdrant.
 # Exposes two ports:

@@ -1,4 +1,4 @@
-{{- if .Values.qdrant.enabled }}
+{{- if and .Values.qdrant.enabled (eq .Values.episodicMemory.longTermMemory.backend "event") }}
 # qdrant-deployment.yaml
 # Deploys Qdrant (1 replica) as the vector store for the event-backed
 # long-term memory. Data is persisted to the qdrant-pvc PVC at /qdrant/storage.

@@ -17,6 +17,16 @@ storageClass: nfs-client
 accessMode: ReadWriteMany
 pvcSize: 5Gi
 
+# Long-term memory backend. This picks which vector store is deployed and wired:
+#   declarative -> Neo4j (vector_graph_store). The legacy backend.
+#   event       -> Qdrant (vector_store) + Postgres (segment_store).
+# The two are mutually exclusive in the server config, so only the store the
+# chosen backend needs is deployed; the other is skipped even if its
+# `enabled` flag is true.
+episodicMemory:
+  longTermMemory:
+    backend: declarative     # declarative | event
+
 neo4j:
   enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
   host: memmachine-neo4j     # internal service name (default); override when enabled: false

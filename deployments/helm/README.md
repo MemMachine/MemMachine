@@ -220,6 +220,28 @@ kubectl exec -i deploy/postgres -- psql -U memmachine -d memmachine < dump.sql
 
 A new deployment needs none of this.
 
+### Choosing the long-term memory backend
+
+The two vector stores are alternatives, not peers, and the server config treats
+them as a discriminated union — exactly one applies. `episodicMemory.longTermMemory.backend`
+picks which, and the chart deploys only the store that choice needs:
+
+| `backend`     | Store deployed | `long_term_memory` wiring                            |
+|---------------|----------------|------------------------------------------------------|
+| `declarative` | Neo4j          | `vector_graph_store: db_neo4j`                        |
+| `event`       | Qdrant         | `vector_store: event_vector_store`, `segment_store: db_postgres` |
+
+```bash
+helm upgrade --install memmachine . --set episodicMemory.longTermMemory.backend=event
+```
+
+`declarative` is the default, matching the previous chart behaviour.
+
+The unused store's Deployment, Service and PVC are skipped even if its `enabled`
+flag is left `true`, so switching the backend is a single value. `neo4j.enabled`
+and `qdrant.enabled` keep their existing meaning — in-cluster versus an external
+host — and only apply to whichever store the backend actually uses.
+
 ### Qdrant (`qdrant.*`)
 
 Vector store for the event-backed long-term memory. Wire it via

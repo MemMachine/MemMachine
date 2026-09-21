@@ -1,3 +1,8 @@
+# Long-term memory backend: exactly one vector store runs, selected by the
+# active compose profile (COMPOSE_PROFILES in .env, or --profile on the CLI).
+#   declarative -> Neo4j   docker compose --profile declarative up
+#   event       -> Qdrant  docker compose --profile event up
+# The choice must match episodic_memory.long_term_memory in configuration.yml.
 services:
   # PostgreSQL with pgvector extension for profile memory storage
   postgres:
@@ -25,11 +30,12 @@ services:
     networks:
       - memmachine-network
 
-  # Neo4j database for graph storage
+  # Neo4j database for graph storage (declarative long-term memory backend)
   neo4j:
     image: neo4j:5.23-community
     container_name: memmachine-neo4j
     restart: unless-stopped
+    profiles: ["declarative"]
     ports:
       - "${NEO4J_HTTP_PORT:-7474}:7474"  # HTTP
       - "${NEO4J_HTTPS_PORT:-7473}:7473"  # HTTPS
@@ -59,11 +65,12 @@ services:
     networks:
       - memmachine-network
 
-  # Qdrant vector database for the event-backed long-term memory
+  # Qdrant vector database (event long-term memory backend)
   qdrant:
     image: qdrant/qdrant:v1.19.1
     container_name: memmachine-qdrant
     restart: unless-stopped
+    profiles: ["event"]
     ports:
       - "${QDRANT_PORT:-6333}:6333"  # REST
       - "${QDRANT_GRPC_PORT:-6334}:6334"  # gRPC
@@ -127,10 +134,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # required: false so the store this profile did not start is simply
+      # skipped rather than failing the project. Exactly one of these runs.
       neo4j:
         condition: service_healthy
+        required: false
       qdrant:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/api/v2/health"]
       interval: 30s
