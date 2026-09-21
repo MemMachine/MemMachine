@@ -1,5 +1,6 @@
 """Tests for the ingestion service using the in-memory semantic storage."""
 
+from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -19,6 +20,7 @@ from memmachine_server.semantic_memory.semantic_llm import (
     LLMReducedFeature,
     SemanticConsolidateMemoryRes,
 )
+from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_model import (
     RawSemanticPrompt,
     Resources,
@@ -227,6 +229,71 @@ async def test_process_single_set_applies_commands(
     )
     assert list(ingested) == [message_id]
     assert embedder_double.ingest_calls == [["blue"]]
+
+
+@pytest.mark.asyncio
+async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
+    ingestion_service: IngestionService,
+    semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await semantic_service.stop()
+    start = datetime(2025, 1, 1, tzinfo=UTC)
+    colors = ["violet", "indigo", "blue", "green", "yellow", "orange", "red"]
+    episodes = await episode_storage.add_episodes(
+        session_key="color-updates",
+        episodes=[
+            EpisodeEntry(
+                uid=f"{prefix}0000000-0000-4000-8000-000000000000",
+                content=f"My favorite color is {color}",
+                producer_id="user",
+                producer_role="user",
+                created_at=start + timedelta(hours=index),
+            )
+            for index, (prefix, color) in enumerate(zip("fedcba0", colors, strict=True))
+        ],
+    )
+    await semantic_service.add_messages("colors", [e.uid for e in reversed(episodes)])
+    seen_messages: list[str] = []
+
+    async def update_color(*, message_content: str, **_kwargs) -> list[SemanticCommand]:
+        seen_messages.append(message_content)
+        return [
+            SemanticCommand(
+                command=SemanticCommandType.DELETE,
+                feature="favorite_color",
+                tag="color",
+                value="",
+            ),
+            SemanticCommand(
+                command=SemanticCommandType.ADD,
+                feature="favorite_color",
+                tag="color",
+                value=message_content.rsplit(" ", 1)[-1],
+            ),
+        ]
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        update_color,
+    )
+    await ingestion_service._process_single_set("colors")
+    assert len(seen_messages) == 5
+    await ingestion_service._process_single_set("colors")
+
+    features = await _collect(
+        semantic_storage.get_feature_set(filter_expr=parse_filter("set_id = 'colors'"))
+    )
+    assert [feature.value for feature in features] == ["red"]
+    assert seen_messages == [f"My favorite color is {color}" for color in colors]
+    assert (
+        await semantic_storage.get_history_messages_count(
+            set_ids=["colors"], is_ingested=False
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -527,8 +594,57 @@ async def test_deduplicate_features_merges_and_relabels(
 
 
 @pytest.mark.asyncio
+async def test_process_single_set_retries_episode_missing_during_parallel_write(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    ingestion_service: IngestionService,
+    monkeypatch,
+):
+    episode = EpisodeEntry(
+        content="arrives after semantic registration",
+        producer_id="profile_id",
+        producer_role="dev",
+    )
+    await semantic_storage.add_history_to_set(
+        set_id="user-parallel",
+        history_id=episode.uid,
+        created_at=datetime.now(UTC),
+    )
+    llm_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.llm_feature_update",
+        llm_mock,
+    )
+
+    await ingestion_service._process_single_set("user-parallel")
+
+    pending_history = await _collect(
+        semantic_storage.get_history_messages(
+            set_ids=["user-parallel"],
+            is_ingested=False,
+        )
+    )
+    assert pending_history == [episode.uid]
+
+    await episode_storage.add_episodes("session_id", [episode])
+    await ingestion_service._process_single_set("user-parallel")
+
+    llm_mock.assert_awaited_once()
+    assert (
+        await _collect(
+            semantic_storage.get_history_messages(
+                set_ids=["user-parallel"],
+                is_ingested=False,
+            )
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
 async def test_process_single_set_deletes_invalid_episode_ids(
     semantic_storage: SemanticStorage,
+    semantic_service: SemanticService,
     episode_storage: EpisodeStorage,
     resource_retriever: MockResourceRetriever,
     embedder_double: MockEmbedder,
@@ -537,13 +653,10 @@ async def test_process_single_set_deletes_invalid_episode_ids(
 ):
     """When some episode_ids resolve to None, the service deletes them from
     semantic storage and continues processing the valid ones."""
+    await semantic_service.stop()
     valid_id = await add_history(episode_storage, content="valid message")
-    # Use a numeric string so the episode store doesn't reject the format,
-    # but one that doesn't correspond to any real episode (returns None).
-    invalid_id = "99999"
-
-    await semantic_storage.add_history_to_set(set_id="user-999", history_id=valid_id)
-    await semantic_storage.add_history_to_set(set_id="user-999", history_id=invalid_id)
+    invalid_id = "missing-episode"
+    await semantic_service.add_messages("user-999", [valid_id, invalid_id])
 
     commands = [
         SemanticCommand(
@@ -566,6 +679,7 @@ async def test_process_single_set_deletes_invalid_episode_ids(
             resource_retriever=resource_retriever.get_resources,
             consolidated_threshold=2,
             debug_fail_loudly=False,
+            missing_episode_grace_period_sec=0,
         )
     )
 
@@ -587,17 +701,17 @@ async def test_process_single_set_deletes_invalid_episode_ids(
 @pytest.mark.asyncio
 async def test_process_single_set_raises_in_debug_mode_for_invalid_ids(
     semantic_storage: SemanticStorage,
+    semantic_service: SemanticService,
     episode_storage: EpisodeStorage,
     resource_retriever: MockResourceRetriever,
     semantic_category: SemanticCategory,
 ):
     """When debug_fail_loudly is True and invalid episode_ids are found,
     the service raises a ValueError with set_id and invalid ids in the message."""
+    await semantic_service.stop()
     valid_id = await add_history(episode_storage, content="valid message")
-    invalid_id = "99999"
-
-    await semantic_storage.add_history_to_set(set_id="user-888", history_id=valid_id)
-    await semantic_storage.add_history_to_set(set_id="user-888", history_id=invalid_id)
+    invalid_id = "missing-episode"
+    await semantic_service.add_messages("user-888", [valid_id, invalid_id])
 
     ingestion_service = IngestionService(
         IngestionService.Params(

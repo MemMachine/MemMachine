@@ -14,7 +14,7 @@ import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import String, text
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -25,6 +25,7 @@ from memmachine_server.common.episode_store.episode_model import (
 from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
     _EPISODE_PG_ENUM,
     BaseEpisodeStore,
+    Episode,
     SqlAlchemyEpisodeStore,
 )
 from memmachine_server.common.errors import ConfigurationError
@@ -119,6 +120,13 @@ async def test_startup_wraps_socket_gaierror():
         await store.startup()
 
     assert isinstance(exc_info.value.__cause__, socket.gaierror)
+
+
+def test_episode_primary_key_is_string_and_not_autoincremented():
+    id_column = Episode.__table__.c.id
+
+    assert isinstance(id_column.type, String)
+    assert id_column.autoincrement is False
 
 
 # ---------------------------------------------------------------------------

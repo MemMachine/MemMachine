@@ -126,7 +126,9 @@ class SemanticSessionManager:
             session_data=session_data,
             metadata=episode_metadata,
         )
-        await self._semantic_service.add_message_to_sets(episode.uid, list(set_ids))
+        await self._semantic_service.add_message_to_sets(
+            episode.uid, list(set_ids), created_at=episode.created_at
+        )
 
     @staticmethod
     def _assert_session_data_implements_protocol(session_data: SessionData) -> None:

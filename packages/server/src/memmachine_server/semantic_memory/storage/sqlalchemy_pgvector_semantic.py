@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import AsyncIterator, Mapping, MutableMapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast, overload
 
@@ -438,6 +439,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         is_ingested: bool | None = None,
     ) -> AsyncIterator[EpisodeIdT]:
         stmt = select(SetIngestedHistory.history_id).order_by(
+            SetIngestedHistory.created_at.asc(),
             SetIngestedHistory.history_id.asc(),
         )
 
@@ -497,8 +499,14 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         self,
         set_id: SetIdT,
         history_id: EpisodeIdT,
+        *,
+        created_at: datetime | None = None,
     ) -> None:
-        stmt = insert(SetIngestedHistory).values(set_id=set_id, history_id=history_id)
+        stmt = insert(SetIngestedHistory).values(
+            set_id=set_id,
+            history_id=history_id,
+            created_at=created_at or datetime.now(UTC),
+        )
 
         async with self._create_session() as session:
             await session.execute(stmt)

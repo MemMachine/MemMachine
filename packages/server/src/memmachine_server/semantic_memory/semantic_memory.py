@@ -232,12 +232,21 @@ class SemanticService:
         self, set_id: SetIdT, history_ids: Sequence[EpisodeIdT]
     ) -> None:
         logger.debug("Adding %d messages to set %s", len(history_ids), set_id)
+        if not history_ids:
+            return
+
+        created_at_by_id = {
+            episode.uid: episode.created_at
+            for episode in await self._episode_storage.get_episodes(history_ids)
+        }
 
         res = await asyncio.gather(
             *[
                 self._semantic_storage.add_history_to_set(
                     set_id=set_id,
                     history_id=h_id,
+                    # Missing episodes remain queued for ingestion's recovery path.
+                    created_at=created_at_by_id.get(h_id),
                 )
                 for h_id in history_ids
             ],
@@ -250,16 +259,25 @@ class SemanticService:
         self,
         history_id: EpisodeIdT,
         set_ids: Sequence[SetIdT],
+        *,
+        created_at: datetime | None = None,
     ) -> None:
         assert len(set_ids) == len(set(set_ids))
+        if not set_ids:
+            return
 
         logger.debug("Adding message id %s to sets %s", history_id, set_ids)
+        if created_at is None:
+            episode = await self._episode_storage.get_episode(history_id)
+            if episode is not None:
+                created_at = episode.created_at
 
         res = await asyncio.gather(
             *[
                 self._semantic_storage.add_history_to_set(
                     set_id=set_id,
                     history_id=history_id,
+                    created_at=created_at,
                 )
                 for set_id in set_ids
             ],
