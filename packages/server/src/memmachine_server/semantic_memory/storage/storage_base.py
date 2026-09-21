@@ -141,7 +141,7 @@ class SemanticStorage(ABC):
         limit: int | None = None,
         is_ingested: bool | None = None,
     ) -> AsyncIterator[EpisodeIdT]:
-        """Retrieve history messages with optional ingestion status."""
+        """Retrieve history by creation time, then ID, before applying the limit."""
         raise NotImplementedError
 
     @abstractmethod
@@ -155,8 +155,14 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def add_history_to_set(self, set_id: SetIdT, history_id: EpisodeIdT) -> None:
-        """Attach a history id to a feature set."""
+    async def add_history_to_set(
+        self,
+        set_id: SetIdT,
+        history_id: EpisodeIdT,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
+        """Attach history using its episode creation time, defaulting to now."""
         raise NotImplementedError
 
     @abstractmethod

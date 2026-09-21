@@ -575,7 +575,9 @@ class Neo4jSemanticStorage(SemanticStorage):
             params["is_ingested"] = is_ingested
         if conditions:
             query.append("WHERE " + " AND ".join(conditions))
-        query.append("RETURN h.history_id AS history_id ORDER BY h.history_id")
+        query.append(
+            "RETURN h.history_id AS history_id ORDER BY h.created_at, h.history_id"
+        )
         if limit is not None:
             query.append("LIMIT $limit")
             params["limit"] = limit
@@ -724,7 +726,13 @@ class Neo4jSemanticStorage(SemanticStorage):
                 continue
             yield SetIdT(str(record["set_id"]))
 
-    async def add_history_to_set(self, set_id: SetIdT, history_id: EpisodeIdT) -> None:
+    async def add_history_to_set(
+        self,
+        set_id: SetIdT,
+        history_id: EpisodeIdT,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
         await self._driver.execute_query(
             """
             MERGE (h:SetHistory {set_id: $set_id, history_id: $history_id})
@@ -733,7 +741,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             """,
             set_id=set_id,
             history_id=str(history_id),
-            created_at=datetime.now(UTC),
+            created_at=created_at or datetime.now(UTC),
         )
 
     async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:

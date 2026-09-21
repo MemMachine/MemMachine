@@ -114,6 +114,8 @@ async def test_background_ingestion_processes_messages_on_message_limit(
     ]
 
     async def mock_llm_update(*args, **kwargs):
+        # Processing can take longer than the old fixed wait on a busy backend.
+        await asyncio.sleep(0.7)
         return commands
 
     monkeypatch.setattr(
@@ -130,7 +132,14 @@ async def test_background_ingestion_processes_messages_on_message_limit(
     )
     await service.add_messages(set_id="user-123", history_ids=[msg2])
 
-    await asyncio.sleep(0.6)
+    async def wait_for_ingestion():
+        while await semantic_storage.get_history_messages_count(  # noqa: ASYNC110
+            set_ids=["user-123"],
+            is_ingested=False,
+        ):
+            await asyncio.sleep(0.1)
+
+    await asyncio.wait_for(wait_for_ingestion(), timeout=15)
 
     uningested = await semantic_storage.get_history_messages_count(
         set_ids=["user-123"],

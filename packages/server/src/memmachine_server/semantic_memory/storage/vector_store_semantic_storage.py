@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, MutableMapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid5
 
@@ -425,7 +425,8 @@ class VectorStoreSemanticStorage(SemanticStorage):
         is_ingested: bool | None = None,
     ) -> AsyncIterator[EpisodeIdT]:
         stmt = select(VectorSemanticSetIngestedHistory.history_id).order_by(
-            VectorSemanticSetIngestedHistory.history_id.asc()
+            VectorSemanticSetIngestedHistory.created_at.asc(),
+            VectorSemanticSetIngestedHistory.history_id.asc(),
         )
         stmt = self._apply_history_filter(
             stmt,
@@ -454,10 +455,17 @@ class VectorStoreSemanticStorage(SemanticStorage):
             result = await session.execute(stmt)
             return int(result.scalar_one())
 
-    async def add_history_to_set(self, set_id: SetIdT, history_id: EpisodeIdT) -> None:
+    async def add_history_to_set(
+        self,
+        set_id: SetIdT,
+        history_id: EpisodeIdT,
+        *,
+        created_at: datetime | None = None,
+    ) -> None:
         stmt = insert(VectorSemanticSetIngestedHistory).values(
             set_id=set_id,
             history_id=history_id,
+            created_at=created_at or datetime.now(UTC),
         )
         async with self._create_session() as session:
             await session.execute(stmt)

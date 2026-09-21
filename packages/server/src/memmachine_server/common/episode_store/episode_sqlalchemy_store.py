@@ -8,8 +8,6 @@ from typing import Any, TypeVar, overload
 
 from pydantic import (
     AwareDatetime,
-    TypeAdapter,
-    ValidationError,
     validate_call,
 )
 from sqlalchemy import (
@@ -17,7 +15,6 @@ from sqlalchemy import (
     DateTime,
     Delete,
     Index,
-    Integer,
     String,
     delete,
     func,
@@ -45,7 +42,6 @@ from memmachine_server.common.episode_store.episode_storage import (
 from memmachine_server.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
-    ResourceNotFoundError,
 )
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -83,7 +79,7 @@ class Episode(BaseEpisodeStore):
     """SQLAlchemy mapping for stored conversation messages."""
 
     __tablename__ = "episodestore"
-    id = mapped_column(Integer, primary_key=True)
+    id = mapped_column(String, primary_key=True, autoincrement=False)
 
     content = mapped_column(String, nullable=False)
 
@@ -204,6 +200,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         values_to_insert: list[dict[str, Any]] = []
         for entry in episodes:
             entry_values: dict[str, Any] = {
+                "id": entry.uid,
                 "content": entry.content,
                 "session_key": session_key,
                 "producer_id": entry.producer_id,
@@ -232,20 +229,18 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
             await session.commit()
 
-            res_episodes = [e.to_typed_model() for e in persisted_episodes]
+            persisted_by_id = {episode.id: episode for episode in persisted_episodes}
+            res_episodes = [
+                persisted_by_id[entry.uid].to_typed_model() for entry in episodes
+            ]
 
         return res_episodes
 
     @validate_call
     async def get_episode(self, episode_id: EpisodeIdT) -> EpisodeE | None:
-        try:
-            int_episode_id = int(episode_id)
-        except (TypeError, ValueError) as e:
-            raise ResourceNotFoundError("Invalid episode ID") from e
-
         stmt = (
             select(Episode)
-            .where(Episode.id == int_episode_id)
+            .where(Episode.id == episode_id)
             .order_by(Episode.created_at.asc())
         )
 
@@ -260,17 +255,11 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         self,
         episode_ids: Iterable[EpisodeIdT],
     ) -> list[EpisodeE]:
-        int_ids: set[int] = set()
-        for episode_id in episode_ids:
-            try:
-                int_ids.add(int(episode_id))
-            except (TypeError, ValueError) as e:
-                raise ResourceNotFoundError("Invalid episode ID") from e
-
-        if not int_ids:
+        ids = set(episode_ids)
+        if not ids:
             return []
 
-        stmt = select(Episode).where(Episode.id.in_(int_ids))
+        stmt = select(Episode).where(Episode.id.in_(ids))
 
         async with self._create_session() as session:
             result = await session.execute(stmt)
@@ -440,12 +429,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     @validate_call
     @timed("delete_episodes")
     async def delete_episodes(self, episode_ids: list[EpisodeIdT]) -> None:
-        try:
-            int_episode_ids = TypeAdapter(list[int]).validate_python(episode_ids)
-        except ValidationError as e:
-            raise ResourceNotFoundError("Invalid episode IDs") from e
-
-        stmt = delete(Episode).where(Episode.id.in_(int_episode_ids))
+        stmt = delete(Episode).where(Episode.id.in_(episode_ids))
 
         async with self._create_session() as session:
             await session.execute(stmt)

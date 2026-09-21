@@ -5,6 +5,7 @@ import contextlib
 import logging
 from asyncio import Task
 from collections.abc import Callable, Coroutine, Iterable, Mapping
+from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
 from memmachine_common.api import MemoryType
@@ -26,6 +27,7 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.errors import (
     ConfigurationError,
+    ResourceNotFoundError,
     ResourceNotReadyError,
     SessionNotFoundError,
 )
@@ -724,13 +726,24 @@ class MemMachine:
 
         """
         episode_storage = await self._resources.get_episode_storage()
-        episodes = await episode_storage.add_episodes(
-            session_data.session_key,
-            episode_entries,
-        )
+        created_at = datetime.now(UTC)
+        episode_entries = [
+            entry
+            if entry.created_at is not None
+            else entry.model_copy(update={"created_at": created_at})
+            for entry in episode_entries
+        ]
+        episodes = [
+            Episode(
+                session_key=session_data.session_key,
+                **entry.model_dump(exclude_none=True),
+            )
+            for entry in episode_entries
+        ]
         episode_ids = [e.uid for e in episodes]
 
-        tasks = []
+        episodic_memory_manager = None
+        semantic_session_manager = None
 
         if MemoryType.Episodic in target_memories:
             episodic_memory_manager = (
@@ -748,12 +761,22 @@ class MemMachine:
                 ) as episodic_session:
                     await episodic_session.add_memory_episodes(episodes)
 
-            tasks.append(add_to_episodic_memory())
-
         if self._should_dispatch_to_semantic_memory(target_memories):
             semantic_session_manager = (
                 await self._resources.get_semantic_session_manager()
             )
+
+        tasks: list[Coroutine[Any, Any, object]] = [
+            episode_storage.add_episodes(
+                session_data.session_key,
+                episode_entries,
+            )
+        ]
+
+        if episodic_memory_manager is not None:
+            tasks.append(add_to_episodic_memory())
+
+        if semantic_session_manager is not None:
             tasks.append(
                 semantic_session_manager.add_message(
                     episodes=episodes,
@@ -761,7 +784,11 @@ class MemMachine:
                 )
             )
 
-        await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+
         return episode_ids
 
     class SearchResponse(BaseModel):
@@ -1176,6 +1203,13 @@ class MemMachine:
 
         """
         episode_storage = await self._resources.get_episode_storage()
+        existing_episodes = await episode_storage.get_episodes(episode_ids)
+        existing_ids = {episode.uid for episode in existing_episodes}
+        missing_ids = set(episode_ids) - existing_ids
+        if missing_ids:
+            raise ResourceNotFoundError(
+                f"Episodic memories not found: {', '.join(sorted(missing_ids))}"
+            )
 
         tasks: list[Coroutine[Any, Any, Any]] = []
 

@@ -1,7 +1,7 @@
 """Unit tests for the SemanticSessionManager using in-memory storage."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -143,6 +143,45 @@ async def test_add_message_records_history_and_uningested_counts(
     assert list(session_messages) == episode_ids
     assert await semantic_service.number_of_uningested([profile_id]) == 1
     assert await semantic_service.number_of_uningested([session_id]) == 1
+
+
+async def test_add_message_preserves_episode_time_at_storage(
+    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
+    session_data,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    await semantic_service.stop()
+    created_at = datetime(2025, 1, 1, 12, 34, 56, 123456, tzinfo=UTC)
+    episode = Episode(
+        uid="f0000000-0000-4000-8000-000000000000",
+        content="My favorite color is blue",
+        producer_id="profile_id",
+        producer_role="user",
+        session_key="session_id",
+        created_at=created_at,
+    )
+    add_history = AsyncMock(wraps=semantic_storage.add_history_to_set)
+    monkeypatch.setattr(semantic_storage, "add_history_to_set", add_history)
+
+    await session_manager.add_message(episodes=[episode], session_data=session_data)
+
+    assert add_history.await_count == 3
+    for call in add_history.await_args_list:
+        assert call.kwargs["history_id"] == episode.uid
+        assert call.kwargs.get("created_at") == created_at
+    assert (
+        len(
+            [
+                sid
+                async for sid in semantic_storage.get_history_set_ids(
+                    older_than=created_at + timedelta(microseconds=1)
+                )
+            ]
+        )
+        == 3
+    )
 
 
 async def test_search_returns_relevant_features(
@@ -290,6 +329,7 @@ async def test_add_message_uses_all_isolations(
     session_data,
 ):
     history_id = "abc"
+    created_at = datetime.now(tz=UTC)
     await mock_session_manager.add_message(
         session_data=session_data,
         episodes=[
@@ -299,7 +339,7 @@ async def test_add_message_uses_all_isolations(
                 producer_id="profile_id",
                 producer_role="dev",
                 session_key="session_id",
-                created_at=datetime.now(tz=UTC),
+                created_at=created_at,
             ),
         ],
     )
@@ -323,7 +363,7 @@ async def test_add_message_uses_all_isolations(
 
     mock_semantic_service.add_message_to_sets.assert_awaited_once()
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
-    assert kwargs == {}
+    assert kwargs == {"created_at": created_at}
 
     assert args[0] == history_id
     assert set(args[1]) == {profile_id, session_id, user_set_id}
@@ -334,6 +374,7 @@ async def test_add_message_with_session_only_isolation(
     mock_semantic_service: MagicMock,
     session_data,
 ):
+    created_at = datetime.now(tz=UTC)
     await mock_session_manager.add_message(
         episodes=[
             Episode(
@@ -342,7 +383,7 @@ async def test_add_message_with_session_only_isolation(
                 producer_id="profile_id",
                 producer_role="dev",
                 session_key="session_id",
-                created_at=datetime.now(tz=UTC),
+                created_at=created_at,
             ),
         ],
         session_data=session_data,
@@ -350,7 +391,7 @@ async def test_add_message_with_session_only_isolation(
 
     mock_semantic_service.add_message_to_sets.assert_awaited_once()
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
-    assert kwargs == {}
+    assert kwargs == {"created_at": created_at}
 
     project_id = mock_session_manager._generate_set_id(
         org_id=session_data.org_id,
