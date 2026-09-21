@@ -1,8 +1,11 @@
 """Unit tests for the SemanticService using an in-memory storage backend."""
 
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
+
 import pytest
 
-from memmachine_server.common.episode_store import EpisodeStorage
+from memmachine_server.common.episode_store import EpisodeEntry, EpisodeStorage
 from memmachine_server.common.errors import InvalidSetIdConfigurationError
 from memmachine_server.common.filter.filter_parser import parse_filter
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
@@ -369,6 +372,60 @@ async def test_add_message_to_sets_supports_multiple_targets(
     # Then all sets report the pending ingestion
     assert await semantic_service.number_of_uningested(["user-a"]) == 1
     assert await semantic_service.number_of_uningested(["user-b"]) == 1
+
+
+@pytest.mark.parametrize("registration", ["batch", "single"])
+async def test_id_only_registration_preserves_episode_times(
+    semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    monkeypatch: pytest.MonkeyPatch,
+    registration: str,
+):
+    await semantic_service.stop()
+    start = datetime(2025, 1, 1, 12, 34, 56, 123456, tzinfo=UTC)
+    episodes = await episode_storage.add_episodes(
+        session_key="history-times",
+        episodes=[
+            EpisodeEntry(
+                uid="f0000000-0000-4000-8000-000000000000",
+                content="Earlier",
+                producer_id="user",
+                producer_role="user",
+                created_at=start,
+            ),
+            EpisodeEntry(
+                uid="00000000-0000-4000-8000-000000000000",
+                content="Later",
+                producer_id="user",
+                producer_role="user",
+                created_at=start + timedelta(hours=1),
+            ),
+        ],
+    )
+    add_history_to_set = AsyncMock(wraps=semantic_storage.add_history_to_set)
+    monkeypatch.setattr(semantic_storage, "add_history_to_set", add_history_to_set)
+    ids = [episodes[1].uid, "missing-episode", episodes[0].uid]
+
+    if registration == "batch":
+        await semantic_service.add_messages("ordered", ids)
+    else:
+        for history_id in ids:
+            await semantic_service.add_message_to_sets(history_id, ["ordered"])
+
+    registered_times = {
+        call.kwargs["history_id"]: call.kwargs.get("created_at")
+        for call in add_history_to_set.await_args_list
+    }
+    assert registered_times == {
+        episodes[0].uid: start,
+        episodes[1].uid: start + timedelta(hours=1),
+        "missing-episode": None,
+    }
+    assert await _collect_async(
+        semantic_storage.get_history_messages(set_ids=["ordered"], is_ingested=False)
+    ) == [episodes[0].uid, episodes[1].uid, "missing-episode"]
+    assert await episode_storage.get_episode("missing-episode") is None
 
 
 async def test_search_returns_matching_features(

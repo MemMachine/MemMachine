@@ -6,16 +6,22 @@ correctly wire spec fields — in particular set_metadata — through to the Mem
 core methods (query_search / list_search).
 """
 
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 import pytest
 from memmachine_common.api import MemoryType
 from memmachine_common.api.spec import (
+    AddMemoriesSpec,
     ListMemoriesSpec,
     SearchMemoriesSpec,
 )
 
+from memmachine_server import MemMachine
+from memmachine_server.common.episode_store import EpisodeEntry, EpisodeIdT
 from memmachine_server.server.api_v2.service import (
+    _add_messages_to,
     _list_target_memories,
     _search_target_memories,
 )
@@ -23,6 +29,21 @@ from memmachine_server.server.api_v2.service import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _CapturingMemMachine:
+    def __init__(self) -> None:
+        self.entries: list[EpisodeEntry] = []
+
+    async def add_episodes(
+        self,
+        session_data: Any,
+        episode_entries: list[EpisodeEntry],
+        *,
+        target_memories: list[MemoryType],
+    ) -> list[EpisodeIdT]:
+        self.entries.extend(episode_entries)
+        return [entry.uid for entry in episode_entries]
 
 
 def _make_empty_memmachine() -> AsyncMock:
@@ -36,6 +57,36 @@ def _make_empty_memmachine() -> AsyncMock:
     memmachine.query_search.return_value = empty
     memmachine.list_search.return_value = empty
     return memmachine
+
+
+@pytest.mark.asyncio
+async def test_add_messages_assigns_uuid_before_calling_memmachine():
+    spec = AddMemoriesSpec.model_validate(
+        {
+            "org_id": "org",
+            "project_id": "project",
+            "messages": [
+                {
+                    "content": "hello",
+                    "role": "user",
+                    "uid": "attacker-selected-id",
+                }
+            ],
+        }
+    )
+    capturing_memmachine = _CapturingMemMachine()
+
+    result = await _add_messages_to(
+        target_memories=[MemoryType.Episodic],
+        spec=spec,
+        memmachine=cast(MemMachine, capturing_memmachine),
+    )
+
+    assert len(capturing_memmachine.entries) == 1
+    assigned_id = capturing_memmachine.entries[0].uid
+    assert UUID(assigned_id).version == 4
+    assert assigned_id != "attacker-selected-id"
+    assert result[0].uid == assigned_id
 
 
 # ---------------------------------------------------------------------------

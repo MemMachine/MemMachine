@@ -457,13 +457,13 @@ class InMemorySemanticStorage(SemanticStorage):
         set_ids: Sequence[SetIdT] | None,
     ) -> list[tuple[EpisodeIdT, bool]]:
         rows = [
-            (history_id, ingested)
+            (history_id, ingested, self._history_created_at[(set_id, history_id)])
             for set_id, history_map in self._set_history_map.items()
             if set_ids is None or set_id in set_ids
             for history_id, ingested in history_map.items()
         ]
-        rows.sort(key=lambda pair: pair[0])
-        return rows
+        rows.sort(key=lambda row: (row[2], row[0]))
+        return [(history_id, ingested) for history_id, ingested, _ in rows]
 
     @staticmethod
     def _filter_history_rows(
@@ -478,6 +478,8 @@ class InMemorySemanticStorage(SemanticStorage):
         self,
         set_id: SetIdT,
         history_id: EpisodeIdT,
+        *,
+        created_at: datetime | None = None,
     ) -> None:
         async with self._lock:
             history_map = self._set_history_map.setdefault(set_id, {})
@@ -485,7 +487,7 @@ class InMemorySemanticStorage(SemanticStorage):
             is_new_association = history_id not in history_map
             history_map[history_id] = history_map.get(history_id, False)
             if is_new_association:
-                self._history_created_at[(set_id, history_id)] = _utcnow()
+                self._history_created_at[(set_id, history_id)] = created_at or _utcnow()
             self._history_to_sets.setdefault(history_id, {})[set_id] = history_map[
                 history_id
             ]
