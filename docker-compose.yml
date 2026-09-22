@@ -1,10 +1,12 @@
 # Long-term memory backend: exactly one vector store runs, selected by the
 # active compose profile (COMPOSE_PROFILES in .env, or --profile on the CLI).
+#   event       -> Qdrant  docker compose --profile event up        (default)
 #   declarative -> Neo4j   docker compose --profile declarative up
-#   event       -> Qdrant  docker compose --profile event up
-# The choice must match episodic_memory.long_term_memory in configuration.yml.
-# For the event backend a ready-made config is provided:
+# The choice must match episodic_memory.long_term_memory in configuration.yml;
+# memmachine-compose.sh generates a matching one. Written by hand, start from:
 #   cp sample_configs/configuration.event.yml configuration.yml
+# With neither profile active, no vector store starts — an .env that predates
+# COMPOSE_PROFILES needs it added (memmachine-compose.sh does this for you).
 services:
   # PostgreSQL with pgvector extension for profile memory storage
   postgres:

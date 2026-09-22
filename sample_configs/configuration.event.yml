@@ -2,8 +2,8 @@
 #
 # Usage:
 #   cp sample_configs/configuration.event.yml configuration.yml
-#   cp sample_configs/env.dockercompose .env      # then set COMPOSE_PROFILES=event
-#   docker compose --profile event up -d
+#   cp sample_configs/env.dockercompose .env      # COMPOSE_PROFILES=event is the default
+#   docker compose up -d
 #
 # This file is written for the compose topology, where MemMachine itself runs as
 # a container on memmachine-network. Hostnames are therefore compose *service
