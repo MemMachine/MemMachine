@@ -31,11 +31,12 @@ data:
       long_term_memory:
         embedder: default_embedder
         reranker: my_reranker_id
-{{- if eq .Values.episodicMemory.longTermMemory.backend "event" }}
+{{- $backend := include "memmachine.ltmBackend" . }}
+{{- if eq $backend "event" }}
         backend: event
         vector_store: event_vector_store
         segment_store: db_postgres
-{{- else }}
+{{- else if eq $backend "declarative" }}
         backend: declarative
         vector_graph_store: db_neo4j
 {{- end }}
@@ -93,8 +94,8 @@ data:
             grpc_port: {{ .Values.qdrant.grpcPort }}
             prefer_grpc: {{ .Values.qdrant.prefer_grpc }}
             https: {{ .Values.qdrant.https }}
-            {{- if .Values.qdrant.apiKey }}
-            api_key: {{ .Values.qdrant.apiKey }}
+            {{- if include "memmachine.qdrantApiKeySecret" . }}
+            api_key: $QDRANT_API_KEY
             {{- end }}
       embedders:
         default_embedder:

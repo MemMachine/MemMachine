@@ -7,7 +7,7 @@
 # All PVCs use the same storageClass and pvcSize from values.yaml.
 # ReadWriteMany (RWX) requires an NFS-backed or similarly capable StorageClass.
 {{- $namespace := .Release.Namespace }}
-{{- if and .Values.neo4j.enabled (eq .Values.episodicMemory.longTermMemory.backend "declarative") }}
+{{- if and .Values.neo4j.enabled (eq (include "memmachine.ltmBackend" .) "declarative") }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -37,7 +37,7 @@ spec:
       storage: {{ .Values.pvcSize }}
   storageClassName: {{ .Values.storageClass }}
 {{- end }}
-{{- if and .Values.qdrant.enabled (eq .Values.episodicMemory.longTermMemory.backend "event") }}
+{{- if and .Values.qdrant.enabled (eq (include "memmachine.ltmBackend" .) "event") }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

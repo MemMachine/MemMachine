@@ -1,4 +1,4 @@
-{{- if and .Values.neo4j.enabled (eq .Values.episodicMemory.longTermMemory.backend "declarative") }}
+{{- if and .Values.neo4j.enabled (eq (include "memmachine.ltmBackend" .) "declarative") }}
 # neo4j-service.yaml
 # ClusterIP Service for internal access to Neo4j.
 # Exposes three ports:

@@ -59,7 +59,7 @@ postgres-pvc         neo4j-pvc              ← only if enabled: true
 | MemMachine           | Deployment | `memmachine-service`           | NodePort 31001 → :80 → pod:8080 | Always                 |
 | PostgreSQL (pgvector)| Deployment | `memmachine-postgres`          | ClusterIP :5432                 | `postgres.enabled=true`|
 | Neo4j                | Deployment | `memmachine-neo4j`             | ClusterIP :7687, :7474, :7473   | `neo4j.enabled=true`   |
-| Qdrant               | Deployment | `memmachine-qdrant`            | ClusterIP :6333, :6334          | `qdrant.enabled=true`  |
+| Qdrant               | Deployment | `memmachine-qdrant`            | ClusterIP `qdrant.port`, `qdrant.grpcPort` (6333, 6334) | `qdrant.enabled=true`  |
 
 ### Persistent Storage
 
@@ -76,11 +76,12 @@ All PVCs request `ReadWriteMany` (RWX) access mode. This requires a StorageClass
 
 ### Secrets
 
-All three secrets are always created regardless of `postgres.enabled` / `neo4j.enabled`.
+The first three secrets are always created regardless of `postgres.enabled` / `neo4j.enabled`; `qdrant-secret` is optional.
 
 | Secret name          | Keys                                          | Consumed by                                                                   |
 |----------------------|-----------------------------------------------|-------------------------------------------------------------------------------|
 | `postgres-secret`    | `POSTGRES_PASSWORD`                           | PostgreSQL deployment (when in-cluster); MemMachine deployment env var        |
+| `qdrant-secret`      | `QDRANT_API_KEY`                              | Only when `qdrant.apiKey` is set and `qdrant.existingSecret` is not. MemMachine env var (`api_key: $QDRANT_API_KEY`); Qdrant `QDRANT__SERVICE__API_KEY` (when in-cluster) |
 | `memmachine-secrets` | `OPENAI_API_KEY`                              | MemMachine deployment env var; `api_key` for LLM and embedder in configuration.yml |
 | `neo4j-secret`       | `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_AUTH`  | Neo4j deployment `NEO4J_AUTH` (when in-cluster); MemMachine deployment env vars |
 
@@ -103,11 +104,11 @@ All three secrets are always created regardless of `postgres.enabled` / `neo4j.e
 | `templates/neo4j-deployment.yaml`      | Deployment (neo4j)       | Neo4j with APOC + GDS plugins, PVC for data                     |
 | `templates/neo4j-service.yaml`         | Service (ClusterIP)      | Internal Neo4j access (Bolt 7687, HTTP 7474, HTTPS 7473)        |
 | `templates/qdrant-deployment.yaml`     | Deployment (qdrant)      | Qdrant vector store, PVC for storage                            |
-| `templates/qdrant-service.yaml`        | Service (ClusterIP)      | Internal Qdrant access (REST 6333, gRPC 6334)                   |
+| `templates/qdrant-service.yaml`        | Service (ClusterIP)      | Internal Qdrant access (REST `qdrant.port`, gRPC `qdrant.grpcPort`) |
 | `templates/postgres-deployment.yaml`   | Deployment (memmachine-postgres) | PostgreSQL with pgvector, credentials from Secret           |
 | `templates/postgres-service.yaml`      | Service (ClusterIP)      | Internal PostgreSQL access on port 5432                         |
 | `templates/pvc.yaml`                   | PersistentVolumeClaim × 1–4 | `memmachine-pvc` always; `neo4j-pvc` if `neo4j.enabled`; `postgres-pvc` if `postgres.enabled`; `qdrant-pvc` if `qdrant.enabled` |
-| `templates/secrets.yaml`               | Secret × 3               | `postgres-secret`, `memmachine-secrets`, `neo4j-secret` — all always created |
+| `templates/secrets.yaml`               | Secret × 3–4             | `postgres-secret`, `memmachine-secrets`, `neo4j-secret` always; `qdrant-secret` when `qdrant.apiKey` is set without `qdrant.existingSecret` |
 
 ---
 
@@ -150,7 +151,7 @@ resources:
   databases:
     db_postgres: { provider: postgres, config: { host, port, user, password: $POSTGRES_PASSWORD, ... } }
     db_neo4j:    { provider: neo4j,    config: { uri, username: $NEO4J_USER, password: $NEO4J_PASSWORD, pool, ... } }
-    event_vector_store: { provider: qdrant, config: { host, port, grpc_port, prefer_grpc, https, api_key? } }
+    event_vector_store: { provider: qdrant, config: { host, port, grpc_port, prefer_grpc, https, api_key: $QDRANT_API_KEY (only when a key is configured) } }
   embedders:
     default_embedder: { provider, config: { model, api_key: $OPENAI_API_KEY, base_url, dimensions } }
   language_models:
@@ -228,14 +229,24 @@ picks which, and the chart deploys only the store that choice needs:
 
 | `backend`     | Store deployed | `long_term_memory` wiring                            |
 |---------------|----------------|------------------------------------------------------|
+| `event` (default) | Qdrant     | `vector_store: event_vector_store`, `segment_store: db_postgres` |
 | `declarative` | Neo4j          | `vector_graph_store: db_neo4j`                        |
-| `event`       | Qdrant         | `vector_store: event_vector_store`, `segment_store: db_postgres` |
 
 ```bash
-helm upgrade --install memmachine . --set episodicMemory.longTermMemory.backend=event
+helm upgrade --install memmachine . --set episodicMemory.longTermMemory.backend=declarative
 ```
 
-`declarative` is the default, matching the previous chart behaviour.
+Any other value fails the render with an error naming the two accepted values.
+
+> **Upgrading a release installed before chart 0.2.0:** those releases ran Neo4j,
+> and the default is now `event`. A plain `helm upgrade` would switch the backend
+> and **delete the Neo4j Deployment, Service and `neo4j-pvc`** — and with it the
+> stored memories, depending on the StorageClass reclaim policy. Pin the old
+> backend when upgrading:
+>
+> ```bash
+> helm upgrade memmachine . --set episodicMemory.longTermMemory.backend=declarative
+> ```
 
 The unused store's Deployment, Service and PVC are skipped even if its `enabled`
 flag is left `true`, so switching the backend is a single value. `neo4j.enabled`
@@ -256,8 +267,19 @@ Vector store for the event-backed long-term memory. Wire it via
 | `qdrant.image`         | `qdrant/qdrant:v1.19.1`| Container image |
 | `qdrant.prefer_grpc`   | `false`                | Talk gRPC instead of REST |
 | `qdrant.https`         | `false`                | Use TLS; set for Qdrant Cloud |
-| `qdrant.apiKey`        | unset                  | Only rendered when set; required for Qdrant Cloud |
+| `qdrant.apiKey`        | `""`                   | API key (required for Qdrant Cloud). Stored in `qdrant-secret`, never in the ConfigMap. Prefer `existingSecret` |
+| `qdrant.existingSecret`| `""`                   | Name of a Secret you manage with a `QDRANT_API_KEY` key; takes precedence over `apiKey` |
 | `qdrant.resources`     | 250m / 512Mi, 2Gi limit| Pod resource requests and limits |
+
+With either key option set, MemMachine gets it as the `QDRANT_API_KEY` env var
+(referenced from `configuration.yml` as `api_key: $QDRANT_API_KEY`), and the
+in-cluster Qdrant enforces it via `QDRANT__SERVICE__API_KEY`. To keep the key out
+of values entirely:
+
+```bash
+kubectl create secret generic my-qdrant-key --from-literal=QDRANT_API_KEY=...
+helm upgrade --install memmachine . --set qdrant.existingSecret=my-qdrant-key
+```
 
 
 ### PostgreSQL (`postgres.*`)
@@ -527,7 +549,7 @@ helm upgrade --install memmachine-30006 . \
 
 ### External Databases
 
-By default, the chart deploys PostgreSQL and Neo4j in-cluster. If you already operate your own database infrastructure, you can skip the in-cluster deployments and point MemMachine at external hosts.
+By default, the chart deploys PostgreSQL and Qdrant in-cluster (PostgreSQL and Neo4j with `backend=declarative`). If you already operate your own database infrastructure, you can skip the in-cluster deployments and point MemMachine at external hosts.
 
 #### External Postgres only
 
@@ -541,11 +563,24 @@ helm upgrade --install memmachine . \
 
 The in-cluster PostgreSQL Deployment, Service, and PVC are not created. `postgres-secret` is still created (MemMachine always needs `POSTGRES_PASSWORD`). MemMachine connects to `my-pg.example.com:5432` instead.
 
-#### External Neo4j only
+#### External Qdrant only
 
 ```bash
 helm upgrade --install memmachine . \
   --namespace memmachine --create-namespace \
+  --set qdrant.enabled=false \
+  --set qdrant.host=my-qdrant.example.com \
+  --set qdrant.existingSecret=my-qdrant-key   # if it requires an API key
+```
+
+The in-cluster Qdrant Deployment, Service, and PVC are not created. MemMachine connects to `my-qdrant.example.com:6333` instead.
+
+#### External Neo4j only (declarative backend)
+
+```bash
+helm upgrade --install memmachine . \
+  --namespace memmachine --create-namespace \
+  --set episodicMemory.longTermMemory.backend=declarative \
   --set neo4j.enabled=false \
   --set neo4j.host=my-neo4j.example.com \
   --set neo4j.port=7687
@@ -559,7 +594,7 @@ The in-cluster Neo4j Deployment, Service, and PVC are not created. MemMachine co
 helm upgrade --install memmachine . \
   --namespace memmachine --create-namespace \
   --set postgres.enabled=false --set postgres.host=pg.example.com \
-  --set neo4j.enabled=false --set neo4j.host=neo4j.example.com
+  --set qdrant.enabled=false --set qdrant.host=qdrant.example.com
 ```
 
 Only the MemMachine Deployment, Service, memmachine-pvc, two ConfigMaps, and three Secrets (`postgres-secret`, `memmachine-secrets`, `neo4j-secret`) are created.
@@ -605,5 +640,5 @@ helm uninstall memmachine -n memmachine
 
 > **Note:** Helm does not delete PVCs by default. To also remove persistent data:
 > ```bash
-> kubectl delete pvc -n memmachine neo4j-pvc postgres-pvc memmachine-pvc
+> kubectl delete pvc -n memmachine qdrant-pvc neo4j-pvc postgres-pvc memmachine-pvc --ignore-not-found
 > ```

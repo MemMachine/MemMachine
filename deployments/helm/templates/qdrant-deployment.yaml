@@ -1,8 +1,10 @@
-{{- if and .Values.qdrant.enabled (eq .Values.episodicMemory.longTermMemory.backend "event") }}
+{{- if and .Values.qdrant.enabled (eq (include "memmachine.ltmBackend" .) "event") }}
 # qdrant-deployment.yaml
 # Deploys Qdrant (1 replica) as the vector store for the event-backed
 # long-term memory. Data is persisted to the qdrant-pvc PVC at /qdrant/storage.
-# Exposes: REST (6333), gRPC (6334).
+# Exposes: REST (6333), gRPC (6334); the Service maps qdrant.port/grpcPort onto these.
+# When an API key is configured (qdrant.apiKey or qdrant.existingSecret), it is
+# enforced via QDRANT__SERVICE__API_KEY.
 # Probes are tcpSocket rather than HTTP: the image carries no curl or wget, and
 # a TCP check matches how neo4j and postgres are probed in this chart.
 apiVersion: apps/v1
@@ -24,8 +26,20 @@ spec:
         - name: qdrant
           image: {{ .Values.qdrant.image }}
           ports:
-            - containerPort: 6333
-            - containerPort: 6334
+            - name: rest
+              containerPort: 6333
+            - name: grpc
+              containerPort: 6334
+          {{- with include "memmachine.qdrantApiKeySecret" . }}
+          env:
+            # Enforce the same key MemMachine is given, so the in-cluster
+            # instance is not left open when an API key is configured.
+            - name: QDRANT__SERVICE__API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: QDRANT_API_KEY
+          {{- end }}
           resources:
             {{- toYaml .Values.qdrant.resources | nindent 12 }}
           startupProbe:

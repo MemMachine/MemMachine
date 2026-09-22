@@ -18,14 +18,14 @@ accessMode: ReadWriteMany
 pvcSize: 5Gi
 
 # Long-term memory backend. This picks which vector store is deployed and wired:
+#   event       -> Qdrant (vector_store) + Postgres (segment_store). The default.
 #   declarative -> Neo4j (vector_graph_store). The legacy backend.
-#   event       -> Qdrant (vector_store) + Postgres (segment_store).
 # The two are mutually exclusive in the server config, so only the store the
 # chosen backend needs is deployed; the other is skipped even if its
-# `enabled` flag is true.
+# `enabled` flag is true. Any other value fails the install.
 episodicMemory:
   longTermMemory:
-    backend: declarative     # declarative | event
+    backend: event           # event | declarative
 
 neo4j:
   enabled: true              # false = skip in-cluster Deployment/Service/PVC, use external host
@@ -80,7 +80,14 @@ qdrant:
   image: qdrant/qdrant:v1.19.1
   prefer_grpc: false         # true = talk gRPC (grpcPort) instead of REST
   https: false               # true when fronted by TLS, or for Qdrant Cloud
-  # apiKey: <QDRANT_API_KEY> # required for Qdrant Cloud; omit for in-cluster
+  # API key, required for Qdrant Cloud. Never written to the ConfigMap: it is
+  # stored in a Secret and passed to MemMachine as $QDRANT_API_KEY (and, for the
+  # in-cluster instance, enforced on Qdrant itself). Prefer existingSecret —
+  # a Secret you create out-of-band with a QDRANT_API_KEY key — over apiKey,
+  # which the chart turns into qdrant-secret but which still passes through
+  # values. existingSecret wins if both are set. Leave both empty for no auth.
+  apiKey: ""
+  existingSecret: ""
   resources:
     requests:
       cpu: 250m
