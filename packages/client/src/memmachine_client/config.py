@@ -465,6 +465,7 @@ class Config:
         embedding_model: str | None = None,
         ingestion_trigger_messages: int | None = None,
         ingestion_trigger_age_seconds: int | None = None,
+        ingestion_poll_interval_seconds: float | None = None,
         timeout: int | None = None,
     ) -> UpdateMemoryConfigResponse:
         """
@@ -481,6 +482,9 @@ class Config:
             embedding_model: Name of the embedder to use for semantic similarity
             ingestion_trigger_messages: Number of messages before triggering ingestion
             ingestion_trigger_age_seconds: Age threshold in seconds for triggering ingestion
+            ingestion_poll_interval_seconds: How often, in seconds, the background
+                ingestion loop polls for sets with uningested messages. Takes
+                effect on the next server restart, not immediately
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -503,6 +507,7 @@ class Config:
             embedding_model=embedding_model,
             ingestion_trigger_messages=ingestion_trigger_messages,
             ingestion_trigger_age_seconds=ingestion_trigger_age_seconds,
+            ingestion_poll_interval_seconds=ingestion_poll_interval_seconds,
         )
         payload = spec.model_dump(exclude_none=True)
         try:

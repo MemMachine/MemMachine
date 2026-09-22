@@ -472,6 +472,7 @@ class TestConfig:
             embedding_model="openai-embedder",
             ingestion_trigger_messages=10,
             ingestion_trigger_age_seconds=3600,
+            ingestion_poll_interval_seconds=5.0,
         )
         assert isinstance(result, UpdateMemoryConfigResponse)
         assert result.success is True
@@ -489,6 +490,7 @@ class TestConfig:
         assert body["embedding_model"] == "openai-embedder"
         assert body["ingestion_trigger_messages"] == 10
         assert body["ingestion_trigger_age_seconds"] == 3600
+        assert body["ingestion_poll_interval_seconds"] == 5.0
 
     def test_update_semantic_memory_config_partial(self, config, mock_client):
         mock_client.request.return_value = _mock_response(

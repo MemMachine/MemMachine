@@ -393,6 +393,19 @@ def test_update_semantic_ingestion_settings(memory_resource_manager):
     assert "ingestion_trigger_age=600s" in message
 
 
+def test_update_semantic_ingestion_poll_interval(memory_resource_manager):
+    """Test updating the semantic memory ingestion poll interval."""
+    spec = UpdateSemanticMemorySpec.model_validate(
+        {"ingestion_poll_interval_seconds": 15}
+    )
+    service = ConfigService(memory_resource_manager)
+    message = service.update_memory_config(None, spec)
+
+    sm = memory_resource_manager.config.semantic_memory
+    assert sm.ingestion_poll_interval_seconds == 15
+    assert "ingestion_poll_interval_seconds=15" in message
+
+
 def test_update_both_episodic_and_semantic(memory_resource_manager):
     """Test updating both memory sections in one call."""
     episodic_spec = UpdateEpisodicMemorySpec.model_validate(

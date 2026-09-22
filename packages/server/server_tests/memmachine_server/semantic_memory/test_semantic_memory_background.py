@@ -100,6 +100,94 @@ async def test_background_ingestion_handles_errors_gracefully(
     assert not semantic_service._ingestion_task.done()
 
 
+@pytest.mark.parametrize(
+    ("interval", "expected_sleeps"),
+    [
+        # Below the 60s ceiling: behavior must be unchanged from before this
+        # fix -- the backoff genuinely doubles each failure until it plateaus
+        # at 60s. This guards against a fix that disables doubling entirely.
+        pytest.param(5.0, [5.0, 10.0, 20.0, 40.0, 60.0], id="below-ceiling-doubles"),
+        # Above the 60s ceiling: doubling would immediately exceed the
+        # configured interval, so the floor pins every backoff at the
+        # interval itself rather than dropping to the old hardcoded 60s.
+        pytest.param(120.0, [120.0, 120.0, 120.0], id="above-ceiling-floored"),
+    ],
+)
+async def test_background_ingestion_backoff_matches_expected_sequence(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    semantic_config_storage: SemanticConfigStorage,
+    semantic_resource_manager,
+    mock_llm_model,
+    spy_embedder: SpyEmbedder,
+    semantic_category_retriever,
+    monkeypatch,
+    interval: float,
+    expected_sleeps: list[float],
+):
+    # Given a service configured with the given poll interval and an
+    # ingestion path that always fails
+    service = SemanticService(
+        SemanticService.Params(
+            semantic_storage=semantic_storage,
+            episode_storage=episode_storage,
+            semantic_config_storage=semantic_config_storage,
+            feature_update_interval_sec=interval,
+            uningested_message_limit=1,
+            resource_manager=semantic_resource_manager,
+            default_embedder=spy_embedder,
+            default_embedder_name="default_embedder",
+            default_language_model=mock_llm_model,
+            default_category_retriever=semantic_category_retriever,
+        ),
+    )
+
+    # Per-message LLM failures are deliberately swallowed inside
+    # IngestionService._process_single_set (it always retries later rather
+    # than propagating), so to exercise the *outer* backoff loop we need a
+    # failure that isn't caught internally.
+    async def mock_process_single_set(self, set_id):
+        raise ValueError("ingestion processing error")
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion."
+        "IngestionService._process_single_set",
+        mock_process_single_set,
+    )
+
+    recorded_sleeps: list[float] = []
+
+    async def fast_sleep(seconds: float) -> None:
+        recorded_sleeps.append(seconds)
+        if len(recorded_sleeps) >= len(expected_sleeps):
+            service._is_shutting_down = True
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(service, "_interruptible_sleep", fast_sleep)
+
+    msg = await add_history(history_storage=episode_storage, content="Test message")
+    await service.add_messages(set_id="user-backoff", history_ids=[msg])
+
+    # When the background loop hits repeated ingestion failures, letting the
+    # mocked sleep trigger its own shutdown once enough backoffs are
+    # recorded. Guarded by a timeout so a future regression that stops the
+    # loop from sleeping at all (and so never reaches the shutdown trigger
+    # above) fails the test instead of hanging it.
+    await service.start()
+    ingestion_task = service._ingestion_task
+    assert ingestion_task is not None
+    try:
+        async with asyncio.timeout(5):
+            await ingestion_task
+    finally:
+        service._ingestion_task = None
+
+    # Then the full backoff sequence matches exactly -- proving both that
+    # doubling genuinely happens and that it never drops below the
+    # configured interval once it would otherwise have exceeded it.
+    assert recorded_sleeps == pytest.approx(expected_sleeps)
+
+
 async def test_consolidation_threshold_not_reached(
     semantic_service: SemanticService,
     semantic_storage: SemanticStorage,

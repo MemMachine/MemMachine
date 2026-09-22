@@ -172,12 +172,28 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
+    ingestion_poll_interval_seconds: float = Field(
+        default=2.0,
+        description=(
+            "How often, in seconds, the background ingestion loop polls for "
+            "sets with uningested messages."
+        ),
+        gt=0,
+    )
     max_features_per_update: int = Field(
         default=50,
         description=(
             "Maximum number of existing features passed to the LLM per ingestion update call. "
             "Limits the LLM response size to prevent token-budget overflow when the profile "
             "has grown very large."
+        ),
+        gt=0,
+    )
+    consolidation_threshold: int = Field(
+        default=20,
+        description=(
+            "Minimum number of features sharing a tag before they are "
+            "consolidated during ingestion."
         ),
         gt=0,
     )

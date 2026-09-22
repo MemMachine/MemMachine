@@ -787,6 +787,7 @@ class SemanticService:
                 resource_retriever=self._set_id_resource,
                 history_store=self._episode_storage,
                 max_features_per_update=self._max_features_per_update,
+                consolidated_threshold=self._consolidation_threshold,
             ),
         )
 
@@ -830,7 +831,10 @@ class SemanticService:
 
             if had_errors:
                 await self._interruptible_sleep(backoff_sec)
-                backoff_sec = min(backoff_sec * 2, 60.0)
+                backoff_sec = min(
+                    backoff_sec * 2,
+                    max(60.0, self._background_ingestion_interval_sec),
+                )
             else:
                 backoff_sec = self._background_ingestion_interval_sec
                 await self._interruptible_sleep(self._background_ingestion_interval_sec)
