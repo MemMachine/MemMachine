@@ -478,6 +478,11 @@ class SpecDoc:
     The maximum age (in seconds) of uningested messages before
     triggering an ingestion cycle."""
 
+    SEMANTIC_INGESTION_POLL_INTERVAL = """
+    How often, in seconds, the background ingestion loop polls for
+    sets with uningested messages. Takes effect on the next server
+    restart; updating it does not affect an already-running loop."""
+
     UPDATE_EPISODIC_MEMORY = """
     Partial update for episodic memory configuration. Only supplied
     fields are updated; omitted fields remain unchanged."""

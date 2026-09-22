@@ -253,7 +253,9 @@ class SemanticResourceManager:
                 semantic_config_storage=config_store,
                 uningested_time_limit=self._conf.ingestion_trigger_age,
                 uningested_message_limit=self._conf.ingestion_trigger_messages,
+                feature_update_interval_sec=self._conf.ingestion_poll_interval_seconds,
                 max_features_per_update=self._conf.max_features_per_update,
+                consolidation_threshold=self._conf.consolidation_threshold,
             ),
         )
         return self._semantic_service
