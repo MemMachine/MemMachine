@@ -126,6 +126,47 @@ async def test_search_target_memories_other_fields_still_passed():
     assert call_kwargs["query"] == "my query"
     assert call_kwargs["limit"] == 5
     assert call_kwargs["set_metadata"] == {"user_id": "u1"}
+    assert call_kwargs["score_threshold"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_target_memories_omitted_score_threshold_is_none():
+    """Omitted score_threshold must stay None — not coerced to -inf.
+
+    Under euclidean (lower-is-better) event-backed LTM, `-inf` means
+    `score <= -inf` and empties the result set.
+    """
+    spec = SearchMemoriesSpec.model_validate({"query": "test query"})
+    assert spec.score_threshold is None
+
+    memmachine = _make_empty_memmachine()
+
+    await _search_target_memories(
+        target_memories=[MemoryType.Episodic],
+        spec=spec,
+        memmachine=memmachine,
+    )
+
+    call_kwargs = memmachine.query_search.call_args[1]
+    assert call_kwargs["score_threshold"] is None
+
+
+@pytest.mark.asyncio
+async def test_search_target_memories_passes_explicit_score_threshold():
+    """Explicit numeric score_threshold is forwarded unchanged."""
+    spec = SearchMemoriesSpec.model_validate(
+        {"query": "test query", "score_threshold": 0.25}
+    )
+    memmachine = _make_empty_memmachine()
+
+    await _search_target_memories(
+        target_memories=[MemoryType.Episodic],
+        spec=spec,
+        memmachine=memmachine,
+    )
+
+    call_kwargs = memmachine.query_search.call_args[1]
+    assert call_kwargs["score_threshold"] == 0.25
 
 
 # ---------------------------------------------------------------------------

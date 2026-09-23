@@ -14,7 +14,7 @@ drop_session_partition all dispatch correctly through the event backend.
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import override
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
@@ -28,9 +28,14 @@ from memmachine_server.common.episode_store import (
 from memmachine_server.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.common.vector_store.data_types import (
     VectorStoreCollectionConfig,
+)
+from memmachine_server.episodic_memory.episodic_memory import (
+    EpisodicMemory,
+    EpisodicMemoryParams,
 )
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
@@ -587,3 +592,51 @@ async def test_score_threshold_none_keeps_all_results_under_euclidean():
 
     scored = await ltm.search_scored("abc", num_episodes_limit=10)
     assert [ep.uid for _, ep in scored] == ["only"]
+
+
+async def test_score_threshold_neg_inf_sentinel_drops_all_under_euclidean():
+    """Upper layers historically passed `-inf` to mean "no threshold". Under
+    euclidean (lower-is-better) that sentinel becomes `score <= -inf` and drops
+    every hit. Callers must pass `None` instead.
+    """
+    episodes = [_episode("only", "abc")]
+    ltm = _make_ltm_with_metric(SimilarityMetric.EUCLIDEAN, episodes)
+    await ltm.add_episodes(episodes)
+
+    scored = await ltm.search_scored(
+        "abc",
+        num_episodes_limit=10,
+        score_threshold=-float("inf"),
+    )
+    assert scored == []
+
+
+async def test_episodic_query_memory_default_keeps_euclidean_results():
+    """Default score_threshold on EpisodicMemory.query_memory must mean
+    "no threshold" under euclidean event-backed LTM. Injecting `-inf` empties
+    long-term results even when matches exist.
+    """
+    episodes = [_episode("only", "abc")]
+    ltm = _make_ltm_with_metric(SimilarityMetric.EUCLIDEAN, episodes)
+    await ltm.add_episodes(episodes)
+
+    metrics = MagicMock(spec=MetricsFactory)
+    metrics.get_summary.return_value = MagicMock()
+    metrics.get_counter.return_value = MagicMock()
+
+    memory = EpisodicMemory(
+        EpisodicMemoryParams(
+            session_key="sess1",
+            metrics_factory=metrics,
+            short_term_memory=None,
+            long_term_memory=ltm,
+            enabled=True,
+        )
+    )
+
+    response = await memory.query_memory(
+        "abc",
+        mode=EpisodicMemory.QueryMode.LONG_TERM_ONLY,
+    )
+    assert response is not None
+    assert [ep.uid for ep in response.long_term_memory.episodes] == ["only"]

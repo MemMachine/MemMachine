@@ -90,7 +90,7 @@ class FakeEpisodicMemory(EpisodicMemory):
         *,
         limit: int | None = None,
         expand_context: int = 0,
-        score_threshold: float = -float("inf"),
+        score_threshold: float | None = None,
         property_filter: Any | None = None,
         mode: EpisodicMemory.QueryMode = EpisodicMemory.QueryMode.BOTH,
     ) -> EpisodicMemory.QueryResponse | None:
