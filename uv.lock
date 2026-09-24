@@ -2420,7 +2420,7 @@ requires-dist = [
     { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.17.0" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
     { name = "sentence-transformers", marker = "extra == 'gpu'", specifier = ">=5.1.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.43" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.53" },
     { name = "sqlite-vec", specifier = ">=0.1.9" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "usearch", specifier = ">=2.25.1" },
