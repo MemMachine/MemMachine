@@ -173,7 +173,6 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
             "embedder": "openai",
             "vector_store": "vstore",
             "segment_store": "pgengine",
-            "properties_schema": {"my_field": "str"},
         },
     }
 
@@ -183,7 +182,6 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
         embedder="openai",
         vector_store="vstore",
         segment_store="pgengine",
-        properties_schema={"my_field": "str"},
     )
     mock_memmachine.create_session.return_value = mock_session
 
@@ -193,7 +191,6 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
     assert body["config"]["backend"] == "event"
     assert body["config"]["vector_store"] == "vstore"
     assert body["config"]["segment_store"] == "pgengine"
-    assert body["config"]["properties_schema"] == {"my_field": "str"}
 
     # Server forwards the event-shaped partial to create_session unchanged.
     mock_memmachine.create_session.assert_awaited_once()
@@ -460,6 +457,13 @@ def test_search_memories(client, mock_memmachine):
         # Not found
         mock_search.reset_mock()
         mock_search.side_effect = RuntimeError("No session info found for session")
+        response = client.post("/api/v2/memories/search", json=payload)
+        assert response.status_code == 404
+        assert response.json()["detail"]["message"] == "Project does not exist"
+
+        # A search never creates a project: an unknown one is not found.
+        mock_search.reset_mock()
+        mock_search.side_effect = SessionNotFoundError("org/project")
         response = client.post("/api/v2/memories/search", json=payload)
         assert response.status_code == 404
         assert response.json()["detail"]["message"] == "Project does not exist"
@@ -2158,3 +2162,19 @@ def test_configure_long_term_memory_error(client, mock_memmachine):
     assert (
         "Unable to configure long-term memory" in response.json()["detail"]["message"]
     )
+
+
+def test_add_memories_to_unknown_project_is_not_found(client, mock_memmachine):
+    """A write never creates a project: an unknown one is 404."""
+    payload = {
+        "org_id": "org",
+        "project_id": "project",
+        "messages": [{"role": "user", "content": "hello"}],
+    }
+    with patch(
+        "memmachine_server.server.api_v2.router._add_messages_to",
+        side_effect=SessionNotFoundError("org/project"),
+    ):
+        response = client.post("/api/v2/memories", json=payload)
+    assert response.status_code == 404
+    assert response.json()["detail"]["message"] == "Project does not exist"

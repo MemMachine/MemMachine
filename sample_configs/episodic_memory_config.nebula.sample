@@ -19,9 +19,6 @@ episodic_memory:
     # reranker: my_reranker_id              # optional; omit to use embedding scores
     # vector_store: event_vector_store      # references resources.databases
     # segment_store: profile_storage        # references a relational DB; segment store is created from it
-    # properties_schema:                    # optional — user-defined filterable properties
-    #   source_role: str
-    #   target_id: str
     # segmenter:                            # optional — defaults to passthrough
     #   type: passthrough                   # or: text (with max_chunk_length)
     # deriver:                              # optional — defaults to whole-text deriver
@@ -121,17 +118,33 @@ resources:
         grpc_port: 6334
         prefer_grpc: false
         https: false
+        request_timeout_seconds: 30
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
+        partition_registry: profile_storage    # relational database holding the partition registry
+        # Optional tuning of the collection, as qdrant_client's HnswConfigDiff,
+        # OptimizersConfigDiff and QuantizationConfig in YAML form. hnsw_config.m
+        # stays 0: the collection holds every partition and indexes per partition.
+        # hnsw_config:
+        #   payload_m: 16
+        #   ef_construct: 100
+        # optimizers_config:
+        #   indexing_threshold: 20000
+        # quantization_config:
+        #   scalar:
+        #     type: int8
+        #     always_ram: true
     #
-    # Alternative: Milvus. The local .db URI uses Milvus Lite; replace it with
-    # http(s)://... plus token/db_name for Milvus server or Zilliz Cloud.
+    # Alternative: Milvus. Point uri at a Milvus server, or at Zilliz Cloud
+    # with token/db_name.
     # event_vector_store:
     #   provider: milvus
     #   config:
-    #     uri: event_milvus.db
+    #     uri: http://localhost:19530
     #     # token: $MILVUS_TOKEN
     #     # db_name: default
     #     consistency_level: Session       # Strong, Session, Bounded, Eventually
+    #     partition_registry: profile_storage
+    #     request_timeout_seconds: 30
     #
     # Alternative: a local file-backed SQLite vector store. Single-writer; OK
     # for embedded/dev use, not recommended for multi-process server deploys.
@@ -161,7 +174,6 @@ resources:
         aws_access_key_id: <AWS_ACCESS_KEY_ID>
         aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
         model_id: "amazon.titan-embed-text-v2:0"
-        similarity_metric: "cosine"
     ollama_embedder:
       provider: openai
       config:
