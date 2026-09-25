@@ -1,11 +1,15 @@
-"""In-memory VectorStoreCollection implementation for testing."""
+"""In-memory VectorStorePartition implementation for testing."""
 
 import math
 import operator
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from uuid import UUID
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import (
+    PropertyType,
+    PropertyValue,
+    SimilarityMetric,
+)
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -15,12 +19,11 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
-from memmachine_server.common.vector_store import VectorStoreCollection
+from memmachine_server.common.vector_store import VectorStorePartition
 from memmachine_server.common.vector_store.data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -104,24 +107,40 @@ def _passes_threshold(score: float, threshold: float, higher_is_better: bool) ->
 
 
 # ---------------------------------------------------------------------------
-# InMemoryVectorStoreCollection
+# InMemoryVectorStorePartition
 # ---------------------------------------------------------------------------
 
 
-class InMemoryVectorStoreCollection(VectorStoreCollection):
-    """In-memory VectorStoreCollection for testing.
+class InMemoryVectorStorePartition(VectorStorePartition):
+    """In-memory VectorStorePartition for testing.
 
     Supports all similarity metrics (cosine, dot, euclidean, manhattan)
     and full FilterExpr evaluation on record properties.
     """
 
-    def __init__(self, collection_config: VectorStoreCollectionConfig) -> None:
-        self.collection_config = collection_config
+    def __init__(
+        self,
+        *,
+        partition_key: str = "in_memory",
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
+        indexed_properties: Mapping[str, PropertyType] | None = None,
+    ) -> None:
+        self._partition_key = partition_key
+        self._similarity_metric = similarity_metric
+        self._indexed_properties = dict(indexed_properties or {})
         self.records: dict[UUID, Record] = {}
 
     @property
-    def config(self) -> VectorStoreCollectionConfig:
-        return self.collection_config
+    def partition_key(self) -> str:
+        return self._partition_key
+
+    @property
+    def similarity_metric(self) -> SimilarityMetric:
+        return self._similarity_metric
+
+    @property
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
         for record in records:
@@ -141,7 +160,7 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
         return_vector: bool = False,
         return_properties: bool = True,
     ) -> list[QueryResult]:
-        metric = self.collection_config.similarity_metric
+        metric = self._similarity_metric
         higher_is_better = metric.higher_is_better
 
         results: list[QueryResult] = []

@@ -1,13 +1,33 @@
 """Unit tests for service_locator helpers."""
 
+import re
+from unittest.mock import create_autospec
+
 import pytest
 
+from memmachine_server.common.configuration.episodic_config import (
+    EventLongTermMemoryConf,
+)
+from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.embedder import Embedder
+from memmachine_server.common.episode_store import EpisodeStorage
+from memmachine_server.common.resource_manager import CommonResourceManager
+from memmachine_server.common.vector_store import (
+    VectorStore,
+    VectorStorePartition,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStore,
+    SegmentStorePartition,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
-    _resolve_user_properties_schema,
+    _event_params,
+    event_backend_indexed_properties,
+    event_backend_vector_store,
     partition_key_for_session,
 )
 
@@ -76,23 +96,69 @@ def test_partition_key_empty_string_passthrough():
     assert len(key) == PARTITION_KEY_MAX_BYTES
 
 
-def test_resolve_user_properties_schema_accepts_normal_keys():
-    resolved = _resolve_user_properties_schema({"customer_tier": "str", "score": "int"})
-    assert resolved == {"customer_tier": str, "score": int}
+@pytest.mark.asyncio
+async def test_any_embedder_id_names_a_vector_store():
+    """The store's name derives from the embedder id, so the id itself is unconstrained."""
+    config = EventLongTermMemoryConf(
+        session_id="s",
+        vector_store="vs",
+        segment_store="ss",
+        embedder="OpenAI text-embedding-3-large, 3072 dimensions",
+    )
+    embedder = create_autospec(Embedder, instance=True)
+    embedder.dimensions = 3
+    embedder.similarity_metric = SimilarityMetric.COSINE
+    resource_manager = create_autospec(CommonResourceManager, instance=True)
+    resource_manager.get_embedder.return_value = embedder
+
+    await event_backend_vector_store(config, resource_manager)
+
+    vector_store_name = resource_manager.get_vector_store.await_args.kwargs[
+        "vector_store_name"
+    ]
+    assert re.fullmatch(r"[0-9a-f]{32}", vector_store_name)
 
 
-def test_resolve_user_properties_schema_rejects_underscore_prefixed_keys():
-    """`_`-prefixed keys collide with system-defined event fields
-    (`_episode_uid`, `_session_key`, ...). The merged collection schema is
-    a dict-spread with user_schema last, so allowing them would silently
-    overwrite the system slot and may change its declared type."""
-    with pytest.raises(ValueError, match="reserved"):
-        _resolve_user_properties_schema({"_episode_uid": "str"})
+@pytest.mark.asyncio
+async def test_event_params_opens_the_session_partition_of_the_embedders_collection():
+    """The store is the embedder's collection, and the session's partition is opened in it.
 
-    with pytest.raises(ValueError, match="reserved"):
-        _resolve_user_properties_schema({"_my_field": "int"})
+    Opening creates the partition when it is absent; the vector store's
+    registry arbitrates creation across processes, so a worker that loses
+    the race to another opens the winner's partition instead of failing
+    the request.
+    """
+    config = EventLongTermMemoryConf(
+        session_id="raced", vector_store="vs", segment_store="ss", embedder="e"
+    )
+    partition = create_autospec(VectorStorePartition, instance=True)
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.open_or_create_partition.return_value = partition
+    embedder = create_autospec(Embedder, instance=True)
+    embedder.dimensions = 3
+    embedder.similarity_metric = SimilarityMetric.COSINE
+    resource_manager = create_autospec(CommonResourceManager, instance=True)
+    resource_manager.get_vector_store.return_value = vector_store
+    resource_manager.get_segment_store.return_value = create_autospec(
+        SegmentStore, instance=True
+    )
+    resource_manager.get_segment_store.return_value.open_or_create_partition.return_value = create_autospec(
+        SegmentStorePartition, instance=True
+    )
+    resource_manager.get_embedder.return_value = embedder
+    resource_manager.get_episode_storage.return_value = create_autospec(
+        EpisodeStorage, instance=True
+    )
+    resource_manager.get_metrics_factory.return_value = None
 
+    params = await _event_params(config, resource_manager)
 
-def test_resolve_user_properties_schema_rejects_unknown_type_name():
-    with pytest.raises(ValueError, match="unknown type name"):
-        _resolve_user_properties_schema({"customer_tier": "date"})
+    assert params.vector_store_partition is partition
+    vector_store.open_or_create_partition.assert_awaited_once_with("raced")
+    resource_manager.get_vector_store.assert_awaited_once_with(
+        "vs",
+        vector_store_name="9f2137ad9dd259d3b15516148bd5d7cc",
+        vector_dimensions=3,
+        similarity_metric=SimilarityMetric.COSINE,
+        indexed_properties=event_backend_indexed_properties(),
+    )

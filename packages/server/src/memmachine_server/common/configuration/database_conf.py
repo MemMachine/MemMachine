@@ -252,12 +252,27 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
     )
-    registry_replication_factor: int = Field(
-        default=1,
+    partition_registry: str = Field(
+        ...,
         description=(
-            "Replication factor for registry collections. Write consistency factor "
-            "is set to match so all replicas confirm writes."
+            "The relational database, a name under resources.databases, that "
+            "holds this store's partition registry."
         ),
+    )
+    tombstone_retention_seconds: int = Field(
+        default=86400,
+        gt=0,
+        description=(
+            "Seconds a deleted collection's records are kept before its purge "
+            "starts, so every write to Qdrant in flight at the deletion has landed "
+            "and is reclaimed; keep it orders of magnitude above the longest a "
+            "request to Qdrant can be in flight."
+        ),
+    )
+    request_timeout_seconds: int = Field(
+        default=30,
+        gt=0,
+        description="Seconds a request to Qdrant may take before the client gives up.",
     )
 
 
@@ -265,11 +280,8 @@ class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
     """Configuration options for a Milvus instance."""
 
     uri: str = Field(
-        default="./milvus.db",
-        description=(
-            "Milvus URI. Use a local .db path for Milvus Lite, "
-            "or an HTTP(S) URI for Milvus server / Zilliz Cloud."
-        ),
+        default="http://localhost:19530",
+        description="URL of the Milvus server or Zilliz Cloud endpoint.",
     )
     token: SecretStr = Field(
         default=SecretStr(""),
@@ -289,6 +301,47 @@ class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
             "Supported values: Strong, Session, Bounded, Eventually."
         ),
     )
+    partition_registry: str = Field(
+        ...,
+        description=(
+            "The relational database, a name under resources.databases, that "
+            "holds this store's partition registry."
+        ),
+    )
+    tombstone_retention_seconds: int = Field(
+        default=86400,
+        gt=0,
+        description=(
+            "Seconds a deleted collection's records are kept before its purge "
+            "starts, so every write to Milvus in flight at the deletion has landed "
+            "and is reclaimed; keep it orders of magnitude above the longest a "
+            "request to Milvus can be in flight."
+        ),
+    )
+    request_timeout_seconds: int = Field(
+        default=30,
+        gt=0,
+        description="Seconds a request to Milvus may take before the client gives up.",
+    )
+    max_varchar_length: int = Field(
+        default=65535,
+        gt=0,
+        description=(
+            "Bytes a declared string property can hold: the length of its "
+            "VARCHAR field. Milvus refuses a length above its "
+            "proxy.maxVarCharLength, 65535 unless the server sets it otherwise."
+        ),
+    )
+    purge_batch_size: int = Field(
+        default=10000,
+        gt=0,
+        description=(
+            "The most entities one purge round lists and deletes. Milvus refuses "
+            "a query whose limit exceeds its "
+            "quotaAndLimits.limits.maxQueryResultWindow, 16384 unless the server "
+            "sets it otherwise."
+        ),
+    )
 
     @field_validator("uri", mode="before")
     @classmethod
@@ -297,6 +350,14 @@ class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
         resolved = cls._resolve_env(v)
         if not isinstance(resolved, str):
             raise TypeError("Milvus URI must be a string")
+        # pymilvus reads a URI without a scheme as a Milvus Lite file, which
+        # is not supported: it is a separate engine that behaves unlike the
+        # server.
+        if resolved and "://" not in resolved:
+            raise ValueError(
+                f"Milvus URI {resolved!r} must be a server URL such as "
+                "http://localhost:19530; Milvus Lite files are not supported"
+            )
         return resolved
 
     @field_validator("token", mode="before")

@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import cast
+from uuid import UUID, uuid5
 
 from pydantic import InstanceOf
 
@@ -10,12 +11,12 @@ from memmachine_server.common.configuration import (
     SemanticMemoryConf,
     SemanticMemoryStorageBackend,
 )
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ResourceNotReadyError
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -47,8 +48,31 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
     VectorStoreSemanticStorage,
 )
 
-_VECTOR_STORE_NAMESPACE = "semantic_memory"
-_VECTOR_STORE_COLLECTION_NAME = "semantic_memory"
+_VECTOR_STORE_NAMESPACE = UUID("a9aaac84-233d-4ade-8e49-c0a8094c6b8d")
+"""The UUIDv5 namespace of semantic memory's vector store names.
+
+Semantic memory keeps one store per embedder, named by the UUIDv5 of the
+embedder id in this namespace, in hex: a vector store name whatever the id
+is, and never the name of another memory's store of the same embedder.
+Fixed, because the name locates the store's data.
+"""
+_VECTOR_STORE_PARTITION_KEY = "semantic_memory"
+
+# The keys semantic storage may write into a vector record; the vector store
+# is built with these.
+_INDEXED_PROPERTIES: dict[str, PropertyType] = {
+    "feature_id": str,
+    "set_id": str,
+    "set": str,
+    "semantic_category_id": str,
+    "category_name": str,
+    "category": str,
+    "tag_id": str,
+    "tag": str,
+    "feature": str,
+    "feature_name": str,
+    "value": str,
+}
 
 
 class SemanticResourceManager:
@@ -142,33 +166,25 @@ class SemanticResourceManager:
             feature_store_name,
             validate=True,
         )
-        vector_store = await self._resource_manager.get_vector_store(vector_store_name)
         vector_dimensions = self._conf.vector_dimensions
         if vector_dimensions is None:
             vector_dimensions = (await self._get_default_embedder()).dimensions
-
-        collection = await vector_store.open_or_create_collection(
-            namespace=_VECTOR_STORE_NAMESPACE,
-            name=_VECTOR_STORE_COLLECTION_NAME,
-            config=VectorStoreCollectionConfig(
-                vector_dimensions=vector_dimensions,
-                similarity_metric=self._conf.vector_similarity_metric,
-                indexed_properties_schema={
-                    "feature_id": str,
-                    "set_id": str,
-                    "set": str,
-                    "semantic_category_id": str,
-                    "category_name": str,
-                    "category": str,
-                    "tag_id": str,
-                    "tag": str,
-                    "feature": str,
-                    "feature_name": str,
-                    "value": str,
-                },
-            ),
+        vector_store = await self._resource_manager.get_vector_store(
+            vector_store_name,
+            vector_store_name=uuid5(
+                _VECTOR_STORE_NAMESPACE, self._get_default_embedder_name()
+            ).hex,
+            vector_dimensions=vector_dimensions,
+            similarity_metric=self._conf.vector_similarity_metric,
+            indexed_properties=_INDEXED_PROPERTIES,
         )
-        storage = VectorStoreSemanticStorage(sql_engine, collection)
+
+        # The manager owns this partition, so opening it here, once, at the
+        # storage's first use is the owner's provisioning, not a request's.
+        vector_partition = await vector_store.open_or_create_partition(
+            _VECTOR_STORE_PARTITION_KEY
+        )
+        storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()
         return storage
 

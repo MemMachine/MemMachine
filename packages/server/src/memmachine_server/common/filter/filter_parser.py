@@ -397,6 +397,17 @@ def map_filter_fields(
     raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
 
 
+def filter_fields(expr: FilterExpr) -> frozenset[str]:
+    """Every field name a filter tree addresses."""
+    if isinstance(expr, (Comparison, In, IsNull)):
+        return frozenset((expr.field,))
+    if isinstance(expr, Not):
+        return filter_fields(expr.expr)
+    if isinstance(expr, (And, Or)):
+        return filter_fields(expr.left) | filter_fields(expr.right)
+    raise TypeError(f"Unsupported filter expression type: {type(expr)}")
+
+
 def parse_filter(spec: str | None) -> FilterExpr | None:
     """Parse the given textual filter specification."""
     if spec is None:
