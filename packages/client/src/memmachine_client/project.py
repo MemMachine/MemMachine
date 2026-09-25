@@ -100,7 +100,6 @@ class Project:
                 vector_graph_store="",
                 vector_store="",
                 segment_store="",
-                properties_schema={},
             )
         )
 
