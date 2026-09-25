@@ -17,6 +17,21 @@ export async function basic() {
   const project = client.project({ org_id: 'my_org', project_id: 'my_project' })
   const memory = project.memory()
 
+  // Create the project before the first write, and accept that it already
+  // exists: the example never relies on a write creating it.
+  console.log('Creating project...')
+  try {
+    await project.create()
+    console.log('Project created.')
+  } catch (error) {
+    if (error instanceof MemMachineAPIError && error.message.includes('status code 409')) {
+      console.log('Project already exists.')
+    } else {
+      handleError(error, 'Creating project')
+      return
+    }
+  }
+
   const memoriesToAdd = [
     {
       content: 'I like pizza and pasta',
