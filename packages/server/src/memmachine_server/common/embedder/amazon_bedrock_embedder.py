@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.data_types import (
     ExternalServiceAPIError,
-    SimilarityMetric,
 )
 from memmachine_server.common.utils import chunk_text, unflatten_like
 
@@ -42,10 +41,6 @@ class AmazonBedrockEmbedderParams(BaseModel):
         description="Maximum input length for the model (in Unicode code points).",
         gt=0,
     )
-    similarity_metric: SimilarityMetric = Field(
-        default=SimilarityMetric.COSINE,
-        description="Similarity metric to use for comparing embeddings.",
-    )
     max_retry_interval_seconds: int = Field(
         default=120,
         description="Maximal retry interval in seconds (defualt: 120).",
@@ -68,7 +63,6 @@ class AmazonBedrockEmbedder(Embedder):
 
         self._model_id = params.model_id
         self._max_input_length = params.max_input_length
-        self._similarity_metric = params.similarity_metric
         self._max_retry_interval_seconds = params.max_retry_interval_seconds
 
         # Get dimensions by embedding a dummy string.
@@ -233,8 +227,3 @@ class AmazonBedrockEmbedder(Embedder):
     def dimensions(self) -> int:
         """Return the embedding dimensionality."""
         return self._dimensions
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        """Return the similarity metric used by the embedder."""
-        return self._similarity_metric
