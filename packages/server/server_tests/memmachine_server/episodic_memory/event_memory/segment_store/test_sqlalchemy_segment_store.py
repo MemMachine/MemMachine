@@ -40,7 +40,6 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStoreAttemptsExhaustedError,
     SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
-    SegmentStorePartitionConfigMismatchError,
     SegmentStorePartitionHandleStaleError,
     sqlalchemy_segment_store,
 )
@@ -93,6 +92,21 @@ def _seg(
 def _links(*segments: Segment) -> dict[Segment, list[UUID]]:
     """Build a segment-to-derivative-UUIDs mapping with one derivative per segment."""
     return {seg: [uuid4()] for seg in segments}
+
+
+async def _get_or_create_partition(
+    store: SQLAlchemySegmentStore,
+    partition_key: str,
+    config: SegmentStorePartitionConfig,
+) -> SQLAlchemySegmentStorePartition:
+    """Create-if-absent then get, as the composition root does."""
+    partition = await store.get_partition(partition_key)
+    if partition is None:
+        with contextlib.suppress(SegmentStorePartitionAlreadyExistsError):
+            await store.create_partition(partition_key, config)
+        partition = await store.get_partition(partition_key)
+    assert partition is not None
+    return partition
 
 
 def _plaintext_partition_config() -> SegmentStorePartitionConfig:
@@ -248,7 +262,8 @@ def recorded_statements(
 async def partition(
     store: SQLAlchemySegmentStore,
 ) -> SQLAlchemySegmentStorePartition:
-    return await store.open_or_create_partition(
+    return await _get_or_create_partition(
+        store,
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
@@ -681,13 +696,15 @@ async def test_contexts_session_isolation(store: SQLAlchemySegmentStore) -> None
     s_seed = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1)
     s_after = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2)
 
-    other_partition = await store.open_or_create_partition(
+    other_partition = await _get_or_create_partition(
+        store,
         "other_session",
         _plaintext_partition_config(),
     )
     await other_partition.add_segments(_links(s_other))
 
-    partition = await store.open_or_create_partition(
+    partition = await _get_or_create_partition(
+        store,
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
@@ -892,8 +909,8 @@ async def test_segment_write_whose_commit_fails_changes_nothing(
     operation: str,
 ) -> None:
     """A segment write whose commit fails leaves the partition as it was."""
-    partition = await store.open_or_create_partition(
-        "uncommitted", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        store, "uncommitted", _plaintext_partition_config()
     )
     kept = _seg()
     await partition.add_segments(_links(kept))
@@ -921,7 +938,8 @@ async def test_segment_write_whose_commit_fails_changes_nothing(
 async def _get_partition(engine: AsyncEngine) -> SQLAlchemySegmentStorePartition:
     """Create a partition handle that shares the engine."""
     store = SQLAlchemySegmentStore(SQLAlchemySegmentStoreParams(engine=engine))
-    return await store.open_or_create_partition(
+    return await _get_or_create_partition(
+        store,
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
@@ -960,7 +978,8 @@ async def test_concurrent_reads_during_writes(
 ) -> None:
     """Reads should not fail or block indefinitely while writes are happening."""
     engine = store._engine
-    partition = await store.open_or_create_partition(
+    partition = await _get_or_create_partition(
+        store,
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
@@ -1000,7 +1019,8 @@ async def test_concurrent_context_reads_during_deletes(
 ) -> None:
     """get_segment_contexts should not crash if segments are deleted concurrently."""
     engine = store._engine
-    partition = await store.open_or_create_partition(
+    partition = await _get_or_create_partition(
+        store,
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
@@ -1045,10 +1065,11 @@ async def test_concurrent_context_reads_during_deletes(
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_partition_defaults_to_plaintext_config(
+async def test_partition_defaults_to_plaintext_config(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    partition = await store.open_or_create_partition(
+    partition = await _get_or_create_partition(
+        store,
         "plaintext_default",
         _plaintext_partition_config(),
     )
@@ -1058,7 +1079,7 @@ async def test_open_or_create_partition_defaults_to_plaintext_config(
 @pytest.mark.asyncio
 async def test_create_partition(store: SQLAlchemySegmentStore) -> None:
     await store.create_partition("new_partition", _plaintext_partition_config())
-    partition = await store.open_partition("new_partition")
+    partition = await store.get_partition("new_partition")
     assert partition is not None
 
 
@@ -1070,45 +1091,22 @@ async def test_create_partition_already_exists(store: SQLAlchemySegmentStore) ->
 
 
 @pytest.mark.asyncio
-async def test_open_partition_nonexistent(store: SQLAlchemySegmentStore) -> None:
-    result = await store.open_partition("nonexistent")
+async def test_get_partition_nonexistent(store: SQLAlchemySegmentStore) -> None:
+    result = await store.get_partition("nonexistent")
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_open_partition_existing(store: SQLAlchemySegmentStore) -> None:
+async def test_get_partition_existing(store: SQLAlchemySegmentStore) -> None:
     await store.create_partition("existing", _plaintext_partition_config())
-    partition = await store.open_partition("existing")
-    assert partition is not None
-
-
-@pytest.mark.asyncio
-async def test_open_or_create_partition_creates(store: SQLAlchemySegmentStore) -> None:
-    partition = await store.open_or_create_partition(
-        "fresh",
-        _plaintext_partition_config(),
-    )
-    assert partition is not None
-    # Verify it was actually created.
-    opened = await store.open_partition("fresh")
-    assert opened is not None
-
-
-@pytest.mark.asyncio
-async def test_open_or_create_partition_idempotent(
-    store: SQLAlchemySegmentStore,
-) -> None:
-    await store.create_partition("idem", _plaintext_partition_config())
-    partition = await store.open_or_create_partition(
-        "idem",
-        _plaintext_partition_config(),
-    )
+    partition = await store.get_partition("existing")
     assert partition is not None
 
 
 @pytest.mark.asyncio
 async def test_delete_partition_removes_data(store: SQLAlchemySegmentStore) -> None:
-    partition = await store.open_or_create_partition(
+    partition = await _get_or_create_partition(
+        store,
         "to_delete",
         _plaintext_partition_config(),
     )
@@ -1118,7 +1116,7 @@ async def test_delete_partition_removes_data(store: SQLAlchemySegmentStore) -> N
     await store.delete_partition("to_delete")
 
     # Partition no longer exists.
-    assert await store.open_partition("to_delete") is None
+    assert await store.get_partition("to_delete") is None
 
 
 @pytest.mark.integration
@@ -1128,10 +1126,10 @@ async def test_delete_partition_keeps_foreign_key_enforced(
     sqlalchemy_pg_engine: AsyncEngine,
 ) -> None:
     """Deleting one partition must not drop the derivative-link foreign key."""
-    keeper = await pg_store.open_or_create_partition(
-        "keeper_fk", _plaintext_partition_config()
+    keeper = await _get_or_create_partition(
+        pg_store, "keeper_fk", _plaintext_partition_config()
     )
-    await pg_store.open_or_create_partition("doomed_fk", _plaintext_partition_config())
+    await _get_or_create_partition(pg_store, "doomed_fk", _plaintext_partition_config())
 
     await pg_store.delete_partition("doomed_fk")
 
@@ -1158,11 +1156,13 @@ async def test_delete_partition_keeps_other_partitions_cascading(
     store: SQLAlchemySegmentStore,
 ) -> None:
     """Deleting one partition must not disable the derivative-link cascade."""
-    keeper = await store.open_or_create_partition(
+    keeper = await _get_or_create_partition(
+        store,
         "keeper",
         _plaintext_partition_config(),
     )
-    await store.open_or_create_partition(
+    await _get_or_create_partition(
+        store,
         "doomed",
         _plaintext_partition_config(),
     )
@@ -1182,7 +1182,8 @@ async def test_delete_partition_keeps_other_partitions_cascading(
 async def test_delete_partition_cascades_segments(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    partition = await store.open_or_create_partition(
+    partition = await _get_or_create_partition(
+        store,
         "cascade_test",
         _plaintext_partition_config(),
     )
@@ -1193,7 +1194,8 @@ async def test_delete_partition_cascades_segments(
     await store.delete_partition("cascade_test")
 
     # Re-create the partition and verify data is gone.
-    new_partition = await store.open_or_create_partition(
+    new_partition = await _get_or_create_partition(
+        store,
         "cascade_test",
         _plaintext_partition_config(),
     )
@@ -1234,7 +1236,8 @@ async def test_pg_context_preserved_via_lateral_join(
     pg_store: SQLAlchemySegmentStore,
 ) -> None:
     """Context is preserved when retrieved via the LATERAL join path (multiple seeds)."""
-    partition = await pg_store.open_or_create_partition(
+    partition = await _get_or_create_partition(
+        pg_store,
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
@@ -1273,7 +1276,8 @@ async def test_pg_mixed_context_types(
     pg_store: SQLAlchemySegmentStore,
 ) -> None:
     """Different context types (producer, None) round-trip correctly on PG."""
-    partition = await pg_store.open_or_create_partition(
+    partition = await _get_or_create_partition(
+        pg_store,
         PARTITION_KEY,
         _plaintext_partition_config(),
     )
@@ -1310,8 +1314,8 @@ async def test_stale_handle_raises_after_delete(
     store: SQLAlchemySegmentStore,
 ) -> None:
     """A handle held across deletion must fail loudly, not act."""
-    partition = await store.open_or_create_partition(
-        "fenced", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        store, "fenced", _plaintext_partition_config()
     )
     seg = _seg()
     await partition.add_segments(_links(seg))
@@ -1346,8 +1350,8 @@ async def test_reads_check_liveness_inside_the_data_statement(
     Only a read that finds nothing pays a second statement, to tell an
     empty partition from a stale handle.
     """
-    partition = await pg_store.open_or_create_partition(
-        "folded", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        pg_store, "folded", _plaintext_partition_config()
     )
     seg = _seg()
     await partition.add_segments(_links(seg))
@@ -1371,12 +1375,12 @@ async def test_stale_handle_raises_after_recreate(
     store: SQLAlchemySegmentStore,
 ) -> None:
     """Re-creating the key must not let an old handle act on the successor."""
-    old_handle = await store.open_or_create_partition(
-        "reborn", _plaintext_partition_config()
+    old_handle = await _get_or_create_partition(
+        store, "reborn", _plaintext_partition_config()
     )
     await store.delete_partition("reborn")
-    new_handle = await store.open_or_create_partition(
-        "reborn", _plaintext_partition_config()
+    new_handle = await _get_or_create_partition(
+        store, "reborn", _plaintext_partition_config()
     )
 
     with pytest.raises(SegmentStorePartitionHandleStaleError):
@@ -1389,16 +1393,16 @@ async def test_recreated_partition_is_isolated_from_old_rows(
     store: SQLAlchemySegmentStore,
 ) -> None:
     """Old-incarnation rows are invisible to the successor before purging."""
-    partition = await store.open_or_create_partition(
-        "isolated", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        store, "isolated", _plaintext_partition_config()
     )
     seg = _seg()
     await partition.add_segments(_links(seg))
     old_incarnation = partition._incarnation
 
     await store.delete_partition("isolated")
-    successor = await store.open_or_create_partition(
-        "isolated", _plaintext_partition_config()
+    successor = await _get_or_create_partition(
+        store, "isolated", _plaintext_partition_config()
     )
 
     assert await successor.get_segment_contexts([seg.uuid]) == {}
@@ -1423,12 +1427,14 @@ async def test_purge_reclaims_only_dead_incarnations(
     # Small default bound, so draining takes the caller's loop.
     monkeypatch.setattr(store, "_purge_max_segments", 2)
 
-    live = await store.open_or_create_partition("live_p", _plaintext_partition_config())
+    live = await _get_or_create_partition(
+        store, "live_p", _plaintext_partition_config()
+    )
     live_seg = _seg()
     await live.add_segments(_links(live_seg))
 
-    doomed = await store.open_or_create_partition(
-        "doomed_p", _plaintext_partition_config()
+    doomed = await _get_or_create_partition(
+        store, "doomed_p", _plaintext_partition_config()
     )
     doomed_incarnation = doomed._incarnation
     await doomed.add_segments(_links(_seg(), _seg(), _seg()))
@@ -1472,8 +1478,8 @@ async def test_concurrent_purges_reclaim_everything(
     monkeypatch.setattr(store, "_purge_max_segments", 2)
     incarnations = []
     for index in range(3):
-        partition = await store.open_or_create_partition(
-            f"gc_race_{index}", _plaintext_partition_config()
+        partition = await _get_or_create_partition(
+            store, f"gc_race_{index}", _plaintext_partition_config()
         )
         incarnations.append(partition._incarnation)
         await partition.add_segments(_links(_seg(), _seg(), _seg()))
@@ -1516,8 +1522,8 @@ async def test_racing_purgers_never_retire_a_partly_purged_entry(
     with rows left. PostgreSQL's claim lock makes it skip the entry; on
     SQLite the claim is a write, so it waits until the first commits.
     """
-    partition = await store.open_or_create_partition(
-        "raced", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        store, "raced", _plaintext_partition_config()
     )
     await partition.add_segments(
         {_seg(ts_offset_seconds=index): [] for index in range(6)}
@@ -1574,8 +1580,8 @@ async def test_failed_purge_call_leaves_nothing_half_done(
     A call's deletions and its record of how far it got commit together or
     not at all, so no row is ever skipped after a failure.
     """
-    partition = await store.open_or_create_partition(
-        "interrupted", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        store, "interrupted", _plaintext_partition_config()
     )
     await partition.add_segments(
         _links(*(_seg(ts_offset_seconds=index) for index in range(5)))
@@ -1610,8 +1616,8 @@ async def test_purge_reclaims_every_size_within_the_bound(
     sizes = [0, 1, bound - 1, bound, bound + 1, 2 * bound]
     incarnations = []
     for index, size in enumerate(sizes):
-        partition = await store.open_or_create_partition(
-            f"sized_{index}", _plaintext_partition_config()
+        partition = await _get_or_create_partition(
+            store, f"sized_{index}", _plaintext_partition_config()
         )
         if size:
             await partition.add_segments(
@@ -1646,15 +1652,15 @@ async def test_purging_a_recreated_key_reclaims_only_the_dead_incarnation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A successor keeps every row it writes while its predecessor is purged."""
-    predecessor = await store.open_or_create_partition(
-        "reborn_purge", _plaintext_partition_config()
+    predecessor = await _get_or_create_partition(
+        store, "reborn_purge", _plaintext_partition_config()
     )
     await predecessor.add_segments(
         _links(*(_seg(ts_offset_seconds=index) for index in range(5)))
     )
     await store.delete_partition("reborn_purge")
-    successor = await store.open_or_create_partition(
-        "reborn_purge", _plaintext_partition_config()
+    successor = await _get_or_create_partition(
+        store, "reborn_purge", _plaintext_partition_config()
     )
     early = [_seg(ts_offset_seconds=10 + index) for index in range(3)]
     await successor.add_segments(_links(*early))
@@ -1702,8 +1708,8 @@ async def test_racing_purgers_and_writers_leave_exactly_the_live_rows(
 
     dead = []
     for index in range(5):
-        partition = await store.open_or_create_partition(
-            f"stress_dead_{index}", _plaintext_partition_config()
+        partition = await _get_or_create_partition(
+            store, f"stress_dead_{index}", _plaintext_partition_config()
         )
         segments = batch(rng.randint(0, 9), 0)
         if segments:
@@ -1712,8 +1718,8 @@ async def test_racing_purgers_and_writers_leave_exactly_the_live_rows(
         await store.delete_partition(f"stress_dead_{index}")
 
     live = [
-        await store.open_or_create_partition(
-            f"stress_live_{index}", _plaintext_partition_config()
+        await _get_or_create_partition(
+            store, f"stress_live_{index}", _plaintext_partition_config()
         )
         for index in range(2)
     ]
@@ -1762,8 +1768,8 @@ async def test_purge_skips_entries_claimed_by_concurrent_purger(
     """
     partitions = {}
     for key in ("gc_held", "gc_free"):
-        partition = await pg_store.open_or_create_partition(
-            key, _plaintext_partition_config()
+        partition = await _get_or_create_partition(
+            pg_store, key, _plaintext_partition_config()
         )
         partitions[key] = partition._incarnation
         await partition.add_segments(_links(_seg()))
@@ -1828,8 +1834,8 @@ async def test_write_landing_during_delete_is_never_orphaned(
     flight, and the write then lands rows under an incarnation the queue
     no longer tracks: garbage no purge will ever reclaim.
     """
-    partition = await pg_store.open_or_create_partition(
-        "orphan_race", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        pg_store, "orphan_race", _plaintext_partition_config()
     )
     incarnation = partition._incarnation
 
@@ -1900,8 +1906,8 @@ async def test_concurrent_remote_delete_yields_single_queue_entry(
     observe the registry row gone and no-op -- one queue entry, no
     integrity error surfacing to the caller.
     """
-    partition = await pg_store.open_or_create_partition(
-        "remote_del", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        pg_store, "remote_del", _plaintext_partition_config()
     )
     incarnation = partition._incarnation
 
@@ -1941,7 +1947,7 @@ async def test_concurrent_remote_delete_yields_single_queue_entry(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "create_via",
-    ["create_partition", "open_or_create_partition"],
+    ["create_partition"],
 )
 async def test_incarnation_with_garbage_left_is_never_reused(
     store: SQLAlchemySegmentStore,
@@ -1955,8 +1961,8 @@ async def test_incarnation_with_garbage_left_is_never_reused(
     the purger. The mint transaction re-checks the purge queue and retries
     with a fresh uuid instead.
     """
-    doomed = await store.open_or_create_partition(
-        "gc_reuse", _plaintext_partition_config()
+    doomed = await _get_or_create_partition(
+        store, "gc_reuse", _plaintext_partition_config()
     )
     dead_incarnation = doomed._incarnation
     await doomed.add_segments(_links(_seg()))
@@ -1974,10 +1980,10 @@ async def test_incarnation_with_garbage_left_is_never_reused(
 
     if create_via == "create_partition":
         await store.create_partition("fresh_p", _plaintext_partition_config())
-        fresh = await store.open_partition("fresh_p")
+        fresh = await store.get_partition("fresh_p")
     else:
-        fresh = await store.open_or_create_partition(
-            "fresh_p", _plaintext_partition_config()
+        fresh = await _get_or_create_partition(
+            store, "fresh_p", _plaintext_partition_config()
         )
     assert fresh is not None
     assert offered, "the colliding uuid was never offered to the mint"
@@ -2002,7 +2008,7 @@ async def test_incarnation_with_garbage_left_is_never_reused(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "create_via",
-    ["create_partition", "open_or_create_partition"],
+    ["create_partition"],
 )
 async def test_incarnation_colliding_with_live_partition_is_never_reused(
     store: SQLAlchemySegmentStore,
@@ -2016,8 +2022,8 @@ async def test_incarnation_colliding_with_live_partition_is_never_reused(
     fresh uuid, and succeed -- not misreport the partition as already
     existing.
     """
-    live = await store.open_or_create_partition(
-        "live_src", _plaintext_partition_config()
+    live = await _get_or_create_partition(
+        store, "live_src", _plaintext_partition_config()
     )
     live_incarnation = live._incarnation
 
@@ -2033,17 +2039,17 @@ async def test_incarnation_colliding_with_live_partition_is_never_reused(
 
     if create_via == "create_partition":
         await store.create_partition("fresh_p", _plaintext_partition_config())
-        fresh = await store.open_partition("fresh_p")
+        fresh = await store.get_partition("fresh_p")
     else:
-        fresh = await store.open_or_create_partition(
-            "fresh_p", _plaintext_partition_config()
+        fresh = await _get_or_create_partition(
+            store, "fresh_p", _plaintext_partition_config()
         )
     assert fresh is not None
     assert offered, "the colliding uuid was never offered to the mint"
     assert fresh._incarnation != live_incarnation
 
     # The live partition is unharmed.
-    reopened = await store.open_partition("live_src")
+    reopened = await store.get_partition("live_src")
     assert reopened is not None
     assert reopened._incarnation == live_incarnation
 
@@ -2061,8 +2067,8 @@ async def test_purge_bound_comes_from_params(
     )
     await store.startup()
     try:
-        partition = await store.open_or_create_partition(
-            "bound_p", _plaintext_partition_config()
+        partition = await _get_or_create_partition(
+            store, "bound_p", _plaintext_partition_config()
         )
         await partition.add_segments(_links(_seg(), _seg(), _seg()))
         await store.delete_partition("bound_p")
@@ -2093,8 +2099,8 @@ async def test_mint_detects_collision_with_concurrent_deletion(
     whose incarnation is on the purge queue, handing its rows to the
     purger.
     """
-    victim = await pg_store.open_or_create_partition(
-        "mint_victim", _plaintext_partition_config()
+    victim = await _get_or_create_partition(
+        pg_store, "mint_victim", _plaintext_partition_config()
     )
     victim_incarnation = victim._incarnation
     await victim.add_segments(_links(_seg()))
@@ -2142,7 +2148,7 @@ async def test_mint_detects_collision_with_concurrent_deletion(
     # Deletion committed on exiting begin().
     await asyncio.wait_for(creator, 30)
 
-    fresh = await pg_store.open_partition("mint_fresh")
+    fresh = await pg_store.get_partition("mint_fresh")
     assert fresh is not None
     assert offered, "the colliding uuid was never offered to the mint"
     assert fresh._incarnation != victim_incarnation, (
@@ -2162,7 +2168,7 @@ async def test_mint_detects_collision_with_concurrent_deletion(
             )
         ).scalar_one()
     assert dead_rows == 0
-    assert await pg_store.open_partition("mint_fresh") is not None
+    assert await pg_store.get_partition("mint_fresh") is not None
 
 
 @pytest.mark.integration
@@ -2180,8 +2186,8 @@ async def test_purge_claims_queue_entries_incrementally(
     concurrent purgers.
     """
     for index in range(3):
-        partition = await pg_store.open_or_create_partition(
-            f"inc_claim_{index}", _plaintext_partition_config()
+        partition = await _get_or_create_partition(
+            pg_store, f"inc_claim_{index}", _plaintext_partition_config()
         )
         await partition.add_segments(_links(_seg(), _seg(), _seg()))
         await pg_store.delete_partition(f"inc_claim_{index}")
@@ -2224,8 +2230,8 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
     registry UPDATE opens the write transaction first, so the racing
     deletion must wait for the writer and the rows stay reclaimable.
     """
-    partition = await sqlite_store.open_or_create_partition(
-        "sqlite_fence", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        sqlite_store, "sqlite_fence", _plaintext_partition_config()
     )
     incarnation = partition._incarnation
 
@@ -2320,20 +2326,7 @@ async def test_persistent_mint_failure_raises_instead_of_looping(
 
     attempts.clear()
     with pytest.raises(SegmentStoreAttemptsExhaustedError):
-        await store.open_or_create_partition("mint_cap", _plaintext_partition_config())
-    assert len(attempts) == sqlalchemy_segment_store._MAX_MINT_ATTEMPTS
-
-    # The lost-race arm is bounded by the same cap: an insert that keeps
-    # losing to a winner that keeps vanishing must not livelock.
-    attempts.clear()
-
-    async def always_losing(partition_key, incarnation, config) -> None:
-        attempts.append(incarnation)
-        raise SegmentStorePartitionAlreadyExistsError(partition_key)
-
-    monkeypatch.setattr(store, "_insert_partition_row", always_losing)
-    with pytest.raises(SegmentStoreAttemptsExhaustedError):
-        await store.open_or_create_partition("mint_cap", _plaintext_partition_config())
+        await _get_or_create_partition(store, "mint_cap", _plaintext_partition_config())
     assert len(attempts) == sqlalchemy_segment_store._MAX_MINT_ATTEMPTS
 
 
@@ -2352,7 +2345,7 @@ async def test_persistent_integrity_error_surfaces_with_cause(
     """
     monkeypatch.setattr(sqlalchemy_segment_store, "uuid4", lambda: None)
 
-    for create in (store.create_partition, store.open_or_create_partition):
+    for create in (store.create_partition,):
         with pytest.raises(SegmentStoreAttemptsExhaustedError) as exc_info:
             await create("not_null", _plaintext_partition_config())
         cause: BaseException | None = exc_info.value.__cause__
@@ -2410,8 +2403,8 @@ async def test_empty_incarnations_do_not_consume_row_budget(
     for index in range(3):
         await store.create_partition(f"noop_{index}", _plaintext_partition_config())
         await store.delete_partition(f"noop_{index}")
-    rowful = await store.open_or_create_partition(
-        "rowful", _plaintext_partition_config()
+    rowful = await _get_or_create_partition(
+        store, "rowful", _plaintext_partition_config()
     )
     await rowful.add_segments(_links(_seg(), _seg()))
     await store.delete_partition("rowful")
@@ -2435,8 +2428,8 @@ async def test_purge_reclaims_oldest_garbage_first(
     incarnations = {}
     partition = None
     for key in ("fifo_a", "fifo_b", "fifo_c"):
-        partition = await store.open_or_create_partition(
-            key, _plaintext_partition_config()
+        partition = await _get_or_create_partition(
+            store, key, _plaintext_partition_config()
         )
         incarnations[key] = partition._incarnation
         await partition.add_segments(_links(_seg()))
@@ -2501,27 +2494,7 @@ class _ForeignPayloadCodecConfig(PlaintextPayloadCodecConfig):
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_with_different_config_raises_mismatch(
-    store: SQLAlchemySegmentStore,
-) -> None:
-    """Reopening a key under a different config is refused, not adapted."""
-    await store.create_partition("cfg_guard", _plaintext_partition_config())
-
-    requested = SegmentStorePartitionConfig(
-        payload_codec_config=_ForeignPayloadCodecConfig()
-    )
-    with pytest.raises(SegmentStorePartitionConfigMismatchError) as exc_info:
-        await store.open_or_create_partition("cfg_guard", requested)
-    assert exc_info.value.partition_key == "cfg_guard"
-    assert exc_info.value.existing_config == _plaintext_partition_config()
-    assert exc_info.value.requested_config == requested
-
-    # The partition itself is untouched and still opens.
-    assert await store.open_partition("cfg_guard") is not None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("create", ["create_partition", "open_or_create_partition"])
+@pytest.mark.parametrize("create", ["create_partition"])
 async def test_unloadable_codec_config_commits_no_registry_row(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
@@ -2592,8 +2565,8 @@ async def test_windowed_read_raises_when_partition_dies_between_statements(
     would return nothing; the read must raise rather than hand back
     seeds with silently empty context.
     """
-    partition = await store.open_or_create_partition(
-        "mid_read", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        store, "mid_read", _plaintext_partition_config()
     )
     segs = [_seg(ts_offset_seconds=i) for i in range(3)]
     await partition.add_segments(_links(*segs))
@@ -2632,8 +2605,8 @@ async def test_delete_partition_touches_only_registry_and_queue(
     recorded_statements: list[str],
 ) -> None:
     """Deletion is O(1): no data-table statements, regardless of size."""
-    partition = await pg_store.open_or_create_partition(
-        "big_delete", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        pg_store, "big_delete", _plaintext_partition_config()
     )
     await partition.add_segments(
         _links(*(_seg(ts_offset_seconds=i) for i in range(20)))
@@ -2690,8 +2663,8 @@ async def test_write_pin_blocks_partition_delete(
     without the pin it proceeds immediately and the write lands in a
     partition that no longer exists.
     """
-    partition = await pg_store.open_or_create_partition(
-        "lk_write_pin", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        pg_store, "lk_write_pin", _plaintext_partition_config()
     )
 
     reached_pause = asyncio.Event()
@@ -2728,7 +2701,7 @@ async def test_write_pin_blocks_partition_delete(
 
     await writer
     await deleter
-    assert await pg_store.open_partition("lk_write_pin") is None
+    assert await pg_store.get_partition("lk_write_pin") is None
 
 
 @pytest.mark.asyncio
@@ -2746,8 +2719,8 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
     deliberately; this test catches the AB/BA cycle wherever an engine or
     plan change ever produces divergent orders.
     """
-    partition = await store.open_or_create_partition(
-        "lk_row_order", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        store, "lk_row_order", _plaintext_partition_config()
     )
 
     async def round_trip(rng: random.Random) -> None:
@@ -2772,17 +2745,24 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
 async def test_lifecycle_churn_completes_without_database_errors(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Concurrent create/open/delete churn never aborts on lock cycles.
+    """Concurrent create/get/delete churn never aborts on lock cycles.
 
     Lifecycle operations of different partitions, and repeated
     create/delete/re-create of the same partitions, must serialize
     through the store's partition-level locking: any database deadlock
     abort or constraint violation escaping the store API is a locking
-    defect. Domain errors (already exists, config mismatch) are the only
-    legitimate racing outcomes.
+    defect. The only legitimate racing outcomes are domain ones: a create
+    finds the partition exists, and a lookup after a create finds a
+    concurrent delete got there first.
     """
     keys = [f"lk_churn_{index}" for index in range(4)]
     config = _plaintext_partition_config()
+
+    async def create_if_absent(key: str) -> None:
+        if await store.get_partition(key) is None:
+            with contextlib.suppress(SegmentStorePartitionAlreadyExistsError):
+                await store.create_partition(key, config)
+            await store.get_partition(key)
 
     async def worker(seed: int) -> None:
         rng = random.Random(seed)
@@ -2793,15 +2773,12 @@ async def test_lifecycle_churn_completes_without_database_errors(
                 if operation == 0:
                     await store.create_partition(key, config)
                 elif operation == 1:
-                    await store.open_or_create_partition(key, config)
+                    await create_if_absent(key)
                 elif operation == 2:
-                    await store.open_partition(key)
+                    await store.get_partition(key)
                 else:
                     await store.delete_partition(key)
-            except (
-                SegmentStorePartitionAlreadyExistsError,
-                SegmentStorePartitionConfigMismatchError,
-            ):
+            except SegmentStorePartitionAlreadyExistsError:
                 pass
 
     await asyncio.wait_for(
@@ -2827,7 +2804,7 @@ async def test_concurrent_partition_deletes_are_clean(
             asyncio.gather(*(store.delete_partition("lk_del_race") for _ in range(4))),
             30,
         )
-        assert await store.open_partition("lk_del_race") is None
+        assert await store.get_partition("lk_del_race") is None
         async with store._create_session() as session:
             queue_depth = (
                 await session.execute(select(func.count()).select_from(PurgeQueueRow))
@@ -2871,7 +2848,7 @@ async def test_random_operation_sequences_agree_with_a_model(
             model.pop(key, None)
         else:
             if key not in handles:
-                handles[key] = await store.open_or_create_partition(key, config)
+                handles[key] = await _get_or_create_partition(store, key, config)
                 model[key] = {}
             if operation == "add":
                 segments = {
@@ -2943,7 +2920,7 @@ async def test_mixed_operation_churn_completes_and_strands_nothing(
     monkeypatch.setattr(store, "_purge_max_segments", 3)
     config = _plaintext_partition_config()
     live = [
-        await store.open_or_create_partition(f"churn_live_{index}", config)
+        await _get_or_create_partition(store, f"churn_live_{index}", config)
         for index in range(2)
     ]
     # Each writer's segments, by UUID, with their link counts.
@@ -3030,7 +3007,12 @@ async def _churn_shared_keys(
     for _ in range(8):
         key = f"churn_shared_{rng.randrange(2)}"
         try:
-            partition = await store.open_or_create_partition(key, config)
+            with contextlib.suppress(SegmentStorePartitionAlreadyExistsError):
+                await store.create_partition(key, config)
+            partition = await store.get_partition(key)
+            if partition is None:
+                # Another churner deleted it in between.
+                continue
             await partition.add_segments(
                 _links(
                     *(
@@ -3040,10 +3022,7 @@ async def _churn_shared_keys(
                 )
             )
             await store.delete_partition(key)
-        except (
-            SegmentStorePartitionAlreadyExistsError,
-            SegmentStorePartitionHandleStaleError,
-        ):
+        except SegmentStorePartitionHandleStaleError:
             pass
 
 
@@ -3061,8 +3040,8 @@ async def test_sqlite_delete_partition_touches_only_registry_and_queue(
     sqlite_recorded_statements: list[str],
 ) -> None:
     """Deletion is O(1) on SQLite too: no data-table statements."""
-    partition = await sqlite_store.open_or_create_partition(
-        "sqlite_big_delete", _plaintext_partition_config()
+    partition = await _get_or_create_partition(
+        sqlite_store, "sqlite_big_delete", _plaintext_partition_config()
     )
     await partition.add_segments(
         _links(*(_seg(ts_offset_seconds=i) for i in range(20)))
@@ -3092,8 +3071,8 @@ async def test_sqlite_mint_detects_collision_with_concurrent_deletion(
     deletion commits, the post-insert queue re-check sees the entry and
     re-mints.
     """
-    victim = await sqlite_store.open_or_create_partition(
-        "sq_mint_victim", _plaintext_partition_config()
+    victim = await _get_or_create_partition(
+        sqlite_store, "sq_mint_victim", _plaintext_partition_config()
     )
     victim_incarnation = victim._incarnation
     await victim.add_segments(_links(_seg()))
@@ -3149,14 +3128,14 @@ async def test_sqlite_mint_detects_collision_with_concurrent_deletion(
     # Deletion committed on exiting begin().
     await asyncio.wait_for(creator, 30)
 
-    fresh = await sqlite_store.open_partition("sq_mint_fresh")
+    fresh = await sqlite_store.get_partition("sq_mint_fresh")
     assert fresh is not None
     assert offered
     assert fresh._incarnation != victim_incarnation
 
     while await sqlite_store.purge_deleted_partitions():
         pass
-    assert (await sqlite_store.open_partition("sq_mint_fresh")) is not None
+    assert (await sqlite_store.get_partition("sq_mint_fresh")) is not None
 
 
 def test_empty_partition_key_is_named_as_empty() -> None:

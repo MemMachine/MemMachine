@@ -1,15 +1,51 @@
 """Unit tests for service_locator helpers."""
 
-import pytest
+import re
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from memmachine_server.common.configuration.episodic_config import (
+    EventLongTermMemoryConf,
+)
+from memmachine_server.common.episode_store import EpisodeStorage
+from memmachine_server.common.resource_manager import CommonResourceManager
+from memmachine_server.common.resource_manager.database_manager import (
+    enable_sqlite_foreign_keys,
+)
+from memmachine_server.common.vector_store.sqlite_vector_store import (
+    SQLiteVectorStore,
+    SQLiteVectorStoreParams,
+)
+from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
+    USearchVectorSearchEngine,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStorePartitionAlreadyExistsError,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
+    SQLAlchemySegmentStore,
+    SQLAlchemySegmentStoreParams,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
+from memmachine_server.episodic_memory.long_term_memory.long_term_memory import (
+    EventBackendParams,
+)
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
-    _resolve_user_properties_schema,
+    SessionPartitionMissingError,
+    create_event_backend_partitions,
+    delete_event_backend_partitions,
+    event_backend_indexed_properties,
+    event_backend_vector_store,
+    long_term_memory_params_from_config,
     partition_key_for_session,
 )
+from server_tests.memmachine_server.common.reranker.fake_embedder import FakeEmbedder
 
 
 def _is_valid_partition_key(value: str) -> bool:
@@ -76,23 +112,116 @@ def test_partition_key_empty_string_passthrough():
     assert len(key) == PARTITION_KEY_MAX_BYTES
 
 
-def test_resolve_user_properties_schema_accepts_normal_keys():
-    resolved = _resolve_user_properties_schema({"customer_tier": "str", "score": "int"})
-    assert resolved == {"customer_tier": str, "score": int}
+@pytest.mark.asyncio
+async def test_any_embedder_id_names_a_vector_store(resource_manager):
+    """The store's name derives from the embedder id, so the id itself is unconstrained."""
+    config = EventLongTermMemoryConf(
+        session_id="s",
+        vector_store="vs",
+        segment_store="ss",
+        embedder="OpenAI text-embedding-3-large, 3072 dimensions",
+    )
+
+    await event_backend_vector_store(config, resource_manager)
+    await event_backend_vector_store(_EVENT_CONF, resource_manager)
+
+    names = [
+        call.kwargs["vector_store_name"]
+        for call in resource_manager.get_vector_store.await_args_list
+    ]
+    assert re.fullmatch(r"[0-9a-f]{32}", names[0])
+    # The name locates the store's data, so it is fixed.
+    assert names[1] == "e3ec3c91a6f0510883bcabe661ca9e61"
 
 
-def test_resolve_user_properties_schema_rejects_underscore_prefixed_keys():
-    """`_`-prefixed keys collide with system-defined event fields
-    (`_episode_uid`, `_session_key`, ...). The merged collection schema is
-    a dict-spread with user_schema last, so allowing them would silently
-    overwrite the system slot and may change its declared type."""
-    with pytest.raises(ValueError, match="reserved"):
-        _resolve_user_properties_schema({"_episode_uid": "str"})
-
-    with pytest.raises(ValueError, match="reserved"):
-        _resolve_user_properties_schema({"_my_field": "int"})
+# ===================================================================
+# A session's partitions are created with the session, never by a request
+# ===================================================================
 
 
-def test_resolve_user_properties_schema_rejects_unknown_type_name():
-    with pytest.raises(ValueError, match="unknown type name"):
-        _resolve_user_properties_schema({"customer_tier": "date"})
+@pytest_asyncio.fixture
+async def stores(tmp_path):
+    """A segment store and a vector store on one SQLite file, both started."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stores.db'}")
+    enable_sqlite_foreign_keys(engine)
+    segment_store = SQLAlchemySegmentStore(SQLAlchemySegmentStoreParams(engine=engine))
+    await segment_store.startup()
+    vector_store = SQLiteVectorStore(
+        SQLiteVectorStoreParams(
+            vector_store_name="e3ec3c91a6f0510883bcabe661ca9e61",
+            vector_dimensions=2,
+            indexed_properties=event_backend_indexed_properties(),
+            sqlalchemy_engine=engine,
+            vector_search_engine_factory=lambda ndim, metric: USearchVectorSearchEngine(
+                num_dimensions=ndim, similarity_metric=metric
+            ),
+        )
+    )
+    await vector_store.provision()
+    await vector_store.startup()
+    yield segment_store, vector_store
+    await vector_store.shutdown()
+    await engine.dispose()
+
+
+@pytest.fixture
+def resource_manager(stores):
+    segment_store, vector_store = stores
+    manager = MagicMock(spec=CommonResourceManager)
+    manager.get_segment_store = AsyncMock(return_value=segment_store)
+    manager.get_vector_store = AsyncMock(return_value=vector_store)
+    manager.get_embedder = AsyncMock(return_value=FakeEmbedder())
+    manager.get_episode_storage = AsyncMock(return_value=MagicMock(spec=EpisodeStorage))
+    manager.get_metrics_factory = AsyncMock(return_value=None)
+    return manager
+
+
+_EVENT_CONF = EventLongTermMemoryConf(
+    session_id="sess_1", vector_store="vs", segment_store="ss", embedder="fake"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_request_never_creates_a_partition(stores, resource_manager):
+    segment_store, vector_store = stores
+
+    with pytest.raises(SessionPartitionMissingError, match="sess_1"):
+        await long_term_memory_params_from_config(_EVENT_CONF, resource_manager)
+
+    key = partition_key_for_session("sess_1")
+    assert await vector_store.get_partition(key) is None
+    assert await segment_store.get_partition(key) is None
+
+
+@pytest.mark.asyncio
+async def test_partitions_created_with_the_session_are_what_a_request_binds(
+    resource_manager,
+):
+    key = partition_key_for_session("sess_1")
+
+    await create_event_backend_partitions(_EVENT_CONF, resource_manager)
+    params = await long_term_memory_params_from_config(_EVENT_CONF, resource_manager)
+
+    assert isinstance(params, EventBackendParams)
+    assert params.partition_key == key
+    assert params.vector_store_partition.partition_key == key
+    assert params.segment_store_partition is not None
+    # Strict: the session is created once.
+    with pytest.raises(SegmentStorePartitionAlreadyExistsError):
+        await create_event_backend_partitions(_EVENT_CONF, resource_manager)
+
+
+@pytest.mark.asyncio
+async def test_deleting_partitions_needs_none_to_exist(stores, resource_manager):
+    segment_store, vector_store = stores
+    key = partition_key_for_session("sess_1")
+
+    await delete_event_backend_partitions(_EVENT_CONF, resource_manager)
+
+    await create_event_backend_partitions(_EVENT_CONF, resource_manager)
+    # Half-created storage, as a crash between the two creates would leave.
+    await vector_store.delete_partition(key)
+    await delete_event_backend_partitions(_EVENT_CONF, resource_manager)
+
+    assert await vector_store.get_partition(key) is None
+    assert await segment_store.get_partition(key) is None

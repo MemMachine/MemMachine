@@ -7,37 +7,33 @@ import pytest
 
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.filter.filter_parser import parse_filter
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorStoreSemanticStorage,
     feature_vector_uuid,
 )
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
-    InMemoryVectorStoreCollection,
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    InMemoryVectorStorePartition,
 )
 
 
 @pytest.fixture
-def vector_collection() -> InMemoryVectorStoreCollection:
-    return InMemoryVectorStoreCollection(
-        VectorStoreCollectionConfig(
-            vector_dimensions=2,
-            similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
-                "set_id": str,
-                "category": str,
-                "tag": str,
-                "feature_name": str,
-            },
-        )
+def vector_collection() -> InMemoryVectorStorePartition:
+    return InMemoryVectorStorePartition(
+        similarity_metric=SimilarityMetric.COSINE,
+        indexed_properties={
+            "set_id": str,
+            "category": str,
+            "tag": str,
+            "feature_name": str,
+        },
     )
 
 
 @pytest.mark.asyncio
 async def test_older_than_compares_instants_not_wall_clocks(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     """A non-UTC-offset bound names an instant on SQLite, not a wall clock.
 
@@ -63,7 +59,7 @@ async def test_older_than_compares_instants_not_wall_clocks(
 @pytest.mark.asyncio
 async def test_add_update_delete_feature_keeps_vector_collection_in_sync(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
     await storage.startup()
@@ -103,7 +99,7 @@ async def test_add_update_delete_feature_keeps_vector_collection_in_sync(
 @pytest.mark.asyncio
 async def test_vector_search_returns_relational_features_in_similarity_order(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
     await storage.startup()

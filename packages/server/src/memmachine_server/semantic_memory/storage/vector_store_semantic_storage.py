@@ -43,7 +43,7 @@ from memmachine_server.common.filter.sql_filter_util import (
     compile_sql_filter,
 )
 from memmachine_server.common.utils import ensure_tz_aware
-from memmachine_server.common.vector_store import Record, VectorStoreCollection
+from memmachine_server.common.vector_store import Record, VectorStorePartition
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -179,11 +179,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
     def __init__(
         self,
         sqlalchemy_engine: AsyncEngine,
-        vector_collection: VectorStoreCollection,
+        vector_partition: VectorStorePartition,
     ) -> None:
         """Initialize storage with an async SQLAlchemy engine and vector collection."""
         self._engine = sqlalchemy_engine
-        self._vector_collection = vector_collection
+        self._vector_partition = vector_partition
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             expire_on_commit=False,
@@ -610,7 +610,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             tag=tag,
             metadata=metadata,
         )
-        await self._vector_collection.upsert(
+        await self._vector_partition.upsert(
             records=[
                 Record(
                     uuid=feature_vector_uuid(feature_id),
@@ -621,7 +621,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         )
 
     async def _get_existing_vector_record(self, feature_id: FeatureIdT) -> Record:
-        records = await self._vector_collection.get(
+        records = await self._vector_partition.get(
             record_uuids=[feature_vector_uuid(feature_id)],
             return_vector=True,
             return_properties=False,
@@ -633,7 +633,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
     async def _delete_vector_records(self, feature_ids: Sequence[FeatureIdT]) -> None:
         if not feature_ids:
             return
-        await self._vector_collection.delete(
+        await self._vector_partition.delete(
             record_uuids=[feature_vector_uuid(feature_id) for feature_id in feature_ids]
         )
 
@@ -651,7 +651,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             _DEFAULT_VECTOR_QUERY_LIMIT,
             offset + page_size if page_size is not None else 0,
         )
-        [query_result] = await self._vector_collection.query(
+        [query_result] = await self._vector_partition.query(
             query_vectors=[vector_search_opts.query_embedding.tolist()],
             limit=limit,
             score_threshold=vector_search_opts.min_distance,

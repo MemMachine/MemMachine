@@ -173,7 +173,7 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(self, partition_key: str) -> SegmentStorePartition | None:
+    async def get_partition(self, partition_key: str) -> SegmentStorePartition | None:
         """
         Open a partition-scoped handle for an existing partition.
 
@@ -184,48 +184,6 @@ class SegmentStore(ABC):
         Returns:
             SegmentStorePartition | None:
                 A partition-scoped handle, or None if the partition does not exist.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def open_or_create_partition(
-        self,
-        partition_key: str,
-        config: SegmentStorePartitionConfig,
-    ) -> SegmentStorePartition:
-        """
-        Open the partition if it exists, or create it if it does not.
-
-        Args:
-            partition_key (str):
-                The key of the partition.
-            config (SegmentStorePartitionConfig):
-                Configuration for the partition.
-
-        Returns:
-            SegmentStorePartition:
-                A partition-scoped handle.
-
-        Raises:
-            SegmentStorePartitionConfigMismatchError:
-                If the partition already exists with a different configuration.
-            SegmentStoreAttemptsExhaustedError:
-                If creation exhausted its internal attempts on a
-                failure that should not recur; an immediate retry is
-                unlikely to succeed -- diagnose the chained cause.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def close_partition(
-        self, segment_store_partition: SegmentStorePartition
-    ) -> None:
-        """
-        Close a partition-scoped handle.
-
-        Args:
-            segment_store_partition (SegmentStorePartition):
-                The partition-scoped handle to close.
         """
         raise NotImplementedError
 
