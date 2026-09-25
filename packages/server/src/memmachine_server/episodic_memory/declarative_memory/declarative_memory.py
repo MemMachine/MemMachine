@@ -12,10 +12,7 @@ from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.embedder.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-    map_filter_fields,
-)
+from memmachine_server.common.filter import FilterExpr, map_filter_fields
 from memmachine_server.common.reranker.reranker import Reranker
 from memmachine_server.common.utils import extract_sentences
 from memmachine_server.common.vector_graph_store import Edge, Node, VectorGraphStore
@@ -167,7 +164,7 @@ class DeclarativeMemory:
                     DeclarativeMemory._embedding_name(
                         self._embedder.model_id,
                         self._embedder.dimensions,
-                    ): (embedding, self._embedder.similarity_metric),
+                    ): embedding,
                 },
             )
             for derivative, embedding in zip(
@@ -361,7 +358,6 @@ class DeclarativeMemory:
                 )
             ),
             query_embedding=query_embedding,
-            similarity_metric=self._embedder.similarity_metric,
             limit=min(5 * max_num_episodes, 200),
             property_filter=mangled_property_filter,
         )

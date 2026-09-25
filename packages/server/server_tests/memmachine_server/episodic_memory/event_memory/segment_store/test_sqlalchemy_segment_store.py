@@ -26,7 +26,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from memmachine_server.common.filter.filter_parser import Comparison, parse_filter
+from memmachine_server.common.filter import (
+    Equals,
+    Not,
+)
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
 )
@@ -582,7 +588,7 @@ async def test_contexts_property_filter(
     s3 = _seg(event_uuid=ep, offset=3, ts_offset_seconds=3, properties={"tag": "a"})
     await partition.add_segments(_links(s0, s1, s2, s3))
 
-    filt = Comparison(field="m.tag", op="=", value="a")
+    filt = Equals(field="m.tag", value="a")
     result = await partition.get_segment_contexts(
         [s2.uuid],
         max_backward_segments=5,
@@ -593,6 +599,30 @@ async def test_contexts_property_filter(
     uuids = [s.uuid for s in ctx]
     # s1 excluded (tag=b); s0 backward, s2 seed, s3 forward
     assert uuids == [s0.uuid, s2.uuid, s3.uuid]
+
+
+@pytest.mark.asyncio
+async def test_contexts_negated_property_filter_keeps_a_segment_without_the_key(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """A negated filter is the complement, so a segment holding no tag is kept."""
+    ep = uuid4()
+    s0 = _seg(event_uuid=ep, offset=0, ts_offset_seconds=0, properties={"tag": "a"})
+    s1 = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1, properties={"tag": "b"})
+    s2 = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2)
+    s3 = _seg(event_uuid=ep, offset=3, ts_offset_seconds=3, properties={"tag": "a"})
+    await partition.add_segments(_links(s0, s1, s2, s3))
+
+    result = await partition.get_segment_contexts(
+        [s1.uuid],
+        max_backward_segments=5,
+        max_forward_segments=5,
+        property_filter=Not(Equals(field="m.tag", value="a")),
+    )
+    ctx = result[s1.uuid]
+    uuids = [s.uuid for s in ctx]
+    # s0 and s3 excluded (tag=a); s1 seed, s2 forward and holds no tag at all
+    assert uuids == [s1.uuid, s2.uuid]
 
 
 @pytest.mark.asyncio
@@ -627,7 +657,7 @@ async def test_contexts_filter_by_context_producer(
     )
     await partition.add_segments(_links(s0, s1, s2))
 
-    filt = Comparison(field="context.producer", op="=", value="Alice")
+    filt = Equals(field="context.producer", value="Alice")
     contexts = await partition.get_segment_contexts(
         [s0.uuid],
         max_backward_segments=5,
@@ -663,7 +693,7 @@ async def test_contexts_filter_by_context_type(
     )
     await partition.add_segments(_links(s0, s1, s2))
 
-    filt = Comparison(field="context.context_type", op="=", value="producer")
+    filt = Equals(field="context.context_type", value="producer")
     contexts = await partition.get_segment_contexts(
         [s0.uuid],
         max_backward_segments=5,
@@ -808,6 +838,119 @@ async def test_get_derivative_uuids_by_segment_uuids_unknown(
 ) -> None:
     result = await partition.get_derivative_uuids_by_segment_uuids([uuid4()])
     assert result == {}
+
+
+# ===================================================================
+# get_segment_uuids_by_derivative_uuids
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    seg = _seg()
+    d1, d2 = uuid4(), uuid4()
+    await partition.add_segments({seg: [d1, d2]})
+
+    result = await partition.get_segment_uuids_by_derivative_uuids([d1, d2])
+    assert result == {d1: seg.uuid, d2: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_inverts_the_forward_lookup(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Every derivative belongs to exactly one segment, so the two agree."""
+    segments = [_seg(offset=i, ts_offset_seconds=i) for i in range(3)]
+    links = {seg: [uuid4(), uuid4()] for seg in segments}
+    await partition.add_segments(links)
+
+    forward = await partition.get_derivative_uuids_by_segment_uuids(
+        [seg.uuid for seg in segments]
+    )
+    all_derivative_uuids = [
+        derivative_uuid
+        for derivative_uuids in forward.values()
+        for derivative_uuid in derivative_uuids
+    ]
+    backward = await partition.get_segment_uuids_by_derivative_uuids(
+        all_derivative_uuids
+    )
+
+    assert backward == {
+        derivative_uuid: segment_uuid
+        for segment_uuid, derivative_uuids in forward.items()
+        for derivative_uuid in derivative_uuids
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_empty(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    result = await partition.get_segment_uuids_by_derivative_uuids([])
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_omits_unknown(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """UUIDs the partition does not hold are omitted, not raised on."""
+    seg = _seg()
+    known = uuid4()
+    await partition.add_segments({seg: [known]})
+
+    unknown = uuid4()
+    result = await partition.get_segment_uuids_by_derivative_uuids([known, unknown])
+    assert result == {known: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_session_isolation(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """A derivative another partition owns is invisible here."""
+    other_partition = await store.open_or_create_partition(
+        "other_derivatives",
+        _plaintext_partition_config(),
+    )
+    other_seg = _seg()
+    other_derivative = uuid4()
+    await other_partition.add_segments({other_seg: [other_derivative]})
+
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
+    seg = _seg()
+    derivative = uuid4()
+    await partition.add_segments({seg: [derivative]})
+
+    result = await partition.get_segment_uuids_by_derivative_uuids(
+        [derivative, other_derivative]
+    )
+    assert result == {derivative: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_after_delete_segments(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Deleting a segment takes its derivatives' mapping with it."""
+    kept, dropped = _seg(offset=0), _seg(offset=1)
+    kept_derivative, dropped_derivative = uuid4(), uuid4()
+    await partition.add_segments(
+        {kept: [kept_derivative], dropped: [dropped_derivative]}
+    )
+
+    await partition.delete_segments([dropped.uuid])
+
+    result = await partition.get_segment_uuids_by_derivative_uuids(
+        [kept_derivative, dropped_derivative]
+    )
+    assert result == {kept_derivative: kept.uuid}
 
 
 # ===================================================================
@@ -1058,7 +1201,7 @@ async def test_open_or_create_partition_defaults_to_plaintext_config(
 @pytest.mark.asyncio
 async def test_create_partition(store: SQLAlchemySegmentStore) -> None:
     await store.create_partition("new_partition", _plaintext_partition_config())
-    partition = await store.open_partition("new_partition")
+    partition = await store.get_partition("new_partition")
     assert partition is not None
 
 
@@ -1070,15 +1213,15 @@ async def test_create_partition_already_exists(store: SQLAlchemySegmentStore) ->
 
 
 @pytest.mark.asyncio
-async def test_open_partition_nonexistent(store: SQLAlchemySegmentStore) -> None:
-    result = await store.open_partition("nonexistent")
+async def test_get_partition_nonexistent(store: SQLAlchemySegmentStore) -> None:
+    result = await store.get_partition("nonexistent")
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_open_partition_existing(store: SQLAlchemySegmentStore) -> None:
+async def test_get_partition_existing(store: SQLAlchemySegmentStore) -> None:
     await store.create_partition("existing", _plaintext_partition_config())
-    partition = await store.open_partition("existing")
+    partition = await store.get_partition("existing")
     assert partition is not None
 
 
@@ -1090,7 +1233,7 @@ async def test_open_or_create_partition_creates(store: SQLAlchemySegmentStore) -
     )
     assert partition is not None
     # Verify it was actually created.
-    opened = await store.open_partition("fresh")
+    opened = await store.get_partition("fresh")
     assert opened is not None
 
 
@@ -1118,7 +1261,7 @@ async def test_delete_partition_removes_data(store: SQLAlchemySegmentStore) -> N
     await store.delete_partition("to_delete")
 
     # Partition no longer exists.
-    assert await store.open_partition("to_delete") is None
+    assert await store.get_partition("to_delete") is None
 
 
 @pytest.mark.integration
@@ -1330,6 +1473,8 @@ async def test_stale_handle_raises_after_delete(
     with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.get_derivative_uuids_by_segment_uuids([seg.uuid])
     with pytest.raises(SegmentStorePartitionHandleStaleError):
+        await partition.get_segment_uuids_by_derivative_uuids([uuid4()])
+    with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.delete_segments([seg.uuid])
     # The stale handle deleted nothing; the rows wait for the purge.
     assert await _row_counts(store, partition._incarnation) == (1, 1)
@@ -1350,13 +1495,15 @@ async def test_reads_check_liveness_inside_the_data_statement(
         "folded", _plaintext_partition_config()
     )
     seg = _seg()
-    await partition.add_segments(_links(seg))
+    derivative_uuids = [uuid4()]
+    await partition.add_segments({seg: derivative_uuids})
     recorded_statements.clear()
 
     await partition.get_segment_contexts([seg.uuid])
     await partition.get_segment_uuids_by_event_uuids([seg.event_uuid])
     await partition.get_derivative_uuids_by_segment_uuids([seg.uuid])
-    assert len(recorded_statements) == 3
+    await partition.get_segment_uuids_by_derivative_uuids(derivative_uuids)
+    assert len(recorded_statements) == 4
     assert all(
         "EXISTS (SELECT" in s and "segment_store_pt" in s for s in recorded_statements
     )
@@ -1974,7 +2121,7 @@ async def test_incarnation_with_garbage_left_is_never_reused(
 
     if create_via == "create_partition":
         await store.create_partition("fresh_p", _plaintext_partition_config())
-        fresh = await store.open_partition("fresh_p")
+        fresh = await store.get_partition("fresh_p")
     else:
         fresh = await store.open_or_create_partition(
             "fresh_p", _plaintext_partition_config()
@@ -2033,7 +2180,7 @@ async def test_incarnation_colliding_with_live_partition_is_never_reused(
 
     if create_via == "create_partition":
         await store.create_partition("fresh_p", _plaintext_partition_config())
-        fresh = await store.open_partition("fresh_p")
+        fresh = await store.get_partition("fresh_p")
     else:
         fresh = await store.open_or_create_partition(
             "fresh_p", _plaintext_partition_config()
@@ -2043,7 +2190,7 @@ async def test_incarnation_colliding_with_live_partition_is_never_reused(
     assert fresh._incarnation != live_incarnation
 
     # The live partition is unharmed.
-    reopened = await store.open_partition("live_src")
+    reopened = await store.get_partition("live_src")
     assert reopened is not None
     assert reopened._incarnation == live_incarnation
 
@@ -2142,7 +2289,7 @@ async def test_mint_detects_collision_with_concurrent_deletion(
     # Deletion committed on exiting begin().
     await asyncio.wait_for(creator, 30)
 
-    fresh = await pg_store.open_partition("mint_fresh")
+    fresh = await pg_store.get_partition("mint_fresh")
     assert fresh is not None
     assert offered, "the colliding uuid was never offered to the mint"
     assert fresh._incarnation != victim_incarnation, (
@@ -2162,7 +2309,7 @@ async def test_mint_detects_collision_with_concurrent_deletion(
             )
         ).scalar_one()
     assert dead_rows == 0
-    assert await pg_store.open_partition("mint_fresh") is not None
+    assert await pg_store.get_partition("mint_fresh") is not None
 
 
 @pytest.mark.integration
@@ -2517,7 +2664,7 @@ async def test_open_or_create_with_different_config_raises_mismatch(
     assert exc_info.value.requested_config == requested
 
     # The partition itself is untouched and still opens.
-    assert await store.open_partition("cfg_guard") is not None
+    assert await store.get_partition("cfg_guard") is not None
 
 
 @pytest.mark.asyncio
@@ -2728,7 +2875,7 @@ async def test_write_pin_blocks_partition_delete(
 
     await writer
     await deleter
-    assert await pg_store.open_partition("lk_write_pin") is None
+    assert await pg_store.get_partition("lk_write_pin") is None
 
 
 @pytest.mark.asyncio
@@ -2795,7 +2942,7 @@ async def test_lifecycle_churn_completes_without_database_errors(
                 elif operation == 1:
                     await store.open_or_create_partition(key, config)
                 elif operation == 2:
-                    await store.open_partition(key)
+                    await store.get_partition(key)
                 else:
                     await store.delete_partition(key)
             except (
@@ -2827,7 +2974,7 @@ async def test_concurrent_partition_deletes_are_clean(
             asyncio.gather(*(store.delete_partition("lk_del_race") for _ in range(4))),
             30,
         )
-        assert await store.open_partition("lk_del_race") is None
+        assert await store.get_partition("lk_del_race") is None
         async with store._create_session() as session:
             queue_depth = (
                 await session.execute(select(func.count()).select_from(PurgeQueueRow))
@@ -3149,14 +3296,14 @@ async def test_sqlite_mint_detects_collision_with_concurrent_deletion(
     # Deletion committed on exiting begin().
     await asyncio.wait_for(creator, 30)
 
-    fresh = await sqlite_store.open_partition("sq_mint_fresh")
+    fresh = await sqlite_store.get_partition("sq_mint_fresh")
     assert fresh is not None
     assert offered
     assert fresh._incarnation != victim_incarnation
 
     while await sqlite_store.purge_deleted_partitions():
         pass
-    assert (await sqlite_store.open_partition("sq_mint_fresh")) is not None
+    assert (await sqlite_store.get_partition("sq_mint_fresh")) is not None
 
 
 def test_empty_partition_key_is_named_as_empty() -> None:

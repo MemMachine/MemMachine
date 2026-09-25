@@ -51,8 +51,8 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import StaticPool
 
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
     demangle_user_metadata_key,
     normalize_filter_field,
 )
@@ -768,6 +768,34 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             result[segment_uuid].append(derivative_uuid)
         return dict(result)
 
+    @override
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        derivative_uuids = set(derivative_uuids)
+        if not derivative_uuids:
+            return {}
+
+        async with (
+            self._tracker("get_segment_uuids_by_derivative_uuids"),
+            self._create_session() as session,
+        ):
+            # Served by the primary key, which leads on the same two columns
+            # this filters: the mapping is the derivative row itself.
+            query = select(
+                DerivativeLinkRow.uuid, DerivativeLinkRow.segment_uuid
+            ).where(
+                DerivativeLinkRow.incarnation == self._incarnation,
+                DerivativeLinkRow.uuid.in_(derivative_uuids),
+                self._registry_row_query().exists(),
+            )
+            rows = (await session.execute(query)).all()
+            if not rows:
+                await self._ensure_partition_live(session)
+
+        return {row.uuid: row.segment_uuid for row in rows}
+
     # Deletion
 
     @override
@@ -1074,11 +1102,11 @@ class SQLAlchemySegmentStore(SegmentStore):
             raise _RegistryInsertRejectedError(str(incarnation)) from err
 
     @override
-    async def open_partition(
+    async def get_partition(
         self, partition_key: str
     ) -> SQLAlchemySegmentStorePartition | None:
         validate_partition_key(partition_key)
-        async with self._tracker("open_partition"):
+        async with self._tracker("get_partition"):
             async with self._create_session() as session:
                 partition_row = await SQLAlchemySegmentStore._get_partition_row(
                     session, partition_key

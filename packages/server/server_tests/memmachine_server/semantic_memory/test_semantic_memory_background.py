@@ -6,7 +6,9 @@ import numpy as np
 import pytest
 
 from memmachine_server.common.episode_store import EpisodeStorage
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )

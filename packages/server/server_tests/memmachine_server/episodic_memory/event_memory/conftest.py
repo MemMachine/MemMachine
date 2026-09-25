@@ -7,16 +7,15 @@ from uuid import UUID
 
 import pytest
 
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     FilterExpr,
-    demangle_user_metadata_key,
     map_filter_fields,
+)
+from memmachine_server.common.filter.filter_parser import (
+    demangle_user_metadata_key,
     normalize_filter_field,
 )
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.vector_store.data_types import (
-    VectorStoreCollectionConfig,
-)
 from memmachine_server.episodic_memory.event_memory.data_types import Segment
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
@@ -36,8 +35,8 @@ from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter imp
 from server_tests.memmachine_server.common.reranker.fake_embedder import (
     FakeEmbedder,
 )
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
-    InMemoryVectorStoreCollection,
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    InMemoryVectorStorePartition,
     evaluate_filter,
 )
 
@@ -153,6 +152,19 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return result
 
     @override
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        wanted = set(derivative_uuids)
+        return {
+            derivative_uuid: segment_uuid
+            for segment_uuid, owned in self.segment_to_derivatives.items()
+            for derivative_uuid in owned
+            if derivative_uuid in wanted
+        }
+
+    @override
     async def delete_segments(
         self,
         segment_uuids: Iterable[UUID],
@@ -195,28 +207,25 @@ def fake_segment_store_partition():
 
 
 @pytest.fixture
-def fake_vector_store_collection(fake_embedder):
-    config = VectorStoreCollectionConfig(
-        vector_dimensions=fake_embedder.dimensions,
-        similarity_metric=fake_embedder.similarity_metric,
-        indexed_properties_schema={
+def fake_vector_store_partition(fake_embedder):
+    return InMemoryVectorStorePartition(
+        indexed_properties={
             **EventMemory.expected_vector_store_collection_schema(),
-            "color": str,
+            "_episode_uid": str,
         },
     )
-    return InMemoryVectorStoreCollection(config)
 
 
 @pytest.fixture
 def event_memory(
-    fake_vector_store_collection,
+    fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
     return EventMemory(
         EventMemoryParams(
             segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
+            vector_store_partition=fake_vector_store_partition,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=fake_embedder,
@@ -226,14 +235,14 @@ def event_memory(
 
 @pytest.fixture
 def event_memory_with_reranker(
-    fake_vector_store_collection,
+    fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
     return EventMemory(
         EventMemoryParams(
             segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
+            vector_store_partition=fake_vector_store_partition,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=fake_embedder,
@@ -244,14 +253,14 @@ def event_memory_with_reranker(
 
 @pytest.fixture
 def event_memory_with_sentences(
-    fake_vector_store_collection,
+    fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
     return EventMemory(
         EventMemoryParams(
             segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
+            vector_store_partition=fake_vector_store_partition,
             segmenter=TextSegmenter(),
             deriver=SentenceTextDeriver(),
             embedder=fake_embedder,

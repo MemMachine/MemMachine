@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from uuid import UUID
 
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
 )
@@ -113,6 +113,28 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        """
+        Get the segment each of the given derivatives belongs to.
+
+        A derivative belongs to exactly one segment, so this is the inverse of
+        `get_derivative_uuids_by_segment_uuids` and answers one UUID rather
+        than a list. UUIDs the partition does not hold are omitted.
+
+        Args:
+            derivative_uuids (Iterable[UUID]):
+                The UUIDs of the derivatives whose owning segments to look up.
+
+        Returns:
+            dict[UUID, UUID]:
+                A mapping from each derivative UUID to its segment's UUID.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def delete_segments(
         self,
         segment_uuids: Iterable[UUID],
@@ -173,7 +195,7 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(self, partition_key: str) -> SegmentStorePartition | None:
+    async def get_partition(self, partition_key: str) -> SegmentStorePartition | None:
         """
         Open a partition-scoped handle for an existing partition.
 
