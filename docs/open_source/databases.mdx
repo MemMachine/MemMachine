@@ -30,14 +30,26 @@ keeps event segments in a relational database. Configure the VectorStore under
 `episodic_memory.long_term_memory.vector_store`.
 
 Supported VectorStore providers include Qdrant, Milvus, SQLiteVectorStore, and
-SQLiteVecVectorStore. Milvus supports three deployment shapes through the same
+SQLiteVecVectorStore. A store is one collection on its backend, one per
+memory and embedder, and each session's data is a partition of it. The store's
+vector store name is a UUIDv5 of the embedder's id in a namespace fixed for
+each memory, written as 32 hexadecimal digits, so an embedder's id may be any
+string; a Milvus collection is named `sys_` followed by the vector store name. Qdrant and Milvus keep the registry
+of their partitions in a relational database named by `partition_registry`, so
+any number of server processes can share one backend; the SQLite stores are
+bound to one node. Each store has its own registry there, in tables named by
+its vector store name, so several stores can keep their registries in one
+database. Milvus supports
+two deployment shapes through the same
 configuration fields:
 
-- **Milvus Lite:** set `uri` to a local `.db` path such as
-  `./memmachine_milvus.db`.
 - **Milvus server:** set `uri` to a server endpoint such as
   `http://localhost:19530`.
 - **Zilliz Cloud:** set `uri` to the cloud endpoint and set `token`.
+
+The Milvus store needs Milvus 2.6.8 or later, for its 4-bit HNSW index. Milvus
+Lite is not supported: it is a separate embedded engine that does not behave
+like the server. For a local, single-node deployment, use SQLiteVectorStore.
 
 Example:
 
@@ -47,10 +59,12 @@ resources:
     milvus_vector_store:
       provider: milvus
       config:
-        uri: ./memmachine_milvus.db
+        uri: http://localhost:19530
         # token: $MILVUS_TOKEN
         # db_name: default
         consistency_level: Session
+        partition_registry: profile_storage
+        request_timeout_seconds: 30
 
 episodic_memory:
   long_term_memory:

@@ -206,7 +206,7 @@ class YamlSerializableMixin(BaseModel):
             if isinstance(obj, SecretStr):
                 obj = obj.get_secret_value()
 
-            # Unwrap enums like SimilarityMetric
+            # Unwrap enums to their values
             if isinstance(obj, Enum):
                 obj = obj.value
 
