@@ -24,16 +24,27 @@ from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
 
-_IDENTIFIER_RE = re.compile(r"^[a-z0-9_]+$")
+# Matched with fullmatch: `$` also matches before a trailing newline.
+_IDENTIFIER_RE = re.compile(r"[a-z0-9_]+")
 _IDENTIFIER_MAX_BYTES = 32
 
 
 def validate_identifier(value: str) -> bool:
     """Return True if value is a valid identifier (a-z0-9_, max 32 bytes)."""
     return (
-        bool(_IDENTIFIER_RE.match(value))
+        bool(_IDENTIFIER_RE.fullmatch(value))
         and len(value.encode()) <= _IDENTIFIER_MAX_BYTES
     )
+
+
+def require_identifiers(namespace: str, name: str) -> None:
+    """Raise ValueError unless both the namespace and the name are valid identifiers."""
+    if not validate_identifier(namespace):
+        raise ValueError(
+            f"Namespace {namespace!r} must match [a-z0-9_]+ and be at most 32 bytes"
+        )
+    if not validate_identifier(name):
+        raise ValueError(f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes")
 
 
 def validate_filter(expr: FilterExpr) -> bool:

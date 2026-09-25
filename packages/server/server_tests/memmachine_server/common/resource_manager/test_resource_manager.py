@@ -45,6 +45,7 @@ from memmachine_server.common.resource_manager.resource_manager import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 
 RERANKER_ID = "my_reranker"
@@ -330,3 +331,133 @@ async def test_purge_task_does_not_pin_the_manager(invalid_configure, monkeypatc
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.asyncio
+async def test_vector_store_purge_loop_ticks_and_survives_failures(monkeypatch):
+    """The background purge keeps driving the store past a failing call."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 0
+    )
+    store = create_autospec(VectorStore, instance=True)
+    calls = 0
+    third_call = asyncio.Event()
+
+    async def counting_purge() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("transient")
+        if calls == 3:
+            third_call.set()
+        return False
+
+    store.purge_deleted_collections.side_effect = counting_purge
+
+    task = asyncio.create_task(
+        resource_manager_module._purge_deleted_collections_forever(
+            store, "Vector store s"
+        )
+    )
+    await asyncio.wait_for(third_call.wait(), 5)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert calls >= 3
+
+
+@pytest.mark.asyncio
+async def test_vector_store_purge_drains_backlog_without_waiting(monkeypatch):
+    """True from a purge call means more work: the next call comes after
+    the short busy pause, never the idle tick."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 3600
+    )
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_BUSY_PAUSE_SECONDS", 0
+    )
+    store = create_autospec(VectorStore, instance=True)
+    calls = 0
+    drained = asyncio.Event()
+
+    async def backlogged_purge() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return True
+        drained.set()
+        return False
+
+    store.purge_deleted_collections.side_effect = backlogged_purge
+
+    task = asyncio.create_task(
+        resource_manager_module._purge_deleted_collections_forever(
+            store, "Vector store s"
+        )
+    )
+    await asyncio.wait_for(drained.wait(), 5)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert calls == 3
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_starts_one_sweeper_per_store(
+    invalid_resource_manager, monkeypatch
+):
+    """The first get of a store starts its purge loop; later gets of the
+    same store reuse it, and close() cancels it."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 3600
+    )
+    store = create_autospec(VectorStore, instance=True)
+    store.purge_deleted_collections.return_value = False
+    monkeypatch.setattr(
+        invalid_resource_manager._database_manager,
+        "get_vector_store",
+        AsyncMock(return_value=store),
+    )
+    monkeypatch.setattr(
+        invalid_resource_manager._database_manager, "close", AsyncMock()
+    )
+
+    first = await invalid_resource_manager.get_vector_store("vs")
+    second = await invalid_resource_manager.get_vector_store("vs")
+    await asyncio.sleep(0)  # the loop makes its first call and parks in sleep
+
+    assert first is second is store
+    [task] = invalid_resource_manager._vector_store_purge_tasks.values()
+    assert store.purge_deleted_collections.await_count == 1
+
+    # Bounded: close() waits for the sweepers it cancels.
+    await asyncio.wait_for(invalid_resource_manager.close(), 30)
+
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_vector_store_purge_task_does_not_pin_the_manager(
+    invalid_configure, monkeypatch
+):
+    """A pending purge task keeps its store alive, not the manager that
+    started it: a manager dropped without close() is collectable."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 3600
+    )
+    manager = ResourceManagerImpl(invalid_configure)
+    store = create_autospec(VectorStore, instance=True)
+    store.purge_deleted_collections.return_value = False
+    task = asyncio.create_task(
+        resource_manager_module._purge_deleted_collections_forever(
+            store, "Vector store s"
+        )
+    )
+    manager._vector_store_purge_tasks["vs"] = task
+    manager_ref = weakref.ref(manager)
+    await asyncio.sleep(0)
+
+    del manager
+    gc.collect()
+
+    assert manager_ref() is None
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)

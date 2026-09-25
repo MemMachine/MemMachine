@@ -57,6 +57,8 @@ logger = logging.getLogger(__name__)
 
 _SEGMENT_STORE_PURGE_INTERVAL_SECONDS = 60.0
 _SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
+_VECTOR_STORE_PURGE_INTERVAL_SECONDS = 60.0
+_VECTOR_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
 
 
 async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
@@ -90,6 +92,29 @@ async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
         )
 
 
+async def _purge_deleted_collections_forever(store: VectorStore, label: str) -> None:
+    """Drive the store's bounded purge, paced by its backlog signal.
+
+    The store never schedules reclamation itself; this loop is the
+    deployment's sweeper for one store. A round that reclaimed something
+    is followed after a short pause, a round that found nothing due after
+    the idle interval, and a round that raised is logged and retried a
+    tick later. Concurrent sweepers on other processes are safe by the
+    store's contract, so nothing here coordinates with them.
+    """
+    while True:
+        try:
+            more = await store.purge_deleted_collections()
+        except Exception:
+            logger.exception("%s purge failed; retrying next tick", label)
+            more = False
+        await asyncio.sleep(
+            _VECTOR_STORE_PURGE_BUSY_PAUSE_SECONDS
+            if more
+            else _VECTOR_STORE_PURGE_INTERVAL_SECONDS
+        )
+
+
 class ResourceManagerImpl:
     """Concrete resource manager for MemMachine services."""
 
@@ -118,6 +143,8 @@ class ResourceManagerImpl:
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
         self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
+        # One sweeper per vector store, keyed by the store's configured name.
+        self._vector_store_purge_tasks: dict[str, asyncio.Task[None]] = {}
 
         self._session_data_manager_lock = Lock()
         self._episodic_memory_manager_lock = Lock()
@@ -142,6 +169,8 @@ class ResourceManagerImpl:
         """Close resources and clean up state."""
         purge_tasks = list(self._segment_store_purge_tasks)
         self._segment_store_purge_tasks.clear()
+        purge_tasks.extend(self._vector_store_purge_tasks.values())
+        self._vector_store_purge_tasks.clear()
         segment_stores = list(self._segment_stores.values())
         self._segment_stores.clear()
 
@@ -176,8 +205,17 @@ class ResourceManagerImpl:
         return await self._database_manager.get_vector_graph_store(name)
 
     async def get_vector_store(self, name: str) -> VectorStore:
-        """Return a vector store by name."""
-        return await self._database_manager.get_vector_store(name)
+        """Return a vector store by name.
+
+        The first time a store is handed out, its sweeper is started: the
+        store never schedules its own purge.
+        """
+        store = await self._database_manager.get_vector_store(name)
+        if name not in self._vector_store_purge_tasks:
+            self._vector_store_purge_tasks[name] = asyncio.create_task(
+                _purge_deleted_collections_forever(store, f"Vector store {name}")
+            )
+        return store
 
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return a segment store by name, constructing it on first access."""

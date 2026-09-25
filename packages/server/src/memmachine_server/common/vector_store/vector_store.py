@@ -26,6 +26,13 @@ class VectorStoreCollection(ABC):
     Identified by a (namespace, name) pair.
     All data operations are scoped to this logical collection.
 
+    A handle is bound to one life of the collection: after the collection
+    is deleted, its operations raise VectorStoreCollectionHandleStaleError,
+    and a collection created again under the same (namespace, name) is a
+    new life. A read concurrent with the deletion may take effect before
+    it, returning the content from before the deletion. A store that cannot
+    detect a stale handle says so in its own contract.
+
     Implementations must support storing, filtering on, and returning
     record properties not declared in the configured indexed properties schema.
 
@@ -148,9 +155,11 @@ class VectorStore(ABC):
     """
     Abstract base class for a vector store.
 
-    A given logical collection identified by a (namespace, name) pair
-    must be managed by at most one process at a time.
-    The consumer is responsible for sharding names across processes.
+    A logical collection is identified to callers by a (namespace, name)
+    pair and inside the store by an incarnation minted per life of the
+    pair, so nothing written under one life of a name is ever seen by, or
+    reclaimed out from under, another. Which processes may share a store's
+    collections is the store's own contract, stated on the store.
 
     Different namespaces are fully independent (separate native collections).
     Multiple logical collections with the same (namespace, vector dimensions, similarity metric, indexed properties schema)
@@ -199,6 +208,8 @@ class VectorStore(ABC):
         Raises:
             VectorStoreCollectionAlreadyExistsError: If a collection with the same
                 (namespace, name) already exists.
+            VectorStoreAttemptsExhaustedError: If the store gave up creating the
+                collection after repeated attempts that made no progress.
         """
         raise NotImplementedError
 
@@ -229,6 +240,9 @@ class VectorStore(ABC):
         Raises:
             VectorStoreCollectionConfigMismatchError: If a collection with the same
                 (namespace, name) already exists with a different configuration.
+            VectorStoreAttemptsExhaustedError: If the store gave up opening or
+                creating the collection after repeated attempts that made no
+                progress.
         """
         raise NotImplementedError
 
@@ -267,13 +281,32 @@ class VectorStore(ABC):
         """
         Delete a logical collection from the vector store.
 
-        This will delete all data in the collection.
-        It is idempotent.
+        When this returns, the collection is unreachable and its data is
+        deleted or, on a store that reclaims it later, left for
+        `purge_deleted_collections`. It is idempotent.
 
         Args:
             namespace (str):
                 Namespace of the collection.
             name (str):
                 Name of the collection within the namespace.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def purge_deleted_collections(self) -> bool:
+        """
+        Reclaim, bounded, some of the storage of deleted collections.
+
+        A store whose deletion reclaims physically returns False. A store
+        that defers reclamation does one bounded round per call and
+        returns True when the round found records to reclaim, so the
+        caller's protocol is "call until False"; a False may still leave
+        tombstones that come due later. Safe to repeat, and safe from
+        several processes at once. The store never schedules this itself.
+
+        Returns:
+            bool:
+                Whether the round reclaimed records.
         """
         raise NotImplementedError

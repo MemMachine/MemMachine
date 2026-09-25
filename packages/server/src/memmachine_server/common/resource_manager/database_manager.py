@@ -4,6 +4,7 @@ import asyncio
 import logging
 from asyncio import Lock
 from collections.abc import Callable
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
@@ -33,6 +34,9 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStoreParams,
 )
 from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store.collection_registry.sqlalchemy_collection_registry import (
+    SQLAlchemyVectorStoreCollectionRegistry,
+)
 from memmachine_server.common.vector_store.vector_search_engine import (
     VectorSearchEngine,
 )
@@ -615,9 +619,21 @@ class DatabaseManager:
                 "grpc_port": conf.grpc_port,
                 "prefer_grpc": conf.prefer_grpc,
                 "https": conf.https,
+                "timeout": conf.request_timeout_seconds,
             }
             if conf.api_key.get_secret_value():
                 client_kwargs["api_key"] = conf.api_key.get_secret_value()
+
+            # The registry first: a client opened before a failed lookup
+            # or startup would have nothing to close it. The backend's
+            # key names the vector store: the one identity of the
+            # deployment the client reaches that this wiring has.
+            collection_registry = SQLAlchemyVectorStoreCollectionRegistry(
+                engine=await self.async_get_sql_engine(conf.collection_registry),
+                vector_store_name=name,
+                tombstone_retention=timedelta(seconds=conf.tombstone_retention_seconds),
+            )
+            await collection_registry.startup()
 
             client = AsyncQdrantClient(**client_kwargs)
 
@@ -631,7 +647,7 @@ class DatabaseManager:
 
             params = QdrantVectorStoreParams(
                 client=client,
-                registry_replication_factor=conf.registry_replication_factor,
+                collection_registry=collection_registry,
                 metrics_factory=conf.get_metrics_factory(),
             )
             try:
@@ -691,12 +707,28 @@ class DatabaseManager:
 
             from pymilvus import MilvusClient
 
-            client_kwargs: dict[str, Any] = {"uri": conf.uri}
+            # The constructor's timeout bounds connecting and reconnecting;
+            # the store passes the same bound to every request it makes.
+            client_kwargs: dict[str, Any] = {
+                "uri": conf.uri,
+                "timeout": conf.request_timeout_seconds,
+            }
             token = conf.token.get_secret_value()
             if token:
                 client_kwargs["token"] = token
             if conf.db_name:
                 client_kwargs["db_name"] = conf.db_name
+
+            # The registry first: a client opened before a failed lookup
+            # or startup would have nothing to close it. The backend's
+            # key names the vector store: the one identity of the
+            # deployment the client reaches that this wiring has.
+            collection_registry = SQLAlchemyVectorStoreCollectionRegistry(
+                engine=await self.async_get_sql_engine(conf.collection_registry),
+                vector_store_name=name,
+                tombstone_retention=timedelta(seconds=conf.tombstone_retention_seconds),
+            )
+            await collection_registry.startup()
 
             client = MilvusClient(**client_kwargs)
 
@@ -710,7 +742,11 @@ class DatabaseManager:
 
             params = MilvusVectorStoreParams(
                 client=client,
+                collection_registry=collection_registry,
                 consistency_level=conf.consistency_level,
+                request_timeout_seconds=conf.request_timeout_seconds,
+                max_varchar_length=conf.max_varchar_length,
+                purge_batch_size=conf.purge_batch_size,
             )
             try:
                 store = MilvusVectorStore(params)

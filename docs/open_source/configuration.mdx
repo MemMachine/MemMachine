@@ -337,14 +337,27 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite
             config:
               path: sqlite_test.db
+          qdrant_vector_store:
+            provider: qdrant
+            config:
+              host: localhost
+              port: 6333
+              grpc_port: 6334
+              prefer_grpc: false
+              https: false
+              collection_registry: profile_storage
+              request_timeout_seconds: 30
+              # api_key: $QDRANT_API_KEY
           milvus_vector_store:
             provider: milvus
             config:
-              uri: ./memmachine_milvus.db
+              uri: http://localhost:19530
               # uri: https://example.api.gcp-us-west1.zillizcloud.com
               # token: $MILVUS_TOKEN
               # db_name: default
               consistency_level: Session
+              collection_registry: profile_storage
+              request_timeout_seconds: 30
       ```
     </Tab>
     <Tab title="With Comments">
@@ -369,13 +382,26 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
             provider: sqlite # Local relational database provider
             config: # A dictionary containing provider-specific configuration
               path: sqlite_test.db. # The path for the given database
-          milvus_vector_store: # VectorStore for event or vector-backed semantic memory
-            provider: milvus # Milvus Lite by default, or Milvus server / Zilliz Cloud
+          qdrant_vector_store: # VectorStore for event or vector-backed semantic memory
+            provider: qdrant # Qdrant server or Qdrant Cloud
             config:
-              uri: ./memmachine_milvus.db # Local Milvus Lite file path
+              host: localhost # Qdrant host
+              port: 6333 # REST port
+              grpc_port: 6334 # gRPC port
+              prefer_grpc: false # Use gRPC instead of REST
+              https: false # Use TLS
+              collection_registry: profile_storage # Relational database holding the collection registry
+              request_timeout_seconds: 30 # Bounds every request to Qdrant
+              # api_key: $QDRANT_API_KEY # Required for Qdrant Cloud
+          milvus_vector_store: # VectorStore for event or vector-backed semantic memory
+            provider: milvus # Milvus server or Zilliz Cloud
+            config:
+              uri: http://localhost:19530 # Milvus server or Zilliz Cloud endpoint
               # token: $MILVUS_TOKEN # Required for Zilliz Cloud or auth-enabled Milvus
               # db_name: default # Optional Milvus database name
               consistency_level: Session # Strong, Session, Bounded, or Eventually
+              collection_registry: profile_storage # Relational database holding the collection registry
+              request_timeout_seconds: 30 # Bounds every request to Milvus
       ```
     </Tab>
     </Tabs>
@@ -393,6 +419,11 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.token` | Milvus auth token for Zilliz Cloud or auth-enabled Milvus server.   | `""` |
       | `config.consistency_level` | Milvus collection consistency level: `Strong`, `Session`, `Bounded`, or `Eventually`. | `Session` |
       | `config.metrics_factory_id` | ID of the metrics exporter factory the Qdrant or Neo4j store reports its operation latencies to. | `prometheus` |
+      | `config.collection_registry` | Qdrant and Milvus: the name of a relational database under `resources.databases` that holds the store's collection registry (see [Vector stores](/open_source/databases#vector-stores)). | *Required* |
+      | `config.tombstone_retention_seconds` | Qdrant and Milvus: whole seconds a deleted collection's records are kept before its purge starts, so every write in flight at the deletion has landed and is reclaimed. | `86400` |
+      | `config.request_timeout_seconds` | Qdrant and Milvus: whole seconds a request to the vector store may take before the client gives up; must be positive. | `30` |
+      | `config.max_varchar_length` | Milvus: bytes a declared string property can hold, the length of its VARCHAR field; Milvus refuses a length above its `proxy.maxVarCharLength`. | `65535` |
+      | `config.purge_batch_size` | Milvus: the most entities one purge round lists and deletes; Milvus refuses a query whose limit exceeds its `quotaAndLimits.limits.maxQueryResultWindow`. | `10000` |
       | `config.path`  | The path for the given database.                                    | Depends on provider |
       | `config.username` | Username for internal graph store authentication.                | Depends on provider |
       | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |

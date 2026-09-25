@@ -107,6 +107,28 @@ class VectorStoreCollectionConfigMismatchError(Exception):
         )
 
 
+class VectorStoreCollectionHandleStaleError(Exception):
+    """A collection handle outlived the collection incarnation it was bound to."""
+
+    def __init__(self, namespace: str, name: str) -> None:
+        """Record the namespace and name the stale handle belonged to."""
+        self.namespace = namespace
+        self.name = name
+        super().__init__(
+            f"Stale handle for collection ({namespace!r}, {name!r}): the collection "
+            "was deleted (or re-created) after this handle was bound"
+        )
+
+
+class VectorStoreAttemptsExhaustedError(Exception):
+    """The store exhausted its internal attempts; diagnose the cause.
+
+    Raised when an operation kept failing in a way that should not recur
+    under normal operation. An immediate retry is unlikely to succeed;
+    the underlying error is chained as the cause.
+    """
+
+
 class Record(BaseModel):
     """
     A record in the vector store.

@@ -1,12 +1,32 @@
 """Unit tests for service_locator helpers."""
 
+from unittest.mock import create_autospec
+
 import pytest
 
+from memmachine_server.common.configuration.episodic_config import (
+    EventLongTermMemoryConf,
+)
+from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.embedder import Embedder
+from memmachine_server.common.episode_store import EpisodeStorage
+from memmachine_server.common.resource_manager import CommonResourceManager
+from memmachine_server.common.vector_store import (
+    VectorStore,
+    VectorStoreCollection,
+    VectorStoreCollectionAlreadyExistsError,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStore,
+    SegmentStorePartition,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    _EVENT_BACKEND_NAMESPACE,
+    _event_params,
     _resolve_user_properties_schema,
     partition_key_for_session,
 )
@@ -96,3 +116,45 @@ def test_resolve_user_properties_schema_rejects_underscore_prefixed_keys():
 def test_resolve_user_properties_schema_rejects_unknown_type_name():
     with pytest.raises(ValueError, match="unknown type name"):
         _resolve_user_properties_schema({"customer_tier": "date"})
+
+
+@pytest.mark.asyncio
+async def test_event_params_opens_the_collection_a_racing_creator_won():
+    """Two workers can create a session's collection at once; the loser opens the winner's.
+
+    The vector store's registry arbitrates creation across processes, so the
+    strict create this locator issues when the collection is absent can lose
+    to another worker's; the locator then opens the collection that exists
+    instead of failing the request.
+    """
+    config = EventLongTermMemoryConf(
+        session_id="raced", vector_store="vs", segment_store="ss", embedder="e"
+    )
+    collection = create_autospec(VectorStoreCollection, instance=True)
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.open_collection.side_effect = [None, collection]
+    vector_store.create_collection.side_effect = (
+        VectorStoreCollectionAlreadyExistsError(_EVENT_BACKEND_NAMESPACE, "raced")
+    )
+    embedder = create_autospec(Embedder, instance=True)
+    embedder.dimensions = 3
+    embedder.similarity_metric = SimilarityMetric.COSINE
+    resource_manager = create_autospec(CommonResourceManager, instance=True)
+    resource_manager.get_vector_store.return_value = vector_store
+    resource_manager.get_segment_store.return_value = create_autospec(
+        SegmentStore, instance=True
+    )
+    resource_manager.get_segment_store.return_value.open_or_create_partition.return_value = create_autospec(
+        SegmentStorePartition, instance=True
+    )
+    resource_manager.get_embedder.return_value = embedder
+    resource_manager.get_episode_storage.return_value = create_autospec(
+        EpisodeStorage, instance=True
+    )
+    resource_manager.get_metrics_factory.return_value = None
+
+    params = await _event_params(config, resource_manager)
+
+    assert params.vector_store_collection is collection
+    vector_store.create_collection.assert_awaited_once()
+    assert vector_store.open_collection.await_count == 2
