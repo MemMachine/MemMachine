@@ -2,27 +2,20 @@
 
 import asyncio
 import contextlib
-import math
 from collections.abc import Callable, Container, Iterable, Mapping, Sequence
 from typing import ClassVar, override
 
 import hnswlib  # ty: ignore[unresolved-import]  # C extension, no py.typed
 import numpy as np
 
-from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.rw_locks import AsyncRWLock
-
+from .index_persistence import atomic_index_write, clear_stale_index_temp
 from .vector_search_engine import SearchMatch, SearchResult, VectorSearchEngine
 
 
 class HnswlibVectorSearchEngine(VectorSearchEngine):
     """Vector search engine backed by hnswlib HNSW."""
 
-    _SPACE_MAP: ClassVar[dict[SimilarityMetric, str]] = {
-        SimilarityMetric.COSINE: "cosine",
-        SimilarityMetric.EUCLIDEAN: "l2",
-        SimilarityMetric.DOT: "ip",
-    }
+    _SPACE: ClassVar[str] = "cosine"
 
     _DEFAULT_M: ClassVar[int] = 16
     _DEFAULT_EF_CONSTRUCTION: ClassVar[int] = 128
@@ -35,7 +28,6 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         self,
         *,
         num_dimensions: int,
-        similarity_metric: SimilarityMetric,
         m: int = _DEFAULT_M,
         ef_construction: int = _DEFAULT_EF_CONSTRUCTION,
         ef_search: int = _DEFAULT_EF_SEARCH,
@@ -53,23 +45,14 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         see https://github.com/nmslib/hnswlib/blob/v0.8.0/hnswlib/hnswalg.h#L981-L987.
         Set to False if you'd rather pay memory growth than the per-replacement updatePoint cost.
         """
-        hnswlib_space = self._SPACE_MAP.get(similarity_metric)
-        if hnswlib_space is None:
-            supported = ", ".join(
-                similarity_metric.value for similarity_metric in self._SPACE_MAP
-            )
-            raise ValueError(
-                f"hnswlib does not support {similarity_metric.value!r}. Supported: {supported}"
-            )
-
         self._num_dimensions = num_dimensions
-        self._similarity_metric = similarity_metric
 
-        self._space = hnswlib_space
         self._ef_search = ef_search
         self._allow_replace_deleted = allow_replace_deleted
 
-        self._index = hnswlib.Index(space=hnswlib_space, dim=num_dimensions)
+        self._index = hnswlib.Index(
+            space=HnswlibVectorSearchEngine._SPACE, dim=num_dimensions
+        )
         self._index.init_index(
             max_elements=initial_capacity,
             ef_construction=ef_construction,
@@ -86,17 +69,10 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         # which does not affect correctness (but may be suboptimal).
         self._known_labels: set[int] = set()
 
-        self._lock = AsyncRWLock()
-
-    def _distance_to_score(self, distance: float) -> float:
-        """Convert an hnswlib distance to a pure metric score."""
-        match self._similarity_metric:
-            case SimilarityMetric.COSINE | SimilarityMetric.DOT:
-                return 1.0 - distance
-            case SimilarityMetric.EUCLIDEAN:
-                return math.sqrt(max(0.0, distance))
-            case _:
-                raise NotImplementedError(self._similarity_metric)
+    @staticmethod
+    def _distance_to_cosine_similarity(distance: float) -> float:
+        """Convert an hnswlib cosine distance to a cosine similarity."""
+        return 1.0 - distance
 
     def _ensure_capacity(self, needed: int) -> None:
         """Grow the index if there isn't room for `needed` more elements."""
@@ -116,8 +92,7 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
     async def add(self, vectors: Mapping[int, Sequence[float]]) -> None:
         if not vectors:
             return
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_add, vectors)
+        await asyncio.to_thread(self._sync_add, vectors)
 
     def _sync_add(self, vectors: Mapping[int, Sequence[float]]) -> None:
         if not self._allow_replace_deleted:
@@ -169,10 +144,7 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         if self._index.element_count == 0 or not vectors:
             return [SearchResult(matches=[]) for _ in vectors]
 
-        async with self._lock.read_lock():
-            return await asyncio.to_thread(
-                self._sync_search, vectors, limit, allowed_keys
-            )
+        return await asyncio.to_thread(self._sync_search, vectors, limit, allowed_keys)
 
     def _sync_search(
         self,
@@ -251,7 +223,10 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         results: list[SearchResult] = []
         for labels, distances in zip(all_labels, all_distances, strict=True):
             matches = [
-                SearchMatch(key=int(label), score=self._distance_to_score(float(dist)))
+                SearchMatch(
+                    key=int(label),
+                    cosine_similarity=self._distance_to_cosine_similarity(float(dist)),
+                )
                 for label, dist in zip(labels, distances, strict=True)
                 if int(label) >= 0
             ]
@@ -283,32 +258,8 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         return best
 
     @override
-    async def get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        async with self._lock.read_lock():
-            return await asyncio.to_thread(self._sync_get_vectors, keys)
-
-    def _sync_get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        keys = list(keys)
-        if not keys:
-            return {}
-
-        try:
-            vectors = self._index.get_items(keys)
-            return {
-                key: list(vector) for key, vector in zip(keys, vectors, strict=True)
-            }
-        except RuntimeError:
-            # Fallback: a deleted key was requested. Fetch one by one.
-            result: dict[int, list[float]] = {}
-            for key in keys:
-                with contextlib.suppress(RuntimeError):
-                    result[key] = list(self._index.get_items([key])[0])
-            return result
-
-    @override
     async def remove(self, keys: Iterable[int]) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_remove, keys)
+        await asyncio.to_thread(self._sync_remove, keys)
 
     def _sync_remove(self, keys: Iterable[int]) -> None:
         for key in keys:
@@ -317,22 +268,24 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
 
     @override
     async def save(self, path: str) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_save, path)
+        await asyncio.to_thread(self._sync_save, path)
 
     def _sync_save(self, path: str) -> None:
-        self._index.save_index(path)
+        with atomic_index_write(path) as temp_path:
+            self._index.save_index(temp_path)
         # Reconcile _known_labels with hnswlib's label_lookup_.
         if self._allow_replace_deleted:
             self._known_labels = {int(k) for k in self._index.get_ids_list()}
 
     @override
     async def load(self, path: str) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_load, path)
+        await asyncio.to_thread(self._sync_load, path)
 
     def _sync_load(self, path: str) -> None:
-        self._index = hnswlib.Index(space=self._space, dim=self._num_dimensions)
+        clear_stale_index_temp(path)
+        self._index = hnswlib.Index(
+            space=HnswlibVectorSearchEngine._SPACE, dim=self._num_dimensions
+        )
         self._index.load_index(path, allow_replace_deleted=self._allow_replace_deleted)
         self._index.set_ef(self._ef_search)
         # Reconcile _known_labels with hnswlib's label_lookup_.
