@@ -33,6 +33,24 @@ def test_semantic_config_timedelta_float():
     assert conf.ingestion_trigger_age == timedelta(minutes=2, milliseconds=500)
 
 
+def test_semantic_config_ingestion_poll_interval_defaults_and_overrides():
+    default_conf = SemanticMemoryConf(enabled=False)
+    assert default_conf.ingestion_poll_interval_seconds == 2.0
+    assert default_conf.consolidation_threshold == 20
+
+    raw_conf: dict[str, Any] = {
+        "database": "database",
+        "llm_model": "llm",
+        "embedding_model": "embedding",
+        "config_database": "database",
+        "ingestion_poll_interval_seconds": 15,
+        "consolidation_threshold": 5,
+    }
+    conf = SemanticMemoryConf(**raw_conf)
+    assert conf.ingestion_poll_interval_seconds == 15
+    assert conf.consolidation_threshold == 5
+
+
 def test_semantic_config_disabled_needs_no_config_database():
     conf = SemanticMemoryConf(enabled=False)
     assert conf.enabled is False
