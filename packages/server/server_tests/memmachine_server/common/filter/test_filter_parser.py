@@ -10,6 +10,7 @@ from memmachine_server.common.filter.filter_parser import (
     IsNull,
     Not,
     Or,
+    filter_fields,
     map_filter_fields,
     normalize_filter_field,
     parse_filter,
@@ -580,3 +581,11 @@ def test_map_filter_fields_with_normalize() -> None:
     assert isinstance(result, And)
     assert result.left == Comparison(field="metadata.foo", op="=", value="bar")
     assert result.right == Comparison(field="producer_id", op="=", value="alice")
+
+
+def test_filter_fields_names_every_field_under_every_node() -> None:
+    expr = parse_filter(
+        "m.color = 'red' AND (age > 3 OR NOT tag IN ('a')) AND name IS NULL"
+    )
+    assert expr is not None
+    assert filter_fields(expr) == frozenset({"m.color", "age", "tag", "name"})

@@ -201,7 +201,6 @@ class MemMachineClient:
         vector_graph_store: str = "",
         vector_store: str = "",
         segment_store: str = "",
-        properties_schema: dict[str, str] | None = None,
         timeout: int | None = None,
     ) -> Project:
         """
@@ -225,9 +224,6 @@ class MemMachineClient:
                 ``""`` to let the server pick its default.
             segment_store: SQL engine resource id backing the segment store
                 (event backend only). Use ``""`` for the server default.
-            properties_schema: User-defined filterable property names mapped
-                to type strings ("bool", "int", "float", "str", "datetime").
-                Event backend only. Defaults to no user-defined properties.
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -254,7 +250,6 @@ class MemMachineClient:
                 vector_graph_store=vector_graph_store,
                 vector_store=vector_store,
                 segment_store=segment_store,
-                properties_schema=properties_schema or {},
             ),
         )
         data = spec.model_dump(exclude_none=True)
@@ -382,7 +377,6 @@ class MemMachineClient:
         vector_graph_store: str,
         vector_store: str,
         segment_store: str,
-        properties_schema: dict[str, str] | None,
         timeout: int | None,
     ) -> Project:
         """Create project, handling concurrent creation (409) by fetching existing."""
@@ -397,7 +391,6 @@ class MemMachineClient:
                 vector_graph_store=vector_graph_store,
                 vector_store=vector_store,
                 segment_store=segment_store,
-                properties_schema=properties_schema,
                 timeout=timeout,
             )
         except requests.HTTPError as create_error:
@@ -426,7 +419,6 @@ class MemMachineClient:
         vector_graph_store: str = "",
         vector_store: str = "",
         segment_store: str = "",
-        properties_schema: dict[str, str] | None = None,
         timeout: int | None = None,
     ) -> Project:
         """
@@ -456,9 +448,6 @@ class MemMachineClient:
                 Only used if project needs to be created.
             segment_store: SQL engine resource id for the segment store
                 (event backend only). Only used if project needs to be created.
-            properties_schema: User-defined filterable property names mapped
-                to type strings (event backend only). Only used if project
-                needs to be created.
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -493,7 +482,6 @@ class MemMachineClient:
                     vector_graph_store,
                     vector_store,
                     segment_store,
-                    properties_schema,
                     timeout,
                 )
             # Re-raise other HTTP errors
