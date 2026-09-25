@@ -201,7 +201,7 @@ def fake_vector_store_collection(fake_embedder):
         similarity_metric=fake_embedder.similarity_metric,
         indexed_properties_schema={
             **EventMemory.expected_vector_store_collection_schema(),
-            "color": str,
+            "_episode_uid": str,
         },
     )
     return InMemoryVectorStoreCollection(config)

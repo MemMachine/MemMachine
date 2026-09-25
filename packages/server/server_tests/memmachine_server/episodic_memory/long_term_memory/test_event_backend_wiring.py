@@ -421,13 +421,8 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
         )
 
 
-async def test_unknown_user_metadata_field_passes_when_no_schema(long_term_memory):
-    """With empty `user_property_keys`, any `m.<x>` is accepted.
-
-    The default fixture leaves `properties_schema` unset, so validation is
-    permissive on user metadata. Matches the documented behavior in
-    `_validate_event_backend_filter`.
-    """
+async def test_any_user_metadata_field_is_accepted(long_term_memory):
+    """Any `m.<x>` is a valid filter field; only bare names are checked."""
     # Doesn't raise.
     scored = await long_term_memory.search_scored(
         "msg",
@@ -435,41 +430,6 @@ async def test_unknown_user_metadata_field_passes_when_no_schema(long_term_memor
         property_filter=FilterComparison(field="m.anything", op="=", value="x"),
     )
     assert scored == []
-
-
-async def test_unknown_user_metadata_field_raises_when_schema_configured(
-    fake_embedder,
-    vector_store,
-    vector_store_collection,
-    segment_store,
-    segment_store_partition,
-    fake_episode_storage,
-):
-    """With a configured schema, typo'd `m.<x>` surfaces as ValueError."""
-    ltm = LongTermMemory(
-        EventBackendParams(
-            session_id="sess1",
-            vector_store=vector_store,
-            vector_store_collection=vector_store_collection,
-            vector_store_collection_namespace="long_term_memory",
-            segment_store=segment_store,
-            segment_store_partition=segment_store_partition,
-            partition_key="sess1",
-            episode_storage=fake_episode_storage,
-            embedder=fake_embedder,
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
-            user_property_keys=frozenset({"color"}),
-        ),
-    )
-    with pytest.raises(
-        ValueError, match=r"Unknown user-metadata filter field 'm\.coloor'"
-    ):
-        await ltm.search_scored(
-            "msg",
-            num_episodes_limit=10,
-            property_filter=FilterComparison(field="m.coloor", op="=", value="red"),
-        )
 
 
 async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):

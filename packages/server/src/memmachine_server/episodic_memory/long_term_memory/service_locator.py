@@ -16,10 +16,6 @@ from memmachine_server.common.configuration.episodic_config import (
     TextSegmenterConf,
     WholeTextDeriverConf,
 )
-from memmachine_server.common.data_types import (
-    PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
-    PropertyValue,
-)
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStoreCollectionConfig
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
@@ -112,14 +108,12 @@ async def _event_params(
         name=partition_key,
     )
     if collection is None:
-        user_schema = _resolve_user_properties_schema(config.properties_schema)
         collection_config = VectorStoreCollectionConfig(
             vector_dimensions=embedder.dimensions,
             similarity_metric=embedder.similarity_metric,
             indexed_properties_schema={
                 **EventMemory.expected_vector_store_collection_schema(),
                 **EVENT_BACKEND_SYSTEM_FIELDS,
-                **user_schema,
             },
         )
         await vector_store.create_collection(
@@ -158,7 +152,6 @@ async def _event_params(
         reranker=reranker,
         segmenter=segmenter,
         deriver=deriver,
-        user_property_keys=frozenset(config.properties_schema),
         metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
     )
 
@@ -188,29 +181,6 @@ def partition_key_for_session(session_id: str) -> str:
         partition_key,
     )
     return partition_key
-
-
-def _resolve_user_properties_schema(
-    raw: dict[str, str],
-) -> dict[str, type[PropertyValue]]:
-    resolved: dict[str, type[PropertyValue]] = {}
-    for key, type_name in raw.items():
-        if key.startswith("_"):
-            # `_`-prefixed keys are reserved for system-defined event fields
-            # (`_episode_uid`, `_session_key`, `_producer_id`, ...). Allowing a
-            # user property to share that namespace would let it overwrite the
-            # system slot in the merged collection schema (dict-spread is last-
-            # wins) and silently change its declared type.
-            raise ValueError(
-                f"Property {key!r}: keys starting with '_' are reserved for "
-                "system-defined event fields and cannot be used as user "
-                "property names."
-            )
-        prop_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
-        if prop_type is None:
-            raise ValueError(f"Property {key!r}: unknown type name {type_name!r}")
-        resolved[key] = prop_type
-    return resolved
 
 
 def _build_segmenter(conf: SegmenterConf) -> Segmenter:

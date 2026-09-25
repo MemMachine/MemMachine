@@ -11,6 +11,7 @@ from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
+    FilterExpr,
     In,
     IsNull,
     Not,
@@ -197,16 +198,24 @@ class TestEncodeEvents:
         assert segments[0].offset == 0
         assert segments[1].offset == 0
 
-    async def test_user_properties_propagate(
+    async def test_user_properties_stay_on_the_segment(
         self,
         event_memory: EventMemory,
         fake_vector_store_collection: InMemoryVectorStoreCollection,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
-        event = _make_event("hi", properties={"color": "red"})
+        """A user property is the segment store's; the vector record carries the declared keys."""
+        event = _make_event(
+            "hi", properties={"color": "red", "_episode_uid": "episode-1"}
+        )
         await event_memory.encode_events([event])
 
         record = next(iter(fake_vector_store_collection.records.values()))
-        assert _record_properties(record)["color"] == "red"
+        props = _record_properties(record)
+        assert "color" not in props
+        assert props["_episode_uid"] == "episode-1"
+        segment = next(iter(fake_segment_store_partition.segments.values()))
+        assert segment.properties["color"] == "red"
 
     async def test_missing_context_schema_fields_still_allows_ingest(
         self, fake_embedder
@@ -718,6 +727,71 @@ class TestRoundTrips:
 
 @_async
 class TestQueryWithFilter:
+    async def test_a_user_property_conjunct_reaches_only_the_segment_store(
+        self,
+        event_memory: EventMemory,
+        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The vector store gets the system conjuncts; the segment store gets the whole filter."""
+        seen: list[FilterExpr | None] = []
+        query = fake_vector_store_collection.query
+
+        async def spy(*args, **kwargs):
+            seen.append(kwargs["property_filter"])
+            return await query(*args, **kwargs)
+
+        monkeypatch.setattr(fake_vector_store_collection, "query", spy)
+        e1 = _make_event("red thing", properties={"color": "red", "_episode_uid": "e1"})
+        e2 = _make_event(
+            "blue thing", properties={"color": "blue", "_episode_uid": "e2"}
+        )
+        await event_memory.encode_events([e1, e2])
+
+        result = await event_memory.query(
+            "thing",
+            property_filter=And(
+                left=Comparison(field="m.color", op="=", value="red"),
+                right=Comparison(field="episode_uid", op="=", value="e1"),
+            ),
+        )
+
+        assert seen == [Comparison(field="_episode_uid", op="=", value="e1")]
+        all_texts = {
+            seg.block.text
+            for scored in result.scored_segment_contexts
+            for seg in scored.segments
+            if isinstance(seg.block, TextBlock)
+        }
+        assert all_texts == {"red thing"}
+
+    async def test_a_user_property_under_or_leaves_the_vector_search_unfiltered(
+        self,
+        event_memory: EventMemory,
+        fake_vector_store_collection: InMemoryVectorStoreCollection,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A conjunct is dropped whole: an undeclared key anywhere under it means no vector-side filter."""
+        seen: list[FilterExpr | None] = []
+        query = fake_vector_store_collection.query
+
+        async def spy(*args, **kwargs):
+            seen.append(kwargs["property_filter"])
+            return await query(*args, **kwargs)
+
+        monkeypatch.setattr(fake_vector_store_collection, "query", spy)
+        await event_memory.encode_events([_make_event("thing", timestamp=_ts(0))])
+
+        await event_memory.query(
+            "thing",
+            property_filter=Or(
+                left=Comparison(field="m.color", op="=", value="red"),
+                right=Comparison(field="episode_uid", op="=", value="e1"),
+            ),
+        )
+
+        assert seen == [None]
+
     async def test_equality_filter(self, event_memory: EventMemory):
         """Filter by user property equality."""
         e1 = _make_event("red thing", timestamp=_ts(0), properties={"color": "red"})
