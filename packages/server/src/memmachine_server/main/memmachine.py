@@ -544,6 +544,16 @@ class MemMachine:
             raise RuntimeError(f"Failed to create session {session_key}")
         return ret
 
+    async def _require_session(self, session_key: str) -> None:
+        """Raise SessionNotFoundError unless the session exists and is active.
+
+        A memory request never creates a project (only the create-project
+        request does), so a request naming an unknown project is refused
+        before it reads or writes anything.
+        """
+        if await self.get_session(session_key) is None:
+            raise SessionNotFoundError(session_key)
+
     async def get_session(
         self, session_key: str
     ) -> SessionDataManager.SessionInfo | None:
@@ -722,7 +732,14 @@ class MemMachine:
         Returns:
             IDs of the created episodes.
 
+        Raises:
+            SessionNotFoundError: If the project does not exist. Nothing is
+                written for it: the episodes are persisted only after the
+                check, whichever memories the write targets.
+
         """
+        await self._require_session(session_data.session_key)
+
         episode_storage = await self._resources.get_episode_storage()
         episodes = await episode_storage.add_episodes(
             session_data.session_key,
@@ -738,13 +755,8 @@ class MemMachine:
             )
 
             async def add_to_episodic_memory() -> None:
-                async with episodic_memory_manager.open_or_create_episodic_memory(
-                    session_key=session_data.session_key,
-                    description="",
-                    episodic_memory_config=self._with_default_episodic_memory_conf(
-                        session_key=session_data.session_key
-                    ),
-                    metadata={},
+                async with episodic_memory_manager.open_episodic_memory(
+                    session_data.session_key
                 ) as episodic_session:
                     await episodic_session.add_memory_episodes(episodes)
 
@@ -799,13 +811,9 @@ class MemMachine:
         """
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
 
-        async with episodic_memory_manager.open_or_create_episodic_memory(
-            session_key=session_data.session_key,
-            description="",
-            episodic_memory_config=self._with_default_episodic_memory_conf(
-                session_key=session_data.session_key
-            ),
-            metadata={},
+        # A search reads a session that exists; it never creates one.
+        async with episodic_memory_manager.open_episodic_memory(
+            session_data.session_key
         ) as episodic_session:
             if retrieval_agent is None or episodic_session.long_term_memory is None:
                 response = await episodic_session.query_memory(
@@ -1011,7 +1019,11 @@ class MemMachine:
         semantic_task: Task | None = None
 
         property_filter = parse_filter(search_filter) if search_filter else None
-        if MemoryType.Episodic in target_memories:
+        if MemoryType.Episodic not in target_memories:
+            # Opening episodic memory refuses an unknown project; a search
+            # that does not open it checks the registry itself.
+            await self._require_session(session_data.session_key)
+        else:
             retrieval_agent = await self._get_retrieval_agent() if agent_mode else None
             episodic_task = asyncio.create_task(
                 self._search_episodic_memory(

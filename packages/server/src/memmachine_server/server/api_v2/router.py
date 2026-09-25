@@ -296,9 +296,12 @@ async def add_memories(
     """Add memories to a project."""
     # Use types from spec if provided, otherwise use all memory types
     target_memories = spec.types or ALL_MEMORY_TYPES
-    results = await _add_messages_to(
-        target_memories=target_memories, spec=spec, memmachine=memmachine
-    )
+    try:
+        results = await _add_messages_to(
+            target_memories=target_memories, spec=spec, memmachine=memmachine
+        )
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message="Project does not exist", ex=e) from e
     return AddMemoriesResponse(results=results)
 
 
@@ -320,6 +323,8 @@ async def search_memories(
         )
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
+    except SessionNotFoundError as e:
+        raise RestError(code=404, message="Project does not exist", ex=e) from e
     except RuntimeError as e:
         if "No session info found for session" in str(e):
             raise RestError(code=404, message="Project does not exist", ex=e) from e
