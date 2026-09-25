@@ -120,6 +120,55 @@ check_env_file() {
     else
         print_success ".env file found"
     fi
+    ensure_compose_profile
+}
+
+# An .env from before the backend profiles has no COMPOSE_PROFILES, which would
+# start neither Neo4j nor Qdrant. Add one matching the existing configuration.yml
+# (an active vector_graph_store means declarative), or event for a fresh setup.
+ensure_compose_profile() {
+    if grep -qE '^COMPOSE_PROFILES=' .env; then
+        return 0
+    fi
+    local profile="event"
+    if [ -f "configuration.yml" ] && grep -qE '^    vector_graph_store:' configuration.yml; then
+        profile="declarative"
+    fi
+    printf '\n# Long-term memory backend (added by memmachine-compose.sh)\nCOMPOSE_PROFILES=%s\n' "$profile" >> .env
+    print_warning ".env had no COMPOSE_PROFILES; set it to '$profile' to match configuration.yml"
+}
+
+# Long-term memory backend selected by COMPOSE_PROFILES in .env: declarative if
+# that profile is listed, otherwise event (the default).
+get_ltm_backend() {
+    local profiles
+    profiles=$(grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"' \r")
+    case ",${profiles}," in
+        *,declarative,*) echo "declarative" ;;
+        *) echo "event" ;;
+    esac
+}
+
+# Wire episodic_memory.long_term_memory for the backend. The samples are written
+# for declarative, with the event lines commented out beneath; for event, comment
+# out vector_graph_store and activate backend/vector_store/segment_store.
+set_ltm_backend() {
+    local backend="$1"
+    if [ "$backend" != "event" ]; then
+        return 0
+    fi
+    awk '
+/^  long_term_memory:/ { in_ltm = 1; print; next }
+in_ltm && (/^  [^ #]/ || /^[^ ]/) { in_ltm = 0 }
+in_ltm && /^    vector_graph_store:/ { sub(/^    /, "    # "); print; next }
+in_ltm && /^    # (backend: event|vector_store:|segment_store:)/ {
+  sub(/^    # /, "    ")
+  sub(/[ \t]+#.*$/, "")
+  print
+  next
+}
+{ print }
+' configuration.yml > configuration.yml.tmp && mv configuration.yml.tmp configuration.yml
 }
 
 # Prompt user for LLM model selection based on provider
@@ -476,10 +525,15 @@ set_config_defaults() {
 /provider:/ && /postgres/ {
   vendor = "postgres"
 }
+/provider:/ && /qdrant/ {
+  vendor = "qdrant"
+}
 
 vendor == "neo4j" && /host:/ { sub(/localhost/, "neo4j") }
 vendor == "neo4j" && /uri:/ { sub(/localhost/, "neo4j") }
 vendor == "neo4j" && /password:/ { sub(/<YOUR_PASSWORD_HERE>/, neo4j_pass) }
+
+vendor == "qdrant" && /host:/ { sub(/localhost/, "qdrant") }
 
 # Handle postgres configurations
 vendor == "postgres" && /host:/ { sub(/localhost/, "postgres") }
@@ -548,6 +602,10 @@ check_config_file() {
             
             # Generate configuration file with only needed sections for the selected provider
             generate_config_for_provider "$CONFIG_SOURCE" "$provider" "$selected_llm_model" "$selected_embedding_model"
+
+            local ltm_backend=$(get_ltm_backend)
+            set_ltm_backend "$ltm_backend"
+            print_info "Long-term memory backend: $ltm_backend (COMPOSE_PROFILES in .env)"
         else
             print_error "$CONFIG_SOURCE file not found. Please create configuration.yml file manually."
             exit 1

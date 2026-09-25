@@ -1,4 +1,4 @@
-{{- if .Values.neo4j.enabled }}
+{{- if and .Values.neo4j.enabled (eq (include "memmachine.ltmBackend" .) "declarative") }}
 # neo4j-deployment.yaml
 # Deploys Neo4j (1 replica) for long-term graph memory storage.
 # Plugins (APOC and Graph Data Science) are auto-downloaded at startup via

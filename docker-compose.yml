@@ -1,7 +1,16 @@
+# Long-term memory backend: exactly one vector store runs, selected by the
+# active compose profile (COMPOSE_PROFILES in .env, or --profile on the CLI).
+#   event       -> Qdrant  docker compose --profile event up        (default)
+#   declarative -> Neo4j   docker compose --profile declarative up
+# The choice must match episodic_memory.long_term_memory in configuration.yml;
+# memmachine-compose.sh generates a matching one. Written by hand, start from:
+#   cp sample_configs/configuration.event.yml configuration.yml
+# With neither profile active, no vector store starts — an .env that predates
+# COMPOSE_PROFILES needs it added (memmachine-compose.sh does this for you).
 services:
   # PostgreSQL with pgvector extension for profile memory storage
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg18
     container_name: memmachine-postgres
     restart: unless-stopped
     ports:
@@ -12,7 +21,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memmachine_password}
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # PG18+ stores data in a major-version subdirectory, so the mount is
+      # /var/lib/postgresql, not /var/lib/postgresql/data. The image refuses
+      # to start if the old path is mounted.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-memmachine} -d ${POSTGRES_DB:-memmachine}"]
       interval: 10s
@@ -22,11 +34,12 @@ services:
     networks:
       - memmachine-network
 
-  # Neo4j database for graph storage
+  # Neo4j database for graph storage (declarative long-term memory backend)
   neo4j:
     image: neo4j:5.23-community
     container_name: memmachine-neo4j
     restart: unless-stopped
+    profiles: ["declarative"]
     ports:
       - "${NEO4J_HTTP_PORT:-7474}:7474"  # HTTP
       - "${NEO4J_HTTPS_PORT:-7473}:7473"  # HTTPS
@@ -56,6 +69,32 @@ services:
     networks:
       - memmachine-network
 
+  # Qdrant vector database (event long-term memory backend)
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    container_name: memmachine-qdrant
+    restart: unless-stopped
+    profiles: ["event"]
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"  # REST
+      - "${QDRANT_GRPC_PORT:-6334}:6334"  # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # The image ships bash but no curl/wget, and /bin/sh is dash (no /dev/tcp),
+      # so the check is spelled as an explicit bash command rather than CMD-SHELL.
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf "GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q "healthz check passed" <&3'
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - memmachine-network
+
   # MemMachine application
   memmachine:
     image: ${MEMMACHINE_IMAGE:-memmachine/memmachine}
@@ -78,6 +117,11 @@ services:
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4j_password}
 
+      # Qdrant configuration
+      QDRANT_HOST: ${QDRANT_HOST:-qdrant}
+      QDRANT_PORT: ${QDRANT_PORT:-6333}
+      QDRANT_GRPC_PORT: ${QDRANT_GRPC_PORT:-6334}
+
       # Application configuration
       MEMORY_CONFIG: ${MEMORY_CONFIG:-/app/configuration.yml}
       MCP_BASE_URL: ${MCP_BASE_URL:-http://memmachine:8080}
@@ -94,8 +138,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # required: false so the store this profile did not start is simply
+      # skipped rather than failing the project. Exactly one of these runs.
       neo4j:
         condition: service_healthy
+        required: false
+      qdrant:
+        condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/api/v2/health"]
       interval: 30s
@@ -126,6 +176,8 @@ volumes:
   neo4j_import:
     driver: local
   neo4j_plugins:
+    driver: local
+  qdrant_data:
     driver: local
   memmachine_logs:
     driver: local
