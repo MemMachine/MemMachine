@@ -18,6 +18,7 @@ from pydantic import (
 )
 from sqlalchemy import (
     JSON,
+    ColumnCollection,
     ColumnElement,
     DateTime,
     ForeignKeyConstraint,
@@ -26,11 +27,12 @@ from sqlalchemy import (
     LargeBinary,
     Select,
     String,
+    Tuple,
     Uuid,
+    bindparam,
     delete,
     func,
     insert,
-    literal,
     select,
     true,
     tuple_,
@@ -45,8 +47,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
-    InstrumentedAttribute,
     MappedColumn,
+    aliased,
     mapped_column,
 )
 from sqlalchemy.pool import StaticPool
@@ -116,6 +118,10 @@ _MAX_MINT_ATTEMPTS = 10
 
 # Partition deletion depends on RETURNING, which SQLite added in 3.35.
 _MIN_SQLITE_VERSION = (3, 35)
+
+# A context read takes its context from at most this many segments on each
+# side of a seed, matching or not.
+_MAX_CONTEXT_DISTANCE = 1_000
 
 
 class _RegistryInsertRejectedError(Exception):
@@ -426,7 +432,11 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 seed_segments_query = seed_segments_query.where(
                     compile_sql_filter(
                         property_filter,
-                        SQLAlchemySegmentStorePartition._resolve_segment_field,
+                        lambda field: (
+                            SQLAlchemySegmentStorePartition._resolve_segment_field(
+                                field, columns=SegmentRow.__table__.c
+                            )
+                        ),
                     )
                 )
             seed_segment_rows = (
@@ -509,16 +519,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             .where(
                 SegmentRow.incarnation == self._incarnation,
                 SegmentRow.uuid.in_(seed_rows_by_uuid.keys()),
-                self._registry_row_query().exists(),
             )
             .subquery("seeds")
-        )
-
-        segment_ordering_columns = tuple_(
-            SegmentRow.timestamp,
-            SegmentRow.event_uuid,
-            SegmentRow.index,
-            SegmentRow.offset,
         )
         seed_ordering_columns = tuple_(
             seeds_subquery.c.seed_timestamp,
@@ -527,79 +529,43 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             seeds_subquery.c.seed_offset,
         )
 
-        incarnation = self._incarnation
-
         async def get_context_rows_directional(
-            range_condition: ColumnElement[bool],
-            ordering: Iterable[ColumnElement | InstrumentedAttribute],
+            *,
+            backward: bool,
             limit: int,
         ) -> dict[UUID, list[SegmentRow]]:
             """Get context rows per seed in the specified direction."""
             # Build a LATERAL subquery that gets context rows for each seed.
-            context_rows_query = (
-                select(SegmentRow)
-                .where(SegmentRow.incarnation == incarnation, range_condition)
-                .order_by(*ordering)
-                .limit(limit)
-                .correlate(seeds_subquery)
-            )
-            if property_filter is not None:
-                context_rows_query = context_rows_query.where(
-                    compile_sql_filter(
-                        property_filter,
-                        SQLAlchemySegmentStorePartition._resolve_segment_field,
-                    )
+            lateral_subquery = (
+                self._context_rows_query(
+                    seed_ordering_columns,
+                    backward=backward,
+                    limit=limit,
+                    property_filter=property_filter,
                 )
-            lateral_subquery = context_rows_query.subquery().lateral("context")
+                .subquery()
+                .lateral("context")
+            )
 
-            # Join each seed to its context rows via the LATERAL subquery.
+            # Join each seed to its context rows via the LATERAL subquery,
+            # loaded as segment rows by the ORM.
             seed_context_join_query = select(
-                seeds_subquery.c.seed_uuid,
-                lateral_subquery.c.uuid,
-                lateral_subquery.c.event_uuid,
-                lateral_subquery.c.index,
-                lateral_subquery.c.offset,
-                lateral_subquery.c.timestamp,
-                lateral_subquery.c.timestamp_timezone_offset,
-                lateral_subquery.c.context,
-                lateral_subquery.c.block,
-                lateral_subquery.c.properties,
+                seeds_subquery.c.seed_uuid, aliased(SegmentRow, lateral_subquery)
             ).select_from(seeds_subquery.join(lateral_subquery, true()))
 
             # Group result rows by seed UUID.
             rows_by_seed: dict[UUID, list[SegmentRow]] = {
                 seed_uuid: [] for seed_uuid in seed_rows_by_uuid
             }
-            for row in (await session.execute(seed_context_join_query)).all():
-                rows_by_seed[row.seed_uuid].append(
-                    SegmentRow(
-                        uuid=row.uuid,
-                        incarnation=incarnation,
-                        event_uuid=row.event_uuid,
-                        index=row.index,
-                        offset=row.offset,
-                        timestamp=row.timestamp,
-                        timestamp_timezone_offset=row.timestamp_timezone_offset,
-                        context=row.context,
-                        block=row.block,
-                        properties=row.properties,
-                    )
-                )
+            for seed_uuid, segment_row in (
+                await session.execute(seed_context_join_query)
+            ).all():
+                rows_by_seed[seed_uuid].append(segment_row)
             return rows_by_seed
-
-        chronological_order = [
-            SegmentRow.timestamp,
-            SegmentRow.event_uuid,
-            SegmentRow.index,
-            SegmentRow.offset,
-        ]
-        reverse_chronological_order = [col.desc() for col in chronological_order]
 
         backward_rows_by_seed = (
             await get_context_rows_directional(
-                segment_ordering_columns < seed_ordering_columns,
-                reverse_chronological_order,
-                max_backward_segments,
+                backward=True, limit=max_backward_segments
             )
             if max_backward_segments > 0
             else {seed_uuid: [] for seed_uuid in seed_rows_by_uuid}
@@ -607,9 +573,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
         forward_rows_by_seed = (
             await get_context_rows_directional(
-                segment_ordering_columns > seed_ordering_columns,
-                chronological_order,
-                max_forward_segments,
+                backward=False, limit=max_forward_segments
             )
             if max_forward_segments > 0
             else {seed_uuid: [] for seed_uuid in seed_rows_by_uuid}
@@ -632,85 +596,154 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         property_filter: FilterExpr | None,
     ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
         """Get backward/forward context per seed (SQLite fallback)."""
-        context_rows_by_seed: dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]] = {}
+        # Build one statement per direction and run it for each seed, binding
+        # the seed's timestamp, event UUID, index and offset. Building a
+        # statement costs more CPU than SQLite spends running it, so building
+        # one per seed would dominate the read.
+        seed_ordering_values = tuple_(
+            bindparam("seed_timestamp", type_=SegmentRow.timestamp.type),
+            bindparam("seed_event_uuid", type_=SegmentRow.event_uuid.type),
+            bindparam("seed_index", type_=SegmentRow.index.type),
+            bindparam("seed_offset", type_=SegmentRow.offset.type),
+        )
 
+        async def get_context_rows_directional(
+            *,
+            backward: bool,
+            limit: int,
+        ) -> dict[UUID, list[SegmentRow]]:
+            """Get context rows per seed in the specified direction."""
+            # Loaded as segment rows by the ORM, which is cheaper than building
+            # them from plain rows.
+            context_rows_query = select(SegmentRow).from_statement(
+                self._context_rows_query(
+                    seed_ordering_values,
+                    backward=backward,
+                    limit=limit,
+                    property_filter=property_filter,
+                )
+            )
+            rows_by_seed: dict[UUID, list[SegmentRow]] = {}
+            for seed_uuid, seed_row in seed_rows_by_uuid.items():
+                seed_position = {
+                    "seed_timestamp": seed_row.timestamp,
+                    "seed_event_uuid": seed_row.event_uuid,
+                    "seed_index": seed_row.index,
+                    "seed_offset": seed_row.offset,
+                }
+                rows_by_seed[seed_uuid] = list(
+                    (await session.execute(context_rows_query, seed_position))
+                    .scalars()
+                    .all()
+                )
+            return rows_by_seed
+
+        backward_rows_by_seed = (
+            await get_context_rows_directional(
+                backward=True, limit=max_backward_segments
+            )
+            if max_backward_segments > 0
+            else {seed_uuid: [] for seed_uuid in seed_rows_by_uuid}
+        )
+
+        forward_rows_by_seed = (
+            await get_context_rows_directional(
+                backward=False, limit=max_forward_segments
+            )
+            if max_forward_segments > 0
+            else {seed_uuid: [] for seed_uuid in seed_rows_by_uuid}
+        )
+
+        return {
+            seed_uuid: (
+                backward_rows_by_seed[seed_uuid],
+                forward_rows_by_seed[seed_uuid],
+            )
+            for seed_uuid in seed_rows_by_uuid
+        }
+
+    def _context_rows_query(
+        self,
+        seed_ordering_values: Tuple,
+        *,
+        backward: bool,
+        limit: int,
+        property_filter: FilterExpr | None,
+    ) -> Select:
+        """Select a seed's context on one side, nearest the seed first.
+
+        `seed_ordering_values` is the seed's (timestamp, event_uuid, index,
+        offset): bound parameters or an enclosing statement's columns.
+        Context comes from at most the next _MAX_CONTEXT_DISTANCE segments.
+        Unfiltered, it is the first `limit` of them. With a property filter,
+        it is the first `limit` matches among them, read without the filter,
+        which the planner cannot estimate, so the plan stays an ordered index
+        scan.
+        Returns nothing once the partition is deleted.
+        """
+        # Built from Core columns, the table's and the window's: building from
+        # the mapped class adds ORM work to every column reference, and an
+        # alias of it adapts each column it hands out.
+        segments = SegmentRow.__table__.c
         segment_ordering_columns = tuple_(
-            SegmentRow.timestamp,
-            SegmentRow.event_uuid,
-            SegmentRow.index,
-            SegmentRow.offset,
+            segments.timestamp,
+            segments.event_uuid,
+            segments.index,
+            segments.offset,
+        )
+        walk = (
+            select(SegmentRow.__table__)
+            .where(
+                segments.incarnation == self._incarnation,
+                segment_ordering_columns < seed_ordering_values
+                if backward
+                else segment_ordering_columns > seed_ordering_values,
+                self._registry_row_query().exists(),
+            )
+            .order_by(
+                *SQLAlchemySegmentStorePartition._chronological_order(
+                    segments, descending=backward
+                )
+            )
+            # Refer to an enclosing statement that supplies the seed's
+            # position instead of selecting from it again.
+            .correlate_except(SegmentRow.__table__)
+        )
+        if property_filter is None:
+            return walk.limit(min(limit, _MAX_CONTEXT_DISTANCE))
+        window = walk.limit(_MAX_CONTEXT_DISTANCE).subquery("window")
+        return (
+            select(window)
+            .where(
+                compile_sql_filter(
+                    property_filter,
+                    lambda field: (
+                        SQLAlchemySegmentStorePartition._resolve_segment_field(
+                            field, columns=window.c
+                        )
+                    ),
+                )
+            )
+            .order_by(
+                *SQLAlchemySegmentStorePartition._chronological_order(
+                    window.c, descending=backward
+                )
+            )
+            .limit(limit)
         )
 
-        compiled_property_filter = (
-            compile_sql_filter(
-                property_filter,
-                SQLAlchemySegmentStorePartition._resolve_segment_field,
-            )
-            if property_filter is not None
-            else None
-        )
+    @staticmethod
+    def _chronological_order(
+        columns: ColumnCollection[str, ColumnElement],
+        *,
+        descending: bool,
+    ) -> list[ColumnElement]:
+        """Segments' chronological order over `columns`, newest first if `descending`.
 
-        for seed_uuid, seed_row in seed_rows_by_uuid.items():
-            seed_ordering_values = tuple_(
-                literal(seed_row.timestamp),
-                literal(seed_row.event_uuid),
-                literal(seed_row.index),
-                literal(seed_row.offset),
-            )
-
-            backward_rows: list[SegmentRow] = []
-            if max_backward_segments > 0:
-                backward_rows_query = (
-                    select(SegmentRow)
-                    .where(
-                        SegmentRow.incarnation == self._incarnation,
-                        segment_ordering_columns < seed_ordering_values,
-                        self._registry_row_query().exists(),
-                    )
-                    .order_by(
-                        SegmentRow.timestamp.desc(),
-                        SegmentRow.event_uuid.desc(),
-                        SegmentRow.index.desc(),
-                        SegmentRow.offset.desc(),
-                    )
-                    .limit(max_backward_segments)
-                )
-                if compiled_property_filter is not None:
-                    backward_rows_query = backward_rows_query.where(
-                        compiled_property_filter
-                    )
-                backward_rows = list(
-                    (await session.execute(backward_rows_query)).scalars().all()
-                )
-
-            forward_rows: list[SegmentRow] = []
-            if max_forward_segments > 0:
-                forward_rows_query = (
-                    select(SegmentRow)
-                    .where(
-                        SegmentRow.incarnation == self._incarnation,
-                        segment_ordering_columns > seed_ordering_values,
-                        self._registry_row_query().exists(),
-                    )
-                    .order_by(
-                        SegmentRow.timestamp,
-                        SegmentRow.event_uuid,
-                        SegmentRow.index,
-                        SegmentRow.offset,
-                    )
-                    .limit(max_forward_segments)
-                )
-                if compiled_property_filter is not None:
-                    forward_rows_query = forward_rows_query.where(
-                        compiled_property_filter
-                    )
-                forward_rows = list(
-                    (await session.execute(forward_rows_query)).scalars().all()
-                )
-
-            context_rows_by_seed[seed_uuid] = (backward_rows, forward_rows)
-
-        return context_rows_by_seed
+        `columns` is the segment table's columns or a subquery's.
+        """
+        order = [columns.timestamp, columns.event_uuid, columns.index, columns.offset]
+        return [column.desc() for column in order] if descending else order
 
     @override
     async def get_segment_uuids_by_event_uuids(
@@ -812,15 +845,17 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     @staticmethod
     def _resolve_segment_field(
         field: str,
+        *,
+        columns: ColumnCollection[str, ColumnElement],
     ) -> tuple[ColumnElement, FieldEncoding]:
-        """Map a filter field name to a segment column and encoding."""
+        """Map a filter field name to one of `columns` and its encoding."""
         if field == "timestamp":
-            return SegmentRow.timestamp.expression, "column"
+            return columns.timestamp, "column"
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             key = demangle_user_metadata_key(internal_name)
-            return SegmentRow.properties[key], "properties_json"
-        return SegmentRow.properties[f"_{field}"], "properties_json"
+            return columns.properties[key], "properties_json"
+        return columns.properties[f"_{field}"], "properties_json"
 
     def _segment_from_segment_row(self, row: SegmentRow) -> Segment:
         """Convert a SegmentRow into a Segment."""
