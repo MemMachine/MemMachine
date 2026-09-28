@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, override
 from unittest.mock import create_autospec
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
@@ -26,7 +26,6 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import (
     Episode,
     EpisodeEntry,
-    EpisodeIdT,
     EpisodeStorage,
 )
 from memmachine_server.common.filter.filter_parser import (
@@ -71,7 +70,7 @@ pytestmark = pytest.mark.asyncio
 class FakeEpisodeStorage(EpisodeStorage):
     """In-memory EpisodeStorage; only get_episode is exercised here."""
 
-    def __init__(self, episodes: dict[EpisodeIdT, Episode]):
+    def __init__(self, episodes: dict[UUID, Episode]):
         self._episodes = dict(episodes)
 
     @override
@@ -88,11 +87,11 @@ class FakeEpisodeStorage(EpisodeStorage):
         raise NotImplementedError
 
     @override
-    async def get_episode(self, episode_id: EpisodeIdT) -> Episode | None:
+    async def get_episode(self, episode_id: UUID) -> Episode | None:
         return self._episodes.get(episode_id)
 
     @override
-    async def get_episodes(self, episode_ids: Iterable[EpisodeIdT]) -> list[Episode]:
+    async def get_episodes(self, episode_ids: Iterable[UUID]) -> list[Episode]:
         return [self._episodes[uid] for uid in episode_ids if uid in self._episodes]
 
     @override
@@ -104,11 +103,11 @@ class FakeEpisodeStorage(EpisodeStorage):
         raise NotImplementedError
 
     @override
-    async def get_episode_ids(self, **kwargs) -> list[EpisodeIdT]:
+    async def get_episode_ids(self, **kwargs) -> list[UUID]:
         raise NotImplementedError
 
     @override
-    async def delete_episodes(self, episode_ids: list[EpisodeIdT]) -> None:
+    async def delete_episodes(self, episode_ids: list[UUID]) -> None:
         for uid in episode_ids:
             self._episodes.pop(uid, None)
 
@@ -117,7 +116,7 @@ class FakeEpisodeStorage(EpisodeStorage):
         raise NotImplementedError
 
 
-def _uid(value: str) -> EpisodeIdT:
+def _uid(value: str) -> UUID:
     return uuid5(NAMESPACE_URL, value)
 
 
@@ -862,7 +861,7 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
         "passthrough": PassthroughSegmenter(),
         "text": TextSegmenter(max_chunk_length=9),
     }
-    reached: dict[str, set[EpisodeIdT]] = {}
+    reached: dict[str, set[UUID]] = {}
     for name, segmenter in segmenters.items():
         ltm = _make_ltm(RankedEmbedder(), timeline_episodes, segmenter=segmenter)
         await ltm.add_episodes(timeline_episodes)

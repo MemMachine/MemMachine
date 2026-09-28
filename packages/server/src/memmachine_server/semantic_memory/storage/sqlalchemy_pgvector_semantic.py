@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Mapping, MutableMapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast, overload
+from uuid import UUID
 
 import numpy as np
 from alembic import command
@@ -38,7 +39,6 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.sql import Delete, Select, func
 
-from memmachine_server.common.episode_store.episode_model import EpisodeIdT
 from memmachine_server.common.errors import InvalidArgumentError, ResourceNotFoundError
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -134,7 +134,7 @@ class Feature(BaseSemanticStorage):
     def to_typed_model(
         self,
         *,
-        citations: Sequence[EpisodeIdT] | None = None,
+        citations: Sequence[UUID] | None = None,
     ) -> SemanticFeature:
         return SemanticFeature(
             metadata=SemanticFeature.Metadata(
@@ -313,7 +313,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             result = await session.execute(stmt)
             feature = result.scalar_one_or_none()
 
-            citations_map: Mapping[int, Sequence[EpisodeIdT]] = {}
+            citations_map: Mapping[int, Sequence[UUID]] = {}
             if feature is not None and load_citations:
                 citations_map = await self._load_feature_citations(
                     session,
@@ -361,7 +361,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             )
             if requires_buffering:
                 features = [f async for f in result.scalars()]
-                citations_map: Mapping[int, Sequence[EpisodeIdT]] = {}
+                citations_map: Mapping[int, Sequence[UUID]] = {}
                 if load_citations and features:
                     citations_map = await self._load_feature_citations(
                         session,
@@ -410,7 +410,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         if not history_ids:
             return
@@ -437,7 +437,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> AsyncIterator[EpisodeIdT]:
+    ) -> AsyncIterator[UUID]:
         stmt = select(SetIngestedHistory.history_id).order_by(
             SetIngestedHistory.created_at.asc(),
             SetIngestedHistory.history_id.asc(),
@@ -453,7 +453,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         async with self._create_session() as session:
             result = await session.stream(stmt)
             async for history_id in result.scalars():
-                yield EpisodeIdT(history_id)
+                yield UUID(history_id)
 
     async def get_history_messages_count(
         self,
@@ -479,7 +479,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         self,
         *,
         set_id: SetIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         if len(history_ids) == 0:
             raise ValueError("No ids provided")
@@ -498,7 +498,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     async def add_history_to_set(
         self,
         set_id: SetIdT,
-        history_id: EpisodeIdT,
+        history_id: UUID,
         *,
         created_at: datetime | None = None,
     ) -> None:
@@ -512,7 +512,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             await session.execute(stmt)
             await session.commit()
 
-    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
         if not history_ids:
             return
 
@@ -693,7 +693,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         self,
         session: AsyncSession,
         feature_ids: Sequence[int],
-    ) -> Mapping[int, Sequence[EpisodeIdT]]:
+    ) -> Mapping[int, Sequence[UUID]]:
         if not feature_ids:
             return {}
 
@@ -704,12 +704,12 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         result = await session.execute(stmt)
 
-        citations: MutableMapping[int, list[EpisodeIdT]] = {
+        citations: MutableMapping[int, list[UUID]] = {
             feature_id: [] for feature_id in feature_ids
         }
 
         for feature_id, history_id in result:
-            citations.setdefault(feature_id, []).append(EpisodeIdT(history_id))
+            citations.setdefault(feature_id, []).append(UUID(history_id))
 
         return citations
 

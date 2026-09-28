@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass
+from uuid import UUID
 
 from pydantic import AwareDatetime
 
 from memmachine_server.common.episode_store.episode_model import (
     Episode,
     EpisodeEntry,
-    EpisodeIdT,
 )
 from memmachine_server.common.episode_store.episode_storage import EpisodeStorage
 from memmachine_server.common.filter.filter_parser import Comparison, FilterExpr
@@ -74,13 +74,13 @@ class CountCachingEpisodeStorage(EpisodeStorage):
 
     async def get_episode(
         self,
-        episode_id: EpisodeIdT,
+        episode_id: UUID,
     ) -> Episode | None:
         return await self._wrapped.get_episode(episode_id)
 
     async def get_episodes(
         self,
-        episode_ids: Iterable[EpisodeIdT],
+        episode_ids: Iterable[UUID],
     ) -> list[Episode]:
         return await self._wrapped.get_episodes(episode_ids)
 
@@ -106,7 +106,7 @@ class CountCachingEpisodeStorage(EpisodeStorage):
         *,
         page_size: int,
         filter_expr: FilterExpr | None = None,
-    ) -> list[EpisodeIdT]:
+    ) -> list[UUID]:
         return await self._wrapped.get_episode_ids(
             page_size=page_size,
             filter_expr=filter_expr,
@@ -147,7 +147,7 @@ class CountCachingEpisodeStorage(EpisodeStorage):
 
     async def delete_episodes(
         self,
-        episode_ids: list[EpisodeIdT],
+        episode_ids: list[UUID],
     ) -> None:
         await self._wrapped.delete_episodes(episode_ids)
         await self._clear_cache()

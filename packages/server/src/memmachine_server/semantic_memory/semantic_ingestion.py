@@ -6,12 +6,13 @@ import logging
 import time
 from collections.abc import Sequence
 from itertools import chain
+from uuid import UUID
 
 import numpy as np
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import Episode, EpisodeIdT, EpisodeStorage
+from memmachine_server.common.episode_store import Episode, EpisodeStorage
 from memmachine_server.common.filter.filter_parser import And, Comparison
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.semantic_memory.semantic_llm import (
@@ -101,7 +102,7 @@ class IngestionService:
         self._consolidation_threshold = params.consolidated_threshold
         self._debug_fail_loudly = params.debug_fail_loudly
         self._missing_episode_grace_period_sec = params.missing_episode_grace_period_sec
-        self._missing_episode_first_seen: dict[EpisodeIdT, float] = {}
+        self._missing_episode_first_seen: dict[UUID, float] = {}
         self._max_features_per_update = params.max_features_per_update
 
     async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
@@ -277,7 +278,7 @@ class IngestionService:
 
                 mark_messages.append(message.uid)
 
-        mark_messages: list[EpisodeIdT] = []
+        mark_messages: list[UUID] = []
         semantic_category_runners = []
         for t in resources.semantic_categories:
             task = process_semantic_type(t)
@@ -311,7 +312,7 @@ class IngestionService:
         commands: list[SemanticCommand],
         set_id: SetIdT,
         category_name: str,
-        citation_id: EpisodeIdT | None,
+        citation_id: UUID | None,
         embedder: InstanceOf[Embedder],
     ) -> None:
         for command in commands:
@@ -509,14 +510,14 @@ class IngestionService:
             [m.metadata.id for m in memories_to_delete if m.metadata.id is not None],
         )
 
-        merged_citations: chain[EpisodeIdT] = itertools.chain.from_iterable(
+        merged_citations: chain[UUID] = itertools.chain.from_iterable(
             [
                 m.metadata.citations
                 for m in memories_to_delete
                 if m.metadata.citations is not None
             ],
         )
-        citation_ids = TypeAdapter(list[EpisodeIdT]).validate_python(
+        citation_ids = TypeAdapter(list[UUID]).validate_python(
             list(set(merged_citations)),
         )
 

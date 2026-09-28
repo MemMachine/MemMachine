@@ -14,10 +14,11 @@ from collections.abc import (
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 from pydantic import BaseModel, JsonValue
 
-from memmachine_server.common.episode_store import Episode, EpisodeIdT
+from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage as ESemanticConfigStorage,
@@ -207,7 +208,7 @@ class SemanticSessionManager:
         feature: str,
         value: str,
         tag: str,
-        citations: Sequence[EpisodeIdT] | None = None,
+        citations: Sequence[UUID] | None = None,
     ) -> FeatureIdT:
         metadata = (
             {k: str(v) for k, v in feature_metadata.items()}

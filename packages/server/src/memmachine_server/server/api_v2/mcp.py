@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Self, cast
+from uuid import UUID
 
 from fastapi import FastAPI
 from fastmcp import FastMCP
@@ -16,7 +17,6 @@ from fastmcp.server.http import StarletteWithLifespan
 from memmachine_common.api.spec import (
     AddMemoriesSpec,
     DeleteMemoriesSpec,
-    EpisodeIdT,
     FeatureIdT,
     MemoryMessage,
     SearchMemoriesSpec,
@@ -238,7 +238,7 @@ class Params(BaseModel):
 
     def to_delete_memories_spec(
         self,
-        episodic_memory_uids: list[EpisodeIdT],
+        episodic_memory_uids: list[UUID],
         semantic_memory_uids: list[FeatureIdT],
     ) -> DeleteMemoriesSpec:
         """Convert to DeleteMemoriesSpec."""
@@ -549,7 +549,7 @@ async def mcp_search_memory(
 async def mcp_delete_memory(
     org_id: str = "",
     proj_id: str = "",
-    episodic_memory_uids: list[EpisodeIdT] | None = None,
+    episodic_memory_uids: list[UUID] | None = None,
     semantic_memory_uids: list[FeatureIdT] | None = None,
 ) -> McpResponse:
     """Delete specific memories from the user's memory store."""

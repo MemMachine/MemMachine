@@ -22,13 +22,13 @@ import time
 from collections.abc import Coroutine, Iterable
 from enum import StrEnum
 from typing import cast, get_args
+from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.episode_store import (
     Episode,
-    EpisodeIdT,
     EpisodeResponse,
 )
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
@@ -259,7 +259,7 @@ class EpisodicMemory:
             tasks.append(self._long_term_memory.close())
         await asyncio.gather(*tasks)
 
-    async def delete_episodes(self, uids: Iterable[EpisodeIdT]) -> None:
+    async def delete_episodes(self, uids: Iterable[UUID]) -> None:
         """Delete episodes by UID."""
         if not self._enabled:
             return

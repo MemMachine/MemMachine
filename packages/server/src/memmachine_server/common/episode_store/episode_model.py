@@ -11,8 +11,6 @@ from pydantic import AwareDatetime, BaseModel, Field, JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
 
-EpisodeIdT = UUID
-
 
 class ContentType(Enum):
     """Enumeration for the type of content within an Episode."""
@@ -24,7 +22,7 @@ class ContentType(Enum):
 class EpisodeEntry(BaseModel):
     """Payload used when creating a new episode entry."""
 
-    uid: EpisodeIdT = Field(default_factory=uuid4)
+    uid: UUID = Field(default_factory=uuid4)
     content: str
 
     producer_id: str
@@ -39,14 +37,14 @@ class EpisodeEntry(BaseModel):
 class EpisodeResponse(EpisodeEntry):
     """Episode data returned in responses."""
 
-    uid: EpisodeIdT
+    uid: UUID
     score: float | None = None
 
 
 class Episode(BaseModel):
     """Conversation message stored in history together with persistence metadata."""
 
-    uid: EpisodeIdT
+    uid: UUID
     content: str
     session_key: str
     created_at: AwareDatetime
