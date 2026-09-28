@@ -267,7 +267,6 @@ class InMemorySemanticStorage(SemanticStorage):
 
             existing: set[EpisodeIdT] = set(entry.citations)
             for history_id in history_ids:
-                history_id = EpisodeIdT(history_id)
                 if history_id not in existing:
                     entry.citations.append(history_id)
                     existing.add(history_id)
@@ -483,7 +482,6 @@ class InMemorySemanticStorage(SemanticStorage):
     ) -> None:
         async with self._lock:
             history_map = self._set_history_map.setdefault(set_id, {})
-            history_id = EpisodeIdT(history_id)
             is_new_association = history_id not in history_map
             history_map[history_id] = history_map.get(history_id, False)
             if is_new_association:
@@ -497,10 +495,9 @@ class InMemorySemanticStorage(SemanticStorage):
             return
 
         async with self._lock:
-            ids = {EpisodeIdT(history_id) for history_id in history_ids}
+            ids = set(history_ids)
             for history_id in history_ids:
-                normalized_id = EpisodeIdT(history_id)
-                referencing_sets = self._history_to_sets.pop(normalized_id, None)
+                referencing_sets = self._history_to_sets.pop(history_id, None)
                 if referencing_sets is None:
                     continue
 
@@ -509,8 +506,8 @@ class InMemorySemanticStorage(SemanticStorage):
                     if history_map is None:
                         continue
 
-                    history_map.pop(normalized_id, None)
-                    self._history_created_at.pop((set_id, normalized_id), None)
+                    history_map.pop(history_id, None)
+                    self._history_created_at.pop((set_id, history_id), None)
                     if not history_map:
                         self._set_history_map.pop(set_id, None)
 
@@ -557,7 +554,6 @@ class InMemorySemanticStorage(SemanticStorage):
                 return
 
             for history_id in history_ids:
-                history_id = EpisodeIdT(history_id)
                 if history_id in set_map:
                     set_map[history_id] = True
                     self._history_to_sets.setdefault(history_id, {})[set_id] = True

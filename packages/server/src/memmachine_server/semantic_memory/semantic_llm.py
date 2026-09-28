@@ -13,9 +13,9 @@ from pydantic import (
     validate_call,
 )
 
-from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.semantic_memory.semantic_model import (
+    FeatureIdT,
     SemanticCommand,
     SemanticFeature,
 )
@@ -120,7 +120,7 @@ class SemanticConsolidateMemoryRes(BaseModel):
     """LLM response describing merged features and ids of features to retain."""
 
     consolidated_memories: list[LLMReducedFeature] = Field(default_factory=list)
-    keep_memories: list[EpisodeIdT] | None
+    keep_memories: list[FeatureIdT] | None
     model_config = ConfigDict(coerce_numbers_to_str=True)
 
 

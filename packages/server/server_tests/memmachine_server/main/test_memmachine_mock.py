@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
@@ -156,9 +157,13 @@ def patched_resource_manager(monkeypatch):
     return fake_manager
 
 
-def _make_episode(uid: str, session_key: str) -> Episode:
+def _uid(value: str | UUID) -> UUID:
+    return value if isinstance(value, UUID) else uuid5(NAMESPACE_URL, value)
+
+
+def _make_episode(uid: str | UUID, session_key: str) -> Episode:
     return Episode(
-        uid=uid,
+        uid=_uid(uid),
         content="content",
         session_key=session_key,
         created_at=datetime.now(UTC),
@@ -496,9 +501,11 @@ async def test_query_episodic_with_retrieval_agent_searches_long_then_short(
     )
 
     assert response is not None
-    assert [episode.uid for episode in response.long_term_memory.episodes] == ["long-1"]
+    assert [episode.uid for episode in response.long_term_memory.episodes] == [
+        _uid("long-1")
+    ]
     assert [episode.uid for episode in response.short_term_memory.episodes] == [
-        "short-1"
+        _uid("short-1")
     ]
     assert response.short_term_memory.episode_summary == ["short-summary"]
     assert episodic_session.query_memory.await_count == 2
@@ -572,7 +579,9 @@ async def test_query_episodic_with_retrieval_agent_skips_short_term_when_disable
     )
 
     assert response is not None
-    assert [episode.uid for episode in response.long_term_memory.episodes] == ["long-2"]
+    assert [episode.uid for episode in response.long_term_memory.episodes] == [
+        _uid("long-2")
+    ]
     assert response.short_term_memory.episodes == []
     assert episodic_session.query_memory.await_count == 1
     await_args = episodic_session.query_memory.await_args
@@ -642,7 +651,7 @@ async def test_add_episodes_dispatches_to_all_memories(
 
     entries = [
         EpisodeEntry(
-            uid="e1",
+            uid=_uid("e1"),
             content="hello",
             producer_id="user",
             producer_role="assistant",
@@ -651,7 +660,7 @@ async def test_add_episodes_dispatches_to_all_memories(
     ]
     episodes = [
         Episode(
-            uid="e1",
+            uid=_uid("e1"),
             content="hello",
             session_key=session.session_key,
             created_at=created_at,
@@ -854,7 +863,7 @@ async def test_add_episodes_finishes_episodic_write_before_closing(
     memory = _ClosingEpisodicSession()
     episode_storage = MagicMock()
     episode_storage.add_episodes = AsyncMock(
-        return_value=[_make_episode("ep1", session.session_key)]
+        return_value=[_make_episode(_uid("ep1"), session.session_key)]
     )
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -886,7 +895,7 @@ async def test_add_episodes_skips_memories_not_requested(
     entries = [
         EpisodeEntry(content="hello", producer_id="user", producer_role="assistant"),
     ]
-    stored_episodes = [_make_episode("e1", session.session_key)]
+    stored_episodes = [_make_episode(_uid("e1"), session.session_key)]
 
     episode_storage = MagicMock()
     episode_storage.add_episodes = AsyncMock(return_value=stored_episodes)
@@ -924,7 +933,7 @@ async def test_list_search_fetches_episode_history(
     session = DummySessionData("session-list")
 
     episode_storage = MagicMock()
-    episodes = [_make_episode("e1", session.session_key)]
+    episodes = [_make_episode(_uid("e1"), session.session_key)]
     episode_storage.get_episode_messages = AsyncMock(return_value=episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1012,15 +1021,17 @@ async def test_delete_episodes_rejects_missing_id_before_deleting(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     episode_storage = MagicMock()
     episode_storage.get_episodes = AsyncMock(
-        return_value=[SimpleNamespace(uid="existing-episode")]
+        return_value=[SimpleNamespace(uid=_uid("existing-episode"))]
     )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
     )
 
-    with pytest.raises(ResourceNotFoundError, match="missing-episode"):
-        await memmachine.delete_episodes(["existing-episode", "missing-episode"])
+    with pytest.raises(ResourceNotFoundError, match=str(_uid("missing-episode"))):
+        await memmachine.delete_episodes(
+            [_uid("existing-episode"), _uid("missing-episode")]
+        )
 
     episode_storage.delete_episodes.assert_not_awaited()
 
@@ -1034,7 +1045,10 @@ async def test_delete_episodes_forwards_to_storage_and_memories(
 
     episode_storage = MagicMock()
     episode_storage.get_episodes = AsyncMock(
-        return_value=[SimpleNamespace(uid="ep1"), SimpleNamespace(uid="ep2")]
+        return_value=[
+            SimpleNamespace(uid=_uid("ep1")),
+            SimpleNamespace(uid=_uid("ep2")),
+        ]
     )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
@@ -1048,10 +1062,12 @@ async def test_delete_episodes_forwards_to_storage_and_memories(
         return_value=episodic_manager
     )
 
-    await memmachine.delete_episodes(["ep1", "ep2"], session_data=session)
+    await memmachine.delete_episodes([_uid("ep1"), _uid("ep2")], session_data=session)
 
-    episode_storage.delete_episodes.assert_awaited_once_with(["ep1", "ep2"])
-    episodic_session.delete_episodes.assert_awaited_once_with(["ep1", "ep2"])
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("ep1"), _uid("ep2")])
+    episodic_session.delete_episodes.assert_awaited_once_with(
+        [_uid("ep1"), _uid("ep2")]
+    )
 
 
 @pytest.mark.asyncio
@@ -1062,7 +1078,9 @@ async def test_delete_episodes_finishes_episodic_write_before_closing(
     session = DummySessionData("session-delete-close")
     memory = _ClosingEpisodicSession()
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(return_value=[SimpleNamespace(uid="ep1")])
+    episode_storage.get_episodes = AsyncMock(
+        return_value=[SimpleNamespace(uid=_uid("ep1"))]
+    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1080,7 +1098,7 @@ async def test_delete_episodes_finishes_episodic_write_before_closing(
         return_value=episodic_manager
     )
 
-    await memmachine.delete_episodes(["ep1"], session_data=session)
+    await memmachine.delete_episodes([_uid("ep1")], session_data=session)
 
     assert memory.operations == ["delete", "close"]
 
@@ -1092,7 +1110,9 @@ async def test_delete_episodes_without_session_only_hits_storage(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(return_value=[SimpleNamespace(uid="ep1")])
+    episode_storage.get_episodes = AsyncMock(
+        return_value=[SimpleNamespace(uid=_uid("ep1"))]
+    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1104,9 +1124,9 @@ async def test_delete_episodes_without_session_only_hits_storage(
         return_value=episodic_manager
     )
 
-    await memmachine.delete_episodes(["ep1"], session_data=None)
+    await memmachine.delete_episodes([_uid("ep1")], session_data=None)
 
-    episode_storage.delete_episodes.assert_awaited_once_with(["ep1"])
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("ep1")])
     episodic_manager.open_episodic_memory.assert_not_called()
 
 
@@ -1231,7 +1251,7 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
 
     entries = [
         EpisodeEntry(
-            uid="e1",
+            uid=_uid("e1"),
             content="hello",
             producer_id="user",
             producer_role="assistant",
@@ -1240,7 +1260,7 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
     ]
     episodes = [
         Episode(
-            uid="e1",
+            uid=_uid("e1"),
             content="hello",
             session_key=session.session_key,
             created_at=created_at,
@@ -1370,7 +1390,7 @@ async def test_list_search_skips_semantic_memory_when_disabled(
     session = DummySessionData("disabled-list")
 
     episode_storage = MagicMock()
-    episodes = [_make_episode("e1", session.session_key)]
+    episodes = [_make_episode(_uid("e1"), session.session_key)]
     episode_storage.get_episode_messages = AsyncMock(return_value=episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1444,17 +1464,19 @@ async def test_delete_episodes_skips_semantic_memory_when_disabled(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(return_value=[SimpleNamespace(uid="e1")])
+    episode_storage.get_episodes = AsyncMock(
+        return_value=[SimpleNamespace(uid=_uid("e1"))]
+    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
     )
     patched_resource_manager.get_semantic_service = AsyncMock()
 
-    await memmachine.delete_episodes(["e1"])
+    await memmachine.delete_episodes([_uid("e1")])
 
     patched_resource_manager.get_semantic_service.assert_not_called()
-    episode_storage.delete_episodes.assert_awaited_once_with(["e1"])
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("e1")])
 
 
 @pytest.mark.asyncio
@@ -1466,7 +1488,9 @@ async def test_delete_episodes_uses_semantic_memory_when_enabled(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(return_value=[SimpleNamespace(uid="e1")])
+    episode_storage.get_episodes = AsyncMock(
+        return_value=[SimpleNamespace(uid=_uid("e1"))]
+    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1478,7 +1502,7 @@ async def test_delete_episodes_uses_semantic_memory_when_enabled(
         return_value=semantic_service
     )
 
-    await memmachine.delete_episodes(["e1"])
+    await memmachine.delete_episodes([_uid("e1")])
 
-    semantic_service.delete_history.assert_awaited_once_with(["e1"])
-    episode_storage.delete_episodes.assert_awaited_once_with(["e1"])
+    semantic_service.delete_history.assert_awaited_once_with([_uid("e1")])
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("e1")])

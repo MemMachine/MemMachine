@@ -6,7 +6,7 @@ import json
 import logging
 from collections.abc import Iterable
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -116,7 +116,7 @@ class DeclarativeMemory:
         )
         episode_nodes = [
             Node(
-                uid=episode.uid,
+                uid=str(episode.uid),
                 properties={
                     "uid": str(episode.uid),
                     "timestamp": episode.timestamp,
@@ -181,7 +181,7 @@ class DeclarativeMemory:
             Edge(
                 uid=str(uuid4()),
                 source_uid=derivative.uid,
-                target_uid=episode.uid,
+                target_uid=str(episode.uid),
             )
             for episode, episode_derivatives in zip(
                 episodes,
@@ -539,11 +539,11 @@ class DeclarativeMemory:
         """Format the time as a string."""
         return time.strftime("%I:%M %p")
 
-    async def get_episodes(self, uids: Iterable[str]) -> list[Episode]:
+    async def get_episodes(self, uids: Iterable[UUID]) -> list[Episode]:
         """Get episodes by their UIDs."""
         episode_nodes = await self._vector_graph_store.get_nodes(
             collection=self._episode_collection,
-            node_uids=uids,
+            node_uids=[str(uid) for uid in uids],
         )
 
         episodes = [
@@ -574,9 +574,9 @@ class DeclarativeMemory:
 
         return matching_episodes
 
-    async def delete_episodes(self, uids: Iterable[str]) -> None:
+    async def delete_episodes(self, uids: Iterable[UUID]) -> None:
         """Delete episodes by their UIDs."""
-        uids = list(uids)
+        node_uids = [str(uid) for uid in uids]
 
         search_derived_derivative_nodes_tasks = [
             self._vector_graph_store.search_related_nodes(
@@ -587,7 +587,7 @@ class DeclarativeMemory:
                 find_sources=True,
                 find_targets=False,
             )
-            for episode_uid in uids
+            for episode_uid in node_uids
         ]
 
         derived_derivative_nodes = [
@@ -601,7 +601,7 @@ class DeclarativeMemory:
         delete_nodes_tasks = [
             self._vector_graph_store.delete_nodes(
                 collection=self._episode_collection,
-                node_uids=uids,
+                node_uids=node_uids,
             ),
             self._vector_graph_store.delete_nodes(
                 collection=self._derivative_collection,
@@ -685,7 +685,7 @@ class DeclarativeMemory:
     @staticmethod
     def _episode_from_episode_node(episode_node: Node) -> Episode:
         return Episode(
-            uid=cast("str", episode_node.properties["uid"]),
+            uid=UUID(cast("str", episode_node.properties["uid"])),
             timestamp=cast("datetime.datetime", episode_node.properties["timestamp"]),
             source=cast("str", episode_node.properties["source"]),
             content_type=ContentType(episode_node.properties["content_type"]),

@@ -1208,7 +1208,8 @@ class MemMachine:
         missing_ids = set(episode_ids) - existing_ids
         if missing_ids:
             raise ResourceNotFoundError(
-                f"Episodic memories not found: {', '.join(sorted(missing_ids))}"
+                "Episodic memories not found: "
+                + ", ".join(str(uid) for uid in sorted(missing_ids))
             )
 
         tasks: list[Coroutine[Any, Any, Any]] = []
@@ -1232,7 +1233,7 @@ class MemMachine:
             tasks.append(semantic_service.delete_history(episode_ids))
         await asyncio.gather(*tasks)
 
-    async def _cleanup_semantic_history(self, episode_ids: list[str]) -> None:
+    async def _cleanup_semantic_history(self, episode_ids: list[EpisodeIdT]) -> None:
         """Delete semantic history entries for the given episode IDs.
 
         Args:

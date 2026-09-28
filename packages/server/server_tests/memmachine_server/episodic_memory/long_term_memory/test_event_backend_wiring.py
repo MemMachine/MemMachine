@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, override
 from unittest.mock import create_autospec
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -70,7 +71,7 @@ pytestmark = pytest.mark.asyncio
 class FakeEpisodeStorage(EpisodeStorage):
     """In-memory EpisodeStorage; only get_episode is exercised here."""
 
-    def __init__(self, episodes: dict[str, Episode]):
+    def __init__(self, episodes: dict[EpisodeIdT, Episode]):
         self._episodes = dict(episodes)
 
     @override
@@ -116,9 +117,13 @@ class FakeEpisodeStorage(EpisodeStorage):
         raise NotImplementedError
 
 
+def _uid(value: str) -> EpisodeIdT:
+    return uuid5(NAMESPACE_URL, value)
+
+
 def _episode(uid: str, content: str, *, producer_id: str = "alice") -> Episode:
     return Episode(
-        uid=uid,
+        uid=_uid(uid),
         content=content,
         session_key="sess1",
         created_at=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
@@ -249,7 +254,7 @@ async def test_search_warns_on_index_storage_drift(
 
     await long_term_memory.add_episodes(episodes)
     # Simulate drift: index keeps ep-2's segment, but EpisodeStorage forgets it.
-    await fake_episode_storage.delete_episodes(["ep-2"])
+    await fake_episode_storage.delete_episodes([_uid("ep-2")])
 
     with caplog.at_level(
         logging.WARNING,
@@ -261,14 +266,14 @@ async def test_search_warns_on_index_storage_drift(
         )
 
     returned_uids = {ep.uid for _, ep in scored}
-    assert "ep-2" not in returned_uids
-    assert returned_uids <= {"ep-1", "ep-3"}
+    assert _uid("ep-2") not in returned_uids
+    assert returned_uids <= {_uid("ep-1"), _uid("ep-3")}
 
     drift_records = [
         r for r in caplog.records if "index/storage drift" in r.getMessage()
     ]
     assert drift_records, "expected a drift warning"
-    assert "ep-2" in drift_records[0].getMessage()
+    assert str(_uid("ep-2")) in drift_records[0].getMessage()
 
 
 async def test_delete_episodes_removes_from_event_memory(
@@ -280,7 +285,7 @@ async def test_delete_episodes_removes_from_event_memory(
     # Sanity: 3 events, each with 1 segment under PassthroughSegmenter.
     assert len(segment_store_partition.segments) == 3
 
-    await long_term_memory.delete_episodes(["ep-1"])
+    await long_term_memory.delete_episodes([_uid("ep-1")])
 
     # ep-1's segment should be gone; the others should remain.
     assert len(segment_store_partition.segments) == 2
@@ -289,7 +294,7 @@ async def test_delete_episodes_removes_from_event_memory(
     remaining_episode_uids = {
         s.properties["_episode_uid"] for s in segment_store_partition.segments.values()
     }
-    assert "ep-1" not in remaining_episode_uids
+    assert str(_uid("ep-1")) not in remaining_episode_uids
 
 
 async def test_drop_session_partition_calls_parent_lifecycle_hooks(
@@ -321,7 +326,7 @@ async def test_event_backend_unusable_after_drop_session_partition(
     with pytest.raises(RuntimeError, match="drop_session_partition"):
         await long_term_memory.search_scored("anything", num_episodes_limit=1)
     with pytest.raises(RuntimeError, match="drop_session_partition"):
-        await long_term_memory.delete_episodes(["ep-1"])
+        await long_term_memory.delete_episodes([_uid("ep-1")])
 
 
 async def test_user_metadata_filter_round_trips(
@@ -331,7 +336,7 @@ async def test_user_metadata_filter_round_trips(
     """`m.<field>` filter on the client-API translates to bare field on storage."""
     episodes = [
         Episode(
-            uid="m-1",
+            uid=_uid("m-1"),
             content="apple",
             session_key="sess1",
             created_at=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
@@ -340,7 +345,7 @@ async def test_user_metadata_filter_round_trips(
             filterable_metadata={"color": "red"},
         ),
         Episode(
-            uid="m-2",
+            uid=_uid("m-2"),
             content="banana",
             session_key="sess1",
             created_at=datetime(2026, 1, 15, 12, 1, tzinfo=UTC),
@@ -358,7 +363,7 @@ async def test_user_metadata_filter_round_trips(
         property_filter=FilterComparison(field="m.color", op="=", value="red"),
     )
     uids = {ep.uid for _, ep in scored}
-    assert uids == {"m-1"}
+    assert uids == {_uid("m-1")}
 
 
 async def test_system_field_filter_round_trips(
@@ -372,7 +377,7 @@ async def test_system_field_filter_round_trips(
     """
     episodes = [
         Episode(
-            uid="s-1",
+            uid=_uid("s-1"),
             content="alice msg",
             session_key="sess1",
             created_at=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
@@ -380,7 +385,7 @@ async def test_system_field_filter_round_trips(
             producer_role="user",
         ),
         Episode(
-            uid="s-2",
+            uid=_uid("s-2"),
             content="bob msg",
             session_key="sess1",
             created_at=datetime(2026, 1, 15, 12, 1, tzinfo=UTC),
@@ -397,7 +402,7 @@ async def test_system_field_filter_round_trips(
         property_filter=FilterComparison(field="producer_id", op="=", value="alice"),
     )
     uids = {ep.uid for _, ep in scored}
-    assert uids == {"s-1"}
+    assert uids == {_uid("s-1")}
 
 
 async def test_close_is_a_noop(long_term_memory):
@@ -540,7 +545,7 @@ async def test_score_threshold_drops_low_scores_under_cosine():
     await ltm.add_episodes(episodes)
 
     kept_all = await ltm.search_scored("abc", num_episodes_limit=10)
-    assert {ep.uid for _, ep in kept_all} == {"near", "far"}
+    assert {ep.uid for _, ep in kept_all} == {_uid("near"), _uid("far")}
 
     kept_none = await ltm.search_scored(
         "abc", num_episodes_limit=10, score_threshold=2.0
@@ -576,20 +581,20 @@ async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
         ep.uid: score
         for score, ep in await ltm.search_scored("abc", num_episodes_limit=10)
     }
-    assert scores_by_uid["near"] < scores_by_uid["far"], (
+    assert scores_by_uid[_uid("near")] < scores_by_uid[_uid("far")], (
         "FakeEmbedder should make the shorter 'near' anchor a closer "
         "euclidean match than 'far'."
     )
-    midpoint_threshold = (scores_by_uid["near"] + scores_by_uid["far"]) / 2
+    midpoint_threshold = (scores_by_uid[_uid("near")] + scores_by_uid[_uid("far")]) / 2
 
     kept = await ltm.search_scored(
         "abc", num_episodes_limit=10, score_threshold=midpoint_threshold
     )
     uids = {ep.uid for _, ep in kept}
-    assert "near" in uids, (
+    assert _uid("near") in uids, (
         "Close match was dropped — threshold filter is inverted for euclidean."
     )
-    assert "far" not in uids, (
+    assert _uid("far") not in uids, (
         "Far match was kept — threshold filter is inverted for euclidean."
     )
 
@@ -605,12 +610,12 @@ async def test_score_threshold_none_keeps_all_results_under_euclidean():
     await ltm.add_episodes(episodes)
 
     scored = await ltm.search_scored("abc", num_episodes_limit=10)
-    assert [ep.uid for _, ep in scored] == ["only"]
+    assert [ep.uid for _, ep in scored] == [_uid("only")]
 
 
 def _timeline_episode(uid: str, content: str, minute: int) -> Episode:
     return Episode(
-        uid=uid,
+        uid=_uid(uid),
         content=content,
         session_key="sess1",
         created_at=datetime(2026, 1, 15, 12, minute, tzinfo=UTC),
@@ -639,7 +644,7 @@ _MATCH_INDEX = 3
 # Timeline index -> search rank (0 = most similar). The match ranks first, the
 # two episodes farthest from it next, its four neighbours last.
 _SEARCH_RANK_BY_INDEX = {3: 0, 0: 1, 6: 2, 2: 3, 4: 4, 1: 5, 5: 6}
-_NEIGHBOUR_UIDS = frozenset({"tl-1", "tl-2", "tl-4", "tl-5"})
+_NEIGHBOUR_UIDS = frozenset({_uid("tl-1"), _uid("tl-2"), _uid("tl-4"), _uid("tl-5")})
 
 
 def _timeline_token(index: int) -> str:
@@ -752,7 +757,7 @@ async def test_expand_context_returns_neighbours_the_search_would_not(
 
     plain_uids = {ep.uid for _, ep in plain}
     expanded_uids = {ep.uid for _, ep in expanded}
-    assert f"tl-{_MATCH_INDEX}" in plain_uids
+    assert _uid(f"tl-{_MATCH_INDEX}") in plain_uids
     assert not (plain_uids & _NEIGHBOUR_UIDS)
     assert expanded_uids & _NEIGHBOUR_UIDS
 
@@ -847,7 +852,7 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
     reached, whatever the other windows add up to the limit.
     """
     query = _timeline_token(_MATCH_INDEX)
-    match_uid = f"tl-{_MATCH_INDEX}"
+    match_uid = _uid(f"tl-{_MATCH_INDEX}")
     expand_context = 3
     # At this chunk length every timeline episode splits into three segments
     # (`timeline` / `message` / `tok-<i>`), so the window of three segments
@@ -857,7 +862,7 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
         "passthrough": PassthroughSegmenter(),
         "text": TextSegmenter(max_chunk_length=9),
     }
-    reached: dict[str, set[str]] = {}
+    reached: dict[str, set[EpisodeIdT]] = {}
     for name, segmenter in segmenters.items():
         ltm = _make_ltm(RankedEmbedder(), timeline_episodes, segmenter=segmenter)
         await ltm.add_episodes(timeline_episodes)
@@ -882,34 +887,40 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
 def test_unify_takes_whole_contexts_while_they_fit():
     unified = LongTermMemory._unify_scored_uid_contexts(
         [
-            (0.9, "b", ["a", "b", "c"]),
-            (0.5, "e", ["d", "e"]),
+            (0.9, _uid("b"), [_uid("a"), _uid("b"), _uid("c")]),
+            (0.5, _uid("e"), [_uid("d"), _uid("e")]),
         ],
         max_num_episodes=10,
     )
-    assert unified == {"a": 0.9, "b": 0.9, "c": 0.9, "d": 0.5, "e": 0.5}
+    assert unified == {
+        _uid("a"): 0.9,
+        _uid("b"): 0.9,
+        _uid("c"): 0.9,
+        _uid("d"): 0.5,
+        _uid("e"): 0.5,
+    }
 
 
 def test_unify_overflow_prefers_nucleus_then_forward():
     unified = LongTermMemory._unify_scored_uid_contexts(
-        [(0.9, "c", ["a", "b", "c", "d", "e"])],
+        [(0.9, _uid("c"), [_uid(v) for v in "abcde"])],
         max_num_episodes=3,
     )
     # Nucleus first, then forward neighbor, then next-forward beats backward
     # at equal distance (forward recall preferred).
-    assert set(unified) == {"c", "d", "e"}
+    assert set(unified) == {_uid("c"), _uid("d"), _uid("e")}
 
 
 def test_unify_first_window_keeps_the_score():
     unified = LongTermMemory._unify_scored_uid_contexts(
         [
-            (0.9, "b", ["a", "b"]),
-            (0.4, "a", ["a", "z"]),
+            (0.9, _uid("b"), [_uid("a"), _uid("b")]),
+            (0.4, _uid("a"), [_uid("a"), _uid("z")]),
         ],
         max_num_episodes=10,
     )
-    assert unified["a"] == 0.9  # first (best) window wins
-    assert unified["z"] == 0.4
+    assert unified[_uid("a")] == 0.9  # first (best) window wins
+    assert unified[_uid("z")] == 0.4
 
 
 def test_episode_uid_context_dedup_and_nucleus():
@@ -922,12 +933,12 @@ def test_episode_uid_context_dedup_and_nucleus():
         def __init__(self):
             self.seed_segment_uuid = "s2"
             self.segments = [
-                _Seg("s1", "e1"),
-                _Seg("s2", "e2"),
-                _Seg("s3", "e2"),
-                _Seg("s4", "e3"),
+                _Seg("s1", str(_uid("e1"))),
+                _Seg("s2", str(_uid("e2"))),
+                _Seg("s3", str(_uid("e2"))),
+                _Seg("s4", str(_uid("e3"))),
             ]
 
     nucleus, context = LongTermMemory._episode_uid_context(_Ctx())
-    assert nucleus == "e2"
-    assert context == ["e1", "e2", "e3"]
+    assert nucleus == _uid("e2")
+    assert context == [_uid("e1"), _uid("e2"), _uid("e3")]

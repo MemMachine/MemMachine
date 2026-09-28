@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import numpy as np
 import pytest
@@ -26,7 +26,7 @@ class _SessionData:
 
 async def _wait_for_history(
     semantic_storage: SemanticStorage,
-    episode_id: str,
+    episode_id: UUID,
     *,
     timeout_seconds: float = 5.0,
 ) -> None:

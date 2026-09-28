@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -22,6 +23,9 @@ from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
 from memmachine_server.server.api_v2.router import RestError, get_memmachine
 from memmachine_server.server.api_v2.service import _SessionData
 from memmachine_server.server.app import MemMachineAPI
+
+EPISODE_UID_1 = "550e8400-e29b-41d4-a716-446655440001"
+EPISODE_UID_2 = "550e8400-e29b-41d4-a716-446655440002"
 
 
 @pytest.fixture
@@ -343,33 +347,33 @@ def test_add_memories(client, mock_memmachine):
     with patch(
         "memmachine_server.server.api_v2.router._add_messages_to"
     ) as mock_add_messages:
-        mock_add_messages.return_value = [{"status": "ok", "uid": "123"}]
+        mock_add_messages.return_value = [{"status": "ok", "uid": EPISODE_UID_1}]
 
         # Generic add
         response = client.post("/api/v2/memories", json=payload)
         assert response.status_code == 200
-        assert response.json() == {"results": [{"uid": "123"}]}
+        assert response.json() == {"results": [{"uid": EPISODE_UID_1}]}
         mock_add_messages.assert_awaited_once()
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == ALL_MEMORY_TYPES
 
         # Episodic add
         mock_add_messages.reset_mock()
-        mock_add_messages.return_value = [{"status": "ok", "uid": "123"}]
+        mock_add_messages.return_value = [{"status": "ok", "uid": EPISODE_UID_1}]
         payload["types"] = [MemoryType.Episodic.value]
         response = client.post("/api/v2/memories", json=payload)
         assert response.status_code == 200
-        assert response.json() == {"results": [{"uid": "123"}]}
+        assert response.json() == {"results": [{"uid": EPISODE_UID_1}]}
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == [MemoryType.Episodic]
 
         # Semantic add
         mock_add_messages.reset_mock()
-        mock_add_messages.return_value = [{"status": "ok", "uid": "123"}]
+        mock_add_messages.return_value = [{"status": "ok", "uid": EPISODE_UID_1}]
         payload["types"] = [MemoryType.Semantic.value]
         response = client.post("/api/v2/memories", json=payload)
         assert response.status_code == 200
-        assert response.json() == {"results": [{"uid": "123"}]}
+        assert response.json() == {"results": [{"uid": EPISODE_UID_1}]}
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == [MemoryType.Semantic]
 
@@ -384,11 +388,16 @@ def test_add_memories_episode_type_forwarded(client, mock_memmachine):
         ],
     }
 
-    mock_memmachine.add_episodes.return_value = ["ep-1", "ep-2"]
+    mock_memmachine.add_episodes.return_value = [
+        UUID(EPISODE_UID_1),
+        UUID(EPISODE_UID_2),
+    ]
 
     response = client.post("/api/v2/memories", json=payload)
     assert response.status_code == 200
-    assert response.json() == {"results": [{"uid": "ep-1"}, {"uid": "ep-2"}]}
+    assert response.json() == {
+        "results": [{"uid": EPISODE_UID_1}, {"uid": EPISODE_UID_2}]
+    }
 
     mock_memmachine.add_episodes.assert_awaited_once()
     call_kwargs = mock_memmachine.add_episodes.call_args[1]
@@ -511,7 +520,7 @@ def test_list_memories(client, mock_memmachine):
     mock_results = MagicMock()
     mock_results.episodic_memory = [
         Episode(
-            uid="1",
+            uid=UUID(EPISODE_UID_1),
             content="mem1",
             session_key="test_org/test_proj",
             created_at=datetime(2025, 1, 1, tzinfo=UTC),
@@ -531,7 +540,7 @@ def test_list_memories(client, mock_memmachine):
     response = client.post("/api/v2/memories/list", json=payload)
     assert response.status_code == 200
     data = response.json()
-    assert data["content"]["episodic_memory"][0]["uid"] == "1"
+    assert data["content"]["episodic_memory"][0]["uid"] == EPISODE_UID_1
     assert data["content"]["episodic_memory"][0]["content"] == "mem1"
     assert "semantic_memory" not in data["content"]
 
@@ -563,7 +572,7 @@ def test_delete_episodic_memory(client, mock_memmachine):
     payload = {
         "org_id": "test_org",
         "project_id": "test_proj",
-        "episodic_id": "ep1",
+        "episodic_id": EPISODE_UID_1,
     }
 
     # Success
@@ -609,8 +618,8 @@ def test_delete_episodic_memories(client, mock_memmachine):
     payload = {
         "org_id": "test_org",
         "project_id": "test_proj",
-        "episodic_id": "ep1",
-        "episodic_ids": ["ep3", "ep1"],
+        "episodic_id": EPISODE_UID_1,
+        "episodic_ids": [EPISODE_UID_2, EPISODE_UID_1],
     }
 
     # Success
@@ -621,7 +630,7 @@ def test_delete_episodic_memories(client, mock_memmachine):
             org_id="test_org",
             project_id="test_proj",
         ),
-        episode_ids=["ep1", "ep3"],
+        episode_ids=[UUID(EPISODE_UID_1), UUID(EPISODE_UID_2)],
     )
 
 
@@ -767,7 +776,7 @@ def test_add_feature_with_metadata_and_citations(client, mock_memmachine):
         "feature": "favorite_food",
         "value": "pizza",
         "feature_metadata": {"source": "conversation"},
-        "citations": ["ep1", "ep2"],
+        "citations": [EPISODE_UID_1, EPISODE_UID_2],
     }
 
     mock_memmachine.add_feature.return_value = "feature_456"
@@ -778,7 +787,7 @@ def test_add_feature_with_metadata_and_citations(client, mock_memmachine):
 
     call_args = mock_memmachine.add_feature.call_args[1]
     assert call_args["feature_metadata"] == {"source": "conversation"}
-    assert call_args["citations"] == ["ep1", "ep2"]
+    assert call_args["citations"] == [UUID(EPISODE_UID_1), UUID(EPISODE_UID_2)]
 
 
 def test_add_feature_invalid_arg(client, mock_memmachine):
@@ -866,7 +875,7 @@ def test_get_feature_with_citations(client, mock_memmachine):
     mock_feature.value = "pizza"
     mock_feature.metadata = MagicMock()
     mock_feature.metadata.id = "feature_123"
-    mock_feature.metadata.citations = ["ep1", "ep2"]
+    mock_feature.metadata.citations = [UUID(EPISODE_UID_1), UUID(EPISODE_UID_2)]
     mock_feature.metadata.other = None
 
     mock_memmachine.get_feature.return_value = mock_feature
@@ -874,7 +883,7 @@ def test_get_feature_with_citations(client, mock_memmachine):
     response = client.post("/api/v2/memories/semantic/feature/get", json=payload)
     assert response.status_code == 200
     data = response.json()
-    assert data["metadata"]["citations"] == ["ep1", "ep2"]
+    assert data["metadata"]["citations"] == [EPISODE_UID_1, EPISODE_UID_2]
 
     call_args = mock_memmachine.get_feature.call_args[1]
     assert call_args["load_citations"] is True

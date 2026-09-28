@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import create_autospec
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -69,16 +70,18 @@ async def test_history_limit_selects_oldest_episode_times(
     history_storage: SemanticStorage,
 ):
     # Lexical UUID order and registration order both oppose episode chronology.
-    ids = [f"{prefix}0000000-0000-4000-8000-000000000000" for prefix in "fedcba0"]
+    ids = [UUID(f"{prefix}0000000-0000-4000-8000-000000000000") for prefix in "fedcba0"]
     start = datetime(2025, 1, 1, tzinfo=UTC)
     for offset in reversed(range(len(ids))):
         await history_storage.add_history_to_set(
             "ordered", ids[offset], created_at=start + timedelta(hours=offset)
         )
 
-    await history_storage.add_history_to_set("other", "unrelated", created_at=start)
-    await history_storage.add_history_to_set("ordered", "done", created_at=start)
-    await history_storage.mark_messages_ingested(set_id="ordered", history_ids=["done"])
+    unrelated = UUID("10000000-0000-4000-8000-000000000000")
+    done = UUID("20000000-0000-4000-8000-000000000000")
+    await history_storage.add_history_to_set("other", unrelated, created_at=start)
+    await history_storage.add_history_to_set("ordered", done, created_at=start)
+    await history_storage.mark_messages_ingested(set_id="ordered", history_ids=[done])
 
     first_batch = [
         history_id
@@ -101,8 +104,8 @@ async def test_history_limit_selects_oldest_episode_times(
 async def test_history_equal_times_use_id_tiebreaker(history_storage: SemanticStorage):
     created_at = datetime(2025, 1, 1, tzinfo=UTC)
     ids = [
-        "f0000000-0000-4000-8000-000000000000",
-        "00000000-0000-4000-8000-000000000000",
+        UUID("f0000000-0000-4000-8000-000000000000"),
+        UUID("00000000-0000-4000-8000-000000000000"),
     ]
     for history_id in ids:
         await history_storage.add_history_to_set(
@@ -120,7 +123,7 @@ async def test_history_equal_times_use_id_tiebreaker(history_storage: SemanticSt
 async def test_history_default_time_is_recent(
     history_storage: SemanticStorage,
 ):
-    ids = [f"{prefix}0000000-0000-4000-8000-000000000000" for prefix in "fedcba0"]
+    ids = [UUID(f"{prefix}0000000-0000-4000-8000-000000000000") for prefix in "fedcba0"]
     before = datetime.now(UTC) - timedelta(seconds=1)
     for history_id in ids:
         await history_storage.add_history_to_set("defaults", history_id)
@@ -168,9 +171,10 @@ async def test_neo4j_history_write_preserves_episode_time():
     driver = create_autospec(AsyncDriver, instance=True)
     storage = Neo4jSemanticStorage(driver)
     created_at = datetime(2025, 1, 1, 12, 34, 56, 123456, tzinfo=UTC)
-    await storage.add_history_to_set("ordered", "episode", created_at=created_at)
+    episode_id = UUID("550e8400-e29b-41d4-a716-446655440001")
+    await storage.add_history_to_set("ordered", episode_id, created_at=created_at)
     assert driver.execute_query.call_args.kwargs == {
         "set_id": "ordered",
-        "history_id": "episode",
+        "history_id": str(episode_id),
         "created_at": created_at,
     }

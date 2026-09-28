@@ -23,7 +23,7 @@ from memmachine_server.common.data_types import (
     ExternalServiceAPIError,
     PropertyValue,
 )
-from memmachine_server.common.episode_store import Episode
+from memmachine_server.common.episode_store import Episode, EpisodeIdT
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.errors import ShortTermMemoryClosedError
 from memmachine_server.common.filter.filter_parser import (
@@ -264,7 +264,7 @@ class ShortTermMemory:
         async with self._lock.write_lock():
             await self._do_reset()
 
-    async def delete_episode(self, uid: str) -> bool:
+    async def delete_episode(self, uid: EpisodeIdT) -> bool:
         """Delete one episode by UID."""
         async with self._lock.write_lock():
             for index, episode in enumerate(self._memory):

@@ -487,7 +487,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         stmt = (
             update(SetIngestedHistory)
             .where(SetIngestedHistory.set_id == set_id)
-            .where(SetIngestedHistory.history_id.in_(history_ids))
+            .where(SetIngestedHistory.history_id.in_(map(str, history_ids)))
             .values(ingested=True)
         )
 
@@ -504,7 +504,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     ) -> None:
         stmt = insert(SetIngestedHistory).values(
             set_id=set_id,
-            history_id=history_id,
+            history_id=str(history_id),
             created_at=created_at or datetime.now(UTC),
         )
 
@@ -517,10 +517,10 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             return
 
         stmt_citations = delete(citation_association_table).where(
-            citation_association_table.c.history_id.in_(history_ids)
+            citation_association_table.c.history_id.in_(map(str, history_ids))
         )
         stmt_history = delete(SetIngestedHistory).where(
-            SetIngestedHistory.history_id.in_(history_ids)
+            SetIngestedHistory.history_id.in_(map(str, history_ids))
         )
 
         async with self._create_session() as session:
@@ -709,7 +709,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         }
 
         for feature_id, history_id in result:
-            citations.setdefault(feature_id, []).append(history_id)
+            citations.setdefault(feature_id, []).append(EpisodeIdT(history_id))
 
         return citations
 

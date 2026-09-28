@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from uuid import UUID
 
 import numpy as np
 import pytest
@@ -48,7 +49,9 @@ async def test_older_than_compares_instants_not_wall_clocks(
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
     await storage.startup()
     try:
-        await storage.add_history_to_set(set_id="user", history_id="ep-1")
+        await storage.add_history_to_set(
+            set_id="user", history_id=UUID("550e8400-e29b-41d4-a716-446655440001")
+        )
 
         cutoff = (datetime.now(UTC) - timedelta(minutes=5)).astimezone(
             timezone(timedelta(hours=8))

@@ -16,6 +16,7 @@ from sqlalchemy import (
     Delete,
     Index,
     String,
+    Uuid,
     delete,
     func,
     insert,
@@ -80,7 +81,7 @@ class Episode(BaseEpisodeStore):
     """SQLAlchemy mapping for stored conversation messages."""
 
     __tablename__ = "episodestore"
-    id = mapped_column(String, primary_key=True, autoincrement=False)
+    id = mapped_column(Uuid, primary_key=True, autoincrement=False)
 
     content = mapped_column(String, nullable=False)
 
@@ -123,7 +124,7 @@ class Episode(BaseEpisodeStore):
     def to_typed_model(self) -> EpisodeE:
         created_at = ensure_tz_aware(self.created_at)
         return EpisodeE(
-            uid=EpisodeIdT(self.id),
+            uid=self.id,
             content=self.content,
             session_key=self.session_key,
             producer_id=self.producer_id,
@@ -349,7 +350,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         }
 
         if normalized in field_mapping:
-            return field_mapping[normalized], "column"
+            return field_mapping[normalized], (
+                "uuid" if normalized in {"uid", "id"} else "column"
+            )
 
         raise ValueError(f"Unknown filter field: {field!r}")
 
@@ -431,7 +434,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             result = await session.execute(stmt)
             rows = result.scalars().all()
 
-        return [EpisodeIdT(row) for row in rows]
+        return list(rows)
 
     @validate_call
     @timed("delete_episodes")

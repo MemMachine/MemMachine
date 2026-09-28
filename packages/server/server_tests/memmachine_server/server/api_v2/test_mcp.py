@@ -264,7 +264,7 @@ async def test_delete_memory_success(mock_delete, params, mcp_client):
         arguments={
             "org_id": params.org_id,
             "proj_id": params.proj_id,
-            "episodic_memory_uids": ["episode1"],
+            "episodic_memory_uids": ["550e8400-e29b-41d4-a716-446655440001"],
             "semantic_memory_uids": ["semantic1"],
         },
     )
@@ -285,7 +285,7 @@ async def test_delete_memory_failure(mock_delete, params, mcp_client):
         arguments={
             "org_id": params.org_id,
             "proj_id": params.proj_id,
-            "episodic_memory_uids": ["episode1"],
+            "episodic_memory_uids": ["550e8400-e29b-41d4-a716-446655440001"],
             "semantic_memory_uids": ["semantic1"],
         },
     )

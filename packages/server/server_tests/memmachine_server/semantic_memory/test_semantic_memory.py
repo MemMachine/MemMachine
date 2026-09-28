@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
@@ -405,7 +406,11 @@ async def test_id_only_registration_preserves_episode_times(
     )
     add_history_to_set = AsyncMock(wraps=semantic_storage.add_history_to_set)
     monkeypatch.setattr(semantic_storage, "add_history_to_set", add_history_to_set)
-    ids = [episodes[1].uid, "missing-episode", episodes[0].uid]
+    ids = [
+        episodes[1].uid,
+        UUID("550e8400-e29b-41d4-a716-446655449999"),
+        episodes[0].uid,
+    ]
 
     if registration == "batch":
         await semantic_service.add_messages("ordered", ids)
@@ -420,12 +425,12 @@ async def test_id_only_registration_preserves_episode_times(
     assert registered_times == {
         episodes[0].uid: start,
         episodes[1].uid: start + timedelta(hours=1),
-        "missing-episode": None,
+        ids[1]: None,
     }
     assert await _collect_async(
         semantic_storage.get_history_messages(set_ids=["ordered"], is_ingested=False)
-    ) == [episodes[0].uid, episodes[1].uid, "missing-episode"]
-    assert await episode_storage.get_episode("missing-episode") is None
+    ) == [episodes[0].uid, episodes[1].uid, ids[1]]
+    assert await episode_storage.get_episode(ids[1]) is None
 
 
 async def test_search_returns_matching_features(

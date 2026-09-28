@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -133,7 +134,7 @@ def query_policy() -> QueryPolicy:
 
 def _build_episode(*, uid: str, content: str, created_at: datetime) -> Episode:
     return Episode(
-        uid=uid,
+        uid=uuid5(NAMESPACE_URL, uid),
         content=content,
         session_key="test-session",
         created_at=created_at,
@@ -358,7 +359,9 @@ async def test_chain_of_query_agent_rewrites_and_accumulates_evidence(
         QueryParam(query="original_query?", limit=10, memory=memory),
     )
 
-    assert {episode.uid for episode in results} == {"fact1", "fact2", "fact3"}
+    assert {episode.uid for episode in results} == {
+        uuid5(NAMESPACE_URL, uid) for uid in ("fact1", "fact2", "fact3")
+    }
     assert coq_model.call_count == 3
     assert memory.queries == ["original_query?", "sub_query_1", "sub_query_2"]
     assert metrics["queries"] == ["original_query?", "sub_query_1", "sub_query_2"]

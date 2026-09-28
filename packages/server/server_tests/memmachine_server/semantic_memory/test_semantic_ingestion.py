@@ -3,6 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import numpy as np
 import pytest
@@ -655,7 +656,7 @@ async def test_process_single_set_deletes_invalid_episode_ids(
     semantic storage and continues processing the valid ones."""
     await semantic_service.stop()
     valid_id = await add_history(episode_storage, content="valid message")
-    invalid_id = "missing-episode"
+    invalid_id = UUID("550e8400-e29b-41d4-a716-446655449999")
     await semantic_service.add_messages("user-999", [valid_id, invalid_id])
 
     commands = [
@@ -710,7 +711,7 @@ async def test_process_single_set_raises_in_debug_mode_for_invalid_ids(
     the service raises a ValueError with set_id and invalid ids in the message."""
     await semantic_service.stop()
     valid_id = await add_history(episode_storage, content="valid message")
-    invalid_id = "missing-episode"
+    invalid_id = UUID("550e8400-e29b-41d4-a716-446655449999")
     await semantic_service.add_messages("user-888", [valid_id, invalid_id])
 
     ingestion_service = IngestionService(
