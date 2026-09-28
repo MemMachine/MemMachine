@@ -215,7 +215,12 @@ class EventRow(BaseEventMemoryStore):
 
 
 class SegmentRow(BaseEventMemoryStore):
-    """Persisted segment."""
+    """Persisted segment.
+
+    `block_kind` is the encoded block's kind in a column of its own, since
+    the codec's bytes are opaque to SQL; the store fills it from the block,
+    so the two cannot disagree.
+    """
 
     __tablename__ = "event_memory_store_sg"
 
@@ -231,6 +236,7 @@ class SegmentRow(BaseEventMemoryStore):
     )
     source_id: MappedColumn[str | None] = mapped_column(String(255), nullable=True)
     context: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
+    block_kind: MappedColumn[str] = mapped_column(String(255), nullable=False)
     block: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
     properties: MappedColumn[dict[str, JsonValue]] = mapped_column(
         _JSON_AUTO, nullable=False, default=dict
@@ -446,6 +452,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
         since: datetime | None = None,
         until: datetime | None = None,
         source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> dict[UUID, Segment]:
         SQLAlchemyEventMemoryStorePartition._require_aware_bounds(since, until)
@@ -457,6 +464,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
             since=since,
             until=until,
             source_ids=source_ids,
+            block_kinds=block_kinds,
             property_filter=property_filter,
         )
 
@@ -485,6 +493,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
         since: datetime | None = None,
         until: datetime | None = None,
         source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> dict[UUID, Neighborhood]:
         if before < 0:
@@ -496,7 +505,8 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
         if not seed_uuids:
             return {}
         filtered = any(
-            value is not None for value in (since, until, source_ids, property_filter)
+            value is not None
+            for value in (since, until, source_ids, block_kinds, property_filter)
         )
         neighbor_conditions = (
             partial(
@@ -504,6 +514,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
                 since=since,
                 until=until,
                 source_ids=None if source_ids is None else list(source_ids),
+                block_kinds=None if block_kinds is None else list(block_kinds),
                 property_filter=property_filter,
             )
             if filtered
@@ -820,6 +831,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
         since: datetime | None,
         until: datetime | None,
         source_ids: Iterable[str] | None,
+        block_kinds: Iterable[str] | None,
         property_filter: FilterExpr | None,
     ) -> list[ColumnElement[bool]]:
         """A read's row predicates over `columns`, on the typed fields and the properties.
@@ -834,11 +846,13 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
             conditions.append(columns.timestamp >= since)
         if until is not None:
             conditions.append(columns.timestamp < until)
-        if source_ids is not None:
-            source_ids = list(source_ids)
-            conditions.append(
-                columns.source_id.in_(source_ids) if source_ids else false()
-            )
+        for column, values in (
+            (columns.source_id, source_ids),
+            (columns.block_kind, block_kinds),
+        ):
+            if values is not None:
+                values = list(values)
+                conditions.append(column.in_(values) if values else false())
         if property_filter is not None:
             conditions.append(
                 compile_sql_filter(
@@ -1133,6 +1147,7 @@ class SQLAlchemyEventMemoryStorePartitionWriter(EventMemoryStorePartitionWriter)
                 "context": self._payload_codec.encode(
                     json.dumps(encode_context(segment.context)).encode("utf-8")
                 ),
+                "block_kind": segment.block.block_type,
                 "block": self._payload_codec.encode(
                     json.dumps(encode_block(segment.block)).encode("utf-8")
                 ),
