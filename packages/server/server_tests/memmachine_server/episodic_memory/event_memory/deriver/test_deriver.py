@@ -14,6 +14,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     InjectedBlock,
     Segment,
     TextBlock,
+    ThinkingBlock,
     ToolCallBlock,
     ToolResultBlock,
 )
@@ -114,6 +115,7 @@ async def test_handler_receives_the_segment_and_its_block():
 async def test_the_capture_kinds_derive_nothing_under_the_text_deriver():
     deriver = Deriver([WholeTextDeriver()])
     for block in (
+        ThinkingBlock(text="The suite is red."),
         ToolCallBlock(name="Bash", input={"command": "pytest -q"}),
         ToolResultBlock(name="Bash", output="4 passed"),
         InjectedBlock(text="Run the gates.", source="hook"),
