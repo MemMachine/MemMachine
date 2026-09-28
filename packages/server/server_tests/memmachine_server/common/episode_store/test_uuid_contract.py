@@ -25,7 +25,8 @@ def test_episode_entry_and_api_models_keep_uuid_values():
 
 
 def test_episode_primary_key_uses_uuid_column():
-    assert isinstance(Episode.__table__.c.id.type, Uuid)
+    assert isinstance(Episode.__table__.c.uid.type, Uuid)
+    assert "id" not in Episode.__table__.c
 
 
 @pytest.mark.asyncio
