@@ -96,7 +96,7 @@ async def test_add_and_get_history(episode_storage: EpisodeStorage):
         episode_type=EpisodeType.MESSAGE,
     )
 
-    assert type(history_id) is UUID
+    assert isinstance(history_id, UUID)
 
     history = await episode_storage.get_episode(history_id)
     assert history is not None
