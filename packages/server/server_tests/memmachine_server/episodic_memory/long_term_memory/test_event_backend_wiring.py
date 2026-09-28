@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, override
 from unittest.mock import create_autospec
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 
@@ -28,13 +28,31 @@ from memmachine_server.common.episode_store import (
     EpisodeStorage,
 )
 from memmachine_server.common.filter.filter_parser import (
+    And as FilterAnd,
+)
+from memmachine_server.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
+from memmachine_server.common.filter.filter_parser import (
+    In as FilterIn,
+)
+from memmachine_server.common.filter.filter_parser import (
+    Or as FilterOr,
+)
 from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    Neighborhood,
+    QueryHit,
+    Segment,
+    TextBlock,
+)
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
 )
-from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
+from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EVENT_SOURCE_KEY,
+    EventMemory,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
 )
@@ -442,6 +460,103 @@ async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
     )
 
 
+def test_timestamp_bounds_are_lifted_out_of_the_filter():
+    """`timestamp >=` and `<` conjuncts become the memory's typed bounds; the rest stays."""
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    t1 = datetime(2026, 1, 2, tzinfo=UTC)
+    t2 = datetime(2026, 1, 3, tzinfo=UTC)
+    color = FilterComparison(field="m.color", op="=", value="red")
+    tree = FilterAnd(
+        left=FilterAnd(
+            left=FilterComparison(field="timestamp", op=">=", value=t0),
+            right=color,
+        ),
+        right=FilterAnd(
+            left=FilterComparison(field="created_at", op="<", value=t2),
+            right=FilterComparison(field="timestamp", op=">=", value=t1),
+        ),
+    )
+
+    lifted = LongTermMemory._lift_typed_filters(tree)
+
+    assert (lifted.since, lifted.until, lifted.source_ids) == (t1, t2, None)
+    assert lifted.rest == color
+    assert LongTermMemory._lift_typed_filters(None) == (None, None, None, None)
+    # Another operator, or a timestamp under a disjunction, is not lifted.
+    later = FilterComparison(field="timestamp", op=">", value=t0)
+    assert LongTermMemory._lift_typed_filters(later) == (None, None, None, later)
+    either = FilterOr(
+        left=FilterComparison(field="timestamp", op=">=", value=t0), right=color
+    )
+    assert LongTermMemory._lift_typed_filters(either) == (None, None, None, either)
+
+
+def test_producer_conjuncts_are_lifted_into_source_ids():
+    """`producer_id =` and `IN` conjuncts become `source_ids`; their intersection when several."""
+    color = FilterComparison(field="m.color", op="=", value="red")
+    one = FilterComparison(field="producer_id", op="=", value="alice")
+    assert LongTermMemory._lift_typed_filters(one) == (None, None, ["alice"], None)
+    several = FilterAnd(
+        left=FilterIn(field="producer_id", values=["bob", "alice", "carol"]),
+        right=FilterAnd(
+            left=color,
+            right=FilterIn(field="producer_id", values=["alice", "bob"]),
+        ),
+    )
+    lifted = LongTermMemory._lift_typed_filters(several)
+    assert (lifted.source_ids, lifted.rest) == (["alice", "bob"], color)
+    # Contradictory conjuncts admit nothing, which an empty list expresses.
+    nobody = FilterAnd(left=one, right=FilterIn(field="producer_id", values=["bob"]))
+    assert LongTermMemory._lift_typed_filters(nobody).source_ids == []
+    # A negation or another operator stays a post-filter.
+    other = FilterComparison(field="producer_id", op="!=", value="alice")
+    assert LongTermMemory._lift_typed_filters(other) == (None, None, None, other)
+
+
+async def test_a_producer_filter_reaches_the_vector_stage(
+    long_term_memory, fake_episode_storage, vector_store_partition, monkeypatch
+):
+    """The vector store gets the source predicate; the segment store gets no tree."""
+    episodes = [
+        Episode(
+            uid=_uid("p-1"),
+            content="alice msg",
+            session_key="sess1",
+            created_at=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
+            producer_id="alice",
+            producer_role="user",
+        ),
+        Episode(
+            uid=_uid("p-2"),
+            content="bob msg",
+            session_key="sess1",
+            created_at=datetime(2026, 1, 15, 12, 1, tzinfo=UTC),
+            producer_id="bob",
+            producer_role="user",
+        ),
+    ]
+    fake_episode_storage._episodes.update({e.uid: e for e in episodes})
+    await long_term_memory.add_episodes(episodes)
+    seen: list[object] = []
+    original_query = vector_store_partition.query
+
+    async def recording_query(**kwargs):
+        seen.append(kwargs.get("property_filter"))
+        return await original_query(**kwargs)
+
+    monkeypatch.setattr(vector_store_partition, "query", recording_query)
+
+    scored = await long_term_memory.search_scored(
+        "msg",
+        num_episodes_limit=10,
+        property_filter=FilterComparison(field="producer_id", op="=", value="alice"),
+    )
+
+    assert {ep.uid for _, ep in scored} == {_uid("p-1")}
+    [vector_filter] = seen
+    assert vector_filter == FilterIn(field=EVENT_SOURCE_KEY, values=["alice"])
+
+
 def _make_ltm(
     embedder: Embedder,
     episodes: list[Episode],
@@ -514,7 +629,7 @@ def _timeline_episode(uid: str, content: str, minute: int) -> Episode:
 # contributed anything: a search at `num_episodes_limit=N` returns the first N
 # episodes in store order whether or not the windows are folded in.
 #
-# The expansion tests below give each episode its own similarity instead, by an
+# The expansion tests below give each episode its own cosine similarity instead, by an
 # explicit search rank. The rank order is chosen so that the timeline
 # neighbours of the one matching episode are the LEAST similar of all, which is
 # what lets the tests assert on the contract ("expansion returns timeline
@@ -682,37 +797,42 @@ async def test_expand_context_window_stays_within_the_episode_limit(
     """
     await timeline_long_term_memory.add_episodes(timeline_episodes)
 
-    windows: list[tuple[int, int]] = []
-    get_segment_contexts = segment_store_partition.get_segment_contexts
+    walks: list[tuple[int, int]] = []
+    get_segment_neighborhoods = segment_store_partition.get_segment_neighborhoods
 
-    async def recording_get_segment_contexts(seed_segment_uuids, **kwargs):
-        windows.append(
+    async def recording_get_segment_neighborhoods(seed_uuids, **kwargs):
+        walks.append(
             (
-                kwargs.get("max_backward_segments", 0),
-                kwargs.get("max_forward_segments", 0),
+                kwargs.get("before", 0),
+                kwargs.get("after", 0),
             )
         )
-        return await get_segment_contexts(seed_segment_uuids, **kwargs)
+        return await get_segment_neighborhoods(seed_uuids, **kwargs)
 
     monkeypatch.setattr(
         segment_store_partition,
-        "get_segment_contexts",
-        recording_get_segment_contexts,
+        "get_segment_neighborhoods",
+        recording_get_segment_neighborhoods,
     )
 
     for num_episodes_limit, expand_context in ((1, -3), (1, 5), (3, 99), (5, 2)):
-        windows.clear()
+        walks.clear()
         scored = await timeline_long_term_memory.search_scored(
             _timeline_token(_MATCH_INDEX),
             num_episodes_limit=num_episodes_limit,
             expand_context=expand_context,
         )
         assert len(scored) <= num_episodes_limit
-        assert windows
-        for backward, forward in windows:
+        allowed = max(0, num_episodes_limit - 1)
+        if allowed == 0:
+            # Nothing to expand into: no walk is asked of the store.
+            assert walks == []
+            continue
+        assert walks
+        for backward, forward in walks:
             assert backward >= 0
             assert forward >= 0
-            assert backward + forward <= max(0, num_episodes_limit - 1)
+            assert backward + forward <= allowed
 
 
 @pytest.mark.parametrize("num_episodes_limit", [0, -1])
@@ -822,21 +942,24 @@ def test_unify_first_window_keeps_the_score():
 
 
 def test_episode_uid_context_dedup_and_nucleus():
-    class _Seg:
-        def __init__(self, uuid, uid):
-            self.uuid = uuid
-            self.properties = {"_episode_uid": uid}
+    def _seg(uid: str) -> Segment:
+        return Segment(
+            source_id="src",
+            uuid=uuid4(),
+            event_uuid=uuid4(),
+            index=0,
+            offset=0,
+            timestamp=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
+            block=TextBlock(text=uid),
+            properties={"_episode_uid": str(_uid(uid))},
+        )
 
-    class _Ctx:
-        def __init__(self):
-            self.seed_segment_uuid = "s2"
-            self.segments = [
-                _Seg("s1", str(_uid("e1"))),
-                _Seg("s2", str(_uid("e2"))),
-                _Seg("s3", str(_uid("e2"))),
-                _Seg("s4", str(_uid("e3"))),
-            ]
+    hit = QueryHit(
+        score=1.0,
+        seed=_seg("e2"),
+        neighborhood=Neighborhood(before=[_seg("e1")], after=[_seg("e2"), _seg("e3")]),
+    )
 
-    nucleus, context = LongTermMemory._episode_uid_context(_Ctx())
+    nucleus, context = LongTermMemory._episode_uid_context(hit)
     assert nucleus == _uid("e2")
     assert context == [_uid("e1"), _uid("e2"), _uid("e3")]
