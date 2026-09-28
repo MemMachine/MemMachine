@@ -22,6 +22,7 @@ _TS = datetime(2026, 1, 15, 10, 30, tzinfo=UTC)
 
 def _segment(block: TextBlock) -> Segment:
     return Segment(
+        session_id="s",
         source_id="src",
         uuid=uuid4(),
         event_uuid=uuid4(),

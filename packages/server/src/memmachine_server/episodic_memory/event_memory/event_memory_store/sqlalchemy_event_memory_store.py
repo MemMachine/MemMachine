@@ -249,6 +249,7 @@ class SegmentRow(BaseEventMemoryStore):
     timestamp_timezone_offset: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
+    session_id: MappedColumn[str] = mapped_column(String(255), nullable=False)
     source_id: MappedColumn[str | None] = mapped_column(String(255), nullable=True)
     context: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
     block_kind: MappedColumn[str] = mapped_column(String(255), nullable=False)
@@ -275,9 +276,12 @@ class SegmentRow(BaseEventMemoryStore):
             "incarnation",
             "event_uuid",
         ),
+        # The one total order the store exposes, within a session: a walk
+        # pins the session and follows it.
         Index(
-            "event_memory_store_sg__in_ts_ev_ix_of",
+            "event_memory_store_sg__in_se_ts_ev_ix_of",
             "incarnation",
+            "session_id",
             "timestamp",
             "event_uuid",
             "index",
@@ -373,6 +377,7 @@ class PendingWriteDerivativeRow(BaseEventMemoryStore):
     timestamp_timezone_offset: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
+    session_id: MappedColumn[str] = mapped_column(String(255), nullable=False)
     source_id: MappedColumn[str | None] = mapped_column(String(255), nullable=True)
     block_kind: MappedColumn[str] = mapped_column(String(255), nullable=False)
     text: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
@@ -660,6 +665,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
                 # original offset is recorded separately and reapplied on read.
                 "timestamp": segment.timestamp,
                 "timestamp_timezone_offset": utc_offset_seconds(segment.timestamp),
+                "session_id": segment.session_id,
                 "source_id": segment.source_id,
                 "context": self._payload_codec.encode(
                     json.dumps(segment.context.encode()).encode("utf-8")
@@ -726,6 +732,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
                 "segment_uuid": derivative.segment_uuid,
                 "timestamp": derivative.timestamp,
                 "timestamp_timezone_offset": utc_offset_seconds(derivative.timestamp),
+                "session_id": derivative.session_id,
                 "source_id": derivative.source_id,
                 "block_kind": derivative.block_kind,
                 "text": self._payload_codec.encode(derivative.text.encode("utf-8")),
@@ -769,6 +776,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
         *,
         since: datetime | None = None,
         until: datetime | None = None,
+        session_ids: Iterable[str] | None = None,
         source_ids: Iterable[str] | None = None,
         block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
@@ -781,6 +789,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
             SegmentRow.__table__.c,
             since=since,
             until=until,
+            session_ids=session_ids,
             source_ids=source_ids,
             block_kinds=block_kinds,
             property_filter=property_filter,
@@ -831,6 +840,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
                 SQLAlchemyEventMemoryStorePartition._row_conditions,
                 since=since,
                 until=until,
+                session_ids=None,
                 source_ids=None if source_ids is None else list(source_ids),
                 block_kinds=None if block_kinds is None else list(block_kinds),
                 property_filter=property_filter,
@@ -915,6 +925,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
         seeds_subquery = (
             select(
                 SegmentRow.uuid.label("seed_uuid"),
+                SegmentRow.session_id.label("seed_session_id"),
                 SegmentRow.timestamp.label("seed_timestamp"),
                 SegmentRow.event_uuid.label("seed_event_uuid"),
                 SegmentRow.index.label("seed_index"),
@@ -942,6 +953,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
             # Build a LATERAL subquery that gets context rows for each seed.
             lateral_subquery = (
                 self._context_rows_query(
+                    seeds_subquery.c.seed_session_id,
                     seed_ordering_columns,
                     backward=backward,
                     limit=limit,
@@ -997,14 +1009,17 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
     ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
         """Get backward/forward context per seed (SQLite fallback)."""
         # Build one statement per direction and run it for each seed, binding
-        # the seed's timestamp, event UUID, index and offset. Building a
-        # statement costs more CPU than SQLite spends running it, so building
+        # the seed's session, timestamp, event UUID, index and offset. Building
+        # a statement costs more CPU than SQLite spends running it, so building
         # one per seed would dominate the read.
         seed_ordering_values = tuple_(
             bindparam("seed_timestamp", type_=SegmentRow.timestamp.type),
             bindparam("seed_event_uuid", type_=SegmentRow.event_uuid.type),
             bindparam("seed_index", type_=SegmentRow.index.type),
             bindparam("seed_offset", type_=SegmentRow.offset.type),
+        )
+        seed_session_value = bindparam(
+            "seed_session_id", type_=SegmentRow.session_id.type
         )
 
         async def get_context_rows_directional(
@@ -1017,6 +1032,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
             # them from plain rows.
             context_rows_query = select(SegmentRow).from_statement(
                 self._context_rows_query(
+                    seed_session_value,
                     seed_ordering_values,
                     backward=backward,
                     limit=limit,
@@ -1026,6 +1042,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
             rows_by_seed: dict[UUID, list[SegmentRow]] = {}
             for seed_uuid, seed_row in seed_rows_by_uuid.items():
                 seed_position = {
+                    "seed_session_id": seed_row.session_id,
                     "seed_timestamp": seed_row.timestamp,
                     "seed_event_uuid": seed_row.event_uuid,
                     "seed_index": seed_row.index,
@@ -1060,6 +1077,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
 
     def _context_rows_query(
         self,
+        seed_session_value: ColumnElement,
         seed_ordering_values: Tuple,
         *,
         backward: bool,
@@ -1068,9 +1086,11 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
     ) -> Select:
         """Select a seed's context on one side, nearest the seed first.
 
-        `seed_ordering_values` is the seed's (timestamp, event_uuid, index,
-        offset): bound parameters or an enclosing statement's columns.
-        Context comes from at most the next _MAX_CONTEXT_DISTANCE segments. Unfiltered, it is the first `limit`
+        `seed_session_value` is the seed's session id and
+        `seed_ordering_values` its (timestamp, event_uuid, index, offset):
+        bound parameters or an enclosing statement's columns. The walk stays
+        in the seed's session. Context comes from at most the next
+        _MAX_CONTEXT_DISTANCE segments. Unfiltered, it is the first `limit`
         of them. With `neighbor_conditions`, it is the first `limit` matches
         among them, read without the conditions, which the planner cannot
         estimate, so the plan stays an ordered index scan.
@@ -1090,6 +1110,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
             select(SegmentRow.__table__)
             .where(
                 segments.incarnation == self._incarnation,
+                segments.session_id == seed_session_value,
                 segment_ordering_columns < seed_ordering_values
                 if backward
                 else segment_ordering_columns > seed_ordering_values,
@@ -1148,6 +1169,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
         *,
         since: datetime | None,
         until: datetime | None,
+        session_ids: Iterable[str] | None,
         source_ids: Iterable[str] | None,
         block_kinds: Iterable[str] | None,
         property_filter: FilterExpr | None,
@@ -1165,6 +1187,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
         if until is not None:
             conditions.append(columns.timestamp < until)
         for column, values in (
+            (columns.session_id, session_ids),
             (columns.source_id, source_ids),
             (columns.block_kind, block_kinds),
         ):
@@ -1363,6 +1386,7 @@ class SQLAlchemyEventMemoryStorePartition(EventMemoryStorePartition):
             index=row.index,
             offset=row.offset,
             timestamp=timestamp,
+            session_id=row.session_id,
             source_id=row.source_id,
             context=context,
             block=block,
@@ -2515,6 +2539,7 @@ def _derivative_from_pending_write_derivative_row(
         uuid=row.uuid,
         segment_uuid=row.segment_uuid,
         timestamp=row.timestamp.astimezone(original_timezone),
+        session_id=row.session_id,
         source_id=row.source_id,
         block_kind=row.block_kind,
         text=payload_codec.decode(row.text).decode("utf-8"),

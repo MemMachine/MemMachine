@@ -57,6 +57,14 @@ logger = logging.getLogger(__name__)
 # change without a data migration.
 _EVENT_UUID_NAMESPACE = UUID("8c2c0e0a-3a2f-4b9c-9d1f-9b6c2a3a4f7e")
 
+DEFAULT_SESSION_ID: Final[str] = "memmachine_default"
+"""The session of every event this API ingests.
+
+The API carries no conversation id, so a partition's events are one
+stream. This one name is reserved for it; a caller may name a session
+anything else.
+"""
+
 # The adapter's fields, stored on `event.properties` under the keys it
 # reserves, by the bare name a client filters each by; `ltm` names this
 # memory, short because the keys share the identifier budget.
@@ -749,6 +757,10 @@ class LongTermMemory:
         - Event.uuid = uuid5(NAMESPACE, episode.uid) so the mapping is
           deterministic and reversible (the episode uid field carries the
           original).
+        - Event.session_id = DEFAULT_SESSION_ID: the API carries no
+          conversation id, so a partition's events are one stream, under
+          the one reserved session name; when the API carries one, it
+          goes here.
         - The producer id is both the event's `source_id`, the one source
           an episode has, and an `Author` part in its context, as the
           `ProducerContext` was before, so a rendered segment keeps its
@@ -785,6 +797,7 @@ class LongTermMemory:
         return Event(
             uuid=uuid5(_EVENT_UUID_NAMESPACE, str(episode.uid)),
             timestamp=episode.created_at,
+            session_id=DEFAULT_SESSION_ID,
             source_id=episode.producer_id,
             context=Context(Author(name=episode.producer_id)),
             blocks=[TextBlock(text=episode.content)],

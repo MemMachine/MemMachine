@@ -38,6 +38,7 @@ def _segment(text: str = "hi", *, context=None, block: Block | None = None) -> S
         index=0,
         offset=0,
         timestamp=_TS,
+        session_id="s1",
         source_id="chat",
         context=context if context is not None else Context(),
         block=block if block is not None else TextBlock(text=text),
@@ -89,6 +90,7 @@ async def test_handler_of_the_kind_derives_and_the_table_builds_the_envelope():
     for derivative in derivatives:
         assert derivative.segment_uuid == segment.uuid
         assert derivative.timestamp == segment.timestamp
+        assert derivative.session_id == "s1"
         assert derivative.source_id == "chat"
         assert derivative.block_kind == "text"
     assert len({d.uuid for d in derivatives}) == 2

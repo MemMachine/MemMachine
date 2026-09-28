@@ -39,6 +39,7 @@ SAMPLE_PROPERTIES = {
 class TestSegmentRoundTrip:
     def test_all_property_types(self):
         seg = Segment(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
@@ -55,6 +56,7 @@ class TestSegmentRoundTrip:
 
     def test_empty_properties(self):
         seg = Segment(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
@@ -68,6 +70,7 @@ class TestSegmentRoundTrip:
 
     def test_from_code_plain_values(self):
         seg = Segment(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
@@ -81,6 +84,7 @@ class TestSegmentRoundTrip:
 
     def test_context_preserved(self):
         seg = Segment(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
@@ -93,20 +97,21 @@ class TestSegmentRoundTrip:
         seg2 = Segment.model_validate(seg.model_dump(mode="json"))
         assert seg2.context.get("author") == Author(name="user")
 
-    def test_source_round_trips(self):
+    def test_session_and_source_round_trip(self):
         seg = Segment(
             uuid=uuid4(),
             event_uuid=uuid4(),
             index=0,
             offset=0,
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
+            session_id="s1",
             source_id="alice",
             block=TextBlock(text="hello"),
         )
         seg2 = Segment.model_validate(seg.model_dump(mode="json"))
-        assert seg2.source_id == "alice"
+        assert (seg2.session_id, seg2.source_id) == ("s1", "alice")
 
-    def test_source_defaults_to_null(self):
+    def test_source_defaults_to_null_and_session_is_required(self):
         fields = {
             "uuid": uuid4(),
             "event_uuid": uuid4(),
@@ -115,7 +120,12 @@ class TestSegmentRoundTrip:
             "timestamp": datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
             "block": {"kind": "text", "text": "hello"},
         }
-        assert Segment.model_validate(fields).source_id is None
+        seg = Segment.model_validate({**fields, "session_id": "s1"})
+        assert seg.source_id is None
+        with pytest.raises(ValidationError, match="session_id"):
+            Segment.model_validate(fields)
+        with pytest.raises(ValidationError, match="session_id"):
+            Segment.model_validate({**fields, "session_id": ""})
 
     def test_a_naive_timestamp_is_rejected(self):
         with pytest.raises(ValidationError, match="timestamp"):
@@ -128,21 +138,23 @@ class TestSegmentRoundTrip:
                     "timestamp": datetime(2026, 1, 15, 10, 30, tzinfo=UTC).replace(
                         tzinfo=None
                     ),
+                    "session_id": "s1",
                     "block": {"block_type": "text", "text": "hello"},
                 }
             )
 
 
 class TestBounds:
-    def test_overlong_source_id_is_rejected(self):
+    @pytest.mark.parametrize("field", ["session_id", "source_id"])
+    def test_overlong_id_is_rejected(self, field):
         overlong = "x" * (ID_MAX_BYTES + 1)
-        with pytest.raises(ValidationError, match="source_id"):
+        with pytest.raises(ValidationError, match=field):
             Event.model_validate(
                 {
                     "uuid": uuid4(),
                     "timestamp": datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
                     "blocks": [{"kind": "text", "text": "hello"}],
-                    "source_id": overlong,
+                    field: overlong,
                 }
             )
 
@@ -169,6 +181,7 @@ class TestBounds:
                 index=0,
                 offset=0,
                 timestamp=datetime(2026, 1, 15, 10, 30, seconds, tzinfo=UTC),
+                session_id="s1",
                 block=TextBlock(text="hello"),
             )
 
@@ -184,6 +197,7 @@ class TestBounds:
 class TestEventRoundTrip:
     def test_all_property_types(self):
         evt = Event(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             timestamp=datetime(2026, 1, 15, 10, 30, tzinfo=UTC),
@@ -199,6 +213,7 @@ class TestEventRoundTrip:
 class TestDerivativeRoundTrip:
     def test_round_trip(self):
         der = Derivative(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             segment_uuid=uuid4(),
@@ -305,6 +320,7 @@ class TestContextAndBlockSerialization:
 
     def test_model_dump_encodes_parts_by_kind(self):
         seg = Segment(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),
