@@ -337,8 +337,11 @@ class EventSpec(BaseModel):
     )
     blocks: list[RegisteredBlock] = Field(
         description=(
-            "The event's content, in order, each block of a registered kind; "
-            '`{"kind": "text", "text": ...}` is built in'
+            "The event's content, in order, each block of a registered kind. "
+            "A `text` block is a message, and is the only kind a query "
+            "matches; a `thinking`, `tool_call`, `tool_result` or `injected` "
+            "block is on the session's timeline, reached by expanding from a "
+            "message"
         )
     )
     properties: dict[str, PropertyValue] = Field(
