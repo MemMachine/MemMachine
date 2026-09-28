@@ -8,15 +8,19 @@ from pydantic import ValidationError
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
     ID_MAX_BYTES,
+    TOOL_NAME_MAX_BYTES,
     Author,
     Context,
     DateTimeFormat,
     Derivative,
     Event,
+    InjectedBlock,
     Neighborhood,
     QueryHit,
     Segment,
     TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
     UnknownPart,
     decode_block,
     encode_block,
@@ -320,3 +324,100 @@ class TestContextAndBlockSerialization:
         deserialized = decode_block(serialized)
 
         assert deserialized == block
+
+
+class TestCaptureBlockKinds:
+    """The kinds a coding agent's transcript produces, beside the message kind."""
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            TextBlock(text="run the tests"),
+            ToolCallBlock(
+                name="Bash",
+                input={"command": "pytest -q", "timeout": 600, "env": {"CI": True}},
+            ),
+            ToolResultBlock(name="Bash", output="1 failed", error=True),
+            ToolResultBlock(name="Bash", output="4 passed"),
+            InjectedBlock(text="Run the gates before committing.", source="hook"),
+        ],
+    )
+    def test_a_kind_round_trips_through_the_codec(self, block):
+        assert decode_block(encode_block(block)) == block
+
+    def test_the_encoded_form_carries_the_kind_and_its_fields(self):
+        assert encode_block(ToolCallBlock(name="Bash", input={"command": "ls"})) == {
+            "kind": "tool_call",
+            "name": "Bash",
+            "input": {"command": "ls"},
+        }
+        assert encode_block(
+            ToolResultBlock(name="Bash", output="4 passed", error=False)
+        ) == {
+            "kind": "tool_result",
+            "name": "Bash",
+            "output": "4 passed",
+            "error": False,
+        }
+        assert encode_block(InjectedBlock(text="Be brief.", source="reminder")) == {
+            "kind": "injected",
+            "text": "Be brief.",
+            "source": "reminder",
+        }
+
+    def test_a_call_renders_its_tool_and_its_input_on_one_line(self):
+        rendered = ToolCallBlock(
+            name="Bash", input={"command": "pytest -q\nruff check"}
+        ).render(DateTimeFormat())
+        assert rendered == 'tool_call Bash: {"command":"pytest -q\\nruff check"}'
+        assert "\n" not in rendered
+
+    def test_a_result_renders_its_tool_and_its_output(self):
+        assert (
+            ToolResultBlock(name="Bash", output="4 passed").render(DateTimeFormat())
+            == "tool_result Bash: 4 passed"
+        )
+
+    def test_a_failed_result_renders_an_error_marker(self):
+        assert ToolResultBlock(
+            name="Bash", output="No such file or directory", error=True
+        ).render(DateTimeFormat()) == (
+            "tool_result Bash [error]: No such file or directory"
+        )
+
+    def test_injected_text_renders_its_source_and_its_text(self):
+        assert (
+            InjectedBlock(text="Summary of the session.", source="compaction").render(
+                DateTimeFormat()
+            )
+            == "injected compaction: Summary of the session."
+        )
+
+    def test_a_result_is_a_success_unless_it_says_otherwise(self):
+        assert ToolResultBlock(name="Bash", output="4 passed").error is False
+
+    @pytest.mark.parametrize("kind", [ToolCallBlock, ToolResultBlock])
+    def test_an_empty_tool_name_is_rejected(self, kind):
+        with pytest.raises(ValidationError, match="name"):
+            decode_block({**_minimal(kind), "name": ""})
+
+    @pytest.mark.parametrize("kind", [ToolCallBlock, ToolResultBlock])
+    def test_an_overlong_tool_name_is_rejected(self, kind):
+        overlong = "t" * (TOOL_NAME_MAX_BYTES + 1)
+        with pytest.raises(ValidationError, match="name"):
+            decode_block({**_minimal(kind), "name": overlong})
+
+    def test_an_unlisted_injection_source_is_rejected(self):
+        with pytest.raises(ValidationError, match="source"):
+            decode_block({"kind": "injected", "text": "hi", "source": "typed"})
+
+    def test_an_unregistered_kind_is_rejected(self):
+        with pytest.raises(ValidationError, match="kind"):
+            decode_block({"kind": "hologram", "text": "hi"})
+
+
+def _minimal(kind: type[ToolCallBlock] | type[ToolResultBlock]) -> dict:
+    """The encoded form of a block of this kind, its name left to the caller."""
+    if kind is ToolCallBlock:
+        return {"kind": "tool_call", "name": "Bash", "input": {}}
+    return {"kind": "tool_result", "name": "Bash", "output": "4 passed"}

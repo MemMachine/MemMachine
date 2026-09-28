@@ -11,12 +11,18 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Block,
     Context,
     Event,
+    InjectedBlock,
     TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import (
     BlockSegmenter,
     Piece,
     Segmenter,
+)
+from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
+    TextSegmenter,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -125,4 +131,28 @@ async def test_handler_receives_the_event_and_its_block():
     assert recording.calls == [
         (event, event.blocks[0]),
         (event, event.blocks[1]),
+    ]
+
+
+async def test_the_capture_kinds_are_one_segment_each_beside_split_text():
+    long_output = "tool output line\n" * 500
+    call = ToolCallBlock(name="Bash", input={"command": "pytest -q"})
+    result = ToolResultBlock(name="Bash", output=long_output)
+    injected = InjectedBlock(text="Run the gates. " * 100, source="hook")
+    event = Event(
+        uuid=uuid4(),
+        timestamp=_TS,
+        source_id="chat",
+        blocks=[TextBlock(text="run the tests. " * 100), call, result, injected],
+    )
+
+    segments = await Segmenter([TextSegmenter(max_chunk_length=50)]).segment(event)
+
+    # The text handler splits the message; the kinds it has no handler for
+    # pass through whole, however long.
+    assert len([s for s in segments if s.index == 0]) > 1
+    assert [(s.index, s.offset, s.block) for s in segments if s.index > 0] == [
+        (1, 0, call),
+        (2, 0, result),
+        (3, 0, injected),
     ]
