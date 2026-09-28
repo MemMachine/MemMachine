@@ -166,6 +166,7 @@ class EventMemoryStorePartition(ABC):
         *,
         since: datetime | None = None,
         until: datetime | None = None,
+        session_ids: Iterable[str] | None = None,
         source_ids: Iterable[str] | None = None,
         block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
@@ -185,6 +186,10 @@ class EventMemoryStorePartition(ABC):
             until (datetime | None):
                 Exclusive upper bound on the segments' timestamps, timezone-aware,
                 so ranges meet without overlap (default: None).
+            session_ids (Iterable[str] | None):
+                Keep only segments whose session id is one of these; an
+                empty list keeps none, and None keeps every session
+                (default: None).
             source_ids (Iterable[str] | None):
                 Keep only segments whose source id is one of these; an
                 empty list keeps none, and None keeps every source
@@ -221,8 +226,8 @@ class EventMemoryStorePartition(ABC):
         """
         Get the segments around each seed segment, excluding the seed itself.
 
-        A walk outward from the seed in the partition's total order. The
-        seed is an address: it is located
+        A walk outward from the seed in the partition's total order,
+        within the seed's session. The seed is an address: it is located
         whether or not it passes any filter, and the filters select the
         neighbors.
 

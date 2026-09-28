@@ -40,6 +40,7 @@ def _event(*texts: str, context=None, properties=None) -> Event:
     return Event(
         uuid=uuid4(),
         timestamp=_TS,
+        session_id="s1",
         source_id="chat",
         context=context if context is not None else Context(),
         blocks=[TextBlock(text=text) for text in texts],
@@ -94,6 +95,7 @@ async def test_no_handler_passes_each_block_through_unchanged():
         assert segment.index == index
         assert segment.offset == 0
         assert segment.timestamp == event.timestamp
+        assert segment.session_id == "s1"
         assert segment.source_id == "chat"
         assert segment.context == event.context
         assert segment.properties == event.properties
@@ -144,6 +146,7 @@ async def test_the_capture_kinds_are_one_segment_each_beside_split_text():
     event = Event(
         uuid=uuid4(),
         timestamp=_TS,
+        session_id="s1",
         source_id="chat",
         blocks=[
             TextBlock(text="run the tests. " * 100),

@@ -3,7 +3,7 @@
 import datetime
 import logging
 from collections.abc import Iterable
-from typing import Annotated, Literal, NamedTuple, cast
+from typing import Annotated, Final, Literal, NamedTuple, cast
 from uuid import UUID, uuid5
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
@@ -65,6 +65,14 @@ logger = logging.getLogger(__name__)
 # Stable namespace for deterministic Episode.uid -> Event.uuid mapping. Do not
 # change without a data migration.
 _EVENT_UUID_NAMESPACE = UUID("8c2c0e0a-3a2f-4b9c-9d1f-9b6c2a3a4f7e")
+
+DEFAULT_SESSION_ID: Final[str] = "memmachine_default"
+"""The session of every event this API ingests.
+
+The API carries no conversation id, so a partition's events are one
+stream. This one name is reserved for it; a caller may name a session
+anything else.
+"""
 
 # The adapter's fields, stored on `event.properties` under a leading
 # underscore; the event memory store maps a bare client-API name to `_<name>`.
@@ -825,6 +833,10 @@ class LongTermMemory:
 
         - Event.uuid = uuid5(NAMESPACE, episode.uid) so the mapping is
           deterministic and reversible (`_episode_uid` carries the original).
+        - Event.session_id = DEFAULT_SESSION_ID: the API carries no
+          conversation id, so a partition's events are one stream, under
+          the one reserved session name; when the API carries one, it
+          goes here.
         - The producer id is both the event's `source_id`, the one source
           an episode has, and an `Author` part in its context, as the
           `ProducerContext` was before, so a rendered segment keeps its
@@ -875,6 +887,7 @@ class LongTermMemory:
         return Event(
             uuid=uuid5(_EVENT_UUID_NAMESPACE, str(episode.uid)),
             timestamp=episode.created_at,
+            session_id=DEFAULT_SESSION_ID,
             source_id=episode.producer_id,
             context=Context(Author(name=episode.producer_id)),
             blocks=[TextBlock(text=episode.content)],

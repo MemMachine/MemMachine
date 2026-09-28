@@ -942,6 +942,7 @@ def test_unify_first_window_keeps_the_score():
 def test_episode_uid_context_dedup_and_nucleus():
     def _seg(uid: str) -> Segment:
         return Segment(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),

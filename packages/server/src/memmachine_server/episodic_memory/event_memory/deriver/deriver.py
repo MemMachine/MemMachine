@@ -101,6 +101,7 @@ class Deriver:
                 uuid=uuid4(),
                 segment_uuid=segment.uuid,
                 timestamp=segment.timestamp,
+                session_id=segment.session_id,
                 source_id=segment.source_id,
                 block_kind=segment.block.kind,
                 text=header + json.dumps(text, ensure_ascii=False),

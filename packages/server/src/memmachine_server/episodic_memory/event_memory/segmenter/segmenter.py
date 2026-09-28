@@ -88,6 +88,7 @@ class Segmenter:
                     index=index,
                     offset=piece.offset,
                     timestamp=event.timestamp,
+                    session_id=event.session_id,
                     source_id=event.source_id,
                     context=event.context,
                     block=piece.block,

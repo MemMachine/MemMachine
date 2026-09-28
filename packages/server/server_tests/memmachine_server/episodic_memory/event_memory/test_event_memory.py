@@ -47,6 +47,7 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     BLOCK_KIND_KEY,
+    EVENT_SESSION_KEY,
     EVENT_SOURCE_KEY,
     EVENT_TIMESTAMP_KEY,
     EventMemory,
@@ -119,6 +120,7 @@ def _make_event(
     text: str,
     *,
     timestamp: datetime.datetime = _T0,
+    session_id: str = "s",
     source_id: str = "src",
     context: Context | None = None,
     properties=None,
@@ -126,6 +128,7 @@ def _make_event(
     return Event(
         uuid=uuid4(),
         timestamp=timestamp,
+        session_id=session_id,
         source_id=source_id,
         context=context if context is not None else Context(),
         blocks=[TextBlock(text=text)],
@@ -176,6 +179,7 @@ class TestSchema:
     def test_expected_vector_store_collection_schema_declares_the_reserved_keys(self):
         assert EventMemory.expected_vector_store_collection_schema() == {
             EVENT_TIMESTAMP_KEY: datetime.datetime,
+            EVENT_SESSION_KEY: str,
             EVENT_SOURCE_KEY: str,
             BLOCK_KIND_KEY: str,
         }
@@ -217,6 +221,7 @@ class TestEncodeEvents:
         assert props == {
             EVENT_TIMESTAMP_KEY: event.timestamp,
             BLOCK_KIND_KEY: "text",
+            EVENT_SESSION_KEY: "s",
             EVENT_SOURCE_KEY: "src",
         }
         # The event memory store maps the derivative to its segment.
@@ -227,19 +232,21 @@ class TestEncodeEvents:
             == {record.uuid: segment.uuid}
         )
 
-    async def test_source_is_recorded(
+    async def test_session_and_source_are_recorded(
         self,
         event_memory: EventMemory,
         fake_event_memory_store_partition: InMemoryEventMemoryStorePartition,
         fake_vector_store_partition: InMemoryVectorStorePartition,
     ):
-        event = _make_event("hi", source_id="alice")
+        event = _make_event("hi", session_id="s1", source_id="alice")
         await event_memory.encode_events([event])
 
         record = next(iter(fake_vector_store_partition.records.values()))
-        assert _record_properties(record)[EVENT_SOURCE_KEY] == "alice"
+        props = _record_properties(record)
+        assert props[EVENT_SESSION_KEY] == "s1"
+        assert props[EVENT_SOURCE_KEY] == "alice"
         segment = next(iter(fake_event_memory_store_partition.segments.values()))
-        assert segment.source_id == "alice"
+        assert (segment.session_id, segment.source_id) == ("s1", "alice")
 
     async def test_context_is_not_a_property(
         self,
@@ -279,6 +286,7 @@ class TestEncodeEvents:
         fake_event_memory_store_partition: InMemoryEventMemoryStorePartition,
     ):
         event = Event(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             timestamp=_T0,
@@ -316,7 +324,7 @@ class TestEncodeEvents:
         assert segment.properties["color"] == "red"
 
     async def test_reserved_property_key_is_rejected(self, event_memory: EventMemory):
-        event = _make_event("hi", properties={EVENT_SOURCE_KEY: "spoofed"})
+        event = _make_event("hi", properties={EVENT_SESSION_KEY: "spoofed"})
         with pytest.raises(ValueError, match="reserved"):
             await event_memory.encode_events([event])
 
@@ -327,7 +335,7 @@ class TestEncodeEvents:
 
     async def test_init_raises_on_missing_reserved_field(self, fake_embedder):
         schema = EventMemory.expected_vector_store_collection_schema()
-        del schema[EVENT_SOURCE_KEY]
+        del schema[EVENT_SESSION_KEY]
         vector_store_partition = InMemoryVectorStorePartition(indexed_properties=schema)
         with pytest.raises(
             ValueError,
@@ -574,6 +582,24 @@ class TestQuery:
 
 @_async
 class TestQuerySystemFilters:
+    async def test_session_ids_select_events_and_confine_windows(
+        self, event_memory: EventMemory
+    ):
+        a0 = _make_event("a0", timestamp=_ts(0), session_id="a")
+        b0 = _make_event("b0", timestamp=_ts(1), session_id="b")
+        a1 = _make_event("a1", timestamp=_ts(2), session_id="a")
+        n0 = _make_event("n0", timestamp=_ts(3))
+        await event_memory.encode_events([a0, b0, a1, n0])
+
+        hits = await event_memory.query("x", session_ids=["a"], expand_context=6)
+
+        assert {hit.seed.event_uuid for hit in hits} == {
+            a0.uuid,
+            a1.uuid,
+        }
+        for hit in hits:
+            assert {seg.session_id for seg in hit.window()} == {"a"}
+
     async def test_source_ids_select_events(self, event_memory: EventMemory):
         alice = _make_event("alice says", timestamp=_ts(0), source_id="alice")
         bob = _make_event("bob says", timestamp=_ts(1), source_id="bob")
@@ -617,10 +643,10 @@ class TestQuerySystemFilters:
 
         assert _texts(hits) == {"late"}
 
-    async def test_an_undeclared_property_stays_off_the_vector_stage(
+    async def test_the_property_filter_never_reaches_the_vector_store(
         self, event_memory: EventMemory, fake_vector_store_partition, monkeypatch
     ):
-        """The vector stage gets the typed filters; a filter on an undeclared property is the store's."""
+        """The vector stage evaluates the typed filters only; the property filter is the store's."""
         red = _make_event("red", timestamp=_ts(0), properties={"color": "red"})
         blue = _make_event("blue", timestamp=_ts(1), properties={"color": "blue"})
         await event_memory.encode_events([red, blue])
@@ -635,12 +661,12 @@ class TestQuerySystemFilters:
 
         hits = await event_memory.query(
             "x",
-            source_ids=["src"],
+            session_ids=["s"],
             property_filter=Comparison(field="m.color", op="=", value="blue"),
         )
 
         assert _texts(hits) == {"blue"}
-        assert seen == [In(field=EVENT_SOURCE_KEY, values=["src"])]
+        assert seen == [In(field=EVENT_SESSION_KEY, values=["s"])]
 
 
 # ===================================================================
@@ -692,6 +718,22 @@ class TestExpand:
 
         assert neighborhood.before == []
         assert [s.event_uuid for s in neighborhood.after] == [green.uuid]
+
+    async def test_expand_session_ids_bound_what_the_seed_may_be_in(
+        self,
+        event_memory: EventMemory,
+        fake_event_memory_store_partition: InMemoryEventMemoryStorePartition,
+    ):
+        a0 = _make_event("a0", timestamp=_ts(0), session_id="a")
+        b0 = _make_event("b0", timestamp=_ts(1), session_id="b")
+        a1 = _make_event("a1", timestamp=_ts(2), session_id="a")
+        await event_memory.encode_events([a0, b0, a1])
+        [seed_uuid] = fake_event_memory_store_partition.event_to_segments[a0.uuid]
+
+        neighborhood = await event_memory.expand(seed_uuid, after=5, session_ids=["a"])
+        assert [s.event_uuid for s in neighborhood.after] == [a1.uuid]
+        with pytest.raises(LookupError):
+            await event_memory.expand(seed_uuid, after=5, session_ids=["b"])
 
     async def test_negative_counts_are_rejected(
         self,
@@ -795,6 +837,7 @@ def _make_segment(
     context: Context | None = None,
 ) -> Segment:
     return Segment(
+        session_id="s",
         source_id="src",
         uuid=uuid4(),
         event_uuid=event_uuid or uuid4(),
@@ -913,6 +956,7 @@ class TestCaptureKinds:
         event = Event(
             uuid=uuid4(),
             timestamp=_T0,
+            session_id="s",
             source_id="src",
             context=_author("Alice"),
             blocks=[TextBlock(text="run the tests"), thinking, call, result],
@@ -1733,18 +1777,22 @@ def test_predicates_name_the_reserved_keys():
     tree = _system_predicates(
         since=_T0,
         until=_T1,
+        session_ids=["s1"],
         source_ids=["alice", "bob"],
         block_kinds=["text"],
     )
     assert _conjuncts(tree) == [
         Comparison(field=EVENT_TIMESTAMP_KEY, op=">=", value=_T0),
         Comparison(field=EVENT_TIMESTAMP_KEY, op="<", value=_T1),
+        In(field=EVENT_SESSION_KEY, values=["s1"]),
         In(field=EVENT_SOURCE_KEY, values=["alice", "bob"]),
         In(field=BLOCK_KIND_KEY, values=["text"]),
     ]
 
 
 def test_empty_ids_admit_nothing_and_none_admits_everything():
+    assert _system_predicates(session_ids=None) is None
+    assert _system_predicates(session_ids=[]) == In(field=EVENT_SESSION_KEY, values=[])
     assert _system_predicates(source_ids=None) is None
     assert _system_predicates(source_ids=[]) == In(field=EVENT_SOURCE_KEY, values=[])
 
@@ -1927,6 +1975,7 @@ class TestComposition:
 
     def _segment(self, context) -> Segment:
         return Segment(
+            session_id="s",
             source_id="src",
             uuid=uuid4(),
             event_uuid=uuid4(),

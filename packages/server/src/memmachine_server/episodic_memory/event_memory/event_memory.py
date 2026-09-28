@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 # The keys the memory writes into a vector record; `em` names this memory,
 # short because the keys share the identifier budget.
 EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key("em", "timestamp")
+EVENT_SESSION_KEY: Final[str] = reserved_property_key("em", "session")
 EVENT_SOURCE_KEY: Final[str] = reserved_property_key("em", "source")
 BLOCK_KIND_KEY: Final[str] = reserved_property_key("em", "block_kind")
 
@@ -77,6 +78,7 @@ def _system_predicates(
     *,
     since: datetime.datetime | None = None,
     until: datetime.datetime | None = None,
+    session_ids: Iterable[str] | None = None,
     source_ids: Iterable[str] | None = None,
     block_kinds: Iterable[str] | None = None,
 ) -> FilterExpr | None:
@@ -92,6 +94,9 @@ def _system_predicates(
         else None,
         Comparison(field=EVENT_TIMESTAMP_KEY, op="<", value=until)
         if until is not None
+        else None,
+        In(field=EVENT_SESSION_KEY, values=list(session_ids))
+        if session_ids is not None
         else None,
         In(field=EVENT_SOURCE_KEY, values=list(source_ids))
         if source_ids is not None
@@ -171,6 +176,7 @@ class EventMemory:
     # properties stay in the event memory store.
     _RESERVED_PROPERTY_SCHEMA: ClassVar[dict[str, type[PropertyValue]]] = {
         EVENT_TIMESTAMP_KEY: cast(type[PropertyValue], datetime.datetime),
+        EVENT_SESSION_KEY: cast(type[PropertyValue], str),
         EVENT_SOURCE_KEY: cast(type[PropertyValue], str),
         BLOCK_KIND_KEY: cast(type[PropertyValue], str),
     }
@@ -496,6 +502,7 @@ class EventMemory:
                 if key in self._schema_fields
             },
             EVENT_TIMESTAMP_KEY: derivative.timestamp,
+            EVENT_SESSION_KEY: derivative.session_id,
             BLOCK_KIND_KEY: derivative.block_kind,
         }
         if derivative.source_id is not None:
@@ -625,6 +632,7 @@ class EventMemory:
         expand_context: int = 0,
         since: datetime.datetime | None = None,
         until: datetime.datetime | None = None,
+        session_ids: Iterable[str] | None = None,
         source_ids: Iterable[str] | None = None,
         block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
@@ -650,6 +658,9 @@ class EventMemory:
             until (datetime | None):
                 Exclusive upper bound on the events' timestamps, timezone-aware
                 (default: None).
+            session_ids (Iterable[str] | None):
+                Keep only events of these sessions; an empty list keeps
+                none, and None keeps every session (default: None).
             source_ids (Iterable[str] | None):
                 Keep only events of these sources; an empty list keeps
                 none, and None keeps every source (default: None).
@@ -684,6 +695,7 @@ class EventMemory:
                 expand_context=expand_context,
                 since=since,
                 until=until,
+                session_ids=session_ids,
                 source_ids=source_ids,
                 block_kinds=block_kinds,
                 property_filter=property_filter,
@@ -698,6 +710,7 @@ class EventMemory:
         expand_context: int,
         since: datetime.datetime | None,
         until: datetime.datetime | None,
+        session_ids: Iterable[str] | None,
         source_ids: Iterable[str] | None,
         block_kinds: Iterable[str] | None,
         property_filter: FilterExpr | None,
@@ -705,6 +718,7 @@ class EventMemory:
         if expand_context < 0:
             raise ValueError(f"expand_context must be nonnegative: {expand_context}")
         t_start = time.monotonic()
+        session_ids = list(session_ids) if session_ids is not None else None
         source_ids = list(source_ids) if source_ids is not None else None
         block_kinds = list(block_kinds) if block_kinds is not None else None
 
@@ -726,6 +740,7 @@ class EventMemory:
                 _system_predicates(
                     since=since,
                     until=until,
+                    session_ids=session_ids,
                     source_ids=source_ids,
                     block_kinds=block_kinds,
                 ),
@@ -766,6 +781,7 @@ class EventMemory:
             cosine_similarity_by_seed_uuid.keys(),
             since=since,
             until=until,
+            session_ids=session_ids,
             source_ids=source_ids,
             block_kinds=block_kinds,
             property_filter=property_filter,
@@ -866,12 +882,13 @@ class EventMemory:
         after: int = 0,
         since: datetime.datetime | None = None,
         until: datetime.datetime | None = None,
+        session_ids: Iterable[str] | None = None,
         source_ids: Iterable[str] | None = None,
         block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> Neighborhood:
         """
-        Get the neighborhood of a seed segment: the segments before and after it in the store's order.
+        Get the neighborhood of a seed segment: the segments before and after it in its session, in the store's order.
 
         The filters select the neighbors; the seed itself is excluded from
         the result.
@@ -891,6 +908,9 @@ class EventMemory:
             until (datetime | None):
                 Exclusive upper bound on the neighbors' timestamps, timezone-aware
                 (default: None).
+            session_ids (Iterable[str] | None):
+                The sessions the seed may be in; a seed in another session
+                is not found, and None allows any session (default: None).
             source_ids (Iterable[str] | None):
                 Keep only neighbors of these sources; an empty list keeps
                 none, and None keeps every source (default: None).
@@ -907,12 +927,21 @@ class EventMemory:
 
         Raises:
             LookupError:
-                If the seed is not a segment of this memory.
+                If the seed is not a segment of this memory, or its
+                session is not among `session_ids`.
             ValueError:
                 If `before` or `after` is negative, or `since` or `until`
                 is naive.
         """
         async with self._tracker("expand"):
+            if session_ids is not None:
+                visible = await self._event_memory_store_partition.get_segments(
+                    [seed_uuid], session_ids=session_ids
+                )
+                if seed_uuid not in visible:
+                    raise LookupError(
+                        f"Seed segment {seed_uuid} is not in the named sessions"
+                    )
             neighborhoods = (
                 await self._event_memory_store_partition.get_segment_neighborhoods(
                     [seed_uuid],

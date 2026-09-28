@@ -16,6 +16,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
 )
 from memmachine_server.episodic_memory.long_term_memory.long_term_memory import (
     _EVENT_UUID_NAMESPACE,
+    DEFAULT_SESSION_ID,
     LongTermMemory,
 )
 
@@ -59,12 +60,14 @@ def test_producer_is_the_source_and_the_author():
     """The producer id is the event's source and its `Author` part.
 
     The part keeps rendering's `producer: text` shape, as the producer
-    context did.
+    context did. An episode has no conversation identity, so `session_id`
+    is the one reserved session name, `memmachine_default`.
     """
     episode = _episode(producer_id="alice")
     event = LongTermMemory._episode_to_event(episode)
     assert event.source_id == "alice"
     assert event.context.get("author") == Author(name="alice")
+    assert event.session_id == DEFAULT_SESSION_ID == "memmachine_default"
 
 
 def test_event_has_single_text_block_with_episode_content():
