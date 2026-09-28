@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any
+from uuid import UUID
 
 from pydantic import JsonValue
 
@@ -21,7 +22,7 @@ class ContentType(Enum):
 class Episode:
     """A single episodic memory entry."""
 
-    uid: str
+    uid: UUID
     timestamp: datetime
     source: str
     content_type: ContentType

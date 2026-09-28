@@ -13,6 +13,7 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import (
     ContentType,
     Episode,
+    EpisodeIdT,
     EpisodeStorage,
     EpisodeType,
 )
@@ -370,8 +371,8 @@ class LongTermMemory:
         # higher-is-better (cosine + any reranker) → drop scores BELOW threshold;
         # lower-is-better (raw euclidean without a reranker) → drop scores
         # ABOVE threshold.
-        ordered_uids: list[str] = []
-        scores_by_uid: dict[str, float] = {}
+        ordered_uids: list[EpisodeIdT] = []
+        scores_by_uid: dict[EpisodeIdT, float] = {}
         for scored_context in result.scored_segment_contexts:
             if not self._score_passes_threshold(scored_context.score, score_threshold):
                 continue
@@ -387,7 +388,7 @@ class LongTermMemory:
             return []
 
         episodes = await self._episode_storage.get_episodes(ordered_uids)
-        episodes_by_uid: dict[str, Episode] = {ep.uid: ep for ep in episodes}
+        episodes_by_uid: dict[EpisodeIdT, Episode] = {ep.uid: ep for ep in episodes}
 
         missing = [uid for uid in ordered_uids if uid not in episodes_by_uid]
         if missing:
@@ -409,7 +410,7 @@ class LongTermMemory:
             if uid in episodes_by_uid
         ]
 
-    async def delete_episodes(self, uids: Iterable[str]) -> None:
+    async def delete_episodes(self, uids: Iterable[EpisodeIdT]) -> None:
         uids = list(uids)
         if self._backend == "declarative":
             assert self._declarative_memory is not None
@@ -417,7 +418,7 @@ class LongTermMemory:
             return
 
         event_memory = self._require_event_backend_live()
-        event_uuids = {uuid5(_EVENT_UUID_NAMESPACE, uid) for uid in uids}
+        event_uuids = {uuid5(_EVENT_UUID_NAMESPACE, str(uid)) for uid in uids}
         await event_memory.forget_events(event_uuids)
 
     async def drop_session_partition(self) -> None:
@@ -515,7 +516,7 @@ class LongTermMemory:
             filterable_properties[_FILTERABLE_METADATA_NONE_FLAG] = True
 
         return DeclarativeMemoryEpisode(
-            uid=episode.uid or str(uuid4()),
+            uid=episode.uid or uuid4(),
             timestamp=episode.created_at,
             source=episode.producer_id,
             content_type=LongTermMemory._declarative_memory_content_type_from_episode(
@@ -665,7 +666,7 @@ class LongTermMemory:
         chronologically, as the declarative backend returns its own.
         """
         assert self._episode_storage is not None
-        scored_uid_contexts: list[tuple[float, str, list[str]]] = []
+        scored_uid_contexts: list[tuple[float, EpisodeIdT, list[EpisodeIdT]]] = []
         for scored_context in result.scored_segment_contexts:
             if not self._score_passes_threshold(scored_context.score, score_threshold):
                 continue
@@ -686,7 +687,7 @@ class LongTermMemory:
             return []
 
         episodes = await self._episode_storage.get_episodes(list(episode_scores))
-        episodes_by_uid: dict[str, Episode] = {ep.uid: ep for ep in episodes}
+        episodes_by_uid: dict[EpisodeIdT, Episode] = {ep.uid: ep for ep in episodes}
         missing = [uid for uid in episode_scores if uid not in episodes_by_uid]
         if missing:
             logger.warning(
@@ -708,7 +709,9 @@ class LongTermMemory:
         )
 
     @staticmethod
-    def _episode_uid_context(scored_context: object) -> tuple[str | None, list[str]]:
+    def _episode_uid_context(
+        scored_context: object,
+    ) -> tuple[EpisodeIdT | None, list[EpisodeIdT]]:
         """Episode uids covered by one segment window.
 
         Returns the seed segment's episode uid (the nucleus) and the deduped
@@ -717,14 +720,14 @@ class LongTermMemory:
         """
         segments = getattr(scored_context, "segments", [])
         seed_uuid = getattr(scored_context, "seed_segment_uuid", None)
-        nuclear_uid: str | None = None
-        context_uids: list[str] = []
-        seen: set[str] = set()
+        nuclear_uid: EpisodeIdT | None = None
+        context_uids: list[EpisodeIdT] = []
+        seen: set[EpisodeIdT] = set()
         for segment in segments:
             episode_uid = segment.properties.get(_EPISODE_UID_FIELD)
             if episode_uid is None:
                 continue
-            episode_uid = str(episode_uid)
+            episode_uid = UUID(str(episode_uid))
             if episode_uid not in seen:
                 seen.add(episode_uid)
                 context_uids.append(episode_uid)
@@ -734,9 +737,9 @@ class LongTermMemory:
 
     @staticmethod
     def _unify_scored_uid_contexts(
-        scored_uid_contexts: Iterable[tuple[float, str, list[str]]],
+        scored_uid_contexts: Iterable[tuple[float, EpisodeIdT, list[EpisodeIdT]]],
         max_num_episodes: int,
-    ) -> dict[str, float]:
+    ) -> dict[EpisodeIdT, float]:
         """Unify episode-uid contexts into a limited set, best windows first.
 
         Mirror of DeclarativeMemory._unify_scored_anchored_episode_contexts:
@@ -746,7 +749,7 @@ class LongTermMemory:
         limit is met. An episode keeps the score of the first window that
         contributed it.
         """
-        episode_scores: dict[str, float] = {}
+        episode_scores: dict[EpisodeIdT, float] = {}
         for score, nuclear_uid, context in scored_uid_contexts:
             if len(episode_scores) >= max_num_episodes:
                 break
@@ -772,7 +775,7 @@ class LongTermMemory:
         return episode_scores
 
     @staticmethod
-    def _scored_context_episode_uid(scored_context: object) -> str | None:
+    def _scored_context_episode_uid(scored_context: object) -> EpisodeIdT | None:
         """Pull `_episode_uid` from the seed segment of a ScoredSegmentContext."""
         # We don't import ScoredSegmentContext here just for typing; the runtime
         # shape (`segments`, `seed_segment_uuid`) is what matters.
@@ -781,7 +784,8 @@ class LongTermMemory:
         seed = next((s for s in segments if s.uuid == seed_uuid), None)
         if seed is None:
             return None
-        return cast(str | None, seed.properties.get(_EPISODE_UID_FIELD))
+        value = seed.properties.get(_EPISODE_UID_FIELD)
+        return UUID(str(value)) if value is not None else None
 
     @staticmethod
     def _episode_to_event(episode: Episode) -> Event:
@@ -806,7 +810,7 @@ class LongTermMemory:
         silently dropping so the client sees the misuse.
         """
         properties: dict[str, PropertyValue] = {
-            _EPISODE_UID_FIELD: episode.uid,
+            _EPISODE_UID_FIELD: str(episode.uid),
             _SESSION_KEY_FIELD: episode.session_key,
             _PRODUCER_ID_FIELD: episode.producer_id,
             _PRODUCER_ROLE_FIELD: episode.producer_role,
@@ -838,7 +842,7 @@ class LongTermMemory:
             context = NullContext()
 
         return Event(
-            uuid=uuid5(_EVENT_UUID_NAMESPACE, episode.uid),
+            uuid=uuid5(_EVENT_UUID_NAMESPACE, str(episode.uid)),
             timestamp=episode.created_at,
             context=context,
             blocks=[TextBlock(text=episode.content)],

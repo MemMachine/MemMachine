@@ -14,7 +14,7 @@ import socket
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import String, text
+from sqlalchemy import Uuid, text
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -122,10 +122,10 @@ async def test_startup_wraps_socket_gaierror():
     assert isinstance(exc_info.value.__cause__, socket.gaierror)
 
 
-def test_episode_primary_key_is_string_and_not_autoincremented():
+def test_episode_primary_key_is_uuid_and_not_autoincremented():
     id_column = Episode.__table__.c.id
 
-    assert isinstance(id_column.type, String)
+    assert isinstance(id_column.type, Uuid)
     assert id_column.autoincrement is False
 
 

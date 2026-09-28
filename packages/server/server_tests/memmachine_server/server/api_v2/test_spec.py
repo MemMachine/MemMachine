@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from typing import cast
+from uuid import UUID
 
 import pytest
 from dateutil.tz import tzoffset
@@ -208,8 +209,10 @@ def test_add_memory_response():
         AddMemoriesResponse.model_validate({})
     assert_pydantic_errors(exc_info, {"results": "missing"})
 
-    result = AddMemoryResult.model_validate({"uid": "memory-123"})
-    assert result.uid == "memory-123"
+    result = AddMemoryResult.model_validate(
+        {"uid": "550e8400-e29b-41d4-a716-446655440000"}
+    )
+    assert str(result.uid) == "550e8400-e29b-41d4-a716-446655440000"
     response = AddMemoriesResponse.model_validate({"results": [result]})
     assert response.results == [result]
 
@@ -287,10 +290,11 @@ def test_delete_episodic_memory_spec():
     with pytest.raises(ValidationError):
         DeleteEpisodicMemorySpec.model_validate({})
 
-    spec = DeleteEpisodicMemorySpec.model_validate({"episodic_id": "ep-123"})
+    episode_id = UUID("550e8400-e29b-41d4-a716-446655440001")
+    spec = DeleteEpisodicMemorySpec.model_validate({"episodic_id": str(episode_id)})
     assert spec.org_id == DEFAULT_ORG_AND_PROJECT_ID
     assert spec.project_id == DEFAULT_ORG_AND_PROJECT_ID
-    assert spec.episodic_id == "ep-123"
+    assert spec.episodic_id == episode_id
 
 
 def test_delete_semantic_memory_spec():
@@ -314,13 +318,17 @@ def test_get_semantic_ids():
 
 
 def test_get_episodic_ids():
-    spec = DeleteEpisodicMemorySpec.model_validate({"episodic_ids": ["2", "1"]})
-    assert spec.get_ids() == ["1", "2"]
+    first = UUID("550e8400-e29b-41d4-a716-446655440001")
+    second = UUID("550e8400-e29b-41d4-a716-446655440002")
+    spec = DeleteEpisodicMemorySpec.model_validate(
+        {"episodic_ids": [str(second), str(first)]}
+    )
+    assert spec.get_ids() == [first, second]
 
     spec = DeleteEpisodicMemorySpec.model_validate(
-        {"episodic_id": "1", "episodic_ids": ["2", "1"]}
+        {"episodic_id": str(first), "episodic_ids": [str(second), str(first)]}
     )
-    assert spec.get_ids() == ["1", "2"]
+    assert spec.get_ids() == [first, second]
 
 
 def test_search_result_model():

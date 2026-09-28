@@ -465,7 +465,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
     ) -> None:
         stmt = insert(VectorSemanticSetIngestedHistory).values(
             set_id=set_id,
-            history_id=history_id,
+            history_id=str(history_id),
             created_at=created_at or datetime.now(UTC),
         )
         async with self._create_session() as session:
@@ -478,12 +478,16 @@ class VectorStoreSemanticStorage(SemanticStorage):
         async with self._create_session() as session:
             await session.execute(
                 delete(vector_citation_association_table).where(
-                    vector_citation_association_table.c.history_id.in_(history_ids)
+                    vector_citation_association_table.c.history_id.in_(
+                        map(str, history_ids)
+                    )
                 )
             )
             await session.execute(
                 delete(VectorSemanticSetIngestedHistory).where(
-                    VectorSemanticSetIngestedHistory.history_id.in_(history_ids)
+                    VectorSemanticSetIngestedHistory.history_id.in_(
+                        map(str, history_ids)
+                    )
                 )
             )
             await session.commit()
@@ -510,7 +514,9 @@ class VectorStoreSemanticStorage(SemanticStorage):
         stmt = (
             update(VectorSemanticSetIngestedHistory)
             .where(VectorSemanticSetIngestedHistory.set_id == set_id)
-            .where(VectorSemanticSetIngestedHistory.history_id.in_(history_ids))
+            .where(
+                VectorSemanticSetIngestedHistory.history_id.in_(map(str, history_ids))
+            )
             .values(ingested=True)
         )
         async with self._create_session() as session:

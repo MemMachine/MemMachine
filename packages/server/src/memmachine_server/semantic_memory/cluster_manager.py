@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
+from memmachine_server.common.episode_store import EpisodeIdT
+
 
 @dataclass
 class ClusterInfo:
@@ -32,8 +34,8 @@ class ClusterState:
     """Mutable clustering state for a set."""
 
     clusters: MutableMapping[str, ClusterInfo] = field(default_factory=dict)
-    event_to_cluster: MutableMapping[str, str] = field(default_factory=dict)
-    pending_events: dict[str, dict[str, datetime]] = field(
+    event_to_cluster: MutableMapping[EpisodeIdT, str] = field(default_factory=dict)
+    pending_events: dict[str, dict[EpisodeIdT, datetime]] = field(
         default_factory=dict,
     )
     next_cluster_id: int = 0
@@ -87,7 +89,7 @@ class ClusterManager:
     def assign(
         self,
         *,
-        event_id: str,
+        event_id: EpisodeIdT,
         embedding: Sequence[float],
         timestamp: datetime,
         state: ClusterState | None = None,

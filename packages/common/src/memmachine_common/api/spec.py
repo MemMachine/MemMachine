@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 import regex
 from pydantic import (
@@ -68,7 +69,7 @@ logger = logging.getLogger(__name__)
 # without pulling in server-only packages.
 # --------------------------------------------------------------------------------------
 
-EpisodeIdT = str
+EpisodeIdT = UUID
 
 
 class ContentType(Enum):
@@ -534,7 +535,7 @@ class AddMemoryResult(BaseModel):
     """Response model for adding memories."""
 
     uid: Annotated[
-        str,
+        EpisodeIdT,
         Field(
             ...,
             description=SpecDoc.MEMORY_UID,
@@ -708,15 +709,15 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
     """Specification model for deleting episodic memories."""
 
     episodic_id: Annotated[
-        SafeId,
+        EpisodeIdT | None,
         Field(
-            default="",
+            default=None,
             description=SpecDoc.EPISODIC_ID,
             examples=Examples.EPISODIC_ID,
         ),
     ]
     episodic_ids: Annotated[
-        list[SafeId],
+        list[EpisodeIdT],
         Field(
             default=[],
             description=SpecDoc.EPISODIC_IDS,
@@ -724,12 +725,11 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
         ),
     ]
 
-    def get_ids(self) -> list[str]:
+    def get_ids(self) -> list[EpisodeIdT]:
         """Get a list of episodic IDs to delete."""
         id_set = set(self.episodic_ids)
-        if len(self.episodic_id) > 0:
+        if self.episodic_id is not None:
             id_set.add(self.episodic_id)
-        id_set = {i.strip() for i in id_set if i and i.strip()}
         return sorted(id_set)
 
     @model_validator(mode="after")

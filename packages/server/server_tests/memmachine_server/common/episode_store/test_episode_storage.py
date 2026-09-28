@@ -120,7 +120,7 @@ async def test_get_episodes_batch(episode_storage: EpisodeStorage):
     try:
         # All present; duplicates are deduped; missing IDs are absent.
         fetched = await episode_storage.get_episodes(
-            [first, third, first, "missing-episode"]
+            [first, third, first, UUID("550e8400-e29b-41d4-a716-446655449999")]
         )
         by_uid = {ep.uid: ep for ep in fetched}
         assert set(by_uid.keys()) == {first, third}
@@ -159,7 +159,7 @@ async def test_add_multiple_episodes_returns_models(
 
     try:
         assert [e.content for e in episodes] == ["first", "second"]
-        assert all(UUID(e.uid).version == 4 for e in episodes)
+        assert all(e.uid.version == 4 for e in episodes)
         assert episodes[0].uid != episodes[1].uid
         assert [episode.uid for episode in episodes] == [entry.uid for entry in entries]
         assert all(e.session_key == "batch-session" for e in episodes)
@@ -470,7 +470,7 @@ async def test_delete_history(episode_storage: EpisodeStorage):
 
 @pytest.mark.asyncio
 async def test_store_preserves_preassigned_episode_uuid(episode_storage):
-    supplied_id = "550e8400-e29b-41d4-a716-446655440000"
+    supplied_id = UUID("550e8400-e29b-41d4-a716-446655440000")
     stored = await episode_storage.add_episodes(
         "uuid-session",
         [
@@ -494,10 +494,11 @@ async def test_store_preserves_preassigned_episode_uuid(episode_storage):
 
 
 @pytest.mark.asyncio
-async def test_unknown_opaque_episode_ids_are_no_match(episode_storage):
-    assert await episode_storage.get_episode("missing-episode") is None
-    assert await episode_storage.get_episodes(["missing-episode"]) == []
-    await episode_storage.delete_episodes(["missing-episode"])
+async def test_unknown_uuid_episode_ids_are_no_match(episode_storage):
+    missing_id = UUID("550e8400-e29b-41d4-a716-446655449999")
+    assert await episode_storage.get_episode(missing_id) is None
+    assert await episode_storage.get_episodes([missing_id]) == []
+    await episode_storage.delete_episodes([missing_id])
 
 
 @pytest.mark.asyncio

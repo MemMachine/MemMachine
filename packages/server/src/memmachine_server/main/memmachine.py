@@ -1208,7 +1208,8 @@ class MemMachine:
         missing_ids = set(episode_ids) - existing_ids
         if missing_ids:
             raise ResourceNotFoundError(
-                f"Episodic memories not found: {', '.join(sorted(missing_ids))}"
+                "Episodic memories not found: "
+                + ", ".join(str(uid) for uid in sorted(missing_ids))
             )
 
         tasks: list[Coroutine[Any, Any, Any]] = []

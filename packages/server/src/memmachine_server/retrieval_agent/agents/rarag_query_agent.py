@@ -12,6 +12,7 @@ import asyncio
 import logging
 import time
 from typing import Any, cast
+from uuid import UUID
 
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.language_model.language_model import LanguageModel
@@ -255,7 +256,7 @@ class RaragQueryAgent(AgentToolBase):
         query: QueryParam,
         query_c: str,
         episodes_a: list[Episode],
-        overlap_uids: list[str],
+        overlap_uids: list[UUID],
         perf_metrics: dict[str, Any],
     ) -> list[Episode]:
         """Run combined queries (overlap content + C) and collect results.

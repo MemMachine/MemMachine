@@ -84,7 +84,8 @@ async def test_add_messages_assigns_uuid_before_calling_memmachine():
 
     assert len(capturing_memmachine.entries) == 1
     assigned_id = capturing_memmachine.entries[0].uid
-    assert UUID(assigned_id).version == 4
+    assert isinstance(assigned_id, UUID)
+    assert assigned_id.version == 4
     assert assigned_id != "attacker-selected-id"
     assert result[0].uid == assigned_id
 

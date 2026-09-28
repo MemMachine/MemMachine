@@ -4,14 +4,14 @@ import datetime
 import json
 from collections.abc import Iterable
 from enum import Enum
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from memmachine_common.api import EpisodeType
 from pydantic import AwareDatetime, BaseModel, Field, JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
 
-EpisodeIdT = str
+EpisodeIdT = UUID
 
 
 class ContentType(Enum):
@@ -24,7 +24,7 @@ class ContentType(Enum):
 class EpisodeEntry(BaseModel):
     """Payload used when creating a new episode entry."""
 
-    uid: EpisodeIdT = Field(default_factory=lambda: str(uuid4()))
+    uid: EpisodeIdT = Field(default_factory=uuid4)
     content: str
 
     producer_id: str
