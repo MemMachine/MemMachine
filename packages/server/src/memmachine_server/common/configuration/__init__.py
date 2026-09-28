@@ -172,8 +172,8 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
-    ingestion_poll_interval_seconds: float = Field(
-        default=2.0,
+    ingestion_poll_interval_seconds: int = Field(
+        default=2,
         description=(
             "How often, in seconds, the background ingestion loop polls for "
             "sets with uningested messages."

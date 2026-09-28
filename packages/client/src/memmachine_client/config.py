@@ -465,7 +465,7 @@ class Config:
         embedding_model: str | None = None,
         ingestion_trigger_messages: int | None = None,
         ingestion_trigger_age_seconds: int | None = None,
-        ingestion_poll_interval_seconds: float | None = None,
+        ingestion_poll_interval_seconds: int | None = None,
         timeout: int | None = None,
     ) -> UpdateMemoryConfigResponse:
         """

@@ -568,7 +568,7 @@ class UpdateSemanticMemorySpec(BaseModel):
         Field(default=None, gt=0, description=SpecDoc.SEMANTIC_INGESTION_AGE),
     ]
     ingestion_poll_interval_seconds: Annotated[
-        float | None,
+        int | None,
         Field(default=None, gt=0, description=SpecDoc.SEMANTIC_INGESTION_POLL_INTERVAL),
     ]
 

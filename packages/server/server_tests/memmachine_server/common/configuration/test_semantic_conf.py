@@ -35,7 +35,7 @@ def test_semantic_config_timedelta_float():
 
 def test_semantic_config_ingestion_poll_interval_defaults_and_overrides():
     default_conf = SemanticMemoryConf(enabled=False)
-    assert default_conf.ingestion_poll_interval_seconds == 2.0
+    assert default_conf.ingestion_poll_interval_seconds == 2
     assert default_conf.consolidation_threshold == 20
 
     raw_conf: dict[str, Any] = {

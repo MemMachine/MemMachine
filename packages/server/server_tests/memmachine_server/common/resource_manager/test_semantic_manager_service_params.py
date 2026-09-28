@@ -34,7 +34,7 @@ async def test_semantic_manager_wires_ingestion_settings_into_semantic_service(
             config_database="config_db",
             llm_model="llm",
             embedding_model="embedder",
-            ingestion_poll_interval_seconds=42.0,
+            ingestion_poll_interval_seconds=42,
             consolidation_threshold=7,
         ),
         prompt_conf=PromptConf(),
