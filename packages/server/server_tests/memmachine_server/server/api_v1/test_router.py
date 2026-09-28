@@ -1,5 +1,6 @@
 """Tests for the v1 routes: tenants, events, queries and expansion."""
 
+import json
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -21,8 +22,9 @@ _BASE_TIMESTAMP = "2025-06-01T12:0{minute}:00+00:00"
 
 
 def _event(
-    text,
+    text="near one",
     *,
+    blocks=None,
     session_id="s1",
     minute=0,
     author=None,
@@ -33,7 +35,9 @@ def _event(
     body = {
         "session_id": session_id,
         "timestamp": _BASE_TIMESTAMP.format(minute=minute),
-        "blocks": [{"kind": "text", "text": text}],
+        "blocks": list(blocks)
+        if blocks is not None
+        else [{"kind": "text", "text": text}],
     }
     if author is not None:
         body["context"] = {"author": {"name": author}}
@@ -184,11 +188,78 @@ class TestEvents:
 
     def test_an_unregistered_block_kind_is_rejected(self, client):
         _create(client)
-        body = _event("near one")
-        body["blocks"] = [{"kind": "hologram", "text": "near one"}]
+        body = _event(blocks=[{"kind": "hologram", "text": "near one"}])
         response = client.post(f"/v1/tenants/{_TENANT}/events", json=[body])
         assert response.status_code == 422
         assert _error(response)["code"] == "invalid_request"
+
+    def test_the_capture_kinds_are_stored_and_reached_by_expanding(self, client):
+        _create(client)
+        # The capture client writes one event per timeline entry.
+        thinking = {"kind": "thinking", "text": "The suite is red."}
+        call = {"kind": "tool_call", "name": "Bash", "input": {"command": "pytest -q"}}
+        result = {
+            "kind": "tool_result",
+            "name": "Bash",
+            "output": "1 failed",
+            "error": True,
+        }
+        injected = {"kind": "injected", "text": "Run the gates.", "source": "hook"}
+        entries = [
+            _event(blocks=[block], minute=minute, author="Claude")
+            for minute, block in enumerate([thinking, call, result, injected], start=1)
+        ]
+        _ingest(client, [_event("near one", author="Alice"), *entries])
+
+        # Only the message is on the search surface.
+        hits = _query(client).json()["hits"]
+        seeds = [hit["segments"][hit["seed"]] for hit in hits]
+        assert [seed["block"] for seed in seeds] == [
+            {"kind": "text", "text": "near one"}
+        ]
+
+        # Everything else the session logged is reached by expanding from
+        # it, one segment per block, and the window reads as one timeline.
+        expanded = client.post(
+            f"/v1/tenants/{_TENANT}/episodic-memory/expand",
+            json={"anchor": seeds[0]["uuid"], "after": 4},
+        ).json()
+        assert [segment["block"] for segment in expanded["after"]] == [
+            thinking,
+            call,
+            result,
+            injected,
+        ]
+        # Each line is its segment id, the timestamp, the author, then the
+        # block's rendering.
+        lines = expanded["after_text"].splitlines()[1:]
+        renderings = [
+            "Claude: " + json.dumps("thinking: The suite is red."),
+            "Claude: " + json.dumps('tool_call Bash: {"command":"pytest -q"}'),
+            "Claude: " + json.dumps("tool_result Bash [error]: 1 failed"),
+            "Claude: " + json.dumps("injected hook: Run the gates."),
+        ]
+        for line, rendering in zip(lines, renderings, strict=True):
+            assert line.startswith("[segment:")
+            assert line.endswith(rendering)
+
+    def test_a_capture_block_missing_a_field_is_rejected(self, client):
+        _create(client)
+        body = _event(blocks=[{"kind": "tool_call", "name": "Bash"}])
+        response = client.post(f"/v1/tenants/{_TENANT}/events", json=[body])
+        assert response.status_code == 422
+        error = _error(response)
+        assert error["code"] == "invalid_request"
+        assert "input" in error["message"]
+
+    def test_an_unlisted_injection_source_is_rejected(self, client):
+        _create(client)
+        body = _event(blocks=[{"kind": "injected", "text": "hi", "source": "typed"}])
+        response = client.post(f"/v1/tenants/{_TENANT}/events", json=[body])
+        assert response.status_code == 422
+        error = _error(response)
+        assert error["code"] == "invalid_request"
+        assert "source" in error["message"]
 
     def test_an_empty_session_id_is_rejected(self, client):
         _create(client)
