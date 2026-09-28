@@ -4796,7 +4796,7 @@ async def test_adding_a_stored_event_again_keeps_its_segments(
 
 
 # ===================================================================
-# since / until, source_ids
+# since / until, source_ids, block_kinds
 # ===================================================================
 
 
@@ -4908,6 +4908,25 @@ async def test_source_ids_select_rows(
 
 
 @pytest.mark.asyncio
+async def test_block_kinds_select_rows(
+    partition: SQLAlchemyEventMemoryStorePartition,
+) -> None:
+    s0 = _seg(ts_offset_seconds=0)
+    s1 = _seg(ts_offset_seconds=1)
+    await _add_segments(partition, _links(s0, s1))
+
+    text = await _windows(partition, [s0], after=5, block_kinds=["text"])
+    image = await partition.get_segments([s0.uuid], block_kinds=["image"])
+    around = await partition.get_segment_neighborhoods(
+        [s0.uuid], after=5, block_kinds=["image"]
+    )
+
+    assert [s.uuid for s in text[s0.uuid]] == [s0.uuid, s1.uuid]
+    assert image == {}
+    assert around == {s0.uuid: Neighborhood(before=[], after=[])}
+
+
+@pytest.mark.asyncio
 async def test_row_projections_are_derived_from_the_segment(
     partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
@@ -4918,7 +4937,7 @@ async def test_row_projections_are_derived_from_the_segment(
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert row.source_id == "alice"
+    assert (row.source_id, row.block_kind) == ("alice", "text")
 
     returned = (await partition.get_segments([seg.uuid]))[seg.uuid]
     assert returned.source_id == "alice"

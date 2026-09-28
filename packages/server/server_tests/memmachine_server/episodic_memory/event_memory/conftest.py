@@ -137,6 +137,7 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
         since: datetime | None,
         until: datetime | None,
         source_ids: list[str] | None,
+        block_kinds: list[str] | None,
         normalized_filter: FilterExpr | None,
     ) -> bool:
         for name, bound in (("since", since), ("until", until)):
@@ -147,6 +148,8 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
         if until is not None and segment.timestamp >= until:
             return False
         if source_ids is not None and segment.source_id not in source_ids:
+            return False
+        if block_kinds is not None and segment.block.block_type not in block_kinds:
             return False
         if normalized_filter is not None:
             evaluated = {**segment.properties, "timestamp": segment.timestamp}
@@ -175,6 +178,7 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
         since: datetime | None,
         until: datetime | None,
         source_ids: Iterable[str] | None,
+        block_kinds: Iterable[str] | None,
         property_filter: FilterExpr | None,
     ) -> Callable[[Segment], bool]:
         normalized_filter = (
@@ -183,6 +187,7 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
             else None
         )
         listed_sources = list(source_ids) if source_ids is not None else None
+        listed_kinds = list(block_kinds) if block_kinds is not None else None
 
         def passes(segment: Segment) -> bool:
             return self._passes(
@@ -190,6 +195,7 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
                 since=since,
                 until=until,
                 source_ids=listed_sources,
+                block_kinds=listed_kinds,
                 normalized_filter=normalized_filter,
             )
 
@@ -203,12 +209,14 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
         since: datetime | None = None,
         until: datetime | None = None,
         source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> dict[UUID, Segment]:
         passes = self._admits(
             since=since,
             until=until,
             source_ids=source_ids,
+            block_kinds=block_kinds,
             property_filter=property_filter,
         )
         found: dict[UUID, Segment] = {}
@@ -228,6 +236,7 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
         since: datetime | None = None,
         until: datetime | None = None,
         source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> dict[UUID, Neighborhood]:
         if before < 0:
@@ -238,6 +247,7 @@ class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
             since=since,
             until=until,
             source_ids=source_ids,
+            block_kinds=block_kinds,
             property_filter=property_filter,
         )
         neighborhoods: dict[UUID, Neighborhood] = {}

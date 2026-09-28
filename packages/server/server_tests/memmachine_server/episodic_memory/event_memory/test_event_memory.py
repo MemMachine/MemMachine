@@ -43,6 +43,7 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
     WholeTextDeriver,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
+    BLOCK_KIND_KEY,
     EVENT_SOURCE_KEY,
     EVENT_TIMESTAMP_KEY,
     EventMemory,
@@ -177,6 +178,7 @@ class TestSchema:
         assert EventMemory.expected_vector_store_indexed_properties() == {
             EVENT_TIMESTAMP_KEY: datetime.datetime,
             EVENT_SOURCE_KEY: str,
+            BLOCK_KIND_KEY: str,
         }
         assert all(
             key.startswith("memmachine_")
@@ -215,6 +217,7 @@ class TestEncodeEvents:
         props = _record_properties(record)
         assert props == {
             EVENT_TIMESTAMP_KEY: event.timestamp,
+            BLOCK_KIND_KEY: "text",
             EVENT_SOURCE_KEY: "src",
         }
         # The event memory store maps the derivative to its segment.
@@ -509,6 +512,14 @@ class TestQuerySystemFilters:
         )
 
         assert _texts(hits) == {"event 1", "event 2"}
+
+    async def test_block_kinds_select_segments(
+        self, event_memory_partition: EventMemoryPartition
+    ):
+        await event_memory_partition.encode_events([_make_event("hi")])
+
+        assert len(await event_memory_partition.query("hi", block_kinds=["text"])) == 1
+        assert await event_memory_partition.query("hi", block_kinds=["image"]) == []
 
     async def test_timestamp_filter_field_is_the_event_memory_store_column(
         self, event_memory_partition: EventMemoryPartition
@@ -1591,11 +1602,13 @@ def test_predicates_name_the_reserved_keys():
         since=_T0,
         until=_T1,
         source_ids=["alice", "bob"],
+        block_kinds=["text"],
     )
     assert _conjuncts(tree) == [
         Comparison(field=EVENT_TIMESTAMP_KEY, op=">=", value=_T0),
         Comparison(field=EVENT_TIMESTAMP_KEY, op="<", value=_T1),
         In(field=EVENT_SOURCE_KEY, values=["alice", "bob"]),
+        In(field=BLOCK_KIND_KEY, values=["text"]),
     ]
 
 
