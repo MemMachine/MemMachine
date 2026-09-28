@@ -1,4 +1,4 @@
-"""Data types for segment store."""
+"""Data types for event memory store."""
 
 import json
 from collections.abc import Iterable, Mapping
@@ -16,8 +16,8 @@ from memmachine_server.common.payload_codec.payload_codec_config import (
 _JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
 
-class SegmentStorePartitionConfig(BaseModel):
-    """Configuration for a logical partition in a segment store."""
+class EventMemoryStorePartitionConfig(BaseModel):
+    """Configuration for a logical partition in an event memory store."""
 
     payload_codec_config: PayloadCodecConfig = Field(
         default_factory=PlaintextPayloadCodecConfig,
@@ -47,14 +47,14 @@ class SegmentStorePartitionConfig(BaseModel):
         return value
 
 
-class SegmentStorePartitionConfigMismatchError(Exception):
+class EventMemoryStorePartitionConfigMismatchError(Exception):
     """Raised when opening a partition with a different configuration than it was created with."""
 
     def __init__(
         self,
         partition_key: str,
-        existing_config: SegmentStorePartitionConfig,
-        requested_config: SegmentStorePartitionConfig,
+        existing_config: EventMemoryStorePartitionConfig,
+        requested_config: EventMemoryStorePartitionConfig,
     ) -> None:
         """Initialize with the partition key and configurations."""
         self.partition_key = partition_key
@@ -67,7 +67,7 @@ class SegmentStorePartitionConfigMismatchError(Exception):
         )
 
 
-class SegmentStoreAttemptsExhaustedError(Exception):
+class EventMemoryStoreAttemptsExhaustedError(Exception):
     """The store exhausted its internal attempts; diagnose the cause.
 
     Raised when an operation kept failing in a way that should not recur
@@ -76,7 +76,7 @@ class SegmentStoreAttemptsExhaustedError(Exception):
     """
 
 
-class SegmentStorePartitionHandleStaleError(Exception):
+class EventMemoryStorePartitionHandleStaleError(Exception):
     """A partition handle outlived the partition incarnation it was opened on."""
 
     def __init__(self, partition_key: str) -> None:
@@ -88,7 +88,7 @@ class SegmentStorePartitionHandleStaleError(Exception):
         self.partition_key = partition_key
 
 
-class SegmentStorePartitionAlreadyExistsError(Exception):
+class EventMemoryStorePartitionAlreadyExistsError(Exception):
     """Raised when creating a partition that already exists."""
 
     def __init__(self, partition_key: str) -> None:
@@ -97,7 +97,7 @@ class SegmentStorePartitionAlreadyExistsError(Exception):
         super().__init__(f"Partition {partition_key!r} already exists.")
 
 
-class SegmentStoreEventAlreadyStoredError(Exception):
+class EventMemoryStoreEventAlreadyStoredError(Exception):
     """A batch named an event the partition already holds; nothing was stored."""
 
     def __init__(self, event_uuids: Iterable[UUID]) -> None:

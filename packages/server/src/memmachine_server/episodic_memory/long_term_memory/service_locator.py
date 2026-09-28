@@ -26,10 +26,10 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
     WholeTextDeriver,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStorePartitionConfig,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStorePartitionConfig,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+from memmachine_server.episodic_memory.event_memory.event_memory_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
@@ -100,7 +100,9 @@ async def _event_params(
     config: EventLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
 ) -> EventBackendParams:
-    segment_store = await resource_manager.get_segment_store(config.segment_store)
+    event_memory_store = await resource_manager.get_event_memory_store(
+        config.event_memory_store
+    )
     embedder = await resource_manager.get_embedder(config.embedder, validate=True)
     vector_store = await event_backend_vector_store(config, resource_manager)
     reranker = (
@@ -116,9 +118,9 @@ async def _event_params(
     # caller's still pending, opens that caller's partition once it is live.
     vector_store_partition = await vector_store.open_or_create_partition(partition_key)
 
-    partition = await segment_store.open_or_create_partition(
+    partition = await event_memory_store.open_or_create_partition(
         partition_key,
-        SegmentStorePartitionConfig(),
+        EventMemoryStorePartitionConfig(),
     )
 
     segmenter = _build_segmenter(config.segmenter)
@@ -128,8 +130,8 @@ async def _event_params(
         session_id=config.session_id,
         vector_store=vector_store,
         vector_store_partition=vector_store_partition,
-        segment_store=segment_store,
-        segment_store_partition=partition,
+        event_memory_store=event_memory_store,
+        event_memory_store_partition=partition,
         partition_key=partition_key,
         episode_storage=episode_storage,
         embedder=embedder,
@@ -171,7 +173,7 @@ def event_backend_indexed_properties() -> dict[str, PropertyType]:
 
 def partition_key_for_session(session_id: str) -> str:
     """
-    Derive a partition key satisfying the segment store's contract.
+    Derive a partition key satisfying the event memory store's contract.
 
     If the session_id already satisfies it (checked by the store's own
     validator, so the two can never disagree), use it directly to keep

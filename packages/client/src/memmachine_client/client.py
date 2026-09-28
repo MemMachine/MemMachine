@@ -200,7 +200,7 @@ class MemMachineClient:
         backend: Literal["declarative", "event"] | None = None,
         vector_graph_store: str = "",
         vector_store: str = "",
-        segment_store: str = "",
+        event_memory_store: str = "",
         timeout: int | None = None,
     ) -> Project:
         """
@@ -216,13 +216,13 @@ class MemMachineClient:
                      Use "" to let server use its configured defaults, or specify a model name like "default".
             backend: Long-term-memory backend selector. ``None`` (default)
                 lets the server pick its configured default. Set to ``"event"``
-                for the VectorStore + SegmentStore event backend or
+                for the VectorStore + EventMemoryStore event backend or
                 ``"declarative"`` for the legacy VectorGraphStore backend.
             vector_graph_store: VectorGraphStore resource id (declarative
                 backend only). Use ``""`` to let the server pick its default.
             vector_store: VectorStore resource id (event backend only). Use
                 ``""`` to let the server pick its default.
-            segment_store: SQL engine resource id backing the segment store
+            event_memory_store: SQL engine resource id backing the event memory store
                 (event backend only). Use ``""`` for the server default.
             timeout: Request timeout in seconds (uses client default if not provided)
 
@@ -249,7 +249,7 @@ class MemMachineClient:
                 reranker=reranker,
                 vector_graph_store=vector_graph_store,
                 vector_store=vector_store,
-                segment_store=segment_store,
+                event_memory_store=event_memory_store,
             ),
         )
         data = spec.model_dump(exclude_none=True)
@@ -376,7 +376,7 @@ class MemMachineClient:
         backend: Literal["declarative", "event"] | None,
         vector_graph_store: str,
         vector_store: str,
-        segment_store: str,
+        event_memory_store: str,
         timeout: int | None,
     ) -> Project:
         """Create project, handling concurrent creation (409) by fetching existing."""
@@ -390,7 +390,7 @@ class MemMachineClient:
                 backend=backend,
                 vector_graph_store=vector_graph_store,
                 vector_store=vector_store,
-                segment_store=segment_store,
+                event_memory_store=event_memory_store,
                 timeout=timeout,
             )
         except requests.HTTPError as create_error:
@@ -418,7 +418,7 @@ class MemMachineClient:
         backend: Literal["declarative", "event"] | None = None,
         vector_graph_store: str = "",
         vector_store: str = "",
-        segment_store: str = "",
+        event_memory_store: str = "",
         timeout: int | None = None,
     ) -> Project:
         """
@@ -446,7 +446,7 @@ class MemMachineClient:
                 backend only). Only used if project needs to be created.
             vector_store: VectorStore resource id (event backend only).
                 Only used if project needs to be created.
-            segment_store: SQL engine resource id for the segment store
+            event_memory_store: SQL engine resource id for the event memory store
                 (event backend only). Only used if project needs to be created.
             timeout: Request timeout in seconds (uses client default if not provided)
 
@@ -481,7 +481,7 @@ class MemMachineClient:
                     backend,
                     vector_graph_store,
                     vector_store,
-                    segment_store,
+                    event_memory_store,
                     timeout,
                 )
             # Re-raise other HTTP errors

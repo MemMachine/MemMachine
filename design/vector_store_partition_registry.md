@@ -44,7 +44,7 @@ through SQLAlchemy. The backend keeps only records, each carrying the
   [Reservations and registrations](#reservations-and-registrations)).
 - `SQLAlchemyVectorStorePartitionRegistry` is the one implementation. It
   supports PostgreSQL and SQLite 3.35 or newer (for `RETURNING`), as the
-  segment store does, and its params refuse any other dialect or an older
+  event memory store does, and its params refuse any other dialect or an older
   SQLite.
 - `RegistryBackedVectorStore` (`common/vector_store/registry_backed_vector_store.py`)
   is the base of the Qdrant and Milvus stores and makes every registry call
@@ -134,7 +134,7 @@ reservation, or a registration.
 ### Tables
 
 The registries of every vector store share two tables, defined once at module
-level as the segment store's are, and keyed by `vector_store_name`. Two
+level as the event memory store's are, and keyed by `vector_store_name`. Two
 registry objects under one name are one registry. One table pair with a key
 column, rather than a table pair per vector store, keeps the schema static.
 
@@ -168,7 +168,7 @@ repository's naming scheme (table, two letters per column).
 The incarnation alone locates a dead partition's records, since every
 partition of a store is in its one native collection. The queue carries the
 partition key so an operator looking at a tombstone, a dead-lettered one above
-all, can tell which partition it was, as the segment store's queue does.
+all, can tell which partition it was, as the event memory store's queue does.
 
 ### Operations
 
@@ -289,9 +289,9 @@ after a check that never ran because the process died. Nothing can refuse it
 at the backend, so the purge reclaims it. That is why a tombstone waits out a
 retention before its purge starts.
 
-### Differences from the segment store
+### Differences from the event memory store
 
-The registry reuses the segment store's incarnation logic wherever it can: the
+The registry reuses the event memory store's incarnation logic wherever it can: the
 bounded mint loop, the in-transaction locking re-check of the queue, the
 idempotent deletion that queues a tombstone, the claim under `FOR UPDATE SKIP
 LOCKED`, and the retried read-then-create of open-or-create. It differs where

@@ -1,5 +1,5 @@
 """
-Abstract base class for a segment store.
+Abstract base class for an event memory store.
 
 Defines an interface for adding, retrieving, and deleting the segments of
 events.
@@ -16,12 +16,12 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Neighborhood,
     Segment,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
-    SegmentStorePartitionConfig,
+from memmachine_server.episodic_memory.event_memory.event_memory_store.data_types import (
+    EventMemoryStorePartitionConfig,
 )
 
 
-class SegmentStorePartitionWriter(ABC):
+class EventMemoryStorePartitionWriter(ABC):
     """One write transaction on a partition, open inside `write()`.
 
     Everything done through the writer commits when the `write()` block
@@ -50,7 +50,7 @@ class SegmentStorePartitionWriter(ABC):
                 from each segment to the UUIDs of its derivatives.
 
         Raises:
-            SegmentStoreEventAlreadyStoredError:
+            EventMemoryStoreEventAlreadyStoredError:
                 If the partition already holds any of the events; it
                 names them all.
             ValueError:
@@ -82,12 +82,12 @@ class SegmentStorePartitionWriter(ABC):
         raise NotImplementedError
 
 
-class SegmentStorePartition(ABC):
-    """Partition-scoped handle for a segment store.
+class EventMemoryStorePartition(ABC):
+    """Partition-scoped handle for an event memory store.
 
     A handle is bound to the partition incarnation it was opened on:
     deleting the partition permanently invalidates the handle, and its
-    data operations raise `SegmentStorePartitionHandleStaleError` from
+    data operations raise `EventMemoryStorePartitionHandleStaleError` from
     then on, even if a partition is later created under the same key.
     A call with empty input may do no work and return without checking
     the handle.
@@ -104,14 +104,14 @@ class SegmentStorePartition(ABC):
 
     @property
     @abstractmethod
-    def config(self) -> SegmentStorePartitionConfig:
+    def config(self) -> EventMemoryStorePartitionConfig:
         """The configuration for this partition."""
         raise NotImplementedError
 
     @abstractmethod
     def write(
         self, *, exclusive: bool = False
-    ) -> AbstractAsyncContextManager[SegmentStorePartitionWriter]:
+    ) -> AbstractAsyncContextManager[EventMemoryStorePartitionWriter]:
         """
         Open a write transaction on the partition.
 
@@ -128,12 +128,12 @@ class SegmentStorePartition(ABC):
                 (default: False).
 
         Returns:
-            AbstractAsyncContextManager[SegmentStorePartitionWriter]:
+            AbstractAsyncContextManager[EventMemoryStorePartitionWriter]:
                 The transaction, as a context manager; its writer is
                 usable only inside the block.
 
         Raises:
-            SegmentStorePartitionHandleStaleError: On entry, if the handle is stale.
+            EventMemoryStorePartitionHandleStaleError: On entry, if the handle is stale.
         """
         raise NotImplementedError
 
@@ -313,9 +313,9 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
 
-class SegmentStore(ABC):
+class EventMemoryStore(ABC):
     """
-    Abstract base class for a segment store.
+    Abstract base class for an event memory store.
 
     Manages partition-scoped handles.
 
@@ -338,7 +338,7 @@ class SegmentStore(ABC):
     async def create_partition(
         self,
         partition_key: str,
-        config: SegmentStorePartitionConfig,
+        config: EventMemoryStorePartitionConfig,
     ) -> None:
         """
         Create a new partition.
@@ -346,12 +346,12 @@ class SegmentStore(ABC):
         Args:
             partition_key (str):
                 The key of the partition.
-            config (SegmentStorePartitionConfig):
+            config (EventMemoryStorePartitionConfig):
                 Configuration for the partition.
 
         Raises:
-            SegmentStorePartitionAlreadyExistsError: If the partition already exists.
-            SegmentStoreAttemptsExhaustedError:
+            EventMemoryStorePartitionAlreadyExistsError: If the partition already exists.
+            EventMemoryStoreAttemptsExhaustedError:
                 If creation exhausted its internal attempts on a
                 failure that should not recur; an immediate retry is
                 unlikely to succeed -- diagnose the chained cause.
@@ -359,7 +359,9 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(self, partition_key: str) -> SegmentStorePartition | None:
+    async def open_partition(
+        self, partition_key: str
+    ) -> EventMemoryStorePartition | None:
         """
         Open a partition-scoped handle for an existing partition.
 
@@ -368,7 +370,7 @@ class SegmentStore(ABC):
                 The key of the partition.
 
         Returns:
-            SegmentStorePartition | None:
+            EventMemoryStorePartition | None:
                 A partition-scoped handle, or None if the partition does not exist.
         """
         raise NotImplementedError
@@ -377,25 +379,25 @@ class SegmentStore(ABC):
     async def open_or_create_partition(
         self,
         partition_key: str,
-        config: SegmentStorePartitionConfig,
-    ) -> SegmentStorePartition:
+        config: EventMemoryStorePartitionConfig,
+    ) -> EventMemoryStorePartition:
         """
         Open the partition if it exists, or create it if it does not.
 
         Args:
             partition_key (str):
                 The key of the partition.
-            config (SegmentStorePartitionConfig):
+            config (EventMemoryStorePartitionConfig):
                 Configuration for the partition.
 
         Returns:
-            SegmentStorePartition:
+            EventMemoryStorePartition:
                 A partition-scoped handle.
 
         Raises:
-            SegmentStorePartitionConfigMismatchError:
+            EventMemoryStorePartitionConfigMismatchError:
                 If the partition already exists with a different configuration.
-            SegmentStoreAttemptsExhaustedError:
+            EventMemoryStoreAttemptsExhaustedError:
                 If creation exhausted its internal attempts on a
                 failure that should not recur; an immediate retry is
                 unlikely to succeed -- diagnose the chained cause.
@@ -404,13 +406,13 @@ class SegmentStore(ABC):
 
     @abstractmethod
     async def close_partition(
-        self, segment_store_partition: SegmentStorePartition
+        self, event_memory_store_partition: EventMemoryStorePartition
     ) -> None:
         """
         Close a partition-scoped handle.
 
         Args:
-            segment_store_partition (SegmentStorePartition):
+            event_memory_store_partition (EventMemoryStorePartition):
                 The partition-scoped handle to close.
         """
         raise NotImplementedError

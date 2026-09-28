@@ -265,10 +265,10 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - **Store when the lease ends (`claimed_until`).** Rejected, as `retry_at` is,
   in favor of computing from the recorded `claimed_at`, so a changed lease
   reaches claims already held.
-- **A progress cursor on the tombstone**, as the segment store's queue keeps.
+- **A progress cursor on the tombstone**, as the event memory store's queue keeps.
   Qdrant's round deletes the whole incarnation at once and leaves nothing to
   resume. Milvus lists the incarnation's keys by its field, and its rounds
-  stayed flat to the end of a 1M purge, where the segment store's batches
+  stayed flat to the end of a 1M purge, where the event memory store's batches
   needed the cursor to avoid stepping over every row already purged; listing
   Milvus keys by primary-key range, which a cursor needs, measured no faster.
   A cursor would also make the round carry a backend-specific position.

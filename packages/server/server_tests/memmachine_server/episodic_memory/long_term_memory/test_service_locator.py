@@ -15,11 +15,11 @@ from memmachine_server.common.vector_store import (
     VectorStore,
     VectorStorePartition,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStore,
-    SegmentStorePartition,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+from memmachine_server.episodic_memory.event_memory.event_memory_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
@@ -101,7 +101,7 @@ async def test_any_embedder_id_names_a_vector_store():
     config = EventLongTermMemoryConf(
         session_id="s",
         vector_store="vs",
-        segment_store="ss",
+        event_memory_store="ss",
         embedder="OpenAI text-embedding-3-large, 3072 dimensions",
     )
     embedder = create_autospec(Embedder, instance=True)
@@ -131,7 +131,7 @@ async def test_stores_on_two_backends_never_share_a_name():
         config = EventLongTermMemoryConf(
             session_id="s",
             vector_store=vector_store,
-            segment_store="ss",
+            event_memory_store="ss",
             embedder="e",
         )
         await event_backend_vector_store(config, resource_manager)
@@ -153,7 +153,7 @@ async def test_event_params_opens_the_session_partition_of_the_embedders_collect
     the request.
     """
     config = EventLongTermMemoryConf(
-        session_id="raced", vector_store="vs", segment_store="ss", embedder="e"
+        session_id="raced", vector_store="vs", event_memory_store="ss", embedder="e"
     )
     partition = create_autospec(VectorStorePartition, instance=True)
     vector_store = create_autospec(VectorStore, instance=True)
@@ -162,11 +162,11 @@ async def test_event_params_opens_the_session_partition_of_the_embedders_collect
     embedder.dimensions = 3
     resource_manager = create_autospec(CommonResourceManager, instance=True)
     resource_manager.get_vector_store.return_value = vector_store
-    resource_manager.get_segment_store.return_value = create_autospec(
-        SegmentStore, instance=True
+    resource_manager.get_event_memory_store.return_value = create_autospec(
+        EventMemoryStore, instance=True
     )
-    resource_manager.get_segment_store.return_value.open_or_create_partition.return_value = create_autospec(
-        SegmentStorePartition, instance=True
+    resource_manager.get_event_memory_store.return_value.open_or_create_partition.return_value = create_autospec(
+        EventMemoryStorePartition, instance=True
     )
     resource_manager.get_embedder.return_value = embedder
     resource_manager.get_episode_storage.return_value = create_autospec(

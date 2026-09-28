@@ -1,4 +1,4 @@
-"""Tests for SQLAlchemySegmentStore — SQLite (unit) and PostgreSQL (integration)."""
+"""Tests for SQLAlchemyEventMemoryStore — SQLite (unit) and PostgreSQL (integration)."""
 
 import asyncio
 import contextlib
@@ -49,28 +49,28 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
     TextBlock,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStoreAttemptsExhaustedError,
-    SegmentStoreEventAlreadyStoredError,
-    SegmentStorePartition,
-    SegmentStorePartitionAlreadyExistsError,
-    SegmentStorePartitionConfig,
-    SegmentStorePartitionConfigMismatchError,
-    SegmentStorePartitionHandleStaleError,
-    sqlalchemy_segment_store,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStoreAttemptsExhaustedError,
+    EventMemoryStoreEventAlreadyStoredError,
+    EventMemoryStorePartition,
+    EventMemoryStorePartitionAlreadyExistsError,
+    EventMemoryStorePartitionConfig,
+    EventMemoryStorePartitionConfigMismatchError,
+    EventMemoryStorePartitionHandleStaleError,
+    sqlalchemy_event_memory_store,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
-    BaseSegmentStore,
+from memmachine_server.episodic_memory.event_memory.event_memory_store.sqlalchemy_event_memory_store import (
+    BaseEventMemoryStore,
     DerivativeLinkRow,
     PartitionRow,
     PurgeQueueRow,
     SegmentRow,
-    SQLAlchemySegmentStore,
-    SQLAlchemySegmentStoreParams,
-    SQLAlchemySegmentStorePartition,
-    SQLAlchemySegmentStorePartitionWriter,
+    SQLAlchemyEventMemoryStore,
+    SQLAlchemyEventMemoryStoreParams,
+    SQLAlchemyEventMemoryStorePartition,
+    SQLAlchemyEventMemoryStorePartitionWriter,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+from memmachine_server.episodic_memory.event_memory.event_memory_store.utils import (
     validate_partition_key,
 )
 
@@ -114,7 +114,7 @@ def _seg(
 async def _drop_schema(engine: AsyncEngine) -> None:
     """Drop the store's tables, so the next startup starts clean."""
     async with engine.begin() as conn:
-        await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+        await conn.run_sync(BaseEventMemoryStore.metadata.drop_all)
 
 
 def _links(*segments: Segment) -> dict[Segment, list[UUID]]:
@@ -123,7 +123,7 @@ def _links(*segments: Segment) -> dict[Segment, list[UUID]]:
 
 
 async def _add(
-    partition: SegmentStorePartition,
+    partition: EventMemoryStorePartition,
     segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
 ) -> None:
     """Add the segments through one write, grouped by event; empty adds nothing."""
@@ -137,7 +137,7 @@ async def _add(
 
 
 async def _windows(
-    partition: SegmentStorePartition,
+    partition: EventMemoryStorePartition,
     seeds: list[Segment],
     **read_options,
 ) -> dict[UUID, list[Segment]]:
@@ -156,9 +156,9 @@ async def _windows(
     }
 
 
-def _plaintext_partition_config() -> SegmentStorePartitionConfig:
+def _plaintext_partition_config() -> EventMemoryStorePartitionConfig:
     """Return the default plaintext partition config."""
-    return SegmentStorePartitionConfig()
+    return EventMemoryStorePartitionConfig()
 
 
 def _database_time_ago(engine: AsyncEngine, delta: timedelta) -> ColumnElement:
@@ -201,7 +201,7 @@ async def _wait_until_blocked_or_done(
 
 
 async def _row_counts(
-    owner: SQLAlchemySegmentStore | SQLAlchemySegmentStorePartition,
+    owner: SQLAlchemyEventMemoryStore | SQLAlchemyEventMemoryStorePartition,
     incarnation: UUID,
 ) -> tuple[int, int]:
     """The incarnation's segment and derivative-link row counts."""
@@ -249,9 +249,9 @@ def _failing_next_commit(engine: AsyncEngine) -> Generator[None, None, None]:
 @pytest_asyncio.fixture
 async def sqlite_store(
     sqlalchemy_sqlite_engine: AsyncEngine,
-) -> AsyncIterator[SQLAlchemySegmentStore]:
-    store = SQLAlchemySegmentStore(
-        SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
+) -> AsyncIterator[SQLAlchemyEventMemoryStore]:
+    store = SQLAlchemyEventMemoryStore(
+        SQLAlchemyEventMemoryStoreParams(engine=sqlalchemy_sqlite_engine)
     )
     await store.startup()
     yield store
@@ -261,9 +261,9 @@ async def sqlite_store(
 @pytest_asyncio.fixture
 async def pg_store(
     sqlalchemy_pg_engine: AsyncEngine,
-) -> AsyncIterator[SQLAlchemySegmentStore]:
-    store = SQLAlchemySegmentStore(
-        SQLAlchemySegmentStoreParams(engine=sqlalchemy_pg_engine)
+) -> AsyncIterator[SQLAlchemyEventMemoryStore]:
+    store = SQLAlchemyEventMemoryStore(
+        SQLAlchemyEventMemoryStoreParams(engine=sqlalchemy_pg_engine)
     )
     await store.startup()
     yield store
@@ -276,7 +276,7 @@ async def pg_store(
         pytest.param("pg_store", marks=pytest.mark.integration),
     ],
 )
-def store(request) -> SQLAlchemySegmentStore:
+def store(request) -> SQLAlchemyEventMemoryStore:
     return request.getfixturevalue(request.param)
 
 
@@ -305,8 +305,8 @@ def recorded_statements(
 
 @pytest_asyncio.fixture
 async def partition(
-    store: SQLAlchemySegmentStore,
-) -> SQLAlchemySegmentStorePartition:
+    store: SQLAlchemyEventMemoryStore,
+) -> SQLAlchemyEventMemoryStorePartition:
     return await store.open_or_create_partition(
         PARTITION_KEY,
         _plaintext_partition_config(),
@@ -320,7 +320,7 @@ async def partition(
 
 @pytest.mark.asyncio
 async def test_add_events_and_get_contexts(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seg = _seg(text="a")
     await _add(partition, _links(seg))
@@ -332,7 +332,7 @@ async def test_add_events_and_get_contexts(
 
 @pytest.mark.asyncio
 async def test_add_events_with_properties(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seg = _seg(properties={"color": "red", "score": 42})
     await _add(partition, _links(seg))
@@ -344,7 +344,7 @@ async def test_add_events_with_properties(
 
 @pytest.mark.asyncio
 async def test_add_events_with_producer_context(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     ctx = _author("User")
     seg = _seg(context=ctx)
@@ -363,7 +363,7 @@ async def test_add_events_with_producer_context(
 
 @pytest.mark.asyncio
 async def test_add_events_with_no_context(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seg = _seg()
     await _add(partition, _links(seg))
@@ -388,7 +388,7 @@ async def test_add_events_with_no_context(
     ],
 )
 async def test_timestamp_roundtrips_with_timezone(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
     tz: timezone,
 ) -> None:
     """A timezone-aware timestamp roundtrips with its instant and offset intact.
@@ -429,7 +429,7 @@ async def test_timestamp_roundtrips_with_timezone(
     ],
 )
 async def test_timestamp_filter_compares_instants_not_wall_clocks(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
     bound: str,
 ) -> None:
     """A datetime bound means an instant, whatever zone it is written in.
@@ -454,14 +454,14 @@ async def test_timestamp_filter_compares_instants_not_wall_clocks(
 
 @pytest.mark.asyncio
 async def test_add_events_empty(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     await _add(partition, {})
 
 
 @pytest.mark.asyncio
 async def test_add_multiple_derivatives_per_segment(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seg = _seg()
     d1, d2 = uuid4(), uuid4()
@@ -479,7 +479,7 @@ async def test_add_multiple_derivatives_per_segment(
 
 @pytest.mark.asyncio
 async def test_contexts_empty_seeds(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     result = await partition.get_segments([])
     assert result == {}
@@ -487,7 +487,7 @@ async def test_contexts_empty_seeds(
 
 @pytest.mark.asyncio
 async def test_contexts_unknown_seed(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """An unknown uuid has no entry, in the lookup and in the walk."""
     await _add(partition, _links(_seg()))
@@ -498,7 +498,7 @@ async def test_contexts_unknown_seed(
 
 @pytest.mark.asyncio
 async def test_contexts_seed_only(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """With before=0 and after=0 the walk adds nothing around the seed."""
     seg = _seg()
@@ -512,7 +512,7 @@ async def test_contexts_seed_only(
 
 @pytest.mark.asyncio
 async def test_contexts_backward(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     ep = uuid4()
     segs = [_seg(event_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
@@ -529,7 +529,7 @@ async def test_contexts_backward(
 
 @pytest.mark.asyncio
 async def test_contexts_forward(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     ep = uuid4()
     segs = [_seg(event_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
@@ -546,7 +546,7 @@ async def test_contexts_forward(
 
 @pytest.mark.asyncio
 async def test_contexts_backward_and_forward(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     ep = uuid4()
     segs = [_seg(event_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(7)]
@@ -568,7 +568,7 @@ async def test_contexts_backward_and_forward(
 
 @pytest.mark.asyncio
 async def test_contexts_clamp_at_boundaries(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Requesting more context than available returns what exists."""
     ep = uuid4()
@@ -585,7 +585,7 @@ async def test_contexts_clamp_at_boundaries(
 
 @pytest.mark.asyncio
 async def test_contexts_multiple_seeds(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     ep = uuid4()
     segs = [_seg(event_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(10)]
@@ -608,7 +608,7 @@ async def test_contexts_multiple_seeds(
 
 @pytest.mark.asyncio
 async def test_contexts_with_properties(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Properties are loaded for seed and context segments."""
     ep = uuid4()
@@ -627,7 +627,7 @@ async def test_contexts_with_properties(
 
 @pytest.mark.asyncio
 async def test_contexts_property_filter(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Property filter excludes context rows that don't match."""
     ep = uuid4()
@@ -653,7 +653,7 @@ async def test_contexts_property_filter(
 
 @pytest.mark.asyncio
 async def test_context_comes_from_the_segments_nearest_the_seed(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A context read takes its context from a bounded number of segments on each side.
@@ -662,7 +662,7 @@ async def test_context_comes_from_the_segments_nearest_the_seed(
     is not context, however few matches lie within the bound, and an
     unfiltered read returns no segment beyond it either.
     """
-    monkeypatch.setattr(sqlalchemy_segment_store, "_MAX_CONTEXT_DISTANCE", 4)
+    monkeypatch.setattr(sqlalchemy_event_memory_store, "_MAX_CONTEXT_DISTANCE", 4)
     tags = {1: "a", 2: "b", 3: "b", 4: "a", 5: "a", 6: "a"}
     seed = _seg(ts_offset_seconds=0, properties={"tag": "a"})
     backward = {
@@ -698,7 +698,7 @@ async def test_context_comes_from_the_segments_nearest_the_seed(
 
 @pytest.mark.asyncio
 async def test_contexts_filter_by_context_producer(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """`context.producer` is not a stored property; the filter just matches nothing.
 
@@ -738,7 +738,7 @@ async def test_contexts_filter_by_context_producer(
 
 @pytest.mark.asyncio
 async def test_contexts_filter_by_context_type(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """`context.context_type` is not a stored property; filter matches nothing."""
     ep = uuid4()
@@ -771,7 +771,7 @@ async def test_contexts_filter_by_context_type(
 
 
 @pytest.mark.asyncio
-async def test_contexts_session_isolation(store: SQLAlchemySegmentStore) -> None:
+async def test_contexts_session_isolation(store: SQLAlchemyEventMemoryStore) -> None:
     """Context only includes segments from the same partition_key."""
     ep = uuid4()
     s_other = _seg(event_uuid=ep, offset=0, ts_offset_seconds=0)
@@ -799,7 +799,7 @@ async def test_contexts_session_isolation(store: SQLAlchemySegmentStore) -> None
 
 @pytest.mark.asyncio
 async def test_contexts_chronological_order(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Context segments are returned in chronological order."""
     ep = uuid4()
@@ -814,7 +814,7 @@ async def test_contexts_chronological_order(
 
 @pytest.mark.asyncio
 async def test_context_preserved_in_segment_windows(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Context is preserved when retrieving segment contexts (backward/forward)."""
     ep = uuid4()
@@ -836,7 +836,7 @@ async def test_context_preserved_in_segment_windows(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("random_seed", [1, 2, 3])
 async def test_random_context_reads_agree_with_a_model(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     random_seed: int,
 ) -> None:
     """Random context reads agree with an in-memory model of the timeline.
@@ -1017,7 +1017,7 @@ def _sql_leaf_truth(segment: Segment, expr: Comparison | In | IsNull) -> bool | 
 
 @pytest.mark.asyncio
 async def test_get_derivative_uuids_by_event_uuids(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     ep = uuid4()
     segs = [_seg(event_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(3)]
@@ -1031,7 +1031,7 @@ async def test_get_derivative_uuids_by_event_uuids(
 
 @pytest.mark.asyncio
 async def test_get_derivative_uuids_by_event_uuids_empty(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     result = await partition.get_derivative_uuids_by_event_uuids([])
     assert result == {}
@@ -1039,7 +1039,7 @@ async def test_get_derivative_uuids_by_event_uuids_empty(
 
 @pytest.mark.asyncio
 async def test_get_derivative_uuids_by_event_uuids_unknown(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     result = await partition.get_derivative_uuids_by_event_uuids([uuid4()])
     assert result == {}
@@ -1047,7 +1047,7 @@ async def test_get_derivative_uuids_by_event_uuids_unknown(
 
 @pytest.mark.asyncio
 async def test_get_derivative_uuids_by_event_uuids_answers_a_held_event_without_derivatives(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """A held event answers, with an empty list, even if nothing derives from it."""
     seg = _seg()
@@ -1064,7 +1064,7 @@ async def test_get_derivative_uuids_by_event_uuids_answers_a_held_event_without_
 
 @pytest.mark.asyncio
 async def test_get_segment_uuids_by_derivative_uuids(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seg = _seg()
     d1, d2 = uuid4(), uuid4()
@@ -1076,7 +1076,7 @@ async def test_get_segment_uuids_by_derivative_uuids(
 
 @pytest.mark.asyncio
 async def test_get_segment_uuids_by_derivative_uuids_agrees_with_the_forward_lookup(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Every derivative belongs to exactly one segment, so the two agree."""
     segments = [_seg(offset=i, ts_offset_seconds=i) for i in range(3)]
@@ -1104,7 +1104,7 @@ async def test_get_segment_uuids_by_derivative_uuids_agrees_with_the_forward_loo
 
 @pytest.mark.asyncio
 async def test_get_segment_uuids_by_derivative_uuids_empty(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     result = await partition.get_segment_uuids_by_derivative_uuids([])
     assert result == {}
@@ -1112,7 +1112,7 @@ async def test_get_segment_uuids_by_derivative_uuids_empty(
 
 @pytest.mark.asyncio
 async def test_get_segment_uuids_by_derivative_uuids_omits_unknown(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """UUIDs the partition does not hold are omitted, not raised on."""
     seg = _seg()
@@ -1126,7 +1126,7 @@ async def test_get_segment_uuids_by_derivative_uuids_omits_unknown(
 
 @pytest.mark.asyncio
 async def test_get_segment_uuids_by_derivative_uuids_session_isolation(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """A derivative another partition owns is invisible here."""
     other_partition = await store.open_or_create_partition(
@@ -1153,7 +1153,7 @@ async def test_get_segment_uuids_by_derivative_uuids_session_isolation(
 
 @pytest.mark.asyncio
 async def test_get_segment_uuids_by_derivative_uuids_after_delete_segments(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Deleting a segment takes its derivatives' mapping with it."""
     kept, dropped = _seg(offset=0), _seg(offset=1)
@@ -1175,7 +1175,7 @@ async def test_get_segment_uuids_by_derivative_uuids_after_delete_segments(
 
 @pytest.mark.asyncio
 async def test_delete_segments(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     ep = uuid4()
     seg = _seg(event_uuid=ep)
@@ -1194,21 +1194,21 @@ async def test_delete_segments(
 
 @pytest.mark.asyncio
 async def test_delete_segments_noop_unknown(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     await partition.delete_segments([uuid4()])
 
 
 @pytest.mark.asyncio
 async def test_delete_segments_empty(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     await partition.delete_segments([])
 
 
 @pytest.mark.asyncio
 async def test_delete_segments_partial(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Deleting one segment leaves others intact."""
     ep = uuid4()
@@ -1226,7 +1226,7 @@ async def test_delete_segments_partial(
 
 @pytest.mark.asyncio
 async def test_add_events_failing_partway_writes_nothing(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """An add whose link rows are rejected keeps none of its segments either."""
     taken = uuid4()
@@ -1243,7 +1243,7 @@ async def test_add_events_failing_partway_writes_nothing(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["add_events", "delete_segments"])
 async def test_segment_write_whose_commit_fails_changes_nothing(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     operation: str,
 ) -> None:
     """A segment write whose commit fails leaves the partition as it was."""
@@ -1273,9 +1273,9 @@ async def test_segment_write_whose_commit_fails_changes_nothing(
 # ===================================================================
 
 
-async def _get_partition(engine: AsyncEngine) -> SQLAlchemySegmentStorePartition:
+async def _get_partition(engine: AsyncEngine) -> SQLAlchemyEventMemoryStorePartition:
     """Create a partition handle that shares the engine."""
-    store = SQLAlchemySegmentStore(SQLAlchemySegmentStoreParams(engine=engine))
+    store = SQLAlchemyEventMemoryStore(SQLAlchemyEventMemoryStoreParams(engine=engine))
     return await store.open_or_create_partition(
         PARTITION_KEY,
         _plaintext_partition_config(),
@@ -1284,7 +1284,7 @@ async def _get_partition(engine: AsyncEngine) -> SQLAlchemySegmentStorePartition
 
 @pytest.mark.asyncio
 async def test_concurrent_add_disjoint(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Concurrent additions with disjoint segments should not interfere."""
     engine = store._engine
@@ -1311,7 +1311,7 @@ async def test_concurrent_add_disjoint(
 
 @pytest.mark.asyncio
 async def test_concurrent_reads_during_writes(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Reads should not fail or block indefinitely while writes are happening."""
     engine = store._engine
@@ -1349,7 +1349,7 @@ async def test_concurrent_reads_during_writes(
 
 @pytest.mark.asyncio
 async def test_concurrent_context_reads_during_deletes(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """A walk must not crash if segments are deleted concurrently."""
     engine = store._engine
@@ -1397,7 +1397,7 @@ async def test_concurrent_context_reads_during_deletes(
 
 @pytest.mark.asyncio
 async def test_open_or_create_partition_defaults_to_plaintext_config(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     partition = await store.open_or_create_partition(
         "plaintext_default",
@@ -1407,34 +1407,38 @@ async def test_open_or_create_partition_defaults_to_plaintext_config(
 
 
 @pytest.mark.asyncio
-async def test_create_partition(store: SQLAlchemySegmentStore) -> None:
+async def test_create_partition(store: SQLAlchemyEventMemoryStore) -> None:
     await store.create_partition("new_partition", _plaintext_partition_config())
     partition = await store.open_partition("new_partition")
     assert partition is not None
 
 
 @pytest.mark.asyncio
-async def test_create_partition_already_exists(store: SQLAlchemySegmentStore) -> None:
+async def test_create_partition_already_exists(
+    store: SQLAlchemyEventMemoryStore,
+) -> None:
     await store.create_partition("dup_partition", _plaintext_partition_config())
-    with pytest.raises(SegmentStorePartitionAlreadyExistsError):
+    with pytest.raises(EventMemoryStorePartitionAlreadyExistsError):
         await store.create_partition("dup_partition", _plaintext_partition_config())
 
 
 @pytest.mark.asyncio
-async def test_open_partition_nonexistent(store: SQLAlchemySegmentStore) -> None:
+async def test_open_partition_nonexistent(store: SQLAlchemyEventMemoryStore) -> None:
     result = await store.open_partition("nonexistent")
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_open_partition_existing(store: SQLAlchemySegmentStore) -> None:
+async def test_open_partition_existing(store: SQLAlchemyEventMemoryStore) -> None:
     await store.create_partition("existing", _plaintext_partition_config())
     partition = await store.open_partition("existing")
     assert partition is not None
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_partition_creates(store: SQLAlchemySegmentStore) -> None:
+async def test_open_or_create_partition_creates(
+    store: SQLAlchemyEventMemoryStore,
+) -> None:
     partition = await store.open_or_create_partition(
         "fresh",
         _plaintext_partition_config(),
@@ -1447,7 +1451,7 @@ async def test_open_or_create_partition_creates(store: SQLAlchemySegmentStore) -
 
 @pytest.mark.asyncio
 async def test_open_or_create_partition_idempotent(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     await store.create_partition("idem", _plaintext_partition_config())
     partition = await store.open_or_create_partition(
@@ -1458,7 +1462,7 @@ async def test_open_or_create_partition_idempotent(
 
 
 @pytest.mark.asyncio
-async def test_delete_partition_removes_data(store: SQLAlchemySegmentStore) -> None:
+async def test_delete_partition_removes_data(store: SQLAlchemyEventMemoryStore) -> None:
     partition = await store.open_or_create_partition(
         "to_delete",
         _plaintext_partition_config(),
@@ -1475,7 +1479,7 @@ async def test_delete_partition_removes_data(store: SQLAlchemySegmentStore) -> N
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_delete_partition_keeps_foreign_key_enforced(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     sqlalchemy_pg_engine: AsyncEngine,
 ) -> None:
     """Deleting one partition must not drop the derivative-link foreign key."""
@@ -1492,7 +1496,7 @@ async def test_delete_partition_keeps_foreign_key_enforced(
         async with sqlalchemy_pg_engine.begin() as connection:
             await connection.execute(
                 text(
-                    "INSERT INTO segment_store_dv_ln"
+                    "INSERT INTO event_memory_store_dv_ln"
                     " (incarnation, uuid, segment_uuid)"
                     " VALUES (:incarnation, :uuid, :segment_uuid)"
                 ),
@@ -1506,7 +1510,7 @@ async def test_delete_partition_keeps_foreign_key_enforced(
 
 @pytest.mark.asyncio
 async def test_delete_partition_keeps_other_partitions_cascading(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Deleting one partition must not disable the derivative-link cascade."""
     keeper = await store.open_or_create_partition(
@@ -1533,7 +1537,7 @@ async def test_delete_partition_keeps_other_partitions_cascading(
 
 @pytest.mark.asyncio
 async def test_delete_partition_cascades_segments(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     partition = await store.open_or_create_partition(
         "cascade_test",
@@ -1559,13 +1563,13 @@ async def test_delete_partition_cascades_segments(
 
 
 @pytest.mark.asyncio
-async def test_delete_partition_idempotent(store: SQLAlchemySegmentStore) -> None:
+async def test_delete_partition_idempotent(store: SQLAlchemyEventMemoryStore) -> None:
     await store.delete_partition("never_existed")
 
 
 @pytest.mark.asyncio
 async def test_partition_key_validation_invalid_chars(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     with pytest.raises(ValueError, match="invalid characters"):
         await store.create_partition("UPPER", _plaintext_partition_config())
@@ -1577,7 +1581,7 @@ async def test_partition_key_validation_invalid_chars(
 
 @pytest.mark.asyncio
 async def test_partition_key_validation_too_long(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     with pytest.raises(ValueError, match="too long"):
         await store.create_partition("a" * 33, _plaintext_partition_config())
@@ -1586,7 +1590,7 @@ async def test_partition_key_validation_too_long(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_pg_context_preserved_via_lateral_join(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Context is preserved when retrieved via the LATERAL join path (multiple seeds)."""
     partition = await pg_store.open_or_create_partition(
@@ -1623,7 +1627,7 @@ async def test_pg_context_preserved_via_lateral_join(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_pg_mixed_context_types(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Different context types (producer, None) round-trip correctly on PG."""
     partition = await pg_store.open_or_create_partition(
@@ -1660,7 +1664,7 @@ async def test_pg_mixed_context_types(
 
 @pytest.mark.asyncio
 async def test_stale_handle_raises_after_delete(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """A handle held across deletion must fail loudly, not act."""
     partition = await store.open_or_create_partition(
@@ -1674,20 +1678,20 @@ async def test_stale_handle_raises_after_delete(
     # Empty input may skip the handle check (the ABC-permitted shortcut).
     await _add(partition, {})
 
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         await _add(partition, _links(_seg()))
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         await partition.get_segments([seg.uuid])
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         await partition.get_derivative_uuids_by_event_uuids([seg.event_uuid])
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         await partition.get_segment_uuids_by_derivative_uuids([uuid4()])
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         await partition.delete_segments([seg.uuid])
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         await partition.delete_events([seg.event_uuid])
     # Entering a write raises before the block runs.
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         async with partition.write():
             pytest.fail("the block must not run on a stale handle")
     # The stale handle deleted nothing; the rows wait for the purge.
@@ -1697,7 +1701,7 @@ async def test_stale_handle_raises_after_delete(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_reads_check_liveness_inside_the_data_statement(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     recorded_statements: list[str],
 ) -> None:
     """A read that finds rows is one statement; the registry check rides in it.
@@ -1718,7 +1722,8 @@ async def test_reads_check_liveness_inside_the_data_statement(
     await partition.get_segment_uuids_by_derivative_uuids(derivative_uuids)
     assert len(recorded_statements) == 3
     assert all(
-        "EXISTS (SELECT" in s and "segment_store_pt" in s for s in recorded_statements
+        "EXISTS (SELECT" in s and "event_memory_store_pt" in s
+        for s in recorded_statements
     )
 
     recorded_statements.clear()
@@ -1728,7 +1733,7 @@ async def test_reads_check_liveness_inside_the_data_statement(
 
 @pytest.mark.asyncio
 async def test_stale_handle_raises_after_recreate(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Re-creating the key must not let an old handle act on the successor."""
     old_handle = await store.open_or_create_partition(
@@ -1739,14 +1744,14 @@ async def test_stale_handle_raises_after_recreate(
         "reborn", _plaintext_partition_config()
     )
 
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         await _add(old_handle, _links(_seg()))
     await _add(new_handle, _links(_seg()))  # the live handle works
 
 
 @pytest.mark.asyncio
 async def test_recreated_partition_is_isolated_from_old_rows(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Old-incarnation rows are invisible to the successor before purging."""
     partition = await store.open_or_create_partition(
@@ -1776,7 +1781,7 @@ async def test_recreated_partition_is_isolated_from_old_rows(
 
 @pytest.mark.asyncio
 async def test_purge_reclaims_only_dead_incarnations(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Purging erases queued incarnations and leaves live partitions alone."""
@@ -1820,7 +1825,7 @@ async def test_purge_reclaims_only_dead_incarnations(
 
 @pytest.mark.asyncio
 async def test_concurrent_purges_reclaim_everything(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Racing purgers neither error nor leave garbage behind.
@@ -1864,7 +1869,7 @@ async def test_concurrent_purges_reclaim_everything(
 
 @pytest.mark.asyncio
 async def test_racing_purgers_never_retire_a_partly_purged_entry(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A purger racing another never retires rows it did not reach.
@@ -1898,7 +1903,7 @@ async def test_racing_purgers_never_retire_a_partly_purged_entry(
                 held.append(self)
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(second_read.wait(), 1)
-        elif held and self is not held[0] and "segment_store_sg" in str(statement):
+        elif held and self is not held[0] and "event_memory_store_sg" in str(statement):
             second_read.set()
         return result
 
@@ -1924,7 +1929,7 @@ async def test_racing_purgers_never_retire_a_partly_purged_entry(
 
 @pytest.mark.asyncio
 async def test_failed_purge_call_leaves_nothing_half_done(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A purge call whose commit fails changes nothing; later calls finish.
@@ -1956,7 +1961,7 @@ async def test_failed_purge_call_leaves_nothing_half_done(
 
 @pytest.mark.asyncio
 async def test_purge_reclaims_every_size_within_the_bound(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every incarnation size is reclaimed whole, never over the bound per call.
@@ -2001,7 +2006,7 @@ async def test_purge_reclaims_every_size_within_the_bound(
 
 @pytest.mark.asyncio
 async def test_purging_a_recreated_key_reclaims_only_the_dead_incarnation(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A successor keeps every row it writes while its predecessor is purged."""
@@ -2036,7 +2041,7 @@ async def test_purging_a_recreated_key_reclaims_only_the_dead_incarnation(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("seed", [1, 2, 3])
 async def test_racing_purgers_and_writers_leave_exactly_the_live_rows(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
     seed: int,
 ) -> None:
@@ -2078,7 +2083,7 @@ async def test_racing_purgers_and_writers_leave_exactly_the_live_rows(
     ]
     written = {partition._incarnation: [0, 0] for partition in live}
 
-    async def write(partition: SQLAlchemySegmentStorePartition) -> None:
+    async def write(partition: SQLAlchemyEventMemoryStorePartition) -> None:
         for round_index in range(5):
             segments = batch(rng.randint(1, 3), round_index * 10)
             await _add(partition, segments)
@@ -2108,7 +2113,7 @@ async def test_racing_purgers_and_writers_leave_exactly_the_live_rows(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_purge_skips_entries_claimed_by_concurrent_purger(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     sqlalchemy_pg_engine: AsyncEngine,
 ) -> None:
     """A purge never waits on another purger's claimed queue entries.
@@ -2174,7 +2179,7 @@ async def test_purge_skips_entries_claimed_by_concurrent_purger(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_write_landing_during_delete_is_never_orphaned(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     sqlalchemy_pg_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2194,7 +2199,9 @@ async def test_write_landing_during_delete_is_never_orphaned(
 
     reached_pause = asyncio.Event()
     release = asyncio.Event()
-    original_insert_segments = SQLAlchemySegmentStorePartitionWriter._insert_segments
+    original_insert_segments = (
+        SQLAlchemyEventMemoryStorePartitionWriter._insert_segments
+    )
 
     async def pausing_insert_segments(self, segments) -> None:
         reached_pause.set()
@@ -2202,7 +2209,7 @@ async def test_write_landing_during_delete_is_never_orphaned(
         await original_insert_segments(self, segments)
 
     monkeypatch.setattr(
-        SQLAlchemySegmentStorePartitionWriter,
+        SQLAlchemyEventMemoryStorePartitionWriter,
         "_insert_segments",
         pausing_insert_segments,
     )
@@ -2228,7 +2235,7 @@ async def test_write_landing_during_delete_is_never_orphaned(
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(deleter, 30)
 
-    with contextlib.suppress(SegmentStorePartitionHandleStaleError):
+    with contextlib.suppress(EventMemoryStorePartitionHandleStaleError):
         await writer
     await deleter
 
@@ -2251,7 +2258,7 @@ async def test_write_landing_during_delete_is_never_orphaned(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_concurrent_remote_delete_yields_single_queue_entry(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     sqlalchemy_pg_engine: AsyncEngine,
 ) -> None:
     """Racing deletions enqueue a dead incarnation exactly once.
@@ -2307,7 +2314,7 @@ async def test_concurrent_remote_delete_yields_single_queue_entry(
     ["create_partition", "open_or_create_partition"],
 )
 async def test_incarnation_with_garbage_left_is_never_reused(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
     create_via: str,
 ) -> None:
@@ -2333,7 +2340,7 @@ async def test_incarnation_with_garbage_left_is_never_reused(
             return dead_incarnation
         return uuid4()
 
-    monkeypatch.setattr(sqlalchemy_segment_store, "uuid4", colliding_uuid4)
+    monkeypatch.setattr(sqlalchemy_event_memory_store, "uuid4", colliding_uuid4)
 
     if create_via == "create_partition":
         await store.create_partition("fresh_p", _plaintext_partition_config())
@@ -2368,7 +2375,7 @@ async def test_incarnation_with_garbage_left_is_never_reused(
     ["create_partition", "open_or_create_partition"],
 )
 async def test_incarnation_colliding_with_live_partition_is_never_reused(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
     create_via: str,
 ) -> None:
@@ -2392,7 +2399,7 @@ async def test_incarnation_colliding_with_live_partition_is_never_reused(
             return live_incarnation
         return uuid4()
 
-    monkeypatch.setattr(sqlalchemy_segment_store, "uuid4", colliding_uuid4)
+    monkeypatch.setattr(sqlalchemy_event_memory_store, "uuid4", colliding_uuid4)
 
     if create_via == "create_partition":
         await store.create_partition("fresh_p", _plaintext_partition_config())
@@ -2416,8 +2423,8 @@ async def test_purge_bound_comes_from_params(
     sqlalchemy_sqlite_engine: AsyncEngine,
 ) -> None:
     """The configured bound governs every purge call."""
-    store = SQLAlchemySegmentStore(
-        SQLAlchemySegmentStoreParams(
+    store = SQLAlchemyEventMemoryStore(
+        SQLAlchemyEventMemoryStoreParams(
             engine=sqlalchemy_sqlite_engine,
             purge_max_segments=2,
         )
@@ -2445,7 +2452,7 @@ async def test_purge_bound_comes_from_params(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_mint_detects_collision_with_concurrent_deletion(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     sqlalchemy_pg_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2475,7 +2482,7 @@ async def test_mint_detects_collision_with_concurrent_deletion(
             return victim_incarnation
         return uuid4()
 
-    monkeypatch.setattr(sqlalchemy_segment_store, "uuid4", colliding_uuid4)
+    monkeypatch.setattr(sqlalchemy_event_memory_store, "uuid4", colliding_uuid4)
 
     async with (
         victim._create_session() as remote_session,
@@ -2536,7 +2543,7 @@ async def test_mint_detects_collision_with_concurrent_deletion(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_purge_claims_queue_entries_incrementally(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     recorded_statements: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2561,7 +2568,7 @@ async def test_purge_claims_queue_entries_incrementally(
     claim_statements = [
         statement
         for statement in recorded_statements
-        if statement.startswith("SELECT") and "segment_store_gc" in statement
+        if statement.startswith("SELECT") and "event_memory_store_gc" in statement
     ]
     assert claim_statements, "no queue claim was recorded"
     assert all("LIMIT" in statement for statement in claim_statements), (
@@ -2580,7 +2587,7 @@ async def test_purge_claims_queue_entries_incrementally(
 
 @pytest.mark.asyncio
 async def test_sqlite_write_racing_delete_cannot_orphan_rows(
-    sqlite_store: SQLAlchemySegmentStore,
+    sqlite_store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """On SQLite the write fence opens the write transaction before checking.
@@ -2599,7 +2606,9 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
 
     reached_pause = asyncio.Event()
     release = asyncio.Event()
-    original_insert_segments = SQLAlchemySegmentStorePartitionWriter._insert_segments
+    original_insert_segments = (
+        SQLAlchemyEventMemoryStorePartitionWriter._insert_segments
+    )
 
     async def pausing_insert_segments(self, segments) -> None:
         reached_pause.set()
@@ -2607,7 +2616,7 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
         await original_insert_segments(self, segments)
 
     monkeypatch.setattr(
-        SQLAlchemySegmentStorePartitionWriter,
+        SQLAlchemyEventMemoryStorePartitionWriter,
         "_insert_segments",
         pausing_insert_segments,
     )
@@ -2638,7 +2647,7 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
         while await sqlite_store.purge_deleted_partitions():
             pass
     release.set()
-    with contextlib.suppress(SegmentStorePartitionHandleStaleError):
+    with contextlib.suppress(EventMemoryStorePartitionHandleStaleError):
         await asyncio.wait_for(writer, 30)
     await asyncio.wait_for(deleter, 30)
 
@@ -2661,14 +2670,14 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
 
 @pytest.mark.asyncio
 async def test_persistent_mint_failure_raises_instead_of_looping(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A persistent constraint failure surfaces after bounded mint attempts.
 
     Every realistic trip through the collision-retry path beyond a few
     attempts is a persistent database error being retried, not a race;
-    the mint raises SegmentStoreAttemptsExhaustedError instead of
+    the mint raises EventMemoryStoreAttemptsExhaustedError instead of
     hot-looping, with the underlying error chained for diagnosis.
     """
     cause = IntegrityError("stmt", None, Exception("persistent"))
@@ -2676,24 +2685,24 @@ async def test_persistent_mint_failure_raises_instead_of_looping(
 
     async def always_colliding(partition_key, incarnation, config) -> None:
         attempts.append(incarnation)
-        raise sqlalchemy_segment_store._RegistryInsertRejectedError(
+        raise sqlalchemy_event_memory_store._RegistryInsertRejectedError(
             str(incarnation)
         ) from cause
 
     monkeypatch.setattr(store, "_insert_partition_row", always_colliding)
 
-    with pytest.raises(SegmentStoreAttemptsExhaustedError) as exc_info:
+    with pytest.raises(EventMemoryStoreAttemptsExhaustedError) as exc_info:
         await store.create_partition("mint_cap", _plaintext_partition_config())
-    assert len(attempts) == sqlalchemy_segment_store._MAX_MINT_ATTEMPTS
+    assert len(attempts) == sqlalchemy_event_memory_store._MAX_MINT_ATTEMPTS
     # The underlying database error stays reachable for diagnosis.
     collision = exc_info.value.__cause__
     assert collision is not None
     assert collision.__cause__ is cause
 
     attempts.clear()
-    with pytest.raises(SegmentStoreAttemptsExhaustedError):
+    with pytest.raises(EventMemoryStoreAttemptsExhaustedError):
         await store.open_or_create_partition("mint_cap", _plaintext_partition_config())
-    assert len(attempts) == sqlalchemy_segment_store._MAX_MINT_ATTEMPTS
+    assert len(attempts) == sqlalchemy_event_memory_store._MAX_MINT_ATTEMPTS
 
     # The lost-race arm is bounded by the same cap: an insert that keeps
     # losing to a winner that keeps vanishing must not livelock.
@@ -2701,31 +2710,31 @@ async def test_persistent_mint_failure_raises_instead_of_looping(
 
     async def always_losing(partition_key, incarnation, config) -> None:
         attempts.append(incarnation)
-        raise SegmentStorePartitionAlreadyExistsError(partition_key)
+        raise EventMemoryStorePartitionAlreadyExistsError(partition_key)
 
     monkeypatch.setattr(store, "_insert_partition_row", always_losing)
-    with pytest.raises(SegmentStoreAttemptsExhaustedError):
+    with pytest.raises(EventMemoryStoreAttemptsExhaustedError):
         await store.open_or_create_partition("mint_cap", _plaintext_partition_config())
-    assert len(attempts) == sqlalchemy_segment_store._MAX_MINT_ATTEMPTS
+    assert len(attempts) == sqlalchemy_event_memory_store._MAX_MINT_ATTEMPTS
 
 
 @pytest.mark.asyncio
 async def test_persistent_integrity_error_surfaces_with_cause(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Any integrity rejection is retried boundedly; the cause stays chained.
 
     A rejected registry insert is treated as a possible incarnation
     collision and re-minted up to the attempt bound; a persistent cause
-    surfaces through SegmentStoreAttemptsExhaustedError with the
+    surfaces through EventMemoryStoreAttemptsExhaustedError with the
     driver's error chained for diagnosis. A NOT NULL violation on the
     incarnation column stands in for a cause that is not a collision.
     """
-    monkeypatch.setattr(sqlalchemy_segment_store, "uuid4", lambda: None)
+    monkeypatch.setattr(sqlalchemy_event_memory_store, "uuid4", lambda: None)
 
     for create in (store.create_partition, store.open_or_create_partition):
-        with pytest.raises(SegmentStoreAttemptsExhaustedError) as exc_info:
+        with pytest.raises(EventMemoryStoreAttemptsExhaustedError) as exc_info:
             await create("not_null", _plaintext_partition_config())
         cause: BaseException | None = exc_info.value.__cause__
         while cause is not None and not isinstance(cause, IntegrityError):
@@ -2744,8 +2753,8 @@ async def test_purge_bounds_entries_processed_per_call(
     rather than row deletions, so they are bounded by
     purge_max_partitions rather than charged against the row bound.
     """
-    store = SQLAlchemySegmentStore(
-        SQLAlchemySegmentStoreParams(
+    store = SQLAlchemyEventMemoryStore(
+        SQLAlchemyEventMemoryStoreParams(
             engine=sqlalchemy_sqlite_engine,
             purge_max_partitions=2,
         )
@@ -2773,7 +2782,7 @@ async def test_purge_bounds_entries_processed_per_call(
 
 @pytest.mark.asyncio
 async def test_empty_incarnations_do_not_consume_row_budget(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A backlog of empty entries leaves the row budget for real rows."""
@@ -2802,7 +2811,7 @@ async def test_empty_incarnations_do_not_consume_row_budget(
 
 @pytest.mark.asyncio
 async def test_purge_reclaims_oldest_garbage_first(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The queue is FIFO: claims follow the enqueue stamp, not insertion."""
@@ -2854,7 +2863,7 @@ async def test_purge_reclaims_oldest_garbage_first(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_purge_queue_stamps_enqueue_time_from_database_clock(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     recorded_statements: list[str],
 ) -> None:
     """The FIFO key is one clock for every server: the database's."""
@@ -2864,7 +2873,9 @@ async def test_purge_queue_stamps_enqueue_time_from_database_clock(
     await pg_store.delete_partition("db_clock")
 
     enqueues = [
-        s for s in recorded_statements if s.startswith("INSERT INTO segment_store_gc")
+        s
+        for s in recorded_statements
+        if s.startswith("INSERT INTO event_memory_store_gc")
     ]
     assert len(enqueues) == 1
     assert "now()" in enqueues[0]
@@ -2876,15 +2887,15 @@ class _ForeignPayloadCodecConfig(PlaintextPayloadCodecConfig):
 
 @pytest.mark.asyncio
 async def test_open_or_create_with_different_config_raises_mismatch(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Reopening a key under a different config is refused, not adapted."""
     await store.create_partition("cfg_guard", _plaintext_partition_config())
 
-    requested = SegmentStorePartitionConfig(
+    requested = EventMemoryStorePartitionConfig(
         payload_codec_config=_ForeignPayloadCodecConfig()
     )
-    with pytest.raises(SegmentStorePartitionConfigMismatchError) as exc_info:
+    with pytest.raises(EventMemoryStorePartitionConfigMismatchError) as exc_info:
         await store.open_or_create_partition("cfg_guard", requested)
     assert exc_info.value.partition_key == "cfg_guard"
     assert exc_info.value.existing_config == _plaintext_partition_config()
@@ -2897,7 +2908,7 @@ async def test_open_or_create_with_different_config_raises_mismatch(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("create", ["create_partition", "open_or_create_partition"])
 async def test_unloadable_codec_config_commits_no_registry_row(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
     create: str,
 ) -> None:
@@ -2911,7 +2922,7 @@ async def test_unloadable_codec_config_commits_no_registry_row(
         await getattr(store, create)("codec_p", _plaintext_partition_config())
     async with store._create_session() as session:
         assert (
-            await SQLAlchemySegmentStore._get_partition_row(session, "codec_p")
+            await SQLAlchemyEventMemoryStore._get_partition_row(session, "codec_p")
         ) is None
 
 
@@ -2923,7 +2934,7 @@ async def test_static_pool_engine_is_rejected(tmp_path) -> None:
     )
     try:
         with pytest.raises(ValidationError, match="StaticPool"):
-            SQLAlchemySegmentStoreParams(engine=engine)
+            SQLAlchemyEventMemoryStoreParams(engine=engine)
     finally:
         await engine.dispose()
 
@@ -2939,9 +2950,9 @@ async def test_old_sqlite_runtime_is_rejected(
     stdlib's version tuple being patched process-wide, which SQLAlchemy's
     dialect also reads.
     """
-    monkeypatch.setattr(sqlalchemy_segment_store, "_MIN_SQLITE_VERSION", (99, 0))
+    monkeypatch.setattr(sqlalchemy_event_memory_store, "_MIN_SQLITE_VERSION", (99, 0))
     with pytest.raises(ValidationError, match="RETURNING"):
-        SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
+        SQLAlchemyEventMemoryStoreParams(engine=sqlalchemy_sqlite_engine)
 
 
 @pytest.mark.asyncio
@@ -2952,12 +2963,12 @@ async def test_unsupported_dialect_engine_is_rejected(
     """The store supports PostgreSQL and SQLite; refuse any other dialect loudly."""
     monkeypatch.setattr(sqlalchemy_sqlite_engine.dialect, "name", "mssql")
     with pytest.raises(ValidationError, match="mssql"):
-        SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
+        SQLAlchemyEventMemoryStoreParams(engine=sqlalchemy_sqlite_engine)
 
 
 @pytest.mark.asyncio
 async def test_windowed_read_raises_when_partition_dies_between_statements(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Seeds found, then deletion commits before the context statements.
@@ -2984,13 +2995,13 @@ async def test_windowed_read_raises_when_partition_dies_between_statements(
         return await original(*args, **kwargs)
 
     monkeypatch.setattr(partition, context_method, delete_then_read)
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
+    with pytest.raises(EventMemoryStorePartitionHandleStaleError):
         await _windows(partition, [segs[1]], before=1, after=1)
 
 
 @pytest.mark.asyncio
 async def test_partition_key_with_trailing_newline_is_rejected(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """`$` matches before a trailing newline; the validator must not."""
     with pytest.raises(ValueError, match="invalid characters"):
@@ -3000,7 +3011,7 @@ async def test_partition_key_with_trailing_newline_is_rejected(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_delete_partition_touches_only_registry_and_queue(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     recorded_statements: list[str],
 ) -> None:
     """Deletion is O(1): no data-table statements, regardless of size."""
@@ -3015,10 +3026,10 @@ async def test_delete_partition_touches_only_registry_and_queue(
     touching_data = [
         s
         for s in recorded_statements
-        if "segment_store_sg" in s or "segment_store_dv_ln" in s
+        if "event_memory_store_sg" in s or "event_memory_store_dv_ln" in s
     ]
     assert not touching_data, touching_data
-    assert any("segment_store_gc" in s for s in recorded_statements)
+    assert any("event_memory_store_gc" in s for s in recorded_statements)
 
 
 # ===================================================================
@@ -3048,7 +3059,7 @@ async def test_delete_partition_touches_only_registry_and_queue(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_write_pin_blocks_partition_delete(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     sqlalchemy_pg_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3066,7 +3077,9 @@ async def test_write_pin_blocks_partition_delete(
 
     reached_pause = asyncio.Event()
     release = asyncio.Event()
-    original_insert_segments = SQLAlchemySegmentStorePartitionWriter._insert_segments
+    original_insert_segments = (
+        SQLAlchemyEventMemoryStorePartitionWriter._insert_segments
+    )
 
     async def pausing_insert_segments(self, segments) -> None:
         # Runs inside the write transaction, after the write pin is taken.
@@ -3075,7 +3088,7 @@ async def test_write_pin_blocks_partition_delete(
         await original_insert_segments(self, segments)
 
     monkeypatch.setattr(
-        SQLAlchemySegmentStorePartitionWriter,
+        SQLAlchemyEventMemoryStorePartitionWriter,
         "_insert_segments",
         pausing_insert_segments,
     )
@@ -3107,7 +3120,7 @@ async def test_write_pin_blocks_partition_delete(
 
 @pytest.mark.asyncio
 async def test_overlapping_segment_deletes_do_not_deadlock(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Overlapping concurrent `delete_segments` stay deadlock-free.
 
@@ -3144,7 +3157,7 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
 
 @pytest.mark.asyncio
 async def test_lifecycle_churn_completes_without_database_errors(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Concurrent create/open/delete churn never aborts on lock cycles.
 
@@ -3173,8 +3186,8 @@ async def test_lifecycle_churn_completes_without_database_errors(
                 else:
                     await store.delete_partition(key)
             except (
-                SegmentStorePartitionAlreadyExistsError,
-                SegmentStorePartitionConfigMismatchError,
+                EventMemoryStorePartitionAlreadyExistsError,
+                EventMemoryStorePartitionConfigMismatchError,
             ):
                 pass
 
@@ -3186,7 +3199,7 @@ async def test_lifecycle_churn_completes_without_database_errors(
 
 @pytest.mark.asyncio
 async def test_concurrent_partition_deletes_are_clean(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
 ) -> None:
     """Racing deletions of one partition serialize through the row pin.
 
@@ -3214,7 +3227,7 @@ async def test_concurrent_partition_deletes_are_clean(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("seed", [1, 2])
 async def test_random_operation_sequences_agree_with_a_model(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
     seed: int,
 ) -> None:
@@ -3229,7 +3242,7 @@ async def test_random_operation_sequences_agree_with_a_model(
     monkeypatch.setattr(store, "_purge_max_segments", 3)
     config = _plaintext_partition_config()
     keys = ["model_a", "model_b", "model_c"]
-    handles: dict[str, SQLAlchemySegmentStorePartition] = {}
+    handles: dict[str, SQLAlchemyEventMemoryStorePartition] = {}
     model: dict[str, dict[UUID, set[UUID]]] = {}
 
     for step in range(120):
@@ -3301,7 +3314,7 @@ async def test_random_operation_sequences_agree_with_a_model(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("seed", [1, 2])
 async def test_mixed_operation_churn_completes_and_strands_nothing(
-    store: SQLAlchemySegmentStore,
+    store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
     seed: int,
 ) -> None:
@@ -3377,7 +3390,7 @@ async def test_mixed_operation_churn_completes_and_strands_nothing(
 
 
 async def _write_and_delete_own_segments(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
     mine: dict[UUID, int],
     rng: random.Random,
 ) -> None:
@@ -3398,8 +3411,8 @@ async def _write_and_delete_own_segments(
 
 
 async def _churn_shared_keys(
-    store: SQLAlchemySegmentStore,
-    config: SegmentStorePartitionConfig,
+    store: SQLAlchemyEventMemoryStore,
+    config: EventMemoryStorePartitionConfig,
     rng: random.Random,
 ) -> None:
     """Create, fill, and delete partitions under keys other churners share."""
@@ -3418,8 +3431,8 @@ async def _churn_shared_keys(
             )
             await store.delete_partition(key)
         except (
-            SegmentStorePartitionAlreadyExistsError,
-            SegmentStorePartitionHandleStaleError,
+            EventMemoryStorePartitionAlreadyExistsError,
+            EventMemoryStorePartitionHandleStaleError,
         ):
             pass
 
@@ -3434,7 +3447,7 @@ def sqlite_recorded_statements(
 
 @pytest.mark.asyncio
 async def test_sqlite_delete_partition_touches_only_registry_and_queue(
-    sqlite_store: SQLAlchemySegmentStore,
+    sqlite_store: SQLAlchemyEventMemoryStore,
     sqlite_recorded_statements: list[str],
 ) -> None:
     """Deletion is O(1) on SQLite too: no data-table statements."""
@@ -3449,15 +3462,16 @@ async def test_sqlite_delete_partition_touches_only_registry_and_queue(
     data_statements = [
         statement
         for statement in sqlite_recorded_statements
-        if "segment_store_sg" in statement or "segment_store_dv_ln" in statement
+        if "event_memory_store_sg" in statement
+        or "event_memory_store_dv_ln" in statement
     ]
     assert not data_statements
-    assert any("segment_store_gc" in s for s in sqlite_recorded_statements)
+    assert any("event_memory_store_gc" in s for s in sqlite_recorded_statements)
 
 
 @pytest.mark.asyncio
 async def test_sqlite_mint_detects_collision_with_concurrent_deletion(
-    sqlite_store: SQLAlchemySegmentStore,
+    sqlite_store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """SQLite counterpart of the concurrent mint-collision test.
@@ -3481,7 +3495,7 @@ async def test_sqlite_mint_detects_collision_with_concurrent_deletion(
             return victim_incarnation
         return uuid4()
 
-    monkeypatch.setattr(sqlalchemy_segment_store, "uuid4", colliding_uuid4)
+    monkeypatch.setattr(sqlalchemy_event_memory_store, "uuid4", colliding_uuid4)
 
     creator_started = asyncio.Event()
     original_insert_partition_row = sqlite_store._insert_partition_row
@@ -3547,7 +3561,7 @@ def test_empty_partition_key_is_named_as_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_segment_neighbors_are_two_lists_without_the_seed(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     ep = uuid4()
     segs = [_seg(event_uuid=ep, offset=i, ts_offset_seconds=i) for i in range(5)]
@@ -3569,7 +3583,7 @@ async def test_segment_neighbors_are_two_lists_without_the_seed(
 
 @pytest.mark.asyncio
 async def test_the_lookup_drops_a_failing_segment_and_the_walk_keeps_its_neighbors(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """The filter decides what a read returns: the lookup omits a segment that fails, and the walk from it returns the neighbors that pass."""
     ep = uuid4()
@@ -3591,7 +3605,7 @@ async def test_the_lookup_drops_a_failing_segment_and_the_walk_keeps_its_neighbo
 
 @pytest.mark.asyncio
 async def test_segment_neighbors_of_a_lone_seed_are_empty_lists(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seed = _seg()
     await _add(partition, _links(seed))
@@ -3603,7 +3617,7 @@ async def test_segment_neighbors_of_a_lone_seed_are_empty_lists(
 
 @pytest.mark.asyncio
 async def test_segment_neighbors_with_zero_counts_still_locate_the_seed(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seed = _seg()
     await _add(partition, _links(seed, _seg(ts_offset_seconds=1)))
@@ -3620,14 +3634,14 @@ async def test_segment_neighbors_with_zero_counts_still_locate_the_seed(
 
 @pytest.mark.asyncio
 async def test_add_events_rejects_a_held_event_whole(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """A batch naming a held event is rejected whole, and nothing of it is stored."""
     s0 = _seg(text="first")
     await _add(partition, _links(s0))
     again = s0.model_copy(update={"uuid": uuid4(), "block": TextBlock(text="second")})
     fresh = _seg(text="fresh")
-    with pytest.raises(SegmentStoreEventAlreadyStoredError) as raised:
+    with pytest.raises(EventMemoryStoreEventAlreadyStoredError) as raised:
         await _add(partition, _links(again, fresh))
     assert raised.value.event_uuids == {s0.event_uuid}
     stored = await partition.get_segments([s0.uuid, again.uuid, fresh.uuid])
@@ -3638,7 +3652,7 @@ async def test_add_events_rejects_a_held_event_whole(
 
 @pytest.mark.asyncio
 async def test_add_events_rejects_a_stored_segment_uuid(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Segments are immutable: a stored uuid under another event is rejected, not replaced."""
     s0 = _seg(text="first")
@@ -3659,7 +3673,7 @@ async def test_add_events_rejects_a_stored_segment_uuid(
 
 @pytest.mark.asyncio
 async def test_a_naive_bound_is_rejected(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """A naive bound names no instant, so neither read accepts one."""
     seg = _seg()
@@ -3674,7 +3688,7 @@ async def test_a_naive_bound_is_rejected(
 
 @pytest.mark.asyncio
 async def test_a_negative_count_is_rejected(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seg = _seg()
     await _add(partition, _links(seg))
@@ -3687,7 +3701,7 @@ async def test_a_negative_count_is_rejected(
 
 @pytest.mark.asyncio
 async def test_since_and_until_meet_without_overlap(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """`since` is inclusive and `until` exclusive on a boundary timestamp."""
     s0 = _seg(ts_offset_seconds=0)
@@ -3720,7 +3734,7 @@ async def test_since_and_until_meet_without_overlap(
     ],
 )
 async def test_time_bounds_compare_instants_not_wall_clocks(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
     bound: str,
 ) -> None:
     """A bound means an instant, whatever zone it is written in.
@@ -3744,7 +3758,7 @@ async def test_time_bounds_compare_instants_not_wall_clocks(
 
 @pytest.mark.asyncio
 async def test_source_ids_select_rows(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     s0 = _seg(source_id="alice", ts_offset_seconds=0)
     s1 = _seg(source_id="bob", ts_offset_seconds=1)
@@ -3766,7 +3780,7 @@ async def test_source_ids_select_rows(
 
 @pytest.mark.asyncio
 async def test_row_projections_are_derived_from_the_segment(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seg = _seg(source_id="alice")
     await _add(partition, _links(seg))
@@ -3788,7 +3802,7 @@ async def test_row_projections_are_derived_from_the_segment(
 
 @pytest.mark.asyncio
 async def test_add_events_rejects_a_segment_under_the_wrong_event(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     seg = _seg()
     async with partition.write() as writer:
@@ -3798,7 +3812,7 @@ async def test_add_events_rejects_a_segment_under_the_wrong_event(
 
 @pytest.mark.asyncio
 async def test_write_rolls_back_when_the_block_raises(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Nothing added inside a block that raises is stored, and the event stays free."""
     seg = _seg()
@@ -3821,7 +3835,7 @@ async def test_write_rolls_back_when_the_block_raises(
 
 @pytest.mark.asyncio
 async def test_delete_events_cascades_to_segments_and_derivatives(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     kept = _seg()
     gone_a = _seg()
@@ -3851,14 +3865,14 @@ async def test_delete_events_cascades_to_segments_and_derivatives(
 
 @pytest.mark.asyncio
 async def test_delete_events_empty(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     await partition.delete_events([])
 
 
 @pytest.mark.asyncio
 async def test_delete_segments_keeps_the_event_held(
-    partition: SQLAlchemySegmentStorePartition,
+    partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
     """Evicting every segment of an event does not free its uuid; only deleting the event does."""
     seg = _seg()
@@ -3867,7 +3881,7 @@ async def test_delete_segments_keeps_the_event_held(
     assert await partition.get_derivative_uuids_by_event_uuids([seg.event_uuid]) == {
         seg.event_uuid: []
     }
-    with pytest.raises(SegmentStoreEventAlreadyStoredError):
+    with pytest.raises(EventMemoryStoreEventAlreadyStoredError):
         await _add(partition, _links(_seg(event_uuid=seg.event_uuid)))
     await partition.delete_events([seg.event_uuid])
     await _add(partition, _links(_seg(event_uuid=seg.event_uuid)))
@@ -3883,7 +3897,9 @@ def _pause_segment_inserts(
     """
     reached_pause = asyncio.Event()
     release = asyncio.Event()
-    original_insert_segments = SQLAlchemySegmentStorePartitionWriter._insert_segments
+    original_insert_segments = (
+        SQLAlchemyEventMemoryStorePartitionWriter._insert_segments
+    )
 
     async def pausing_insert_segments(self, segments) -> None:
         reached_pause.set()
@@ -3891,7 +3907,7 @@ def _pause_segment_inserts(
         await original_insert_segments(self, segments)
 
     monkeypatch.setattr(
-        SQLAlchemySegmentStorePartitionWriter,
+        SQLAlchemyEventMemoryStorePartitionWriter,
         "_insert_segments",
         pausing_insert_segments,
     )
@@ -3901,7 +3917,7 @@ def _pause_segment_inserts(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_exclusive_write_waits_for_a_write_in_flight(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     sqlalchemy_pg_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3934,7 +3950,7 @@ async def test_exclusive_write_waits_for_a_write_in_flight(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_a_concurrent_add_of_one_event_waits_then_is_rejected(
-    pg_store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemyEventMemoryStore,
     sqlalchemy_pg_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3943,7 +3959,9 @@ async def test_a_concurrent_add_of_one_event_waits_then_is_rejected(
     partition = await pg_store.open_or_create_partition(
         "lk_event_race", _plaintext_partition_config()
     )
-    original_insert_segments = SQLAlchemySegmentStorePartitionWriter._insert_segments
+    original_insert_segments = (
+        SQLAlchemyEventMemoryStorePartitionWriter._insert_segments
+    )
     reached_pause, release = _pause_segment_inserts(monkeypatch)
     first_segment = _seg()
     second_segment = _seg(event_uuid=first_segment.event_uuid)
@@ -3951,7 +3969,7 @@ async def test_a_concurrent_add_of_one_event_waits_then_is_rejected(
     await asyncio.wait_for(reached_pause.wait(), 30)
     # Only the first write pauses; the second must block on the row, not here.
     monkeypatch.setattr(
-        SQLAlchemySegmentStorePartitionWriter,
+        SQLAlchemyEventMemoryStorePartitionWriter,
         "_insert_segments",
         original_insert_segments,
     )
@@ -3963,7 +3981,7 @@ async def test_a_concurrent_add_of_one_event_waits_then_is_rejected(
     finally:
         release.set()
     await asyncio.wait_for(first, 30)
-    with pytest.raises(SegmentStoreEventAlreadyStoredError) as raised:
+    with pytest.raises(EventMemoryStoreEventAlreadyStoredError) as raised:
         await asyncio.wait_for(second, 30)
     assert raised.value.event_uuids == {first_segment.event_uuid}
     stored = await partition.get_segments([first_segment.uuid, second_segment.uuid])
@@ -3972,7 +3990,7 @@ async def test_a_concurrent_add_of_one_event_waits_then_is_rejected(
 
 @pytest.mark.asyncio
 async def test_sqlite_exclusive_write_waits_for_a_write_in_flight(
-    sqlite_store: SQLAlchemySegmentStore,
+    sqlite_store: SQLAlchemyEventMemoryStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """On SQLite the writer lock is the fence: an exclusive write waits for the
