@@ -807,7 +807,7 @@ class TestMemMachineIntegration:
     def test_delete_nonexistent_episodic_memory(self, memory):
         """Test deleting a non-existent episodic memory."""
         with pytest.raises(requests.HTTPError):
-            memory.delete_episodic("nonexistent_episodic_id")
+            memory.delete_episodic(str(uuid4()))
 
     @pytest.mark.skip(reason="TODO: failing, need investigation")
     def test_delete_nonexistent_semantic_memory(self, memory):
