@@ -437,7 +437,7 @@ def _deserialize_properties(value: object) -> object:
 # Event, Segment, Derivative: core data models for EventMemory.
 
 ID_MAX_BYTES = 255
-"""Bound on a source id, in bytes, fitting the store's 255-character key column."""
+"""Bound on a session id and a source id, in bytes, fitting the store's 255-character key columns."""
 
 
 def _bounded_id(value: str) -> str:
@@ -453,7 +453,7 @@ _BoundedId = Annotated[
 
 
 class Event(BaseModel):
-    """An entry in a timeline, with the content to remember about it.
+    """An entry in a session's timeline, with the content to remember about it.
 
     Immutable once stored: no operation may edit a stored event. A change
     is a forget and a re-encode under the same uuid.
@@ -463,6 +463,7 @@ class Event(BaseModel):
     timestamp: AwareDatetime = Field(
         description="When the event happened, timezone-aware"
     )
+    session_id: _BoundedId = Field(description="The session the event belongs to")
     source_id: _BoundedId | None = Field(
         default=None,
         description="The source of the event, if any",
@@ -516,6 +517,7 @@ class Segment(BaseModel):
         ge=0, description="Position of the piece among the block's pieces"
     )
     timestamp: AwareDatetime = Field(description="The event's timestamp")
+    session_id: _BoundedId = Field(description="The event's session id")
     source_id: _BoundedId | None = Field(
         default=None, description="The event's source id"
     )
@@ -554,6 +556,7 @@ class Derivative(BaseModel):
         description="The UUID of the segment the text was derived from"
     )
     timestamp: AwareDatetime = Field(description="The segment's timestamp")
+    session_id: _BoundedId = Field(description="The segment's session id")
     source_id: _BoundedId | None = Field(
         default=None, description="The segment's source id"
     )

@@ -65,6 +65,7 @@ def _event(text: str, *, minutes: int = 0) -> Event:
     return Event(
         uuid=uuid4(),
         timestamp=_T0 + timedelta(minutes=minutes),
+        session_id="s1",
         blocks=[TextBlock(text=text)],
     )
 

@@ -102,6 +102,7 @@ def _seg(
     offset: int = 0,
     ts_offset_seconds: int = 0,
     text: str = "hello",
+    session_id: str = "s",
     source_id: str | None = None,
     context: Context | None = None,
     properties: dict | None = None,
@@ -112,6 +113,7 @@ def _seg(
         index=index,
         offset=offset,
         timestamp=BASE_TIME + timedelta(seconds=ts_offset_seconds),
+        session_id=session_id,
         source_id=source_id,
         block=TextBlock(text=text),
         context=context if context is not None else Context(),
@@ -160,6 +162,7 @@ def _events(
                 uuid=derivative_uuid,
                 segment_uuid=segment.uuid,
                 timestamp=segment.timestamp,
+                session_id=segment.session_id,
                 source_id=segment.source_id,
                 block_kind=segment.block.kind,
                 text=f"derived from {segment.uuid}",
@@ -452,6 +455,7 @@ async def test_timestamp_roundtrips_with_timezone(
     """
     ts = datetime(2024, 1, 1, 13, 30, 45, tzinfo=tz)
     seg = Segment(
+        session_id="s",
         source_id="src",
         uuid=uuid4(),
         event_uuid=uuid4(),
@@ -664,6 +668,7 @@ async def test_pending_writes_roundtrip_through_a_claim(
         Derivative(
             uuid=uuid4(),
             segment_uuid=segments[0].uuid,
+            session_id=segments[0].session_id,
             timestamp=datetime(
                 2024, 1, 1, 13, 30, 45, tzinfo=timezone(timedelta(hours=5, minutes=30))
             ),
@@ -674,6 +679,7 @@ async def test_pending_writes_roundtrip_through_a_claim(
         Derivative(
             uuid=uuid4(),
             segment_uuid=segments[0].uuid,
+            session_id=segments[0].session_id,
             timestamp=datetime(2024, 1, 1, tzinfo=timezone(timedelta(hours=-8))),
             block_kind="text",
             text="second",
@@ -681,6 +687,7 @@ async def test_pending_writes_roundtrip_through_a_claim(
         Derivative(
             uuid=uuid4(),
             segment_uuid=segments[1].uuid,
+            session_id=segments[0].session_id,
             timestamp=BASE_TIME,
             block_kind="text",
             text="third",
@@ -4780,6 +4787,33 @@ async def test_segment_neighbors_with_zero_counts_still_locate_the_seed(
 
 
 # ===================================================================
+# The one total order: sessions
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_windows_stay_in_the_seeds_session(
+    partition: SQLAlchemyEventMemoryStorePartition,
+) -> None:
+    """Two conversations interleaved in time never appear in each other's windows."""
+    a0 = _seg(session_id="a", ts_offset_seconds=0)
+    b0 = _seg(session_id="b", ts_offset_seconds=1)
+    a1 = _seg(session_id="a", ts_offset_seconds=2)
+    b1 = _seg(session_id="b", ts_offset_seconds=3)
+    a2 = _seg(session_id="a", ts_offset_seconds=4)
+    await _add_segments(partition, _links(a0, b0, a1, b1, a2))
+
+    contexts = await _windows(partition, [a1], before=5, after=5)
+    neighborhoods_by_seed = await partition.get_segment_neighborhoods(
+        [b0.uuid], before=5, after=5
+    )
+
+    assert [s.uuid for s in contexts[a1.uuid]] == [a0.uuid, a1.uuid, a2.uuid]
+    assert neighborhoods_by_seed[b0.uuid].before == []
+    assert [s.uuid for s in neighborhoods_by_seed[b0.uuid].after] == [b1.uuid]
+
+
+# ===================================================================
 # Immutability
 # ===================================================================
 
@@ -4796,6 +4830,25 @@ async def test_adding_a_stored_event_again_keeps_its_segments(
         await _add_segments(partition, _links(again))
     windows = await partition.get_segments([s0.uuid])
     assert windows[s0.uuid].block == TextBlock(text="first")
+
+
+@pytest.mark.asyncio
+async def test_multiple_seeds_across_sessions(
+    partition: SQLAlchemyEventMemoryStorePartition,
+) -> None:
+    """Seeds of different sessions in one call each get their own walk."""
+    a0 = _seg(session_id="a", ts_offset_seconds=0)
+    b0 = _seg(session_id="b", ts_offset_seconds=1)
+    a1 = _seg(session_id="a", ts_offset_seconds=2)
+    b1 = _seg(session_id="b", ts_offset_seconds=3)
+    c0 = _seg(session_id="c", ts_offset_seconds=4)
+    await _add_segments(partition, _links(a0, b0, a1, b1, c0))
+
+    result = await _windows(partition, [a0, b0, c0], before=2, after=2)
+
+    assert [s.uuid for s in result[a0.uuid]] == [a0.uuid, a1.uuid]
+    assert [s.uuid for s in result[b0.uuid]] == [b0.uuid, b1.uuid]
+    assert [s.uuid for s in result[c0.uuid]] == [c0.uuid]
 
 
 # ===================================================================
@@ -4911,6 +4964,23 @@ async def test_source_ids_select_rows(
 
 
 @pytest.mark.asyncio
+async def test_session_ids_select_segments(
+    partition: SQLAlchemyEventMemoryStorePartition,
+) -> None:
+    """`session_ids` selects what the lookup returns; a walk never leaves its seed's session."""
+    a0 = _seg(session_id="a", ts_offset_seconds=0)
+    b0 = _seg(session_id="b", ts_offset_seconds=1)
+    c0 = _seg(session_id="c", ts_offset_seconds=2)
+    await _add_segments(partition, _links(a0, b0, c0))
+
+    found = await partition.get_segments(
+        [a0.uuid, b0.uuid, c0.uuid], session_ids=["a", "b"]
+    )
+    assert set(found) == {a0.uuid, b0.uuid}
+    assert await partition.get_segments([a0.uuid], session_ids=[]) == {}
+
+
+@pytest.mark.asyncio
 async def test_block_kinds_select_rows(
     partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
@@ -4933,14 +5003,14 @@ async def test_block_kinds_select_rows(
 async def test_row_projections_are_derived_from_the_segment(
     partition: SQLAlchemyEventMemoryStorePartition,
 ) -> None:
-    seg = _seg(source_id="alice")
+    seg = _seg(session_id="s1", source_id="alice")
     await _add_segments(partition, _links(seg))
 
     async with partition._create_session() as session:
         row = (
             await session.execute(select(SegmentRow).where(SegmentRow.uuid == seg.uuid))
         ).scalar_one()
-    assert (row.source_id, row.block_kind) == ("alice", "text")
+    assert (row.session_id, row.source_id, row.block_kind) == ("s1", "alice", "text")
 
     returned = (await partition.get_segments([seg.uuid]))[seg.uuid]
-    assert returned.source_id == "alice"
+    assert (returned.session_id, returned.source_id) == ("s1", "alice")
