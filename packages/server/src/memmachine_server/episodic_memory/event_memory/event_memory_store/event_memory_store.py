@@ -111,6 +111,7 @@ class EventMemoryStorePartition(ABC):
         since: datetime | None = None,
         until: datetime | None = None,
         source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> dict[UUID, Segment]:
         """
@@ -131,6 +132,10 @@ class EventMemoryStorePartition(ABC):
             source_ids (Iterable[str] | None):
                 Keep only segments whose source id is one of these; an
                 empty list keeps none, and None keeps every source
+                (default: None).
+            block_kinds (Iterable[str] | None):
+                Keep only segments whose block is of one of these kinds;
+                an empty list keeps none, and None keeps every kind
                 (default: None).
             property_filter (FilterExpr | None):
                 An optional filter expression to apply to the segments (default: None).
@@ -156,6 +161,7 @@ class EventMemoryStorePartition(ABC):
         since: datetime | None = None,
         until: datetime | None = None,
         source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
     ) -> dict[UUID, Neighborhood]:
         """
@@ -188,6 +194,10 @@ class EventMemoryStorePartition(ABC):
             source_ids (Iterable[str] | None):
                 Keep only neighbors whose source id is one of these; an
                 empty list keeps none, and None keeps every source
+                (default: None).
+            block_kinds (Iterable[str] | None):
+                Keep only neighbors whose block is of one of these kinds;
+                an empty list keeps none, and None keeps every kind
                 (default: None).
             property_filter (FilterExpr | None):
                 An optional filter expression to apply to the neighbors
