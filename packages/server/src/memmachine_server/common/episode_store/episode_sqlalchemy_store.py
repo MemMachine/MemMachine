@@ -81,7 +81,7 @@ class Episode(BaseEpisodeStore):
     """SQLAlchemy mapping for stored conversation messages."""
 
     __tablename__ = "episodestore"
-    id = mapped_column(Uuid, primary_key=True, autoincrement=False)
+    uid = mapped_column(Uuid, primary_key=True, autoincrement=False)
 
     content = mapped_column(String, nullable=False)
 
@@ -124,7 +124,7 @@ class Episode(BaseEpisodeStore):
     def to_typed_model(self) -> EpisodeE:
         created_at = ensure_tz_aware(self.created_at)
         return EpisodeE(
-            uid=self.id,
+            uid=self.uid,
             content=self.content,
             session_key=self.session_key,
             producer_id=self.producer_id,
@@ -198,7 +198,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         values_to_insert: list[dict[str, Any]] = []
         for entry in episodes:
             entry_values: dict[str, Any] = {
-                "id": entry.uid,
+                "uid": entry.uid,
                 "content": entry.content,
                 "session_key": session_key,
                 "producer_id": entry.producer_id,
@@ -231,9 +231,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
             await session.commit()
 
-            persisted_by_id = {episode.id: episode for episode in persisted_episodes}
+            persisted_by_uid = {episode.uid: episode for episode in persisted_episodes}
             res_episodes = [
-                persisted_by_id[entry.uid].to_typed_model() for entry in episodes
+                persisted_by_uid[entry.uid].to_typed_model() for entry in episodes
             ]
 
         return res_episodes
@@ -242,7 +242,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     async def get_episode(self, episode_id: EpisodeIdT) -> EpisodeE | None:
         stmt = (
             select(Episode)
-            .where(Episode.id == episode_id)
+            .where(Episode.uid == episode_id)
             .order_by(Episode.created_at.asc())
         )
 
@@ -261,7 +261,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         if not ids:
             return []
 
-        stmt = select(Episode).where(Episode.id.in_(ids))
+        stmt = select(Episode).where(Episode.uid.in_(ids))
 
         async with self._create_session() as session:
             result = await session.execute(stmt)
@@ -337,8 +337,8 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         # Check for system field mappings (case-insensitive)
         normalized = internal_name.lower()
         field_mapping: dict[str, ColumnElement] = {
-            "uid": Episode.id.expression,
-            "id": Episode.id.expression,
+            "uid": Episode.uid.expression,
+            "id": Episode.uid.expression,
             "session_key": Episode.session_key.expression,
             "session": Episode.session_key.expression,
             "producer_id": Episode.producer_id.expression,
@@ -399,7 +399,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
     ) -> int:
-        stmt = select(func.count(Episode.id))
+        stmt = select(func.count(Episode.uid))
 
         stmt = self._apply_episode_filter(
             stmt,
@@ -421,7 +421,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         page_size: int,
         filter_expr: FilterExpr | None = None,
     ) -> list[EpisodeIdT]:
-        stmt = select(Episode.id)
+        stmt = select(Episode.uid)
 
         stmt = self._apply_episode_filter(
             stmt,
@@ -439,7 +439,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     @validate_call
     @timed("delete_episodes")
     async def delete_episodes(self, episode_ids: list[EpisodeIdT]) -> None:
-        stmt = delete(Episode).where(Episode.id.in_(episode_ids))
+        stmt = delete(Episode).where(Episode.uid.in_(episode_ids))
 
         async with self._create_session() as session:
             await session.execute(stmt)

@@ -192,7 +192,7 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
     created_at = datetime.now(tz=UTC)
     returned_rows = [
         Episode(
-            id=entry.uid,
+            uid=entry.uid,
             content=entry.content,
             session_key="batch-session",
             producer_id=entry.producer_id,

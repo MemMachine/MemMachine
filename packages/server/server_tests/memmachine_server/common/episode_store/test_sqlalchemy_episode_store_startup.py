@@ -123,10 +123,10 @@ async def test_startup_wraps_socket_gaierror():
 
 
 def test_episode_primary_key_is_uuid_and_not_autoincremented():
-    id_column = Episode.__table__.c.id
+    uid_column = Episode.__table__.c.uid
 
-    assert isinstance(id_column.type, Uuid)
-    assert id_column.autoincrement is False
+    assert isinstance(uid_column.type, Uuid)
+    assert uid_column.autoincrement is False
 
 
 # ---------------------------------------------------------------------------
