@@ -69,8 +69,6 @@ logger = logging.getLogger(__name__)
 # without pulling in server-only packages.
 # --------------------------------------------------------------------------------------
 
-EpisodeIdT = UUID
-
 
 class ContentType(Enum):
     """Enumeration for the type of content within an Episode."""
@@ -101,14 +99,14 @@ class EpisodeEntry(BaseModel):
 class EpisodeResponse(EpisodeEntry):
     """Episode data returned in search responses."""
 
-    uid: EpisodeIdT = Field(..., description=SpecDoc.EPISODE_UID)
+    uid: UUID = Field(..., description=SpecDoc.EPISODE_UID)
     score: float | None = Field(default=None, description=SpecDoc.EPISODE_SCORE)
 
 
 class Episode(BaseModel):
     """Episode data returned in list responses."""
 
-    uid: EpisodeIdT = Field(..., description=SpecDoc.EPISODE_UID)
+    uid: UUID = Field(..., description=SpecDoc.EPISODE_UID)
     content: str = Field(..., description=SpecDoc.EPISODE_CONTENT)
     session_key: str = Field(..., description=SpecDoc.EPISODE_SESSION_KEY)
     created_at: AwareDatetime = Field(..., description=SpecDoc.EPISODE_CREATED_AT)
@@ -146,7 +144,7 @@ class SemanticFeature(BaseModel):
     class Metadata(BaseModel):
         """Storage metadata for a semantic feature, including id and citations."""
 
-        citations: list[EpisodeIdT] | None = Field(
+        citations: list[UUID] | None = Field(
             default=None, description=SpecDoc.SEMANTIC_METADATA_CITATIONS
         )
         id: FeatureIdT | None = Field(
@@ -535,7 +533,7 @@ class AddMemoryResult(BaseModel):
     """Response model for adding memories."""
 
     uid: Annotated[
-        EpisodeIdT,
+        UUID,
         Field(
             ...,
             description=SpecDoc.MEMORY_UID,
@@ -643,7 +641,7 @@ class DeleteMemoriesSpec(_WithOrgAndProj):
     """Specification model for deleting memories."""
 
     episodic_memory_uids: Annotated[
-        list[EpisodeIdT],
+        list[UUID],
         Field(
             default=[],
             description=SpecDoc.EPISODIC_IDS,
@@ -709,7 +707,7 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
     """Specification model for deleting episodic memories."""
 
     episodic_id: Annotated[
-        EpisodeIdT | None,
+        UUID | None,
         Field(
             default=None,
             description=SpecDoc.EPISODIC_ID,
@@ -717,7 +715,7 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
         ),
     ]
     episodic_ids: Annotated[
-        list[EpisodeIdT],
+        list[UUID],
         Field(
             default=[],
             description=SpecDoc.EPISODIC_IDS,
@@ -725,7 +723,7 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
         ),
     ]
 
-    def get_ids(self) -> list[EpisodeIdT]:
+    def get_ids(self) -> list[UUID]:
         """Get a list of episodic IDs to delete."""
         id_set = set(self.episodic_ids)
         if self.episodic_id is not None:
@@ -825,7 +823,7 @@ class AddFeatureSpec(_WithOrgAndProj):
         ),
     ]
     citations: Annotated[
-        list[EpisodeIdT] | None,
+        list[UUID] | None,
         Field(
             default=None,
             description=SpecDoc.FEATURE_CITATIONS,

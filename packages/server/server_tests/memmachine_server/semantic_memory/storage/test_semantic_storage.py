@@ -10,7 +10,6 @@ import pytest_asyncio
 
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
-    EpisodeIdT,
     EpisodeStorage,
 )
 from memmachine_server.common.errors import InvalidArgumentError
@@ -577,7 +576,7 @@ async def feature_and_citations(
 @pytest.mark.asyncio
 async def test_add_feature_with_citations(
     semantic_storage: SemanticStorage,
-    feature_and_citations: tuple[FeatureIdT, set[EpisodeIdT]],
+    feature_and_citations: tuple[FeatureIdT, set[UUID]],
 ):
     feature_id, citations = feature_and_citations
 
@@ -981,7 +980,7 @@ async def test_complex_semantic_search_and_citations(
     assert len(filtered) == 1
     assert filtered[0].value == "ai"
 
-    history_id_set: set[EpisodeIdT] = set()
+    history_id_set: set[UUID] = set()
     for entry in results:
         if entry.metadata.citations is not None:
             for citation in entry.metadata.citations:

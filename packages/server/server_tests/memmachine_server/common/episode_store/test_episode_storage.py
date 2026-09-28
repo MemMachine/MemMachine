@@ -11,7 +11,6 @@ from pydantic import JsonValue
 
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
-    EpisodeIdT,
     EpisodeStorage,
     EpisodeType,
 )
@@ -40,7 +39,7 @@ async def create_history_entry(
     metadata: dict[str, JsonValue] | None = None,
     created_at: datetime | None = None,
     episode_type: EpisodeType | None = None,
-) -> EpisodeIdT:
+) -> UUID:
     params = {
         "producer_id": producer_id or DEFAULT_HISTORY_ARGS["producer_id"],
         "producer_role": producer_role or DEFAULT_HISTORY_ARGS["producer_role"],
@@ -97,7 +96,7 @@ async def test_add_and_get_history(episode_storage: EpisodeStorage):
         episode_type=EpisodeType.MESSAGE,
     )
 
-    assert type(history_id) is EpisodeIdT
+    assert type(history_id) is UUID
 
     history = await episode_storage.get_episode(history_id)
     assert history is not None

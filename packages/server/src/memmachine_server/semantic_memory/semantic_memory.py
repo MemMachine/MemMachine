@@ -14,12 +14,13 @@ from asyncio import Task
 from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
+from uuid import UUID
 
 import numpy as np
 from pydantic import BaseModel, InstanceOf
 
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import EpisodeIdT, EpisodeStorage
+from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import (
     CategoryNotFoundError,
     InvalidSetIdConfigurationError,
@@ -228,9 +229,7 @@ class SemanticService:
         async for feature in merge_async_iterators(iterators):
             yield feature
 
-    async def add_messages(
-        self, set_id: SetIdT, history_ids: Sequence[EpisodeIdT]
-    ) -> None:
+    async def add_messages(self, set_id: SetIdT, history_ids: Sequence[UUID]) -> None:
         logger.debug("Adding %d messages to set %s", len(history_ids), set_id)
         if not history_ids:
             return
@@ -257,7 +256,7 @@ class SemanticService:
 
     async def add_message_to_sets(
         self,
-        history_id: EpisodeIdT,
+        history_id: UUID,
         set_ids: Sequence[SetIdT],
         *,
         created_at: datetime | None = None,
@@ -308,7 +307,7 @@ class SemanticService:
         value: str,
         tag: str,
         metadata: Mapping[str, str] | None = None,
-        citations: Sequence[EpisodeIdT] | None = None,
+        citations: Sequence[UUID] | None = None,
     ) -> FeatureIdT:
         logger.debug("Adding new feature %s to set %s", feature, set_id)
 
@@ -420,7 +419,7 @@ class SemanticService:
             embedding=embedding,
         )
 
-    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
         logger.info("Deleting history ids %s", history_ids)
 
         await self._semantic_storage.delete_history(history_ids)

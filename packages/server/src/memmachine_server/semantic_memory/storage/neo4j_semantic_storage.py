@@ -17,6 +17,7 @@ from collections.abc import (
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, LiteralString, cast
+from uuid import UUID
 
 import numpy as np
 from neo4j import AsyncDriver, Query
@@ -24,7 +25,6 @@ from neo4j.graph import Node as Neo4jNode
 from pydantic import InstanceOf
 
 from memmachine_server.common.data_types import FilterValue, PropertyValue
-from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.errors import InvalidArgumentError
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
@@ -69,7 +69,7 @@ class _FeatureEntry:
     value: str
     embedding: np.ndarray
     metadata: Mapping[str, Any] | None
-    citations: Sequence[EpisodeIdT]
+    citations: Sequence[UUID]
     created_at_ts: float
     updated_at_ts: float
 
@@ -524,7 +524,7 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         if not history_ids:
             return
@@ -563,7 +563,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> AsyncIterator[EpisodeIdT]:
+    ) -> AsyncIterator[UUID]:
         query = ["MATCH (h:SetHistory)"]
         conditions = []
         params: dict[str, Any] = {}
@@ -586,7 +586,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             **params,
         )
         for record in records:
-            yield EpisodeIdT(record["history_id"])
+            yield UUID(record["history_id"])
 
     async def get_history_messages_count(
         self,
@@ -729,7 +729,7 @@ class Neo4jSemanticStorage(SemanticStorage):
     async def add_history_to_set(
         self,
         set_id: SetIdT,
-        history_id: EpisodeIdT,
+        history_id: UUID,
         *,
         created_at: datetime | None = None,
     ) -> None:
@@ -744,7 +744,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             created_at=created_at or datetime.now(UTC),
         )
 
-    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
         if not history_ids:
             return
 
@@ -786,7 +786,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         *,
         set_id: SetIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         if not history_ids:
             raise ValueError("No ids provided")
@@ -852,7 +852,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             raise ValueError("Feature node missing identifier")
         feature_id = FeatureIdT(str(node_id))
         embedding = np.array(props.get("embedding", []), dtype=float)
-        citations = [EpisodeIdT(cid) for cid in props.get("citations", [])]
+        citations = [UUID(cid) for cid in props.get("citations", [])]
         metadata = self._parse_metadata(props)
         return _FeatureEntry(
             feature_id=feature_id,
@@ -924,7 +924,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         *,
         load_citations: bool,
     ) -> SemanticFeature:
-        citations: Sequence[EpisodeIdT] | None = None
+        citations: Sequence[UUID] | None = None
         if load_citations:
             citations = list(entry.citations)
         return SemanticFeature(

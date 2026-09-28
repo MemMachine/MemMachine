@@ -12,7 +12,6 @@ import pytest_asyncio
 from memmachine_server.common.data_types import ExternalServiceAPIError
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
-    EpisodeIdT,
     EpisodeStorage,
 )
 from memmachine_server.common.filter.filter_parser import parse_filter
@@ -68,7 +67,7 @@ def llm_model(mock_llm_model):
     return mock_llm_model
 
 
-async def add_history(history_storage: EpisodeStorage, content: str) -> EpisodeIdT:
+async def add_history(history_storage: EpisodeStorage, content: str) -> UUID:
     episode = EpisodeEntry(
         content=content,
         producer_id="profile_id",

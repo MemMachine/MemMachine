@@ -5,6 +5,7 @@ import socket
 from collections.abc import Iterable
 from datetime import UTC
 from typing import Any, TypeVar, overload
+from uuid import UUID
 
 from pydantic import (
     AwareDatetime,
@@ -37,7 +38,6 @@ from memmachine_server.common.episode_store.episode_model import (
     EpisodeType,
 )
 from memmachine_server.common.episode_store.episode_storage import (
-    EpisodeIdT,
     EpisodeStorage,
 )
 from memmachine_server.common.errors import (
@@ -239,7 +239,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         return res_episodes
 
     @validate_call
-    async def get_episode(self, episode_id: EpisodeIdT) -> EpisodeE | None:
+    async def get_episode(self, episode_id: UUID) -> EpisodeE | None:
         stmt = (
             select(Episode)
             .where(Episode.uid == episode_id)
@@ -255,7 +255,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     @timed("get_episodes")
     async def get_episodes(
         self,
-        episode_ids: Iterable[EpisodeIdT],
+        episode_ids: Iterable[UUID],
     ) -> list[EpisodeE]:
         ids = set(episode_ids)
         if not ids:
@@ -420,7 +420,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         *,
         page_size: int,
         filter_expr: FilterExpr | None = None,
-    ) -> list[EpisodeIdT]:
+    ) -> list[UUID]:
         stmt = select(Episode.uid)
 
         stmt = self._apply_episode_filter(
@@ -438,7 +438,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
     @validate_call
     @timed("delete_episodes")
-    async def delete_episodes(self, episode_ids: list[EpisodeIdT]) -> None:
+    async def delete_episodes(self, episode_ids: list[UUID]) -> None:
         stmt = delete(Episode).where(Episode.uid.in_(episode_ids))
 
         async with self._create_session() as session:

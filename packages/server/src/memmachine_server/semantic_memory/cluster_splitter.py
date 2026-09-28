@@ -8,10 +8,11 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 import numpy as np
 
-from memmachine_server.common.episode_store import Episode, EpisodeIdT
+from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.semantic_memory.cluster_manager import (
     ClusterInfo,
@@ -41,7 +42,7 @@ class ClusterSplitterProtocol(Protocol):
         self,
         *,
         cluster_messages: Sequence[tuple[str, Sequence[Episode]]],
-        cluster_embeddings: Mapping[EpisodeIdT, Sequence[float]],
+        cluster_embeddings: Mapping[UUID, Sequence[float]],
         state: ClusterState,
         reranker: Reranker | None,
     ) -> tuple[list[tuple[str, Sequence[Episode]]], ClusterState]: ...
@@ -54,7 +55,7 @@ class NoOpClusterSplitter:
         self,
         *,
         cluster_messages: Sequence[tuple[str, Sequence[Episode]]],
-        cluster_embeddings: Mapping[EpisodeIdT, Sequence[float]],  # noqa: ARG002
+        cluster_embeddings: Mapping[UUID, Sequence[float]],  # noqa: ARG002
         state: ClusterState,
         reranker: Reranker | None,  # noqa: ARG002
     ) -> tuple[list[tuple[str, Sequence[Episode]]], ClusterState]:
@@ -107,8 +108,8 @@ class RerankerClusterSplitter:
     @staticmethod
     def _collect_embeddings(
         messages: Sequence[Episode],
-        cluster_embeddings: Mapping[EpisodeIdT, Sequence[float]],
-    ) -> tuple[list[Sequence[float]], list[EpisodeIdT]]:
+        cluster_embeddings: Mapping[UUID, Sequence[float]],
+    ) -> tuple[list[Sequence[float]], list[UUID]]:
         ordered_embeddings = [
             cluster_embeddings[m.uid] for m in messages if m.uid is not None
         ]
@@ -187,7 +188,7 @@ class RerankerClusterSplitter:
         *,
         cluster_id: str,
         messages: Sequence[Episode],
-        cluster_embeddings: Mapping[EpisodeIdT, Sequence[float]],
+        cluster_embeddings: Mapping[UUID, Sequence[float]],
         state: ClusterState,
         reranker: Reranker | None,
     ) -> list[tuple[str, Sequence[Episode]]]:
@@ -279,7 +280,7 @@ class RerankerClusterSplitter:
         self,
         *,
         cluster_messages: Sequence[tuple[str, Sequence[Episode]]],
-        cluster_embeddings: Mapping[EpisodeIdT, Sequence[float]],
+        cluster_embeddings: Mapping[UUID, Sequence[float]],
         state: ClusterState,
         reranker: Reranker | None,
     ) -> tuple[list[tuple[str, Sequence[Episode]]], ClusterState]:
@@ -427,7 +428,7 @@ class RerankerClusterSplitter:
         )
 
     @staticmethod
-    def _input_hash(event_ids: Sequence[EpisodeIdT]) -> str:
+    def _input_hash(event_ids: Sequence[UUID]) -> str:
         raw = ",".join(str(event_id) for event_id in event_ids)
         return hashlib.sha256(raw.encode()).hexdigest()
 

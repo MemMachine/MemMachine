@@ -19,7 +19,7 @@ from memmachine_common.api.spec import (
 )
 
 from memmachine_server import MemMachine
-from memmachine_server.common.episode_store import EpisodeEntry, EpisodeIdT
+from memmachine_server.common.episode_store import EpisodeEntry
 from memmachine_server.server.api_v2.service import (
     _add_messages_to,
     _list_target_memories,
@@ -41,7 +41,7 @@ class _CapturingMemMachine:
         episode_entries: list[EpisodeEntry],
         *,
         target_memories: list[MemoryType],
-    ) -> list[EpisodeIdT]:
+    ) -> list[UUID]:
         self.entries.extend(episode_entries)
         return [entry.uid for entry in episode_entries]
 

@@ -2,13 +2,13 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock
+from uuid import UUID
 
 import numpy as np
 from pydantic import InstanceOf
 
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
@@ -119,7 +119,7 @@ class MockSemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         await self.add_citations_mock(feature_id, history_ids)
 
@@ -128,13 +128,13 @@ class MockSemanticStorage(SemanticStorage):
         content: str,
         metadata: Mapping[str, str] | None = None,
         created_at: datetime | None = None,
-    ) -> EpisodeIdT:
+    ) -> UUID:
         raise NotImplementedError
 
-    async def get_history(self, history_id: EpisodeIdT):
+    async def get_history(self, history_id: UUID):
         raise NotImplementedError
 
-    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
         raise NotImplementedError
 
     async def delete_history_messages(
@@ -151,7 +151,7 @@ class MockSemanticStorage(SemanticStorage):
         set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> AsyncIterator[EpisodeIdT]:
+    ) -> AsyncIterator[UUID]:
         messages = await self.get_history_messages_mock(
             set_ids=set_ids,
             limit=limit,
@@ -171,7 +171,7 @@ class MockSemanticStorage(SemanticStorage):
     async def add_history_to_set(
         self,
         set_id: SetIdT,
-        history_id: EpisodeIdT,
+        history_id: UUID,
         *,
         created_at: datetime | None = None,
     ) -> None:
@@ -181,7 +181,7 @@ class MockSemanticStorage(SemanticStorage):
         self,
         *,
         set_id: SetIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         await self.mark_messages_ingested_mock(set_id=set_id, ids=history_ids)
 
