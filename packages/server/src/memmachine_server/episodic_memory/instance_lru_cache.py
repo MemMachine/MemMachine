@@ -43,8 +43,8 @@ class MemoryInstanceCache:
 
     def __init__(self, capacity: int, max_lifetime: int) -> None:
         """Initialize the cache with capacity and lifetime limits."""
-        if capacity <= 0:
-            raise ValueError("Capacity must be a positive integer")
+        if capacity < 0:
+            raise ValueError("Capacity must be a non-negative integer")
         self.capacity = capacity
         self.max_lifetime = max_lifetime
         self.cache: dict[str, Node] = {}  # Stores key -> Node
@@ -172,7 +172,11 @@ class MemoryInstanceCache:
 
             # Add new key
             lru_node = self.tail.prev
-            while len(self.cache) >= self.capacity and lru_node != self.head:
+            while (
+                self.capacity > 0
+                and len(self.cache) >= self.capacity
+                and lru_node != self.head
+            ):
                 if lru_node.ref_count > 0:
                     lru_node = lru_node.prev
                     continue
@@ -194,14 +198,24 @@ class MemoryInstanceCache:
         """Release the object reference."""
         if key is None:
             return
+        instance_to_close: EpisodicMemory | None = None
         async with self._lock.write_lock():
             if key in self.cache:
                 # Update existing key's value and move it to the front
                 node = self.cache[key]
                 assert node.ref_count > 0
                 node.ref_count -= 1
+                if self.capacity == 0 and node.ref_count == 0:
+                    self._remove_node(node)
+                    del self.cache[key]
+                    instance_to_close = node.value
             else:
                 raise ValueError(f"Key {key} does not exist")
+        if instance_to_close is not None:
+            try:
+                await instance_to_close.close()
+            except Exception:
+                logger.exception("error closing memory instance")
 
     async def clean_old_instance(self) -> None:
         """Remove unused instance with long lifetime."""

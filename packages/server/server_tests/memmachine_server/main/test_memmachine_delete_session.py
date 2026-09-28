@@ -114,7 +114,9 @@ async def test_delete_session_clears_semantic_history_and_citations(
 
 
 @pytest.mark.asyncio
-async def test_delete_episode_store_processes_in_batches() -> None:
+async def test_delete_episode_store_processes_in_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """_delete_episode_store fetches and deletes episodes in batches until empty."""
 
     @dataclass
@@ -158,7 +160,7 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     resources.get_session_data_manager = AsyncMock(return_value=session_manager)
 
     mm = MemMachine(conf=conf, resources=resources)
-    mm._cleanup_semantic_history = cleanup_mock  # type: ignore[method-assign]  # ty: ignore[invalid-assignment]
+    monkeypatch.setattr(mm, "_cleanup_semantic_history", cleanup_mock)
 
     await mm.start()
     await mm.delete_session(_SD())

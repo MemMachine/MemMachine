@@ -14,11 +14,19 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - 'packages/**/pyproject.toml'
+    # ready_for_review is not a default type; it runs the checks a draft skipped.
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
   workflow_dispatch:
 
 jobs:
   check-lock:
     # Verifies that uv.lock matches the project configuration; update it before merging if this fails.
+    # A draft pull request skips CI until it is marked ready for review.
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

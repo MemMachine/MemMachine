@@ -200,7 +200,7 @@ def test_password_mixin_without_env():
 
 def test_password_mixin_invalid_type():
     with pytest.raises(ValidationError) as exc:
-        ApiKeyMixin(api_key=12345)  # type: ignore
+        ApiKeyMixin.model_validate({"api_key": 12345})
     assert "should be a valid string" in str(exc.value)
 
 

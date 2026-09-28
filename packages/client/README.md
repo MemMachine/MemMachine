@@ -32,17 +32,11 @@ pip install -e packages/client
 from memmachine_client import MemMachineClient
 
 # Initialize client
-client = MemMachineClient(
-    base_url="http://localhost:8080",
-    timeout=30
-)
+client = MemMachineClient(base_url="http://localhost:8080", timeout=30)
 
 # Create a memory instance
 memory = client.memory(
-    group_id="my_group",
-    agent_id="my_agent",
-    user_id="user123",
-    session_id="session456"
+    group_id="my_group", agent_id="my_agent", user_id="user123", session_id="session456"
 )
 
 # Add memories
@@ -101,12 +95,14 @@ memory = client.memory(
     group_id="demo_group",
     agent_id="demo_agent",
     user_id="user123",
-    session_id="demo_session"
+    session_id="demo_session",
 )
 
 # Add memories with metadata
 memory.add("I like pizza", metadata={"type": "preference", "category": "food"})
-memory.add("I work as a software engineer", metadata={"type": "fact", "category": "work"})
+memory.add(
+    "I work as a software engineer", metadata={"type": "fact", "category": "work"}
+)
 
 # Search memories — Memory.search() returns a SearchResult Pydantic model
 results = memory.search("What do I like to eat?")
@@ -131,9 +127,7 @@ memories = {}
 
 for user in users:
     memories[user] = client.memory(
-        group_id="team_group",
-        agent_id="team_agent",
-        user_id=user
+        group_id="team_group", agent_id="team_agent", user_id=user
     )
 
 # Add user-specific memories
@@ -161,9 +155,7 @@ try:
 
     # Create memory instance
     memory = client.memory(
-        group_id="demo_group",
-        agent_id="demo_agent",
-        user_id="user123"
+        group_id="demo_group", agent_id="demo_agent", user_id="user123"
     )
 
     # Add memory
@@ -181,9 +173,7 @@ from memmachine_client import MemMachineClient
 # Use client as context manager
 with MemMachineClient(base_url="http://localhost:8080") as client:
     memory = client.memory(
-        group_id="demo_group",
-        agent_id="demo_agent",
-        user_id="user123"
+        group_id="demo_group", agent_id="demo_agent", user_id="user123"
     )
 
     memory.add("This is a test memory")
@@ -207,7 +197,7 @@ client = MemMachineClient(
     api_key="your_api_key",  # Optional
     base_url="http://localhost:8080",
     timeout=30,  # Request timeout in seconds
-    max_retries=3  # Maximum retries for failed requests
+    max_retries=3,  # Maximum retries for failed requests
 )
 ```
 

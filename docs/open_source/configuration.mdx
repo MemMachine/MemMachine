@@ -206,11 +206,11 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     **Parameters:**
     | Parameter           | Description                                                                 | Default    |
     |---------------------|-----------------------------------------------------------------------------|------------|
-    | `enabled`           | Whether semantic memory is enabled. Auto-disabled when required fields are missing. | `true` |
-    | `llm_model`         | The ID of a language model defined in `resources.language_models` for semantic processing. | *Required* |
-    | `embedding_model`   | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
-    | `database`          | The ID of a database defined in `resources.databases` for semantic storage. | *Required* |
-    | `config_database`   | The ID of a database used for semantic configuration metadata. | *Required* |
+    | `enabled`           | Whether semantic memory is enabled. Auto-disabled when required fields are missing. Omit the whole `semantic_memory` section, or set only `enabled: false`, to turn semantic memory off. | `true` |
+    | `llm_model`         | The ID of a language model defined in `resources.language_models` for semantic processing. Required when semantic memory is enabled. | `null` |
+    | `embedding_model`   | The ID of an embedder defined in `resources.embedders` for creating embeddings. Required when semantic memory is enabled. | `null` |
+    | `database`          | The ID of a database defined in `resources.databases` for semantic storage. Required when semantic memory is enabled. | `null` |
+    | `config_database`   | The ID of a SQL database used for semantic configuration metadata. Required when semantic memory is enabled. | `null` |
     | `with_config_cache` | Whether to use an in-memory cache for semantic memory configurations. | `true` |
     | `ingestion_trigger_messages` | Number of pending messages before semantic ingestion triggers. | `5` |
     | `ingestion_trigger_age` | Max age of pending messages before ingestion triggers (duration in HH:MM:SS). | `00:05:00` |
@@ -392,6 +392,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.uri`  | The URI for the given database.                                      | Depends on provider |
       | `config.token` | Milvus auth token for Zilliz Cloud or auth-enabled Milvus server.   | `""` |
       | `config.consistency_level` | Milvus collection consistency level: `Strong`, `Session`, `Bounded`, or `Eventually`. | `Session` |
+      | `config.metrics_factory_id` | ID of the metrics exporter factory the Qdrant or Neo4j store reports its operation latencies to. | `prometheus` |
       | `config.path`  | The path for the given database.                                    | Depends on provider |
       | `config.username` | Username for internal graph store authentication.                | Depends on provider |
       | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |

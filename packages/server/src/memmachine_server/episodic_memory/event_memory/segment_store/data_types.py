@@ -66,6 +66,27 @@ class SegmentStorePartitionConfigMismatchError(Exception):
         )
 
 
+class SegmentStoreAttemptsExhaustedError(Exception):
+    """The store exhausted its internal attempts; diagnose the cause.
+
+    Raised when an operation kept failing in a way that should not recur
+    under normal operation. An immediate retry is unlikely to succeed;
+    the underlying database error is chained as the cause.
+    """
+
+
+class SegmentStorePartitionHandleStaleError(Exception):
+    """A partition handle outlived the partition incarnation it was opened on."""
+
+    def __init__(self, partition_key: str) -> None:
+        """Record the logical partition key the stale handle belonged to."""
+        super().__init__(
+            f"Stale handle for partition {partition_key!r}: the partition was "
+            "deleted (or re-created) after this handle was opened"
+        )
+        self.partition_key = partition_key
+
+
 class SegmentStorePartitionAlreadyExistsError(Exception):
     """Raised when creating a partition that already exists."""
 

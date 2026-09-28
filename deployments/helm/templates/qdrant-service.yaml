@@ -1,0 +1,23 @@
+{{- if and .Values.qdrant.enabled (eq (include "memmachine.ltmBackend" .) "event") }}
+# qdrant-service.yaml
+# ClusterIP Service for internal access to Qdrant.
+# Exposes two ports:
+#   - qdrant.port     (REST — used by MemMachine by default; container 6333)
+#   - qdrant.grpcPort (gRPC — used when qdrant.prefer_grpc is true; container 6334)
+# DNS inside the cluster: memmachine-qdrant.<namespace>.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: memmachine-qdrant
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    app: qdrant
+  ports:
+    - name: rest
+      port: {{ .Values.qdrant.port }}
+      targetPort: rest
+    - name: grpc
+      port: {{ .Values.qdrant.grpcPort }}
+      targetPort: grpc
+{{- end }}

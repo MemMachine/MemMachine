@@ -153,9 +153,15 @@ def _compile_properties_json_leaf(
         type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[type(first_value)]
         value_path = column[PROPERTY_VALUE_KEY]
         type_check = column[PROPERTY_TYPE_KEY].as_string() == type_name
-        if isinstance(first_value, int):
-            return and_(type_check, value_path.as_integer().in_(expr.values))
-        return and_(type_check, value_path.as_string().in_(expr.values))
+        # One cast-and-normalize rule for both leaf shapes: every member
+        # is cast and normalized the way a Comparison value would be, and
+        # the column takes the first member's cast.
+        casts = [
+            _cast_properties_json_value(value_path, value) for value in expr.values
+        ]
+        casted_column = casts[0][0]
+        normalized_values = [normalized for _, normalized in casts]
+        return and_(type_check, casted_column.in_(normalized_values))
 
     # Comparison
     type_name = PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[type(expr.value)]
@@ -176,6 +182,11 @@ def compile_sql_filter(
 
     The `resolve_field` callback maps each field name to a
     `(column, FieldEncoding)` pair and raises `ValueError` for unknown fields.
+
+    Datetime values arrive already normalized -- `Comparison`/`In` nodes
+    convert them to UTC-aware instants at construction -- so
+    column-encoded leaves bind them as-is, and the JSON-text encodings
+    only choose a representation.
     """
     if isinstance(expr, Comparison | In | IsNull):
         column, kind = resolve_field(expr.field)

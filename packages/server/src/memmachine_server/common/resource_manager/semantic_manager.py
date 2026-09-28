@@ -86,7 +86,7 @@ class SemanticResourceManager:
 
         database = self._conf.database
 
-        if database is None:
+        if not database:
             raise ResourceNotReadyError(
                 "No database configured for semantic storage.", "semantic_memory"
             )
@@ -174,6 +174,12 @@ class SemanticResourceManager:
 
     async def get_semantic_config_storage(self) -> SemanticConfigStorage:
         database = self._conf.config_database
+
+        if not database:
+            raise ResourceNotReadyError(
+                "No config database configured for semantic memory.",
+                "semantic_memory",
+            )
 
         sql_engine = await self._resource_manager.get_sql_engine(database)
         storage = SemanticConfigStorageSqlAlchemy(sql_engine)

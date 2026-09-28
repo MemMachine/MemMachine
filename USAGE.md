@@ -106,7 +106,7 @@ client = MemMachineClient(base_url="http://localhost:8080")
 project = client.create_project(
     org_id="my-org",
     project_id="my-project",
-    description="My project description"  # Optional, defaults to ""
+    description="My project description",  # Optional, defaults to ""
 )
 
 # Or get an existing project
@@ -118,10 +118,10 @@ project = client.get_project(org_id="my-org", project_id="my-project")
 ```python
 # Create a memory interface for a specific context
 memory = project.memory(
-    user_id="user123",        # User identifier (stored in metadata)
-    agent_id="agent456",      # Agent identifier (stored in metadata)
+    user_id="user123",  # User identifier (stored in metadata)
+    agent_id="agent456",  # Agent identifier (stored in metadata)
     session_id="session789",  # Session identifier (stored in metadata)
-    group_id="group1"         # Optional: Group identifier (stored in metadata)
+    group_id="group1",  # Optional: Group identifier (stored in metadata)
 )
 
 # Add memories
@@ -134,13 +134,13 @@ memory = project.memory(
 # - timestamp is automatically set to current time
 memory.add(
     content="I prefer Python over JavaScript",
-    role="user",              # Optional, defaults to "user"
-    metadata={"type": "preference"}  # Optional, defaults to {}
+    role="user",  # Optional, defaults to "user"
+    metadata={"type": "preference"},  # Optional, defaults to {}
 )
 
 memory.add(
     content="I understand you prefer Python",
-    role="assistant"  # Optional, defaults to "user"
+    role="assistant",  # Optional, defaults to "user"
 )
 
 # Search memories
@@ -152,7 +152,7 @@ memory.add(
 # - filter_dict defaults to None (but context filters from user_id/agent_id/session_id are auto-applied)
 results = memory.search(
     query="What are the user's preferences?",
-    limit=10  # Optional, defaults to 10
+    limit=10,  # Optional, defaults to 10
 )
 
 # Results structure:
@@ -422,6 +422,7 @@ from memmachine_client import MemMachineClient
 client = MemMachineClient(base_url="http://localhost:8080")
 project = client.get_project(org_id="my-org", project_id="chatbot-project")
 
+
 def handle_user_message(user_id: str, session_id: str, message: str):
     # Create memory context for this user/session
     memory = project.memory(user_id=user_id, session_id=session_id)
@@ -449,9 +450,7 @@ def handle_user_message(user_id: str, session_id: str, message: str):
 ```python
 def handle_group_message(group_id: str, user_id: str, message: str):
     memory = project.memory(
-        group_id=group_id,
-        user_id=user_id,
-        session_id=f"group-{group_id}"
+        group_id=group_id, user_id=user_id, session_id=f"group-{group_id}"
     )
 
     # Store message
@@ -475,8 +474,9 @@ def learn_user_preference(user_id: str, preference: str, category: str):
         content=preference,
         role="user",
         episode_type="semantic",  # Store in semantic memory
-        metadata={"category": category, "type": "preference"}
+        metadata={"category": category, "type": "preference"},
     )
+
 
 def get_user_preferences(user_id: str, category: str = None):
     memory = project.memory(user_id=user_id)
@@ -495,12 +495,12 @@ def get_user_preferences(user_id: str, category: str = None):
 
 ```python
 {
-    "content": str,              # Required: The message content
-    "producer": str,             # Optional: Who created this (defaults to "user")
-    "produced_for": str,         # Optional: Who this is for (defaults to "")
-    "role": str,                 # Optional: "user", "assistant", or "system" (defaults to "")
-    "timestamp": str,            # Optional: ISO 8601 timestamp (defaults to current time in UTC)
-    "metadata": dict             # Optional: Additional metadata (defaults to {})
+    "content": str,  # Required: The message content
+    "producer": str,  # Optional: Who created this (defaults to "user")
+    "produced_for": str,  # Optional: Who this is for (defaults to "")
+    "role": str,  # Optional: "user", "assistant", or "system" (defaults to "")
+    "timestamp": str,  # Optional: ISO 8601 timestamp (defaults to current time in UTC)
+    "metadata": dict,  # Optional: Additional metadata (defaults to {})
 }
 ```
 
@@ -508,7 +508,7 @@ def get_user_preferences(user_id: str, category: str = None):
 
 ```python
 {
-    "episodic_memory": [         # List of episodic memory results
+    "episodic_memory": [  # List of episodic memory results
         {
             "content": str,
             "producer": str,
@@ -519,19 +519,19 @@ def get_user_preferences(user_id: str, category: str = None):
             # ... other fields
         }
     ],
-    "episode_summary": [         # Summaries of episodes
+    "episode_summary": [  # Summaries of episodes
         {
             "content": str,
             # ... other fields
         }
     ],
-    "semantic_memory": [         # List of semantic memory results
+    "semantic_memory": [  # List of semantic memory results
         {
             "content": str,
             "metadata": dict,
             # ... other fields
         }
-    ]
+    ],
 }
 ```
 
@@ -611,7 +611,7 @@ except requests.HTTPError as e:
    memory.add(
        content="I work at Acme Corp",
        role="user",
-       metadata={"type": "fact", "category": "employment", "verified": True}
+       metadata={"type": "fact", "category": "employment", "verified": True},
    )
    ```
 

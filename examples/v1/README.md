@@ -352,6 +352,7 @@ The CRM agent includes Slack integration for real-time communication:
    ```python
    from base_query_constructor import BaseQueryConstructor
 
+
    class NewAgentQueryConstructor(BaseQueryConstructor):
        def create_query(self, **kwargs) -> str:
            # Implement domain-specific logic

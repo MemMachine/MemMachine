@@ -1,0 +1,122 @@
+# MemMachine configuration for docker compose, event long-term memory backend.
+#
+# Usage:
+#   cp sample_configs/configuration.event.yml configuration.yml
+#   cp sample_configs/env.dockercompose .env      # COMPOSE_PROFILES=event is the default
+#   docker compose up -d
+#
+# This file is written for the compose topology, where MemMachine itself runs as
+# a container on memmachine-network. Hostnames are therefore compose *service
+# names* (postgres, qdrant) — not localhost, which inside a container means that
+# container itself, where nothing is listening.
+#
+# Secrets are read from the environment compose already passes to the app, so
+# nothing here needs editing for a default `docker compose up`. Set OPENAI_API_KEY
+# in .env before starting.
+#
+# For the declarative (Neo4j) backend instead, use COMPOSE_PROFILES=declarative
+# and an episodic_memory.long_term_memory with `vector_graph_store` — see
+# sample_configs/episodic_memory_config.cpu.sample.
+
+logging:
+  path: /tmp/memory_logs/memmachine.log   # the memmachine_logs volume
+  level: info                             # debug | info | error
+
+episode_store:
+  database: profile_storage
+
+episodic_memory:
+  long_term_memory:
+    backend: event
+    embedder: openai_embedder
+    reranker: my_reranker_id          # optional; omit to order by embedding score
+    vector_store: event_vector_store  # Qdrant, below
+    segment_store: profile_storage    # a relational DB; the segment store is built from it
+    # properties_schema:              # optional — user-defined filterable properties
+    #   source_role: str
+    # segmenter:                      # optional — defaults to passthrough
+    #   type: passthrough             # or: text (with max_chunk_length)
+    # deriver:                        # optional — defaults to whole_text
+    #   type: whole_text              # or: sentence_text
+  short_term_memory:
+    llm_model: openai_model
+    message_capacity: 500
+
+retrieval_agent:
+  llm_model: openai_model
+  reranker: my_reranker_id
+
+semantic_memory:
+  llm_model: openai_model
+  embedding_model: openai_embedder
+  database: profile_storage
+  config_database: profile_storage
+
+session_manager:
+  database: profile_storage
+  instance_cache_size: 0  # Set above 0 to retain idle episodic memory instances.
+
+prompt:
+  default_project_categories:
+  - profile_prompt
+
+resources:
+  databases:
+    # Relational store: episodes, sessions, semantic memory, and the segment
+    # store for the event backend. `postgres` is the compose service name.
+    profile_storage:
+      provider: postgres
+      config:
+        host: postgres
+        port: 5432
+        # Only `password` and `api_key` support the $ENV_NAME syntax; `user` and
+        # `db_name` are taken literally, so these must match POSTGRES_USER and
+        # POSTGRES_DB in .env (compose defaults shown).
+        user: memmachine
+        password: $POSTGRES_PASSWORD
+        db_name: memmachine
+        pool_size: 5
+        max_overflow: 10
+        pool_timeout: 30      # max seconds to wait for a pool connection (default: 30)
+        pool_recycle: -1      # max connection age in seconds; -1 = disabled (default: -1)
+        pool_pre_ping: false  # test connections for liveness before use (default: false)
+        command_timeout: 60.0  # max seconds a statement may run; ~ = unbounded (asyncpg only, default: 60)
+        connect_timeout: 10.0  # max seconds to establish a connection; ~ = wait forever (asyncpg only, default: 10)
+    # VectorStore for the event-backed long-term memory. `qdrant` is the compose
+    # service name, started by the `event` profile.
+    event_vector_store:
+      provider: qdrant
+      config:
+        host: qdrant
+        port: 6333
+        grpc_port: 6334
+        prefer_grpc: false
+        https: false
+        # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
+  embedders:
+    openai_embedder:
+      provider: openai
+      config:
+        max_input_length: 2048
+        model: "text-embedding-3-small"
+        api_key: $OPENAI_API_KEY
+        base_url: "https://api.openai.com/v1"
+        dimensions: 1536
+  language_models:
+    openai_model:
+      provider: openai-responses
+      config:
+        model: "gpt-4o-mini"
+        api_key: $OPENAI_API_KEY
+        base_url: "https://api.openai.com/v1"
+  rerankers:
+    my_reranker_id:
+      provider: "rrf-hybrid"
+      config:
+        reranker_ids:
+          - id_ranker_id
+          - bm_ranker_id
+    id_ranker_id:
+      provider: "identity"
+    bm_ranker_id:
+      provider: "bm25"

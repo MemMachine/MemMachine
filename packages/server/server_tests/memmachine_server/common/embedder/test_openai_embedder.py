@@ -166,6 +166,46 @@ async def test_embed_oversized_input_with_no_max_input_length():
 
     assert len(result) == 1
     assert len(result[0]) == 256
-    # The text must have been split: balanced chunks of 80,000 chars at limit
-    # 75,000 produce two chunks of 40,000 each, each in its own cluster.
+    # The text must have been split: greedy chunks of 80,000 chars at limit
+    # 75,000 produce chunks of 75,000 and 5,000, each in its own cluster.
     assert mock_client.embeddings.create.call_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_embed_max_input_length_above_request_cap():
+    """max_input_length above max_total_input_length_per_request must not raise.
+
+    A configured chunk limit above the per-request cap can never be honored
+    (no chunk larger than the cap fits in any request), so chunking clamps
+    to the cap instead of handing cluster_texts() a chunk it rejects.
+    """
+    mock_client = AsyncMock(spec=openai.AsyncOpenAI)
+
+    mock_embedding = MagicMock()
+    mock_embedding.embedding = [0.1] * 256
+
+    mock_response = MagicMock()
+    mock_response.data = [mock_embedding]
+    mock_response.usage.prompt_tokens = 10
+    mock_response.usage.total_tokens = 10
+
+    mock_client.embeddings.create = AsyncMock(return_value=mock_response)
+
+    embedder = OpenAIEmbedder(
+        OpenAIEmbedderParams(
+            client=mock_client,
+            model="test-model",
+            dimensions=256,
+            max_input_length=80_000,  # above the 75,000-char per-request cap
+        )
+    )
+
+    long_text = "x" * 100_000
+
+    result = await embedder.ingest_embed([long_text])
+
+    assert len(result) == 1
+    assert len(result[0]) == 256
+    # Clamped to 75,000, the text splits into 75,000 + 25,000 chars, which
+    # exceed one request's total together, so each chunk gets its own call.
+    assert mock_client.embeddings.create.call_count == 2

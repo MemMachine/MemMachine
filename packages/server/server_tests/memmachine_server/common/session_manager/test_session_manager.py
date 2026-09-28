@@ -97,7 +97,7 @@ async def test_create_tables(sqlalchemy_engine: AsyncEngine):
 
 
 @pytest.mark.asyncio
-async def test_create_new_session(
+async def test_create_or_validate_session(
     session_manager: SessionDataManager,
     episodic_memory_conf: EpisodicMemoryConf,
 ):
@@ -107,7 +107,7 @@ async def test_create_new_session(
     description = "A test session"
     metadata: dict[str, JsonValue] = {"user": "tester"}
 
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         session_key,
         config,
         episodic_memory_conf,
@@ -127,29 +127,62 @@ async def test_create_new_session(
 
 
 @pytest.mark.asyncio
-async def test_create_existing_session_raises_error(
+async def test_create_or_validate_existing_session_with_matching_data_succeeds(
     session_manager: SessionDataManager,
     episodic_memory_conf: EpisodicMemoryConf,
 ):
-    """Test that creating a session that already exists raises a ValueError."""
+    """A matching retry leaves the original session intact."""
     session_key = "session1"
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         session_key,
-        {},
+        {"setting": "value"},
         episodic_memory_conf,
-        "",
-        {},
+        "original description",
+        {"owner": "tester"},
     )
+
+    await session_manager.create_or_validate_session(
+        session_key,
+        {"setting": "value"},
+        episodic_memory_conf,
+        "new description",
+        {"owner": "tester"},
+    )
+
+    session_info = await session_manager.get_session_info(session_key)
+    assert session_info is not None
+    assert session_info.description == "original description"
+    assert session_info.configuration == {"setting": "value"}
+    assert session_info.user_metadata == {"owner": "tester"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_field", ["configuration", "param", "metadata"])
+async def test_create_or_validate_existing_session_with_conflicting_data_raises_error(
+    session_manager: SessionDataManager,
+    episodic_memory_conf: EpisodicMemoryConf,
+    changed_field: str,
+):
+    """A reused key cannot silently keep a different configuration or metadata."""
+    session_key = "session1"
+    await session_manager.create_or_validate_session(
+        session_key, {}, episodic_memory_conf, "", {}
+    )
+    config: dict[str, JsonValue] = (
+        {"different": True} if changed_field == "configuration" else {}
+    )
+    metadata: dict[str, JsonValue] = (
+        {"different": True} if changed_field == "metadata" else {}
+    )
+    param = episodic_memory_conf.model_copy(deep=True)
+    if changed_field == "param":
+        param.enabled = not param.enabled
 
     with pytest.raises(
         SessionAlreadyExistsError, match=f"Session '{session_key}' already exists"
     ):
-        await session_manager.create_new_session(
-            session_key,
-            {},
-            episodic_memory_conf,
-            "",
-            {},
+        await session_manager.create_or_validate_session(
+            session_key, config, param, "", metadata
         )
 
 
@@ -160,7 +193,7 @@ async def test_delete_session(
 ):
     """Test deleting an existing session."""
     session_key = "session_to_delete"
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         session_key,
         {},
         episodic_memory_conf,
@@ -209,21 +242,21 @@ async def test_get_sessions(
 ):
     """Test retrieving session keys with and without filters."""
     # Create some sessions
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         "session1",
         {},
         episodic_memory_conf,
         "",
         {"tag": "A", "user": "1"},
     )
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         "session2",
         {},
         episodic_memory_conf,
         "",
         {"tag": "B", "user": "1"},
     )
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         "session3",
         {},
         episodic_memory_conf,
@@ -268,7 +301,7 @@ async def test_save_short_term_memory_new(
 ):
     """Test saving short-term memory for a session for the first time."""
     session_key = "stm_session_1"
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         session_key,
         {},
         episodic_memory_conf,
@@ -303,7 +336,7 @@ async def test_save_short_term_memory_update(
 ):
     """Test updating existing short-term memory for a session."""
     session_key = "stm_session_2"
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         session_key,
         {},
         episodic_memory_conf,
@@ -353,7 +386,7 @@ async def test_get_short_term_memory_nonexistent(
 ):
     """Test that getting STM for which none has been saved raises a ValueError."""
     session_key = "session_no_stm"
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         session_key,
         {},
         episodic_memory_conf,
@@ -375,7 +408,7 @@ async def test_delete_session_cascades_to_short_term_memory(
 ):
     """Test that deleting a session also deletes its associated short-term memory data."""
     session_key = "cascade_delete_session"
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         session_key,
         {},
         episodic_memory_conf,
@@ -405,13 +438,13 @@ async def test_update_and_get_session_status(
 ):
     """Test updating session status and retrieving by status."""
     # Create sessions
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         "session_active_1", {}, episodic_memory_conf, "", {}
     )
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         "session_active_2", {}, episodic_memory_conf, "", {}
     )
-    await session_manager.create_new_session(
+    await session_manager.create_or_validate_session(
         "session_to_delete", {}, episodic_memory_conf, "", {}
     )
 

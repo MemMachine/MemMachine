@@ -377,10 +377,7 @@ async def test_qdrant_api_key_omitted_when_empty():
 async def test_qdrant_creates_vector_store():
     """async_get_qdrant_client creates a QdrantVectorStore and stores it."""
     conf = _qdrant_only_conf()
-    conf.qdrant_confs["qdrant1"] = QdrantConf(
-        is_distributed=True,
-        registry_replication_factor=3,
-    )
+    conf.qdrant_confs["qdrant1"] = QdrantConf(registry_replication_factor=3)
 
     mock_client = AsyncMock()
     mock_client.close = AsyncMock()
@@ -401,11 +398,14 @@ async def test_qdrant_creates_vector_store():
         builder = DatabaseManager(conf)
         await builder.async_get_qdrant_client("qdrant1")
 
-    mock_params_cls.assert_called_once_with(
-        client=mock_client,
-        is_distributed=True,
-        registry_replication_factor=3,
-    )
+    mock_params_cls.assert_called_once()
+    kwargs = mock_params_cls.call_args.kwargs
+    assert kwargs["client"] is mock_client
+    assert kwargs["registry_replication_factor"] == 3
+    # Asserted as "not None" rather than pinned to a value: OperationTracker
+    # accepts None and then discards every timing without error, so passing the
+    # keyword is not the property that matters - passing a factory is.
+    assert kwargs["metrics_factory"] is not None
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
     assert "qdrant1" in builder.vector_stores

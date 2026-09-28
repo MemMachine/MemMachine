@@ -19,10 +19,9 @@ The file controls every component used during a run:
 `run_test.sh` checks for the file at startup and exits with an error if it is
 missing.
 
-The MemMachine configuration schema also requires a `semantic_memory` section.
 The samples below keep semantic memory disabled because these retrieval-agent
-benchmarks do not use it directly, but `semantic_memory.config_database` must
-still reference a valid SQL database ID.
+benchmarks do not use it directly. A `semantic_memory` section is optional;
+`enabled: false` alone (or omitting the section) is enough to turn it off.
 
 ---
 

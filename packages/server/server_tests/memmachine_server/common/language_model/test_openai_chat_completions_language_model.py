@@ -168,8 +168,8 @@ def test_init_missing_client():
     """Test initialization fails if client is missing."""
     with pytest.raises(ValidationError):
         OpenAIChatCompletionsLanguageModel(
-            OpenAIChatCompletionsLanguageModelParams(
-                model="test-model",
+            OpenAIChatCompletionsLanguageModelParams.model_validate(
+                {"model": "test-model"},
             ),
         )
 
@@ -178,10 +178,8 @@ def test_init_missing_model():
     """Test initialization fails if model is missing."""
     with pytest.raises(ValidationError):
         OpenAIChatCompletionsLanguageModel(
-            OpenAIChatCompletionsLanguageModelParams(
-                client=openai.AsyncOpenAI(
-                    api_key="test_api_key",
-                ),
+            OpenAIChatCompletionsLanguageModelParams.model_validate(
+                {"client": openai.AsyncOpenAI(api_key="test_api_key")},
             ),
         )
 

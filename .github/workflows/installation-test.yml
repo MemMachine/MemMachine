@@ -15,9 +15,14 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # ready_for_review is not a default type; it runs the checks a draft skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
   build:
+    # A draft pull request skips CI until it is marked ready for review;
+    # test-install needs this job, so it is skipped with it.
+    if: ${{ !github.event.pull_request.draft }}
     uses: ./.github/workflows/build-python.yml
     with:
       python-version: "3.12"

@@ -3,6 +3,8 @@ on:
   push:
     branches: [ main ]
   pull_request:
+    # ready_for_review is not a default type; it runs the checks a draft skipped.
+    types: [ opened, synchronize, reopened, ready_for_review ]
 
 permissions:
   contents: read
@@ -16,6 +18,8 @@ concurrency:
 
 jobs:
   integration-test:
+    # A draft pull request skips CI until it is marked ready for review.
+    if: ${{ !github.event.pull_request.draft }}
     strategy:
       fail-fast: false
       matrix:

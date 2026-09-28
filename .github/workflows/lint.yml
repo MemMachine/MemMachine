@@ -15,9 +15,13 @@ on:
   push:
     branches: [ main ]
   pull_request:
+    # ready_for_review is not a default type; it runs the checks a draft skipped.
+    types: [ opened, synchronize, reopened, ready_for_review ]
 
 jobs:
   ruff:
+    # A draft pull request skips CI until it is marked ready for review.
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -36,6 +40,7 @@ jobs:
           args: "format --check --diff"
 
   ty-static-check-common:
+    if: ${{ !github.event.pull_request.draft }}
     name: ty static check common package
     runs-on: ubuntu-latest
     strategy:
@@ -53,6 +58,7 @@ jobs:
         run: uv run --frozen ty check --project packages/common --python-version ${{ matrix.python-version }}
 
   ty-static-check-client:
+    if: ${{ !github.event.pull_request.draft }}
     name: ty static check client package
     runs-on: ubuntu-latest
     strategy:
@@ -70,6 +76,7 @@ jobs:
         run: uv run --frozen ty check --project packages/client --python-version ${{ matrix.python-version }}
 
   ty-static-check-server:
+    if: ${{ !github.event.pull_request.draft }}
     name: ty static check server package
     runs-on: ubuntu-latest
     strategy:

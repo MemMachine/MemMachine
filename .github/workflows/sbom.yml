@@ -6,6 +6,8 @@ on:
   push:
     branches: [ main ]
   pull_request:
+    # ready_for_review is not a default type; it runs the checks a draft skipped.
+    types: [ opened, synchronize, reopened, ready_for_review ]
 
 # Cancel any preceding run on the pull request after a new commit is pushed.
 concurrency:
@@ -17,6 +19,8 @@ concurrency:
 
 jobs:
   generate-sbom:
+    # A draft pull request skips CI until it is marked ready for review.
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     permissions:
       actions: read      # to find workflow artifacts when attaching release assets

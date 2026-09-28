@@ -54,6 +54,7 @@ All contributions, regardless of type, should follow this general workflow:
    [Microsoft Commit Signing](https://github.com/microsoft/vscode/wiki/Commit-Signing)
    wiki page for step-by-step instructions.
 5. **Push and Open a Pull Request**: Push your changes to your fork and open a
-   pull request against our `main` branch.
+   pull request against our `main` branch. A draft pull request does not run
+   CI; the checks run once you mark it ready for review.
 
 We look forward to your contributions!

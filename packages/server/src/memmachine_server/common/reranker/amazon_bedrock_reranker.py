@@ -174,7 +174,7 @@ class AmazonBedrockReranker(Reranker):
                 error_message = (
                     f"Expected {len(candidates)} total scores, but got {len(results)}"
                 )
-                logger.exception(error_message)
+                logger.error(error_message)
                 raise ExternalServiceAPIError(error_message)
 
             scores = [0.0] * len(candidates)

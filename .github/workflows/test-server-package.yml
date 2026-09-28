@@ -18,9 +18,13 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+    # ready_for_review is not a default type; it runs the checks a draft skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
   test-server-package:
+    # A draft pull request skips CI until it is marked ready for review.
+    if: ${{ !github.event.pull_request.draft }}
     name: Test Server Package
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -62,6 +66,21 @@ jobs:
             exit 1
           fi
           pip install --find-links dist/ "${local_whls[@]}"
+
+      - name: Check the installed server reports the wheel's version
+        shell: bash
+        run: |
+          set -eo pipefail
+          shopt -s nullglob
+          server_whls=(dist/memmachine_server-*.whl)
+          if [ ${#server_whls[@]} -ne 1 ]; then
+            echo "Expected one server wheel in dist/, found ${#server_whls[@]}" >&2
+            exit 1
+          fi
+          wheel_version=$(basename "${server_whls[0]}" | cut -d- -f2)
+          reported=$(memmachine-server --version)
+          echo "$reported"
+          grep -qxF "server: ${wheel_version}" <<<"$reported"
 
       - name: Test server package imports
         shell: bash

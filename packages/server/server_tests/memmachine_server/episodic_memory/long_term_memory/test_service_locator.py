@@ -1,20 +1,23 @@
 """Unit tests for service_locator helpers."""
 
-import re
-
 import pytest
 
+from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+    PARTITION_KEY_MAX_BYTES,
+    validate_partition_key,
+)
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     _resolve_user_properties_schema,
     partition_key_for_session,
 )
 
-_PARTITION_KEY_RE = re.compile(r"^[a-z0-9_]+$")
-_PARTITION_KEY_MAX_LEN = 32
-
 
 def _is_valid_partition_key(value: str) -> bool:
-    return bool(_PARTITION_KEY_RE.match(value)) and len(value) <= _PARTITION_KEY_MAX_LEN
+    try:
+        validate_partition_key(value)
+    except ValueError:
+        return False
+    return True
 
 
 def test_partition_key_passes_through_when_already_valid():
@@ -27,15 +30,22 @@ def test_partition_key_hashes_when_session_id_invalid():
     key = partition_key_for_session("Session-Mixed-Case-123")
     assert key != "Session-Mixed-Case-123"
     assert _is_valid_partition_key(key)
-    assert len(key) == _PARTITION_KEY_MAX_LEN
+    assert len(key) == PARTITION_KEY_MAX_BYTES
 
 
 def test_partition_key_hashes_when_too_long():
     long_id = "a" * 64
     key = partition_key_for_session(long_id)
     assert _is_valid_partition_key(key)
-    assert len(key) == _PARTITION_KEY_MAX_LEN
+    assert len(key) == PARTITION_KEY_MAX_BYTES
     assert key != long_id
+
+
+def test_partition_key_hashes_trailing_newline():
+    """`$` matches before a trailing newline; the store's validator decides."""
+    key = partition_key_for_session("abc\n")
+    assert key != "abc\n"
+    assert _is_valid_partition_key(key)
 
 
 def test_partition_key_is_deterministic():
@@ -63,7 +73,7 @@ def test_partition_key_empty_string_passthrough():
     # should be hashed (deterministic 32-hex digest).
     key = partition_key_for_session("")
     assert _is_valid_partition_key(key)
-    assert len(key) == _PARTITION_KEY_MAX_LEN
+    assert len(key) == PARTITION_KEY_MAX_BYTES
 
 
 def test_resolve_user_properties_schema_accepts_normal_keys():

@@ -19,9 +19,13 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+    # ready_for_review is not a default type; it runs the checks a draft skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 jobs:
   test-python-client-package:
+    # A draft pull request skips CI until it is marked ready for review.
+    if: ${{ !github.event.pull_request.draft }}
     name: Test Python Client Package (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15

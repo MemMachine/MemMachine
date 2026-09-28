@@ -8,6 +8,7 @@ from typing import TypeVar
 from neo4j.time import DateTime as _Neo4jDateTime
 
 from memmachine_server.common.data_types import FilterValue, PropertyValue
+from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_graph_store.data_types import (
     PropertyValue as VGSPropertyValue,
 )
@@ -99,6 +100,10 @@ def coerce_datetime_to_timestamp(
     value: FilterValue,
 ) -> FilterValue:
     """Convert filter values into epoch timestamps when appropriate."""
+    # Both branches yield the instant's epoch, never a naive value read
+    # in the server's local zone: filter nodes deliver UTC-aware
+    # datetimes (FilterExpr normalizes at construction; naive means
+    # UTC), and ISO strings become instants here under the same rule.
     if isinstance(value, _dt.datetime):
         return value.timestamp()
     if isinstance(value, str):
@@ -106,7 +111,7 @@ def coerce_datetime_to_timestamp(
             parsed = _dt.datetime.fromisoformat(value)
         except ValueError:
             return value
-        return parsed.timestamp()
+        return ensure_tz_aware(parsed).astimezone(_dt.UTC).timestamp()
     return value
 
 

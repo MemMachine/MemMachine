@@ -106,8 +106,8 @@ def test_init_missing_client():
     """Test initialization fails if client is missing."""
     with pytest.raises(ValidationError):
         OpenAIResponsesLanguageModel(
-            OpenAIResponsesLanguageModelParams(
-                model="test-model",
+            OpenAIResponsesLanguageModelParams.model_validate(
+                {"model": "test-model"},
             ),
         )
 
@@ -116,10 +116,8 @@ def test_init_missing_model():
     """Test initialization fails if model is missing."""
     with pytest.raises(ValidationError):
         OpenAIResponsesLanguageModel(
-            OpenAIResponsesLanguageModelParams(
-                client=openai.AsyncOpenAI(
-                    api_key="test_api_key",
-                ),
+            OpenAIResponsesLanguageModelParams.model_validate(
+                {"client": openai.AsyncOpenAI(api_key="test_api_key")},
             ),
         )
 

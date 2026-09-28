@@ -106,11 +106,7 @@ After installing `memmachine-client`:
 from memmachine_server.rest_client import MemMachineClient, Memory
 
 client = MemMachineClient(base_url="http://localhost:8080")
-memory = client.memory(
-    group_id="my_group",
-    agent_id="my_agent",
-    user_id="user123"
-)
+memory = client.memory(group_id="my_group", agent_id="my_agent", user_id="user123")
 memory.add("I like pizza")
 results = memory.search("What do I like?")
 ```

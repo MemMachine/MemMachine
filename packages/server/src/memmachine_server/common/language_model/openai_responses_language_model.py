@@ -317,7 +317,7 @@ class OpenAIResponsesLanguageModel(LanguageModel):
                 for output in response.output:
                     if output.type != "function_call":
                         continue
-                    function_call = cast(ResponseFunctionToolCall, output)
+                    function_call: ResponseFunctionToolCall = output
                     function_calls_arguments.append(
                         {
                             "call_id": function_call.call_id,

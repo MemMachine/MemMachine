@@ -28,7 +28,7 @@ class SessionDataManager(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def create_new_session(
+    async def create_or_validate_session(
         self,
         session_key: str,
         configuration: dict[str, JsonValue],
@@ -36,7 +36,7 @@ class SessionDataManager(ABC):
         description: str,
         metadata: dict[str, JsonValue],
     ) -> None:
-        """Create a new session entry in the database."""
+        """Create a session, or accept an existing one with matching data."""
         raise NotImplementedError
 
     @abstractmethod

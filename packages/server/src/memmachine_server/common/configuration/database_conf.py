@@ -9,13 +9,14 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 
 from memmachine_server.common.configuration.mixin_confs import (
     ApiKeyMixin,
+    MetricsFactoryIdMixin,
     PasswordMixin,
     WithValueFromEnv,
     YamlSerializableMixin,
 )
 
 
-class Neo4jConf(YamlSerializableMixin, PasswordMixin):
+class Neo4jConf(MetricsFactoryIdMixin, YamlSerializableMixin, PasswordMixin):
     """Configuration options for a Neo4j instance."""
 
     uri: str = Field(default="", description="Neo4j database URI")
@@ -228,7 +229,7 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
         return self.hosts
 
 
-class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
+class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
     """Configuration options for a Qdrant instance."""
 
     host: str = Field(
@@ -250,13 +251,6 @@ class QdrantConf(YamlSerializableMixin, ApiKeyMixin):
     https: bool = Field(
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
-    )
-    is_distributed: bool = Field(
-        default=False,
-        description=(
-            "Whether the Qdrant cluster is running in distributed mode. "
-            "If True, native collections use custom sharding."
-        ),
     )
     registry_replication_factor: int = Field(
         default=1,
@@ -445,6 +439,25 @@ class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
             "When True, test each connection for liveness (via a lightweight "
             "SELECT 1) before checking it out of the pool. Catches connections "
             "that were reset server-side. Internal default is False."
+        ),
+    )
+    command_timeout: float | None = Field(
+        default=60.0,
+        description=(
+            "Seconds a single statement may run before the driver cancels it "
+            "(asyncpg only). Without it a connection whose peer has stopped "
+            "responding is not an error but a wait: the kernel retransmits with "
+            "exponential backoff for around fifteen minutes, and the request - "
+            "including `pool_pre_ping`'s own liveness check, which is written "
+            "into the same dead socket - blocks for all of it. Set to null to "
+            "restore the unbounded behaviour."
+        ),
+    )
+    connect_timeout: float | None = Field(
+        default=10.0,
+        description=(
+            "Seconds to wait for a new connection to be established "
+            "(asyncpg only). Set to null to wait indefinitely."
         ),
     )
 

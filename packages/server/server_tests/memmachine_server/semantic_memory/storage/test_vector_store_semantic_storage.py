@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta, timezone
+
 import numpy as np
 import pytest
 
@@ -30,6 +32,32 @@ def vector_collection() -> InMemoryVectorStoreCollection:
             },
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_older_than_compares_instants_not_wall_clocks(
+    sqlalchemy_sqlite_engine,
+    vector_collection: InMemoryVectorStoreCollection,
+):
+    """A non-UTC-offset bound names an instant on SQLite, not a wall clock.
+
+    created_at is server-generated UTC; the bound below is an instant
+    BEFORE the row's creation whose +08:00 wall clock lies far after it,
+    so comparing wall clocks wrongly selects the row.
+    """
+    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.startup()
+    try:
+        await storage.add_history_to_set(set_id="user", history_id="ep-1")
+
+        cutoff = (datetime.now(UTC) - timedelta(minutes=5)).astimezone(
+            timezone(timedelta(hours=8))
+        )
+        set_ids = {sid async for sid in storage.get_history_set_ids(older_than=cutoff)}
+        assert set_ids == set()
+    finally:
+        await storage.delete_all()
+        await storage.cleanup()
 
 
 @pytest.mark.asyncio

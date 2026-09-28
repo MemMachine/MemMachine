@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, MutableMapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID, uuid5
 
@@ -42,6 +42,7 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
+from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store import Record, VectorStoreCollection
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
@@ -528,7 +529,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
                     select(VectorSemanticSetIngestedHistory.set_id)
                     .where(
                         VectorSemanticSetIngestedHistory.ingested.is_(False),
-                        VectorSemanticSetIngestedHistory.created_at <= older_than,
+                        # created_at is server-generated UTC; normalize the
+                        # bound so SQLite compares instants rather than
+                        # wall clocks.
+                        VectorSemanticSetIngestedHistory.created_at
+                        <= ensure_tz_aware(older_than).astimezone(UTC),
                     )
                     .distinct()
                 )
