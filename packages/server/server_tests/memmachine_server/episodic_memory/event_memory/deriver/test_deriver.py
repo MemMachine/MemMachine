@@ -8,14 +8,21 @@ import pytest
 
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Author,
+    Block,
     Context,
     DateTimeFormat,
+    InjectedBlock,
     Segment,
     TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
 )
 from memmachine_server.episodic_memory.event_memory.deriver import (
     BlockDeriver,
     Deriver,
+)
+from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
+    WholeTextDeriver,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -23,7 +30,7 @@ pytestmark = pytest.mark.asyncio
 _TS = datetime(2026, 1, 15, 10, 30, tzinfo=UTC)
 
 
-def _segment(text: str, *, context=None) -> Segment:
+def _segment(text: str = "hi", *, context=None, block: Block | None = None) -> Segment:
     return Segment(
         uuid=uuid4(),
         event_uuid=uuid4(),
@@ -32,7 +39,7 @@ def _segment(text: str, *, context=None) -> Segment:
         timestamp=_TS,
         source_id="chat",
         context=context if context is not None else Context(),
-        block=TextBlock(text=text),
+        block=block if block is not None else TextBlock(text=text),
     )
 
 
@@ -102,3 +109,14 @@ async def test_handler_receives_the_segment_and_its_block():
     segment = _segment("hi")
     await Deriver([recording]).derive(segment)
     assert recording.calls == [(segment, segment.block)]
+
+
+async def test_the_capture_kinds_derive_nothing_under_the_text_deriver():
+    deriver = Deriver([WholeTextDeriver()])
+    for block in (
+        ToolCallBlock(name="Bash", input={"command": "pytest -q"}),
+        ToolResultBlock(name="Bash", output="4 passed"),
+        InjectedBlock(text="Run the gates.", source="hook"),
+    ):
+        assert await deriver.derive(_segment(block=block)) == []
+    assert await deriver.derive(_segment("run the tests")) != []
