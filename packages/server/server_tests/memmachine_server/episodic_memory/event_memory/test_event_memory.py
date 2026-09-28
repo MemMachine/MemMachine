@@ -36,6 +36,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     QueryHit,
     Segment,
     TextBlock,
+    ThinkingBlock,
     ToolCallBlock,
     ToolResultBlock,
 )
@@ -855,29 +856,35 @@ class TestRender:
         message = _make_segment(
             text="run the tests", timestamp=_ts(0), context=_author("Alice")
         )
+        thinking = _make_segment(
+            block=ThinkingBlock(text="The suite is red."),
+            timestamp=_ts(1),
+            context=_author("Claude"),
+        )
         call = _make_segment(
             block=ToolCallBlock(name="Bash", input={"command": "pytest -q"}),
-            timestamp=_ts(1),
+            timestamp=_ts(2),
             context=_author("Claude"),
         )
         result = _make_segment(
             block=ToolResultBlock(name="Bash", output="1 failed", error=True),
-            timestamp=_ts(2),
+            timestamp=_ts(3),
             context=_author("Claude"),
         )
         injected = _make_segment(
             block=InjectedBlock(text="Run the gates.", source="hook"),
-            timestamp=_ts(3),
+            timestamp=_ts(4),
             context=_author("Alice"),
         )
 
         rendered = EventMemory.render_segments(
-            [message, call, result, injected], datetime_format=_BARE
+            [message, thinking, call, result, injected], datetime_format=_BARE
         )
 
         assert rendered == "\n".join(
             [
                 "Alice: " + json.dumps("run the tests"),
+                "Claude: " + json.dumps("thinking: The suite is red."),
                 "Claude: " + json.dumps('tool_call Bash: {"command":"pytest -q"}'),
                 "Claude: " + json.dumps("tool_result Bash [error]: 1 failed"),
                 "Alice: " + json.dumps("injected hook: Run the gates."),
@@ -900,6 +907,7 @@ class TestCaptureKinds:
         fake_event_memory_store_partition: InMemoryEventMemoryStorePartition,
         fake_vector_store_partition: InMemoryVectorStorePartition,
     ):
+        thinking = ThinkingBlock(text="The suite is red.")
         call = ToolCallBlock(name="Bash", input={"command": "pytest -q"})
         result = ToolResultBlock(name="Bash", output="1 failed", error=True)
         event = Event(
@@ -907,7 +915,7 @@ class TestCaptureKinds:
             timestamp=_T0,
             source_id="src",
             context=_author("Alice"),
-            blocks=[TextBlock(text="run the tests"), call, result],
+            blocks=[TextBlock(text="run the tests"), thinking, call, result],
         )
 
         await event_memory.encode_events([event])
@@ -927,9 +935,13 @@ class TestCaptureKinds:
         hits = await event_memory.query("run the tests")
         assert [hit.seed.block for hit in hits] == [TextBlock(text="run the tests")]
 
-        # The tool events are reached by expanding from it.
-        neighborhood = await event_memory.expand(hits[0].seed.uuid, after=2)
-        assert [segment.block for segment in neighborhood.after] == [call, result]
+        # The reasoning and the tool events are reached by expanding from it.
+        neighborhood = await event_memory.expand(hits[0].seed.uuid, after=3)
+        assert [segment.block for segment in neighborhood.after] == [
+            thinking,
+            call,
+            result,
+        ]
 
 
 # ===================================================================

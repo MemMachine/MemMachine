@@ -127,6 +127,23 @@ class TextBlock(Block):
         return self.text
 
 
+class ThinkingBlock(Block):
+    """The agent's reasoning, as the transcript recorded it.
+
+    This kind declares no segmenter and no deriver: reasoning is one
+    segment however long it is, and it is on the timeline and off the
+    search surface, reached by expansion from a message and never by a
+    query.
+    """
+
+    kind: Literal["thinking"] = "thinking"
+    text: str = Field(description="The reasoning the transcript recorded")
+
+    @override
+    def render(self, datetime_format: DateTimeFormat) -> str | None:
+        return f"thinking: {self.text}"
+
+
 TOOL_NAME_MAX_BYTES = 255
 """Bound on the name of a tool a block names, in bytes, as on a source id."""
 
@@ -217,7 +234,7 @@ class InjectedBlock(Block):
 
 
 RegisteredBlock = Annotated[
-    TextBlock | ToolCallBlock | ToolResultBlock | InjectedBlock,
+    TextBlock | ThinkingBlock | ToolCallBlock | ToolResultBlock | InjectedBlock,
     Field(discriminator="kind"),
 ]
 """The union of registered block kinds; closed over the built-in kinds

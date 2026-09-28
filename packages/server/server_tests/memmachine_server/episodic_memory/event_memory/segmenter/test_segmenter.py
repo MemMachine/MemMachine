@@ -13,6 +13,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
     InjectedBlock,
     TextBlock,
+    ThinkingBlock,
     ToolCallBlock,
     ToolResultBlock,
 )
@@ -136,6 +137,7 @@ async def test_handler_receives_the_event_and_its_block():
 
 async def test_the_capture_kinds_are_one_segment_each_beside_split_text():
     long_output = "tool output line\n" * 500
+    thinking = ThinkingBlock(text="The suite is red. " * 200)
     call = ToolCallBlock(name="Bash", input={"command": "pytest -q"})
     result = ToolResultBlock(name="Bash", output=long_output)
     injected = InjectedBlock(text="Run the gates. " * 100, source="hook")
@@ -143,7 +145,13 @@ async def test_the_capture_kinds_are_one_segment_each_beside_split_text():
         uuid=uuid4(),
         timestamp=_TS,
         source_id="chat",
-        blocks=[TextBlock(text="run the tests. " * 100), call, result, injected],
+        blocks=[
+            TextBlock(text="run the tests. " * 100),
+            thinking,
+            call,
+            result,
+            injected,
+        ],
     )
 
     segments = await Segmenter([TextSegmenter(max_chunk_length=50)]).segment(event)
@@ -152,7 +160,8 @@ async def test_the_capture_kinds_are_one_segment_each_beside_split_text():
     # pass through whole, however long.
     assert len([s for s in segments if s.index == 0]) > 1
     assert [(s.index, s.offset, s.block) for s in segments if s.index > 0] == [
-        (1, 0, call),
-        (2, 0, result),
-        (3, 0, injected),
+        (1, 0, thinking),
+        (2, 0, call),
+        (3, 0, result),
+        (4, 0, injected),
     ]
