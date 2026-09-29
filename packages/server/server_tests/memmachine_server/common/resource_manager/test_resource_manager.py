@@ -3,10 +3,12 @@
 import asyncio
 import gc
 import weakref
+from datetime import timedelta
 from unittest.mock import AsyncMock, create_autospec, patch
 
 import pytest
 from pydantic import SecretStr
+from sqlalchemy import inspect
 
 from memmachine_server.common.configuration import (
     Configuration,
@@ -45,6 +47,7 @@ from memmachine_server.common.resource_manager.resource_manager import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.sql_lease_lock import SqlLeaseRWLockService
 from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 
 RERANKER_ID = "my_reranker"
@@ -191,6 +194,51 @@ def test_resource_manager_config_property(invalid_configure):
     """Test that config property returns the configuration."""
     resource_manager = ResourceManagerImpl(invalid_configure)
     assert resource_manager.config == invalid_configure
+
+
+@pytest.mark.asyncio
+async def test_sql_lock_service_uses_session_database_and_is_shared(
+    invalid_configure, tmp_path
+):
+    """Concurrent callers get one ready service backed by the session database."""
+    invalid_configure.session_manager.database = SQLDB_ID
+    invalid_configure.resources.databases.relational_db_confs = {
+        SQLDB_ID: SqlAlchemyConf(
+            dialect="sqlite", driver="aiosqlite", path=str(tmp_path / "session.db")
+        ),
+        "other": SqlAlchemyConf(
+            dialect="sqlite", driver="aiosqlite", path=str(tmp_path / "other.db")
+        ),
+    }
+    resource_manager = ResourceManagerImpl(invalid_configure)
+    try:
+        first, second = await asyncio.gather(
+            resource_manager.get_sql_lock_service(),
+            resource_manager.get_sql_lock_service(),
+        )
+        assert isinstance(first, SqlLeaseRWLockService)
+        assert first is second
+
+        lease = await first.try_acquire_write(
+            "resource", lease_duration=timedelta(seconds=10)
+        )
+        assert lease is not None
+        await lease.release()
+
+        session_engine = await resource_manager.get_sql_engine(SQLDB_ID)
+        other_engine = await resource_manager.get_sql_engine("other")
+        async with session_engine.connect() as conn:
+            session_tables = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_table_names()
+            )
+        async with other_engine.connect() as conn:
+            other_tables = await conn.run_sync(
+                lambda sync_conn: inspect(sync_conn).get_table_names()
+            )
+        assert "lease_lock_resource" in session_tables
+        assert "lease_lock_resource" not in other_tables
+    finally:
+        await resource_manager.close()
 
 
 @pytest.mark.asyncio
