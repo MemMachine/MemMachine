@@ -17,7 +17,7 @@ from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 import numpy as np
-from pydantic import BaseModel, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
@@ -100,6 +100,7 @@ class SemanticService:
 
         uningested_message_limit: int = 5
         uningested_time_limit: timedelta = timedelta(minutes=5)
+        missing_episode_grace_period_sec: float = Field(default=30.0, ge=0)
 
         max_features_per_update: int = 50
 
@@ -140,6 +141,7 @@ class SemanticService:
             1,
         )
         self._feature_time_limit = params.uningested_time_limit
+        self._missing_episode_grace_period_sec = params.missing_episode_grace_period_sec
 
         self._ingestion_task: Task | None = None
         self._is_shutting_down = False
@@ -238,6 +240,7 @@ class SemanticService:
             episode.uid: episode.created_at
             for episode in await self._episode_storage.get_episodes(history_ids)
         }
+        registered_at = datetime.now(UTC)
 
         res = await asyncio.gather(
             *[
@@ -246,8 +249,10 @@ class SemanticService:
                     history_id=h_id,
                     # Missing episodes remain queued for ingestion's recovery path.
                     created_at=created_at_by_id.get(h_id),
+                    registered_at=registered_at,
+                    batch_position=position,
                 )
-                for h_id in history_ids
+                for position, h_id in enumerate(history_ids)
             ],
             return_exceptions=True,
         )
@@ -260,6 +265,8 @@ class SemanticService:
         set_ids: Sequence[SetIdT],
         *,
         created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        batch_position: int = 0,
     ) -> None:
         assert len(set_ids) == len(set(set_ids))
         if not set_ids:
@@ -277,6 +284,8 @@ class SemanticService:
                     set_id=set_id,
                     history_id=history_id,
                     created_at=created_at,
+                    registered_at=registered_at,
+                    batch_position=batch_position,
                 )
                 for set_id in set_ids
             ],
@@ -804,6 +813,8 @@ class SemanticService:
                 resource_retriever=self._set_id_resource,
                 history_store=self._episode_storage,
                 max_features_per_update=self._max_features_per_update,
+                missing_episode_grace_period_sec=self._missing_episode_grace_period_sec,
+                debug_fail_loudly=self._debug_fail_loudly,
             ),
         )
 

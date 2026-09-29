@@ -1,6 +1,6 @@
 """History ordering contracts shared by local and integration backends."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import create_autospec
 from uuid import UUID
 
@@ -101,23 +101,77 @@ async def test_history_limit_selects_oldest_episode_times(
     ] == ids[5:]
 
 
-async def test_history_equal_times_use_id_tiebreaker(history_storage: SemanticStorage):
+async def test_history_equal_times_preserve_batch_order(
+    history_storage: SemanticStorage,
+):
     created_at = datetime(2025, 1, 1, tzinfo=UTC)
+    registered_at = datetime.now(UTC)
     ids = [
         UUID("f0000000-0000-4000-8000-000000000000"),
         UUID("00000000-0000-4000-8000-000000000000"),
     ]
-    for history_id in ids:
+    for position, history_id in enumerate(ids):
         await history_storage.add_history_to_set(
-            "ties", history_id, created_at=created_at
+            "ties",
+            history_id,
+            created_at=created_at,
+            registered_at=registered_at,
+            batch_position=position,
         )
 
     assert [
         history_id
         async for history_id in history_storage.get_history_messages(
-            set_ids=["ties"], is_ingested=False, limit=1
+            set_ids=["ties"], is_ingested=False
         )
-    ] == [ids[1]]
+    ] == ids
+
+
+async def test_history_debounce_uses_registration_time(
+    history_storage: SemanticStorage,
+):
+    now = datetime.now(UTC)
+    await history_storage.add_history_to_set(
+        "past",
+        UUID("10000000-0000-4000-8000-000000000000"),
+        created_at=now - timedelta(days=5),
+        registered_at=now,
+    )
+    await history_storage.add_history_to_set(
+        "future",
+        UUID("20000000-0000-4000-8000-000000000000"),
+        created_at=now + timedelta(days=5),
+        registered_at=now,
+    )
+
+    assert [
+        sid
+        async for sid in history_storage.get_history_set_ids(
+            older_than=now - timedelta(minutes=5)
+        )
+    ] == []
+    assert {
+        sid async for sid in history_storage.get_history_set_ids(older_than=now)
+    } == {"past", "future"}
+
+
+async def test_history_order_compares_timestamp_instants(
+    history_storage: SemanticStorage,
+):
+    earlier = UUID("f0000000-0000-4000-8000-000000000000")
+    later = UUID("00000000-0000-4000-8000-000000000000")
+    await history_storage.add_history_to_set(
+        "zones",
+        later,
+        created_at=datetime(2025, 1, 1, 9, tzinfo=timezone(timedelta(hours=5))),
+    )
+    await history_storage.add_history_to_set(
+        "zones", earlier, created_at=datetime(2025, 1, 1, 3, tzinfo=UTC)
+    )
+
+    assert [
+        uid async for uid in history_storage.get_history_messages(set_ids=["zones"])
+    ] == [earlier, later]
 
 
 async def test_history_default_time_is_recent(
@@ -157,8 +211,9 @@ async def test_neo4j_history_query_orders_before_limit():
         )
     ] == []
     query = driver.execute_query.call_args.args[0]
-    assert "ORDER BY h.created_at, h.history_id LIMIT $limit" in " ".join(
-        query.text.split()
+    assert (
+        "ORDER BY coalesce(h.episode_created_at, h.created_at), h.created_at, h.batch_position, h.history_id LIMIT $limit"
+        in " ".join(query.text.split())
     )
     assert driver.execute_query.call_args.kwargs == {
         "set_ids": ["ordered"],
@@ -172,9 +227,14 @@ async def test_neo4j_history_write_preserves_episode_time():
     storage = Neo4jSemanticStorage(driver)
     created_at = datetime(2025, 1, 1, 12, 34, 56, 123456, tzinfo=UTC)
     episode_id = UUID("550e8400-e29b-41d4-a716-446655440001")
+    before = datetime.now(UTC)
     await storage.add_history_to_set("ordered", episode_id, created_at=created_at)
-    assert driver.execute_query.call_args.kwargs == {
+    after = datetime.now(UTC)
+    kwargs = dict(driver.execute_query.call_args.kwargs)
+    assert before <= kwargs.pop("created_at") <= after
+    assert kwargs == {
         "set_id": "ordered",
         "history_id": str(episode_id),
-        "created_at": created_at,
+        "episode_created_at": created_at,
+        "batch_position": 0,
     }

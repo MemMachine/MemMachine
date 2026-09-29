@@ -74,6 +74,7 @@ async def test_add_messages_assigns_uuid_before_calling_memmachine():
             ],
         }
     )
+    assert "uid" not in spec.messages[0].model_dump()
     capturing_memmachine = _CapturingMemMachine()
 
     result = await _add_messages_to(

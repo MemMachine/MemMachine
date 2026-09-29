@@ -1,5 +1,6 @@
 """Tests for the ingestion service using the in-memory semantic storage."""
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest.mock import AsyncMock
@@ -232,12 +233,14 @@ async def test_process_single_set_applies_commands(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("same_timestamp", [False, True])
 async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
     ingestion_service: IngestionService,
     semantic_service: SemanticService,
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     monkeypatch: pytest.MonkeyPatch,
+    same_timestamp: bool,
 ):
     await semantic_service.stop()
     start = datetime(2025, 1, 1, tzinfo=UTC)
@@ -250,12 +253,13 @@ async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
                 content=f"My favorite color is {color}",
                 producer_id="user",
                 producer_role="user",
-                created_at=start + timedelta(hours=index),
+                created_at=start if same_timestamp else start + timedelta(hours=index),
             )
             for index, (prefix, color) in enumerate(zip("fedcba0", colors, strict=True))
         ],
     )
-    await semantic_service.add_messages("colors", [e.uid for e in reversed(episodes)])
+    history_ids = episodes if same_timestamp else list(reversed(episodes))
+    await semantic_service.add_messages("colors", [e.uid for e in history_ids])
     seen_messages: list[str] = []
 
     async def update_color(*, message_content: str, **_kwargs) -> list[SemanticCommand]:
@@ -720,11 +724,61 @@ async def test_process_single_set_raises_in_debug_mode_for_invalid_ids(
             resource_retriever=resource_retriever.get_resources,
             consolidated_threshold=2,
             debug_fail_loudly=True,
+            missing_episode_grace_period_sec=0,
         )
     )
 
     with pytest.raises(ValueError, match="user-888"):
         await ingestion_service._process_single_set("user-888")
+
+
+@pytest.mark.asyncio
+async def test_debug_mode_defers_transient_missing_episode(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+):
+    missing_id = UUID("550e8400-e29b-41d4-a716-446655449998")
+    await semantic_storage.add_history_to_set("user-888", missing_id)
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+            debug_fail_loudly=True,
+        )
+    )
+
+    await ingestion_service._process_single_set("user-888")
+
+    assert missing_id in await _collect(
+        semantic_storage.get_history_messages(set_ids=["user-888"])
+    )
+
+
+@pytest.mark.asyncio
+async def test_missing_episode_tracking_expires_after_history_is_deleted(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+):
+    missing_id = UUID("550e8400-e29b-41d4-a716-446655449997")
+    await semantic_storage.add_history_to_set("user-888", missing_id)
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+        )
+    )
+    await ingestion_service._process_single_set("user-888")
+    assert missing_id in ingestion_service._missing_episode_first_seen
+
+    await semantic_storage.delete_history([missing_id])
+    ingestion_service._missing_episode_last_seen[missing_id] = time.monotonic() - 120
+    await ingestion_service._process_single_set("user-888")
+
+    assert missing_id not in ingestion_service._missing_episode_first_seen
 
 
 @pytest.mark.asyncio

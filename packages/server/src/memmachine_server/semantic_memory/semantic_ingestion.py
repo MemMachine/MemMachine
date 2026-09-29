@@ -103,6 +103,7 @@ class IngestionService:
         self._debug_fail_loudly = params.debug_fail_loudly
         self._missing_episode_grace_period_sec = params.missing_episode_grace_period_sec
         self._missing_episode_first_seen: dict[UUID, float] = {}
+        self._missing_episode_last_seen: dict[UUID, float] = {}
         self._max_features_per_update = params.max_features_per_update
 
     async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
@@ -135,6 +136,12 @@ class IngestionService:
                 is_ingested=False,
             )
         ]
+        now = time.monotonic()
+        stale_cutoff = now - max(self._missing_episode_grace_period_sec * 2, 60)
+        for history_id, last_seen in list(self._missing_episode_last_seen.items()):
+            if last_seen < stale_cutoff:
+                self._missing_episode_last_seen.pop(history_id, None)
+                self._missing_episode_first_seen.pop(history_id, None)
 
         if len(resources.semantic_categories) == 0:
             logger.debug(
@@ -163,17 +170,13 @@ class IngestionService:
 
         for message in raw_messages:
             self._missing_episode_first_seen.pop(message.uid, None)
+            self._missing_episode_last_seen.pop(message.uid, None)
 
         if len(none_h_ids) != 0:
-            if self._debug_fail_loudly:
-                raise ValueError(
-                    f"Failed to retrieve messages for set_id {set_id} due to invalid episode_ids: {none_h_ids}"
-                )
-
-            now = time.monotonic()
             expired_h_ids = []
             deferred_h_ids = []
             for history_id in none_h_ids:
+                self._missing_episode_last_seen[history_id] = now
                 first_seen = self._missing_episode_first_seen.setdefault(
                     history_id,
                     now,
@@ -182,6 +185,11 @@ class IngestionService:
                     expired_h_ids.append(history_id)
                 else:
                     deferred_h_ids.append(history_id)
+
+            if self._debug_fail_loudly and expired_h_ids:
+                raise ValueError(
+                    f"Failed to retrieve messages for set_id {set_id} due to invalid episode_ids: {expired_h_ids}"
+                )
 
             if deferred_h_ids:
                 logger.warning(
@@ -202,6 +210,7 @@ class IngestionService:
                     )
                     for history_id in expired_h_ids:
                         self._missing_episode_first_seen.pop(history_id, None)
+                        self._missing_episode_last_seen.pop(history_id, None)
                 except Exception:
                     logger.exception(
                         "Failed to delete messages with invalid episode_ids for set_id %s",

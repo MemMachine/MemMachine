@@ -28,7 +28,7 @@ from memmachine_server.common.episode_store import (
     EpisodeEntry,
     EpisodeResponse,
 )
-from memmachine_server.common.errors import ResourceNotFoundError, SessionNotFoundError
+from memmachine_server.common.errors import SessionNotFoundError
 from memmachine_server.common.filter.filter_parser import And as FilterAnd
 from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
 from memmachine_server.common.session_manager.session_data_manager import (
@@ -719,6 +719,7 @@ async def test_add_episodes_writes_to_all_backends_concurrently(
             content="hello",
             producer_id="user",
             producer_role="assistant",
+            metadata={},
         )
     ]
     stored_episodes = [_make_episode(entries[0].uid, session.session_key)]
@@ -792,6 +793,8 @@ async def test_add_episodes_writes_to_all_backends_concurrently(
     assert stored_entries[0].created_at == semantic_episodes[0].created_at
     assert episodic_episodes[0].uid == entries[0].uid
     assert semantic_episodes[0].uid == entries[0].uid
+    assert episodic_episodes[0].metadata is None
+    assert semantic_episodes[0].metadata is None
 
 
 @pytest.mark.asyncio
@@ -852,6 +855,38 @@ async def test_add_episodes_waits_for_started_writes_before_raising(
     with pytest.raises(RuntimeError, match="store write failed"):
         await add_task
     assert episodic_finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_reports_every_failed_write(
+    minimal_conf, patched_resource_manager, caplog
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock(side_effect=RuntimeError("store failed"))
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    episodic_session = MagicMock()
+    episodic_session.add_memory_episodes = AsyncMock(
+        side_effect=ValueError("episodic failed")
+    )
+    episodic_manager = MagicMock()
+    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
+        episodic_session
+    )
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    with pytest.raises(RuntimeError, match="store failed"):
+        await memmachine.add_episodes(
+            DummySessionData("failed-writes"),
+            [EpisodeEntry(content="hello", producer_id="user", producer_role="user")],
+            target_memories=[MemoryType.Episodic],
+        )
+
+    assert "episodic failed" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1015,25 +1050,49 @@ async def test_count_episodes_combines_search_filter(
 
 
 @pytest.mark.asyncio
-async def test_delete_episodes_rejects_missing_id_before_deleting(
+async def test_delete_episodes_cleans_missing_store_id(
     minimal_conf, patched_resource_manager
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(
-        return_value=[SimpleNamespace(uid=_uid("existing-episode"))]
-    )
+    episode_storage.get_episodes = AsyncMock(return_value=[])
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
     )
 
-    with pytest.raises(ResourceNotFoundError, match=str(_uid("missing-episode"))):
-        await memmachine.delete_episodes(
-            [_uid("existing-episode"), _uid("missing-episode")]
-        )
+    await memmachine.delete_episodes([_uid("missing-episode")])
 
-    episode_storage.delete_episodes.assert_not_awaited()
+    episode_storage.get_episodes.assert_not_awaited()
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("missing-episode")])
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_episode_without_episodic_session(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    episode_storage = MagicMock()
+    episode_storage.delete_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    @asynccontextmanager
+    async def missing_session():
+        raise SessionNotFoundError("missing")
+        yield
+
+    episodic_manager = MagicMock()
+    episodic_manager.open_episodic_memory.return_value = missing_session()
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    uid = _uid("missing-episode")
+    await memmachine.delete_episodes([uid], session_data=DummySessionData("missing"))
+
+    episode_storage.delete_episodes.assert_awaited_once_with([uid])
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
 from uuid import UUID
@@ -115,7 +116,11 @@ class SemanticSessionManager:
         self._semantic_config: SemanticConfigStorage = semantic_config_storage
 
     async def _add_single_episode(
-        self, episode: Episode, session_data: SessionData
+        self,
+        episode: Episode,
+        session_data: SessionData,
+        registered_at: datetime,
+        batch_position: int,
     ) -> None:
         episode_metadata: MutableMapping[str, JsonValue] = (
             dict(episode.metadata) if episode.metadata is not None else {}
@@ -128,7 +133,11 @@ class SemanticSessionManager:
             metadata=episode_metadata,
         )
         await self._semantic_service.add_message_to_sets(
-            episode.uid, list(set_ids), created_at=episode.created_at
+            episode.uid,
+            list(set_ids),
+            created_at=episode.created_at,
+            registered_at=registered_at,
+            batch_position=batch_position,
         )
 
     @staticmethod
@@ -150,9 +159,14 @@ class SemanticSessionManager:
         episode_ids = [e.uid for e in episodes]
         assert len(episode_ids) == len(set(episode_ids)), "Episodes must be unique"
 
+        registered_at = datetime.now(UTC)
         async with asyncio.TaskGroup() as tg:
-            for e in episodes:
-                tg.create_task(self._add_single_episode(e, session_data))
+            for position, episode in enumerate(episodes):
+                tg.create_task(
+                    self._add_single_episode(
+                        episode, session_data, registered_at, position
+                    )
+                )
 
     async def search(
         self,
