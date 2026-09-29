@@ -49,6 +49,7 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
+from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -163,6 +164,8 @@ class SetIngestedHistory(BaseSemanticStorage):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    episode_created_at = mapped_column(DateTime(timezone=True), nullable=True)
+    batch_position = mapped_column(Integer, nullable=False, server_default="0")
     ingested = mapped_column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
@@ -439,7 +442,11 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         is_ingested: bool | None = None,
     ) -> AsyncIterator[UUID]:
         stmt = select(SetIngestedHistory.history_id).order_by(
+            func.coalesce(
+                SetIngestedHistory.episode_created_at, SetIngestedHistory.created_at
+            ).asc(),
             SetIngestedHistory.created_at.asc(),
+            SetIngestedHistory.batch_position.asc(),
             SetIngestedHistory.history_id.asc(),
         )
 
@@ -501,11 +508,20 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         history_id: UUID,
         *,
         created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        batch_position: int = 0,
     ) -> None:
+        registration_time = ensure_tz_aware(
+            registered_at or datetime.now(UTC)
+        ).astimezone(UTC)
         stmt = insert(SetIngestedHistory).values(
             set_id=set_id,
             history_id=str(history_id),
-            created_at=created_at or datetime.now(UTC),
+            created_at=registration_time,
+            episode_created_at=ensure_tz_aware(created_at).astimezone(UTC)
+            if created_at is not None
+            else registration_time,
+            batch_position=batch_position,
         )
 
         async with self._create_session() as session:

@@ -146,6 +146,43 @@ async def test_add_message_records_history_and_uningested_counts(
     assert await semantic_service.number_of_uningested([session_id]) == 1
 
 
+async def test_add_message_preserves_equal_timestamp_batch_order(
+    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    session_data,
+):
+    await semantic_service.stop()
+    event_time = datetime(2025, 1, 1, tzinfo=UTC)
+    episodes = await episode_storage.add_episodes(
+        "session_id",
+        [
+            EpisodeEntry(
+                uid=uid,
+                content=str(position),
+                producer_id="user",
+                producer_role="user",
+                created_at=event_time,
+            )
+            for position, uid in enumerate(
+                [
+                    "f0000000-0000-4000-8000-000000000000",
+                    "00000000-0000-4000-8000-000000000000",
+                ]
+            )
+        ],
+    )
+    await session_manager.add_message(session_data=session_data, episodes=episodes)
+
+    profile_id = session_manager._generate_set_id(
+        org_id=session_data.org_id, metadata={}
+    )
+    assert await _collect_history_messages(
+        semantic_storage, set_ids=[profile_id], is_ingested=False
+    ) == [episode.uid for episode in episodes]
+
+
 async def test_add_message_preserves_episode_time_at_storage(
     session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
@@ -172,12 +209,18 @@ async def test_add_message_preserves_episode_time_at_storage(
     for call in add_history.await_args_list:
         assert call.kwargs["history_id"] == episode.uid
         assert call.kwargs.get("created_at") == created_at
+    assert [
+        sid
+        async for sid in semantic_storage.get_history_set_ids(
+            older_than=created_at + timedelta(microseconds=1)
+        )
+    ] == []
     assert (
         len(
             [
                 sid
                 async for sid in semantic_storage.get_history_set_ids(
-                    older_than=created_at + timedelta(microseconds=1)
+                    older_than=datetime.now(UTC)
                 )
             ]
         )
@@ -364,7 +407,9 @@ async def test_add_message_uses_all_isolations(
 
     mock_semantic_service.add_message_to_sets.assert_awaited_once()
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
-    assert kwargs == {"created_at": created_at}
+    assert kwargs["created_at"] == created_at
+    assert kwargs["batch_position"] == 0
+    assert isinstance(kwargs["registered_at"], datetime)
 
     assert args[0] == history_id
     assert set(args[1]) == {profile_id, session_id, user_set_id}
@@ -392,7 +437,9 @@ async def test_add_message_with_session_only_isolation(
 
     mock_semantic_service.add_message_to_sets.assert_awaited_once()
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
-    assert kwargs == {"created_at": created_at}
+    assert kwargs["created_at"] == created_at
+    assert kwargs["batch_position"] == 0
+    assert isinstance(kwargs["registered_at"], datetime)
 
     project_id = mock_session_manager._generate_set_id(
         org_id=session_data.org_id,

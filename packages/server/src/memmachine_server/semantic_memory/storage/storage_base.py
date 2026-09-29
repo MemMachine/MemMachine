@@ -161,8 +161,10 @@ class SemanticStorage(ABC):
         history_id: UUID,
         *,
         created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        batch_position: int = 0,
     ) -> None:
-        """Attach history using its episode creation time, defaulting to now."""
+        """Attach an episode with its event time, registration time, and batch order."""
         raise NotImplementedError
 
     @abstractmethod

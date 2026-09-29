@@ -48,6 +48,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine_server.common.neo4j_utils import coerce_datetime_to_timestamp
+from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -576,7 +577,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         if conditions:
             query.append("WHERE " + " AND ".join(conditions))
         query.append(
-            "RETURN h.history_id AS history_id ORDER BY h.created_at, h.history_id"
+            "RETURN h.history_id AS history_id ORDER BY coalesce(h.episode_created_at, h.created_at), h.created_at, h.batch_position, h.history_id"
         )
         if limit is not None:
             query.append("LIMIT $limit")
@@ -732,16 +733,27 @@ class Neo4jSemanticStorage(SemanticStorage):
         history_id: UUID,
         *,
         created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        batch_position: int = 0,
     ) -> None:
+        registration_time = ensure_tz_aware(
+            registered_at or datetime.now(UTC)
+        ).astimezone(UTC)
         await self._driver.execute_query(
             """
             MERGE (h:SetHistory {set_id: $set_id, history_id: $history_id})
             ON CREATE SET h.is_ingested = false,
-                          h.created_at = $created_at
+                          h.created_at = $created_at,
+                          h.episode_created_at = $episode_created_at,
+                          h.batch_position = $batch_position
             """,
             set_id=set_id,
             history_id=str(history_id),
-            created_at=created_at or datetime.now(UTC),
+            created_at=registration_time,
+            episode_created_at=ensure_tz_aware(created_at).astimezone(UTC)
+            if created_at is not None
+            else registration_time,
+            batch_position=batch_position,
         )
 
     async def delete_history(self, history_ids: Sequence[UUID]) -> None:

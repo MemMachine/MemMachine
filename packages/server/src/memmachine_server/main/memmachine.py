@@ -27,7 +27,6 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.errors import (
     ConfigurationError,
-    ResourceNotFoundError,
     ResourceNotReadyError,
     SessionNotFoundError,
 )
@@ -736,7 +735,8 @@ class MemMachine:
         episodes = [
             Episode(
                 session_key=session_data.session_key,
-                **entry.model_dump(exclude_none=True),
+                metadata=entry.metadata or None,
+                **entry.model_dump(exclude_none=True, exclude={"metadata"}),
             )
             for entry in episode_entries
         ]
@@ -772,9 +772,11 @@ class MemMachine:
                 episode_entries,
             )
         ]
+        task_names = ["episode storage"]
 
         if episodic_memory_manager is not None:
             tasks.append(add_to_episodic_memory())
+            task_names.append("episodic memory")
 
         if semantic_session_manager is not None:
             tasks.append(
@@ -783,11 +785,21 @@ class MemMachine:
                     session_data=session_data,
                 )
             )
+            task_names.append("semantic memory")
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
+        first_error: BaseException | None = None
+        for task_name, result in zip(task_names, results, strict=True):
             if isinstance(result, BaseException):
-                raise result
+                logger.error(
+                    "Failed to add episodes to %s",
+                    task_name,
+                    exc_info=(type(result), result, result.__traceback__),
+                )
+                if first_error is None:
+                    first_error = result
+        if first_error is not None:
+            raise first_error
 
         return episode_ids
 
@@ -1203,15 +1215,6 @@ class MemMachine:
 
         """
         episode_storage = await self._resources.get_episode_storage()
-        existing_episodes = await episode_storage.get_episodes(episode_ids)
-        existing_ids = {episode.uid for episode in existing_episodes}
-        missing_ids = set(episode_ids) - existing_ids
-        if missing_ids:
-            raise ResourceNotFoundError(
-                "Episodic memories not found: "
-                + ", ".join(str(uid) for uid in sorted(missing_ids))
-            )
-
         tasks: list[Coroutine[Any, Any, Any]] = []
 
         if session_data is not None:
@@ -1220,10 +1223,16 @@ class MemMachine:
             )
 
             async def delete_from_episodic_memory() -> None:
-                async with episodic_memory_manager.open_episodic_memory(
-                    session_data.session_key
-                ) as episodic_session:
-                    await episodic_session.delete_episodes(episode_ids)
+                try:
+                    async with episodic_memory_manager.open_episodic_memory(
+                        session_data.session_key
+                    ) as episodic_session:
+                        await episodic_session.delete_episodes(episode_ids)
+                except SessionNotFoundError:
+                    logger.debug(
+                        "No episodic session for %s during idempotent delete",
+                        session_data.session_key,
+                    )
 
             tasks.append(delete_from_episodic_memory())
 

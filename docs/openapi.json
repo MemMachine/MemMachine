@@ -2208,7 +2208,8 @@
             "anyOf": [
               {
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "format": "uuid"
                 },
                 "type": "array"
               },
@@ -2340,6 +2341,7 @@
         "properties": {
           "uid": {
             "type": "string",
+            "format": "uuid",
             "title": "Uid",
             "description": "The unique identifier of the memory message."
           }
@@ -2913,18 +2915,26 @@
             ]
           },
           "episodic_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Episodic Id",
             "description": "\n    The unique ID of the specific episodic memory.\n    ",
-            "default": "",
             "examples": [
-              "123",
-              "345"
+              "550e8400-e29b-41d4-a716-446655440001",
+              "550e8400-e29b-41d4-a716-446655440002"
             ]
           },
           "episodic_ids": {
             "items": {
-              "type": "string"
+              "type": "string",
+              "format": "uuid"
             },
             "type": "array",
             "title": "Episodic Ids",
@@ -2932,11 +2942,11 @@
             "default": [],
             "examples": [
               [
-                "123",
-                "345"
+                "550e8400-e29b-41d4-a716-446655440001",
+                "550e8400-e29b-41d4-a716-446655440002"
               ],
               [
-                "23"
+                "550e8400-e29b-41d4-a716-446655440003"
               ]
             ]
           }
@@ -3206,6 +3216,7 @@
         "properties": {
           "uid": {
             "type": "string",
+            "format": "uuid",
             "title": "Uid",
             "description": "Unique identifier for the episode."
           },
@@ -3409,6 +3420,7 @@
           },
           "uid": {
             "type": "string",
+            "format": "uuid",
             "title": "Uid",
             "description": "Unique identifier for the episode."
           },
@@ -4415,7 +4427,8 @@
             "anyOf": [
               {
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "format": "uuid"
                 },
                 "type": "array"
               },
@@ -5909,6 +5922,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

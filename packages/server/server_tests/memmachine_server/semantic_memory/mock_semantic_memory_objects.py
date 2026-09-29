@@ -174,6 +174,8 @@ class MockSemanticStorage(SemanticStorage):
         history_id: UUID,
         *,
         created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        batch_position: int = 0,
     ) -> None:
         raise NotImplementedError
 
