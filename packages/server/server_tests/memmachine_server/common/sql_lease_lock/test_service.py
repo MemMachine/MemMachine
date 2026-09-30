@@ -16,17 +16,17 @@ from memmachine_server.common.sql_lease_lock import (
     LockAcquireTimeout,
     SqlLeaseRWLockService,
 )
-from memmachine_server.common.sql_lease_lock._store import SqlLeaseStore
+from memmachine_server.common.sql_lease_lock._store import SQLLeaseStore
 
 
 @asynccontextmanager
-async def two_stores(path: Path) -> AsyncIterator[tuple[SqlLeaseStore, SqlLeaseStore]]:
+async def two_stores(path: Path) -> AsyncIterator[tuple[SQLLeaseStore, SQLLeaseStore]]:
     uri = f"sqlite+aiosqlite:///{path}"
     first_engine = create_async_engine(uri)
     second_engine = create_async_engine(uri)
     try:
-        first = SqlLeaseStore(first_engine)
-        second = SqlLeaseStore(second_engine)
+        first = SQLLeaseStore(first_engine)
+        second = SQLLeaseStore(second_engine)
         await first.startup()
         yield first, second
     finally:
@@ -35,30 +35,28 @@ async def two_stores(path: Path) -> AsyncIterator[tuple[SqlLeaseStore, SqlLeaseS
 
 
 @pytest.mark.asyncio
-async def test_readers_share_a_key_and_block_writers(tmp_path: Path) -> None:
+async def test_exclusive_grant_blocks_same_key_but_not_other_key(
+    tmp_path: Path,
+) -> None:
     async with two_stores(tmp_path / "locks.db") as (first, second):
-        read_a = await first.try_acquire("resource", "read", 2_000)
-        read_b = await second.try_acquire("resource", "read", 2_000)
-        assert read_a is not None
-        assert read_b is not None
-        assert read_a.lease_id != read_b.lease_id
-        assert read_b.fencing_token > read_a.fencing_token
-        assert await first.try_acquire("resource", "write", 2_000) is None
-        assert await first.release("resource", read_a.lease_id)
-        assert await second.try_acquire("resource", "write", 2_000) is None
-        assert await second.release("resource", read_b.lease_id)
-        writer = await first.try_acquire("resource", "write", 2_000)
-        assert writer is not None
-        assert writer.fencing_token > read_b.fencing_token
-        assert await second.try_acquire("resource", "read", 2_000) is None
+        first_grant = await first.try_acquire("resource", 2_000)
+        assert first_grant is not None
+        assert await second.try_acquire("resource", 2_000) is None
+        assert await second.try_acquire("other", 2_000) is not None
+        assert await first.release("resource", first_grant.lease_id)
+        replacement = await second.try_acquire("resource", 2_000)
+        assert replacement is not None
+        assert replacement.fencing_token > first_grant.fencing_token
 
 
 @pytest.mark.asyncio
-async def test_simultaneous_writers_cannot_both_acquire(tmp_path: Path) -> None:
+async def test_simultaneous_acquires_cannot_both_grant_missing_key(
+    tmp_path: Path,
+) -> None:
     async with two_stores(tmp_path / "locks.db") as (first, second):
         grants = await asyncio.gather(
-            first.try_acquire("resource", "write", 2_000),
-            second.try_acquire("resource", "write", 2_000),
+            first.try_acquire("resource", 2_000),
+            second.try_acquire("resource", 2_000),
         )
         assert sum(grant is not None for grant in grants) == 1
 
@@ -68,12 +66,12 @@ async def test_expired_lease_is_replaced_and_old_holder_loses_it(
     tmp_path: Path,
 ) -> None:
     async with two_stores(tmp_path / "locks.db") as (first, second):
-        old = await first.try_acquire("resource", "write", 100)
-        other_key = await second.try_acquire("other", "write", 2_000)
+        old = await first.try_acquire("resource", 100)
+        other_key = await second.try_acquire("other", 2_000)
         assert old is not None
         assert other_key is not None
         await asyncio.sleep(0.2)
-        replacement = await second.try_acquire("resource", "write", 2_000)
+        replacement = await second.try_acquire("resource", 2_000)
         assert replacement is not None
         assert replacement.fencing_token > old.fencing_token
         assert await first.renew("resource", old.lease_id, 2_000) is None
@@ -84,9 +82,9 @@ async def test_expired_lease_is_replaced_and_old_holder_loses_it(
 async def test_database_error_is_not_reported_as_contention(tmp_path: Path) -> None:
     async with two_stores(tmp_path / "locks.db") as (first, _second):
         async with first._engine.begin() as conn:
-            await conn.execute(text("DROP TABLE lease_lock_holder"))
+            await conn.execute(text("DROP TABLE lease_lock"))
         with pytest.raises(OperationalError):
-            await first.try_acquire("resource", "read", 2_000)
+            await first.try_acquire("resource", 2_000)
 
 
 @pytest.mark.asyncio
