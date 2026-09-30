@@ -164,6 +164,7 @@ class SQLLeaseLockService:
         owner: asyncio.Task[object],
         interval: float,
         errors: list[Exception],
+        owner_cancellations: list[bool],
     ) -> None:
         while not stop_renewal.is_set():
             try:
@@ -178,6 +179,9 @@ class SQLLeaseLockService:
                 await lease.renew()
             except Exception as err:
                 errors.append(err)
+                if stop_renewal.is_set():
+                    return
+                owner_cancellations.append(True)
                 owner.cancel()
                 return
 
@@ -194,6 +198,7 @@ class SQLLeaseLockService:
             raise RuntimeError("A lock context requires an asyncio task")
         stop_renewal = asyncio.Event()
         renewal_errors: list[Exception] = []
+        owner_cancellations: list[bool] = []
         renewal_task = asyncio.create_task(
             self._renew_loop(
                 lease,
@@ -201,6 +206,7 @@ class SQLLeaseLockService:
                 owner,
                 lease_duration.total_seconds() / 3,
                 renewal_errors,
+                owner_cancellations,
             )
         )
         body_error: BaseException | None = None
@@ -217,6 +223,10 @@ class SQLLeaseLockService:
             raise
         finally:
             stop_renewal.set()
+            if owner_cancellations:
+                # The renewal loop issued one cancel request. Remove only that
+                # request when this context substitutes its renewal error.
+                owner.uncancel()
             await renewal_task
             try:
                 await lease.release()

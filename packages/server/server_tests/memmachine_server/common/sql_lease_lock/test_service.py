@@ -413,3 +413,67 @@ async def test_context_reports_renewal_failure_even_if_body_swallows_cancel(
 
         with pytest.raises(RuntimeError, match="renewal failed"):
             await work()
+
+
+@pytest.mark.asyncio
+async def test_renewal_failure_during_exit_reports_error_and_releases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        renew_started = asyncio.Event()
+        finish_renewal = asyncio.Event()
+        body_finished = asyncio.Event()
+
+        async def work() -> None:
+            async with service.lock(
+                "resource", lease_duration=timedelta(milliseconds=120)
+            ) as lease:
+
+                async def failing_renew() -> None:
+                    renew_started.set()
+                    await finish_renewal.wait()
+                    raise RuntimeError("renew failed during exit")
+
+                monkeypatch.setattr(lease, "renew", failing_renew)
+                await renew_started.wait()
+                body_finished.set()
+
+        task = asyncio.create_task(work())
+        await body_finished.wait()
+        assert not task.done()
+        finish_renewal.set()
+        with pytest.raises(RuntimeError, match="renew failed during exit"):
+            await task
+        replacement = await service.try_acquire(
+            "resource", lease_duration=timedelta(seconds=1)
+        )
+        assert replacement is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outside_cancel", [False, True])
+async def test_renewal_failure_restores_only_its_cancellation_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outside_cancel: bool
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+
+        async def work() -> int:
+            owner = asyncio.current_task()
+            assert owner is not None
+            try:
+                async with service.lock(
+                    "resource", lease_duration=timedelta(milliseconds=120)
+                ) as lease:
+
+                    async def failing_renew() -> None:
+                        if outside_cancel:
+                            owner.cancel()
+                        raise LeaseLostError("renewal lost the lease")  # noqa: TRY301
+
+                    monkeypatch.setattr(lease, "renew", failing_renew)
+                    await asyncio.sleep(0.3)
+            except LeaseLostError:
+                return owner.cancelling()
+            pytest.fail("renewal failure was not reported")
+
+        assert await asyncio.create_task(work()) == int(outside_cancel)
