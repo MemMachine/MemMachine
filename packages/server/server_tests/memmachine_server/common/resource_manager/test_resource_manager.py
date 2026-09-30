@@ -47,7 +47,7 @@ from memmachine_server.common.resource_manager.resource_manager import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
-from memmachine_server.common.sql_lease_lock import SqlLeaseRWLockService
+from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 
 RERANKER_ID = "my_reranker"
@@ -216,10 +216,10 @@ async def test_sql_lock_service_uses_session_database_and_is_shared(
             resource_manager.get_sql_lock_service(),
             resource_manager.get_sql_lock_service(),
         )
-        assert isinstance(first, SqlLeaseRWLockService)
+        assert isinstance(first, SQLLeaseLockService)
         assert first is second
 
-        lease = await first.try_acquire_write(
+        lease = await first.try_acquire(
             "resource", lease_duration=timedelta(seconds=10)
         )
         assert lease is not None
@@ -235,8 +235,8 @@ async def test_sql_lock_service_uses_session_database_and_is_shared(
             other_tables = await conn.run_sync(
                 lambda sync_conn: inspect(sync_conn).get_table_names()
             )
-        assert "lease_lock_resource" in session_tables
-        assert "lease_lock_resource" not in other_tables
+        assert "lease_lock" in session_tables
+        assert "lease_lock" not in other_tables
     finally:
         await resource_manager.close()
 

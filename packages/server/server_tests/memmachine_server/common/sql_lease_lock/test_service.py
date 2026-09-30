@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from memmachine_server.common.sql_lease_lock import (
     LeaseLostError,
     LockAcquireTimeout,
-    SqlLeaseRWLockService,
+    SQLLeaseLockService,
 )
 from memmachine_server.common.sql_lease_lock._store import SQLLeaseStore
 
@@ -91,19 +91,19 @@ async def test_database_error_is_not_reported_as_contention(tmp_path: Path) -> N
 async def test_public_service_validates_key_and_duration(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}")
     try:
-        service = SqlLeaseRWLockService(engine)
+        service = SQLLeaseLockService(engine)
         await service.startup()
         with pytest.raises(ValueError, match="resource key"):
-            await service.try_acquire_read("", lease_duration=timedelta(seconds=1))
+            await service.try_acquire("", lease_duration=timedelta(seconds=1))
         with pytest.raises(ValueError, match="lease duration"):
-            await service.try_acquire_write("resource", lease_duration=timedelta(0))
+            await service.try_acquire("resource", lease_duration=timedelta(0))
         with pytest.raises(ValueError, match="lease duration"):
-            await service.try_acquire_read(
+            await service.try_acquire(
                 "resource", lease_duration=timedelta(milliseconds=-1)
             )
         async with engine.connect() as conn:
             count = (
-                await conn.execute(text("SELECT COUNT(*) FROM lease_lock_resource"))
+                await conn.execute(text("SELECT COUNT(*) FROM lease_lock"))
             ).scalar_one()
         assert count == 0
     finally:
@@ -116,33 +116,30 @@ async def test_public_lease_renewal_and_release(tmp_path: Path) -> None:
     first_engine = create_async_engine(uri)
     second_engine = create_async_engine(uri)
     try:
-        first = SqlLeaseRWLockService(first_engine)
-        second = SqlLeaseRWLockService(second_engine)
+        first = SQLLeaseLockService(first_engine)
+        second = SQLLeaseLockService(second_engine)
         await first.startup()
-        read = await first.try_acquire_read(
+        lease = await first.try_acquire(
             "resource", lease_duration=timedelta(milliseconds=300)
         )
-        assert read is not None
-        assert read.mode == "read"
-        original_expiry = read.expires_at
+        assert lease is not None
+        original_expiry = lease.expires_at
         await asyncio.sleep(0.15)
-        await read.renew()
-        assert read.expires_at > original_expiry
+        await lease.renew()
+        assert lease.expires_at > original_expiry
         await asyncio.sleep(0.2)
         assert (
-            await second.try_acquire_write(
-                "resource", lease_duration=timedelta(seconds=1)
-            )
+            await second.try_acquire("resource", lease_duration=timedelta(seconds=1))
             is None
         )
-        await read.release()
+        await lease.release()
         with pytest.raises(LeaseLostError):
-            await read.release()
-        writer = await second.try_acquire_write(
+            await lease.release()
+        replacement = await second.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
-        assert writer is not None
-        assert writer.fencing_token > read.fencing_token
+        assert replacement is not None
+        assert replacement.fencing_token > lease.fencing_token
     finally:
         await first_engine.dispose()
         await second_engine.dispose()
@@ -154,15 +151,15 @@ async def test_expired_public_handle_cannot_touch_replacement(tmp_path: Path) ->
     first_engine = create_async_engine(uri)
     second_engine = create_async_engine(uri)
     try:
-        first = SqlLeaseRWLockService(first_engine)
-        second = SqlLeaseRWLockService(second_engine)
+        first = SQLLeaseLockService(first_engine)
+        second = SQLLeaseLockService(second_engine)
         await first.startup()
-        old = await first.try_acquire_write(
+        old = await first.try_acquire(
             "resource", lease_duration=timedelta(milliseconds=100)
         )
         assert old is not None
         await asyncio.sleep(0.2)
-        replacement = await second.try_acquire_write(
+        replacement = await second.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert replacement is not None
@@ -171,9 +168,7 @@ async def test_expired_public_handle_cannot_touch_replacement(tmp_path: Path) ->
         with pytest.raises(LeaseLostError):
             await old.release()
         assert (
-            await first.try_acquire_read(
-                "resource", lease_duration=timedelta(seconds=1)
-            )
+            await first.try_acquire("resource", lease_duration=timedelta(seconds=1))
             is None
         )
     finally:
@@ -184,10 +179,10 @@ async def test_expired_public_handle_cannot_touch_replacement(tmp_path: Path) ->
 @asynccontextmanager
 async def one_service(
     path: Path,
-) -> AsyncIterator[tuple[SqlLeaseRWLockService, AsyncEngine]]:
+) -> AsyncIterator[tuple[SQLLeaseLockService, AsyncEngine]]:
     engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
     try:
-        service = SqlLeaseRWLockService(engine)
+        service = SQLLeaseLockService(engine)
         await service.startup()
         yield service, engine
     finally:
@@ -197,12 +192,12 @@ async def one_service(
 @pytest.mark.asyncio
 async def test_waiting_acquire_gets_lock_after_release(tmp_path: Path) -> None:
     async with one_service(tmp_path / "locks.db") as (service, _engine):
-        holder = await service.try_acquire_write(
+        holder = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert holder is not None
         waiter = asyncio.create_task(
-            service.acquire_read(
+            service.acquire(
                 "resource",
                 lease_duration=timedelta(seconds=1),
                 wait_timeout=timedelta(seconds=1),
@@ -212,44 +207,44 @@ async def test_waiting_acquire_gets_lock_after_release(tmp_path: Path) -> None:
         assert not waiter.done()
         await holder.release()
         granted = await waiter
-        assert granted.mode == "read"
+        assert granted.lease_id != holder.lease_id
         await granted.release()
 
 
 @pytest.mark.asyncio
 async def test_wait_timeout_and_waiter_cancellation(tmp_path: Path) -> None:
     async with one_service(tmp_path / "locks.db") as (service, _engine):
-        holder = await service.try_acquire_write(
+        holder = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert holder is not None
         with pytest.raises(LockAcquireTimeout):
-            await service.acquire_read(
+            await service.acquire(
                 "resource",
                 lease_duration=timedelta(seconds=1),
                 wait_timeout=timedelta(0),
             )
         with pytest.raises(LockAcquireTimeout):
-            await service.acquire_read(
+            await service.acquire(
                 "resource",
                 lease_duration=timedelta(seconds=1),
                 wait_timeout=timedelta(milliseconds=50),
             )
         with pytest.raises(ValueError, match="wait timeout"):
-            await service.acquire_read(
+            await service.acquire(
                 "resource",
                 lease_duration=timedelta(seconds=1),
                 wait_timeout=timedelta(milliseconds=-1),
             )
         waiter = asyncio.create_task(
-            service.acquire_read("resource", lease_duration=timedelta(seconds=1))
+            service.acquire("resource", lease_duration=timedelta(seconds=1))
         )
         await asyncio.sleep(0.05)
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
         await holder.release()
-        replacement = await service.try_acquire_write(
+        replacement = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert replacement is not None
@@ -258,18 +253,18 @@ async def test_wait_timeout_and_waiter_cancellation(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_context_renews_and_releases(tmp_path: Path) -> None:
     async with one_service(tmp_path / "locks.db") as (service, _engine):
-        async with service.read_lock(
+        async with service.lock(
             "resource", lease_duration=timedelta(milliseconds=120)
         ) as lease:
             await asyncio.sleep(0.3)
             assert lease.expires_at is not None
             assert (
-                await service.try_acquire_write(
+                await service.try_acquire(
                     "resource", lease_duration=timedelta(seconds=1)
                 )
                 is None
             )
-        writer = await service.try_acquire_write(
+        writer = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert writer is not None
@@ -279,11 +274,11 @@ async def test_context_renews_and_releases(tmp_path: Path) -> None:
 async def test_context_preserves_body_error_and_cleans_up(tmp_path: Path) -> None:
     async with one_service(tmp_path / "locks.db") as (service, _engine):
         with pytest.raises(RuntimeError, match="body failed"):
-            async with service.write_lock(
+            async with service.lock(
                 "resource", lease_duration=timedelta(seconds=1)
             ) as _lease:
                 raise RuntimeError("body failed")
-        next_holder = await service.try_acquire_write(
+        next_holder = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert next_holder is not None
@@ -295,7 +290,7 @@ async def test_context_cancellation_releases_lock(tmp_path: Path) -> None:
         acquired = asyncio.Event()
 
         async def hold_forever() -> None:
-            async with service.write_lock(
+            async with service.lock(
                 "resource", lease_duration=timedelta(seconds=1)
             ) as _lease:
                 acquired.set()
@@ -306,7 +301,7 @@ async def test_context_cancellation_releases_lock(tmp_path: Path) -> None:
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        next_holder = await service.try_acquire_write(
+        next_holder = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert next_holder is not None
@@ -317,12 +312,14 @@ async def test_context_interrupts_body_when_lease_is_lost(tmp_path: Path) -> Non
     async with one_service(tmp_path / "locks.db") as (service, engine):
 
         async def lose_lease() -> None:
-            async with service.write_lock(
+            async with service.lock(
                 "resource", lease_duration=timedelta(milliseconds=120)
             ) as lease:
                 async with engine.begin() as conn:
                     await conn.execute(
-                        text("DELETE FROM lease_lock_holder WHERE lease_id = :id"),
+                        text(
+                            "UPDATE lease_lock SET lease_id = NULL, expires_at_ms = NULL WHERE lease_id = :id"
+                        ),
                         {"id": lease.lease_id},
                     )
                 await asyncio.sleep(0.3)
@@ -340,15 +337,15 @@ async def test_cancellation_after_sql_grant_releases_lease(
         granted_in_store = asyncio.Event()
         resume_store = asyncio.Event()
 
-        async def delayed_grant(key, mode, duration_ms):
-            result = await real_try_acquire(key, mode, duration_ms)
+        async def delayed_grant(key, duration_ms):
+            result = await real_try_acquire(key, duration_ms)
             granted_in_store.set()
             await resume_store.wait()
             return result
 
         monkeypatch.setattr(service._store, "try_acquire", delayed_grant)
         waiter = asyncio.create_task(
-            service.acquire_read("resource", lease_duration=timedelta(seconds=1))
+            service.acquire("resource", lease_duration=timedelta(seconds=1))
         )
         await granted_in_store.wait()
         waiter.cancel()
@@ -356,7 +353,7 @@ async def test_cancellation_after_sql_grant_releases_lease(
         with pytest.raises(asyncio.CancelledError):
             await waiter
         monkeypatch.setattr(service._store, "try_acquire", real_try_acquire)
-        writer = await service.try_acquire_write(
+        writer = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert writer is not None
@@ -371,7 +368,7 @@ async def test_context_waits_for_in_flight_renewal_before_release(
         finish_renewal = asyncio.Event()
 
         async def use_context() -> None:
-            async with service.write_lock(
+            async with service.lock(
                 "resource", lease_duration=timedelta(milliseconds=120)
             ) as lease:
                 real_renew = lease.renew
@@ -390,7 +387,7 @@ async def test_context_waits_for_in_flight_renewal_before_release(
         assert not task.done()
         finish_renewal.set()
         await task
-        writer = await service.try_acquire_write(
+        writer = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert writer is not None
@@ -403,7 +400,7 @@ async def test_context_reports_renewal_failure_even_if_body_swallows_cancel(
     async with one_service(tmp_path / "locks.db") as (service, _engine):
 
         async def work() -> None:
-            async with service.write_lock(
+            async with service.lock(
                 "resource", lease_duration=timedelta(milliseconds=120)
             ) as lease:
 

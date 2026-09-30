@@ -35,7 +35,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
 from memmachine_server.common.session_manager.session_data_manager_sql_impl import (
     SessionDataManagerSQL,
 )
-from memmachine_server.common.sql_lease_lock import SqlLeaseRWLockService
+from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.episodic_memory_manager import (
@@ -113,7 +113,7 @@ class ResourceManagerImpl:
         )
 
         self._session_data_manager: SessionDataManager | None = None
-        self._sql_lock_service: SqlLeaseRWLockService | None = None
+        self._sql_lock_service: SQLLeaseLockService | None = None
         self._episodic_memory_manager: EpisodicMemoryManager | None = None
 
         self._episode_storage: EpisodeStorage | None = None
@@ -242,7 +242,7 @@ class ResourceManagerImpl:
         assert self._session_data_manager is not None
         return self._session_data_manager
 
-    async def get_sql_lock_service(self) -> SqlLeaseRWLockService:
+    async def get_sql_lock_service(self) -> SQLLeaseLockService:
         """Return the SQL lock service backed by the session database."""
         if self._sql_lock_service is None:
             async with self._sql_lock_service_lock:
@@ -250,7 +250,7 @@ class ResourceManagerImpl:
                     engine = await self.get_sql_engine(
                         self._conf.session_manager.database
                     )
-                    service = SqlLeaseRWLockService(engine)
+                    service = SQLLeaseLockService(engine)
                     await service.startup()
                     self._sql_lock_service = service
         assert self._sql_lock_service is not None
