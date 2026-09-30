@@ -16,9 +16,9 @@ not wire it into `EpisodicMemoryManager` or another consumer.
   `lock(key, *, lease_duration, wait_timeout=None)` as an async context manager.
   Remove read/write methods and the `Lease.mode` property; no production caller
   uses them today.
-- A key has at most one live lease. Different keys can be acquired
-  independently on PostgreSQL. SQLite's write transaction serializes attempts
-  across keys, as it does in the current implementation.
+- A key has at most one live lease. Different keys do not block each other as
+  held locks. New grants briefly serialize through the global token counter
+  on PostgreSQL; SQLite's write transaction already serializes attempts.
 - A waiting caller polls with the existing bounded jitter and may time out or
   be cancelled. Acquisition order is not FIFO; the service makes no fairness
   guarantee among waiters.
@@ -32,21 +32,23 @@ not wire it into `EpisodicMemoryManager` or another consumer.
 
 ## Storage and lifecycle
 
-Replace the resource and holder tables with one `lease_lock` table containing
-`key` (primary key), `generation` (non-null integer), `lease_id` (nullable), and
-`expires_at_ms` (nullable). Resource rows remain after release because deleting
-them would reset the per-key fencing sequence. This is suitable for a bounded
-or stable key set; unbounded ephemeral keys need a separate retention strategy
-before adopting this service.
+Replace the resource and holder tables with a `lease_lock` table containing
+`key` (primary key), `fencing_token` (non-null integer), `lease_id` (nullable),
+and `expires_at_ms` (nullable). A singleton `lease_lock_counter` row holds the
+last issued token. Successful release deletes the key row; reacquiring the key
+receives a higher token from the durable counter. The shared counter briefly
+serializes grants across distinct keys on PostgreSQL. Expired rows whose
+workers never return remain until that key is reacquired; workloads with
+abandoned one-time keys need periodic expiry cleanup.
 
 Each acquire runs in a short transaction. It inserts the key if absent, locks
 its row (`FOR UPDATE` on PostgreSQL; `BEGIN IMMEDIATE` on SQLite), and reads
 database time. A live `lease_id` with future expiry denies acquisition. An
-empty or expired row grants a fresh UUID lease ID, increments `generation`, and
-sets the expiry. Renewal and release lock the same row and succeed only if the
-ID still matches and the lease has not expired. Release clears the ID and
-expiry while preserving `generation`. No SQL transaction remains open while
-the caller runs its task.
+empty or expired row grants a fresh UUID lease ID, atomically increments the
+global counter, and sets the expiry and token. Renewal and release lock the
+same row and succeed only if the ID still matches and the lease has not
+expired. Release deletes the row. Renewal and release never insert a missing
+key. No SQL transaction remains open while the caller runs its task.
 
 The current branch has no production users of the tables and has not landed
 on `main`. This proposal replaces its schema in place; it does not migrate data
