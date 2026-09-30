@@ -15,6 +15,7 @@ from memmachine_server.common.configuration.episodic_config import (
 )
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.episode_store import ContentType, Episode
+from memmachine_server.common.errors import ShortTermMemoryClosedError
 from memmachine_server.common.filter.filter_parser import parse_filter
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.session_manager.session_data_manager import (
@@ -44,6 +45,56 @@ def create_test_episode(**kwargs):
     }
     defaults.update(kwargs)
     return Episode.model_validate(defaults)
+
+
+def gate_summarization(mock_model, monkeypatch) -> tuple[asyncio.Event, asyncio.Event]:
+    """Hold the model inside summarization until released.
+
+    Returns (started, release): `started` is set once the model has been
+    entered, `release` lets it run to completion.
+    """
+    started = asyncio.Event()
+    release = asyncio.Event()
+    generate_response = mock_model.generate_response
+
+    async def blocking_generate_response(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return await generate_response(*args, **kwargs)
+
+    monkeypatch.setattr(mock_model, "generate_response", blocking_generate_response)
+    return started, release
+
+
+def gate_summarization_cancellation(
+    mock_model, monkeypatch
+) -> tuple[asyncio.Event, asyncio.Event, asyncio.Event]:
+    """Hold the model inside summarization until cancelled, then until released.
+
+    Returns (started, cancelled, release): `started` is set once the model has
+    been entered, `cancelled` once that call has been cancelled, and `release`
+    lets it finish stopping. Only the first call is held.
+    """
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release = asyncio.Event()
+    generate_response = mock_model.generate_response
+
+    async def slow_to_cancel_generate_response(*args, **kwargs):
+        if started.is_set():
+            return await generate_response(*args, **kwargs)
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            await release.wait()
+            raise
+
+    monkeypatch.setattr(
+        mock_model, "generate_response", slow_to_cancel_generate_response
+    )
+    return started, cancelled, release
 
 
 class MockShortTermMemoryDataManager(SessionDataManager):
@@ -354,22 +405,13 @@ class TestSessionMemoryPublicAPI:
         self, memory, mock_model, monkeypatch
     ):
         """A waiting writer must not deadlock a query after summarization."""
-        summary_started = asyncio.Event()
-        finish_summary = asyncio.Event()
-        generate_response = mock_model.generate_response
-
-        async def blocking_generate_response(*args, **kwargs):
-            summary_started.set()
-            await finish_summary.wait()
-            return await generate_response(*args, **kwargs)
-
-        monkeypatch.setattr(mock_model, "generate_response", blocking_generate_response)
+        summary_started, finish_summary = gate_summarization(mock_model, monkeypatch)
         summarized_episode = create_test_episode(content="x" * 17)
         query_task = None
         write_task = None
         try:
             await memory.add_episodes([summarized_episode])
-            await summary_started.wait()
+            await asyncio.wait_for(summary_started.wait(), timeout=10)
 
             query_task = asyncio.create_task(
                 memory.get_short_term_memory_context(query="test")
@@ -384,9 +426,11 @@ class TestSessionMemoryPublicAPI:
             assert memory._lock._read_gate.locked()
 
             finish_summary.set()
+            # Generous: the timeout is only ever paid when the deadlock is back,
+            # so a tight budget would only turn a slow runner into a false alarm.
             _, pending = await asyncio.wait(
                 {query_task, write_task},
-                timeout=1,
+                timeout=30,
             )
 
             assert not pending
@@ -402,6 +446,334 @@ class TestSessionMemoryPublicAPI:
             if query_task is not None and not query_task.done():
                 query_task.cancel()
                 await asyncio.gather(query_task, return_exceptions=True)
+            await memory._consolidator.wait_until_done()
+
+    async def test_cancelled_query_does_not_kill_shared_summarization(
+        self, memory, mock_model, monkeypatch
+    ):
+        """One abandoned query must not cancel the worker or other waiters."""
+        summary_started, finish_summary = gate_summarization(mock_model, monkeypatch)
+        try:
+            await memory.add_episodes([create_test_episode(content="x" * 17)])
+            await asyncio.wait_for(summary_started.wait(), timeout=10)
+
+            abandoned = asyncio.create_task(
+                memory.get_short_term_memory_context(query="test")
+            )
+            surviving = asyncio.create_task(
+                memory.get_short_term_memory_context(query="test")
+            )
+            await asyncio.sleep(0)
+            abandoned.cancel()
+            await asyncio.sleep(0)
+
+            finish_summary.set()
+            _, summary = await asyncio.wait_for(surviving, timeout=30)
+            assert summary == "summary:x"
+            assert not memory._consolidator._worker_task.cancelled()
+            assert await memory.get_summary() == "summary:x"
+        finally:
+            finish_summary.set()
+            await memory._consolidator.wait_until_done()
+
+    async def test_clear_memory_discards_the_summary(self, memory):
+        """Clearing must drop the summary, not just the retained episodes."""
+        await memory.add_episodes([create_test_episode(content="x" * 17)])
+        assert await memory.get_summary() == "summary:x"
+
+        await memory.clear_memory()
+
+        episodes, summary = await memory.get_short_term_memory_context(query="test")
+        assert episodes == []
+        assert summary == ""
+
+    async def test_clear_memory_clears_the_persisted_summary(
+        self, memory, short_term_memory_param
+    ):
+        """After clear_memory(), a new instance for the session restores nothing."""
+        await memory.add_episodes([create_test_episode(content="x" * 17)])
+        assert await memory.get_summary() == "summary:x"
+
+        await memory.clear_memory()
+
+        restored = await ShortTermMemory.create(short_term_memory_param)
+        assert await restored.get_summary() == ""
+
+    async def test_clear_memory_cancels_in_flight_summarization(
+        self, memory, short_term_memory_param, mock_model, monkeypatch
+    ):
+        """Clearing must not wait for, or persist, a summary of what it clears."""
+        summary_started, finish_summary = gate_summarization(mock_model, monkeypatch)
+        try:
+            await memory.add_episodes([create_test_episode(content="x" * 17)])
+            await asyncio.wait_for(summary_started.wait(), timeout=10)
+
+            await asyncio.wait_for(memory.clear_memory(), timeout=10)
+
+            assert memory._consolidator._worker_task.cancelled()
+            restored = await ShortTermMemory.create(short_term_memory_param)
+            assert await restored.get_summary() == ""
+        finally:
+            finish_summary.set()
+
+    async def test_clear_memory_failed_save_still_clears_memory(
+        self, memory, mock_data_manager, monkeypatch
+    ):
+        """A failed overwrite of the persisted summary must still leave the
+        instance cleared, and must still raise."""
+        await memory.add_episodes([create_test_episode(content="x" * 17)])
+        assert await memory.get_summary() == "summary:x"
+
+        async def failing_save(*args, **kwargs):
+            raise RuntimeError("database unavailable")
+
+        monkeypatch.setattr(mock_data_manager, "save_short_term_memory", failing_save)
+        with pytest.raises(RuntimeError, match="database unavailable"):
+            await memory.clear_memory()
+
+        assert await memory.get_short_term_memory_context(query="test") == ([], "")
+
+    async def test_clear_behind_a_waiting_query_discards_the_new_summary(
+        self, memory, mock_data_manager, mock_model, monkeypatch
+    ):
+        """A clear queued behind a query that waits on the worker cannot cancel
+        it, so it must discard the summary that worker produces."""
+        summary_started, finish_summary = gate_summarization(mock_model, monkeypatch)
+        try:
+            await memory.add_episodes([create_test_episode(content="x" * 17)])
+            await asyncio.wait_for(summary_started.wait(), timeout=10)
+
+            query = asyncio.create_task(
+                memory.get_short_term_memory_context(query="test")
+            )
+            await asyncio.sleep(0)
+            clear_task = asyncio.create_task(memory.clear_memory())
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            finish_summary.set()
+            await asyncio.wait_for(asyncio.gather(query, clear_task), timeout=30)
+
+            assert await memory.get_short_term_memory_context(query="test") == ([], "")
+            assert mock_data_manager.data["session1"] == ("", 0, 0)
+        finally:
+            finish_summary.set()
+
+    async def test_cancelled_clear_does_not_strand_the_next_batch(
+        self, memory, mock_model, monkeypatch
+    ):
+        """A cancelled clear must keep writes out until the worker it cancelled stops.
+
+        Otherwise an eviction can queue a batch behind the stopping worker:
+        summarize() starts no replacement while that worker still counts as
+        running, and it exits without draining the batch.
+        """
+        started, cancelled, release = gate_summarization_cancellation(
+            mock_model, monkeypatch
+        )
+        try:
+            await memory.add_episodes([create_test_episode(content="x" * 17)])
+            await asyncio.wait_for(started.wait(), timeout=10)
+            stopping_worker = memory._consolidator._worker_task
+
+            clear_task = asyncio.create_task(memory.clear_memory())
+            await asyncio.wait_for(cancelled.wait(), timeout=10)
+            clear_task.cancel()
+            await asyncio.gather(clear_task, return_exceptions=True)
+
+            eviction = asyncio.create_task(
+                memory.add_episodes([create_test_episode(content="y" * 17)])
+            )
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.wait_for(eviction, timeout=30)
+            await asyncio.wait({stopping_worker}, timeout=30)
+            assert stopping_worker.cancelled()
+            await asyncio.wait_for(memory._consolidator.wait_until_done(), timeout=30)
+
+            assert memory._consolidator._pending_episodes == []
+            assert await memory.get_summary() == "summary:y"
+        finally:
+            release.set()
+
+    async def test_cancelled_clear_does_not_cancel_the_next_query(
+        self, memory, mock_model, monkeypatch
+    ):
+        """A cancelled clear must keep reads out until the worker it cancelled stops.
+
+        Otherwise a query waits on the stopping worker, and the shield in
+        wait_until_done() passes the worker's cancellation on to it.
+        """
+        started, cancelled, release = gate_summarization_cancellation(
+            mock_model, monkeypatch
+        )
+        try:
+            await memory.add_episodes([create_test_episode(content="x" * 17)])
+            await asyncio.wait_for(started.wait(), timeout=10)
+
+            clear_task = asyncio.create_task(memory.clear_memory())
+            await asyncio.wait_for(cancelled.wait(), timeout=10)
+            clear_task.cancel()
+            await asyncio.gather(clear_task, return_exceptions=True)
+
+            query = asyncio.create_task(
+                memory.get_short_term_memory_context(query="test")
+            )
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.wait({query}, timeout=30)
+
+            assert not query.cancelled()
+            assert query.result() == ([], "")
+        finally:
+            release.set()
+
+    async def test_clear_cancelled_during_cleanup_still_finishes_it(
+        self, memory, mock_model, mock_data_manager, monkeypatch
+    ):
+        """A clear cancelled while summarization is stopping must still finish
+        clearing, the persisted summary included."""
+        await memory.add_episodes([create_test_episode(content="a" * 17)])
+        assert await memory.get_summary() == "summary:a"
+        started, cancelled, release = gate_summarization_cancellation(
+            mock_model, monkeypatch
+        )
+        try:
+            await memory.add_episodes([create_test_episode(content="x" * 17)])
+            await asyncio.wait_for(started.wait(), timeout=10)
+            stopping_worker = memory._consolidator._worker_task
+
+            clear_task = asyncio.create_task(memory.clear_memory())
+            await asyncio.wait_for(cancelled.wait(), timeout=10)
+            clear_task.cancel()
+            await asyncio.gather(clear_task, return_exceptions=True)
+
+            release.set()
+            await asyncio.wait({stopping_worker}, timeout=30)
+            assert stopping_worker.cancelled()
+
+            episodes, summary = await asyncio.wait_for(
+                memory.get_short_term_memory_context(query="test"), timeout=30
+            )
+            assert episodes == []
+            assert summary == ""
+            assert mock_data_manager.data["session1"] == ("", 0, 0)
+        finally:
+            release.set()
+
+    async def test_clear_queued_before_close_still_runs(
+        self, memory, mock_data_manager
+    ):
+        """A clear already waiting for the lock when close() arrives must still
+        run, the persisted summary included."""
+        await memory.add_episodes([create_test_episode(content="x" * 17)])
+        assert await memory.get_summary() == "summary:x"
+
+        await memory._lock.acquire_read()
+        try:
+            clear_task = asyncio.create_task(memory.clear_memory())
+            await asyncio.sleep(0)
+            close_task = asyncio.create_task(memory.close())
+            await asyncio.sleep(0)
+        finally:
+            memory._lock.release_read()
+        await asyncio.wait_for(asyncio.gather(clear_task, close_task), timeout=30)
+
+        assert mock_data_manager.data["session1"] == ("", 0, 0)
+
+    async def test_calls_queued_before_close_still_run(self, memory):
+        """Calls already waiting for the lock when close() arrives must still
+        run instead of failing as closed."""
+        episode = create_test_episode(content="hello")
+        await memory._lock.acquire_read()
+        try:
+            add = asyncio.create_task(memory.add_episodes([episode]))
+            summary = asyncio.create_task(memory.get_summary())
+            context = asyncio.create_task(
+                memory.get_short_term_memory_context(query="test")
+            )
+            await asyncio.sleep(0)
+            close_task = asyncio.create_task(memory.close())
+            await asyncio.sleep(0)
+        finally:
+            memory._lock.release_read()
+        await asyncio.wait_for(
+            asyncio.gather(add, summary, context, close_task, return_exceptions=True),
+            timeout=30,
+        )
+
+        assert add.result() is False
+        assert summary.result() == ""
+        assert context.result() == ([episode], "")
+
+    async def test_close_persists_in_flight_summarization(
+        self, memory, short_term_memory_param, mock_model, monkeypatch
+    ):
+        """close() waits for summarization, so the next instance restores it.
+
+        With instance_cache_size 0 the instance cache closes an instance when
+        its last reference is released, at the end of nearly every request, so
+        a close that cancelled summarization would lose it.
+        """
+        summary_started, finish_summary = gate_summarization(mock_model, monkeypatch)
+        try:
+            await memory.add_episodes([create_test_episode(content="x" * 17)])
+            await asyncio.wait_for(summary_started.wait(), timeout=10)
+
+            close_task = asyncio.create_task(memory.close())
+            await asyncio.sleep(0)
+            finish_summary.set()
+            await asyncio.wait_for(close_task, timeout=30)
+
+            restored = await ShortTermMemory.create(short_term_memory_param)
+            assert await restored.get_summary() == "summary:x"
+        finally:
+            finish_summary.set()
+
+    async def test_close_cancelled_while_waiting_for_the_lock_still_closes(
+        self, memory
+    ):
+        """A close cancelled before it gets the lock must still close and clear."""
+        await memory.add_episodes([create_test_episode(content="hello")])
+
+        await memory._lock.acquire_read()
+        try:
+            close_task = asyncio.create_task(memory.close())
+            await asyncio.sleep(0)
+            close_task.cancel()
+            await asyncio.gather(close_task, return_exceptions=True)
+        finally:
+            memory._lock.release_read()
+
+        with pytest.raises(ShortTermMemoryClosedError):
+            await memory.add_episodes([create_test_episode(content="z")])
+        await asyncio.wait_for(memory.close(), timeout=30)
+        assert len(memory._memory) == 0
+
+    async def test_close_cancelled_during_cleanup_still_finishes_it(
+        self, memory, mock_model, mock_data_manager, monkeypatch
+    ):
+        """A close cancelled while summarization runs must still close,
+        persist that summary, and finish clearing memory."""
+        summary_started, finish_summary = gate_summarization(mock_model, monkeypatch)
+        try:
+            await memory.add_episodes([create_test_episode(content="x" * 17)])
+            await asyncio.wait_for(summary_started.wait(), timeout=10)
+
+            close_task = asyncio.create_task(memory.close())
+            await asyncio.sleep(0)
+            close_task.cancel()
+            await asyncio.gather(close_task, return_exceptions=True)
+
+            finish_summary.set()
+            await asyncio.wait_for(memory.close(), timeout=30)
+
+            assert len(memory._memory) == 0
+            assert await memory._consolidator.summary == ""
+            assert mock_data_manager.data["session1"][0] == "summary:x"
+            with pytest.raises(ShortTermMemoryClosedError):
+                await memory.add_episodes([create_test_episode(content="z")])
+        finally:
+            finish_summary.set()
             await memory._consolidator.wait_until_done()
 
     @pytest.mark.asyncio
@@ -539,10 +911,10 @@ class TestSessionMemoryPublicAPI:
         assert summary == "summary:abc"
 
         # Test with a tighter message length limit. Episodes are retrieved newest first.
-        # length=7 (summary)
-        # add ep1 (length 6), length=13.
-        # add ep2 (length 6), length=19. Now length >= 19, so loop breaks.
-        # Should return [ep1, ep2]
+        # length=11 ("summary:abc")
+        # add ep3 (length 6), length=17.
+        # ep2 would make 23 > 19, so the loop breaks.
+        # Should return [ep3]
         episodes, summary = await memory.get_short_term_memory_context(
             query="test",
             max_message_length=19,
