@@ -117,8 +117,10 @@ class SQLLeaseLockService:
     """Grant exclusive leases for distributed tasks that outlive SQL transactions.
 
     A key has one live holder, but waiting callers have no FIFO guarantee.
-    Per-key rows remain to keep fencing tokens monotonic. Use bounded or
-    stable key sets; ephemeral keys need a separate retention strategy.
+    Successful release deletes the key row. A durable global counter keeps
+    fencing tokens monotonic when a key is later reacquired. Expired leases
+    whose workers never return leave rows until that key is acquired again;
+    workloads with abandoned one-time keys need periodic expiry cleanup.
     Consumers must check fencing tokens at external side-effect boundaries.
     """
 

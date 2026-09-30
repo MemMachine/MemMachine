@@ -50,6 +50,45 @@ async def test_exclusive_grant_blocks_same_key_but_not_other_key(
 
 
 @pytest.mark.asyncio
+async def test_release_deletes_key_row_and_new_grant_keeps_increasing_token(
+    tmp_path: Path,
+) -> None:
+    async with two_stores(tmp_path / "locks.db") as (first, second):
+        first_grant = await first.try_acquire("ephemeral", 2_000)
+        assert first_grant is not None
+        assert await first.release("ephemeral", first_grant.lease_id)
+        async with first._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text("SELECT COUNT(*) FROM lease_lock WHERE key = 'ephemeral'")
+                )
+            ).scalar_one()
+        assert rows == 0
+        replacement = await second.try_acquire("ephemeral", 2_000)
+        assert replacement is not None
+        assert replacement.fencing_token > first_grant.fencing_token
+
+
+@pytest.mark.asyncio
+async def test_stale_renew_and_release_do_not_recreate_deleted_key(
+    tmp_path: Path,
+) -> None:
+    async with two_stores(tmp_path / "locks.db") as (first, _second):
+        lease = await first.try_acquire("ephemeral", 2_000)
+        assert lease is not None
+        assert await first.release("ephemeral", lease.lease_id)
+        assert await first.renew("ephemeral", lease.lease_id, 2_000) is None
+        assert not await first.release("ephemeral", lease.lease_id)
+        async with first._engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text("SELECT COUNT(*) FROM lease_lock WHERE key = 'ephemeral'")
+                )
+            ).scalar_one()
+        assert rows == 0
+
+
+@pytest.mark.asyncio
 async def test_simultaneous_acquires_cannot_both_grant_missing_key(
     tmp_path: Path,
 ) -> None:

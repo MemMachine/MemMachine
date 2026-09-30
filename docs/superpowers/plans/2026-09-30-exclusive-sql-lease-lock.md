@@ -4,11 +4,15 @@
 
 **Goal:** Provide one exclusive SQL lease per key for distributed tasks that outlive a database transaction.
 
-**Architecture:** A single persistent row per key stores the current holder and a monotonic generation. Short PostgreSQL row-lock or SQLite immediate transactions arbitrate acquisition, renewal, and release. The public service polls for acquisition and renews a context-managed lease.
+**Architecture:** A row per held key stores its lease and token; successful release deletes it. A durable singleton counter issues monotonic tokens. Short PostgreSQL row-lock or SQLite immediate transactions arbitrate changes. The public service polls for acquisition and renews a context-managed lease.
 
 **Tech Stack:** Python 3.12+, SQLAlchemy async, SQLite, PostgreSQL, pytest, Ruff.
 
 **Spec:** `docs/superpowers/specs/2026-09-30-exclusive-sql-lease-lock-design.md`
+
+**Revision:** After the original implementation, the lock now uses a durable
+global counter and deletes key rows on successful release. See the updated
+spec and tests for the final storage contract.
 
 ## Global Constraints
 

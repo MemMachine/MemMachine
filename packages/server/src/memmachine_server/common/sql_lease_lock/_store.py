@@ -8,10 +8,12 @@ from uuid import uuid4
 from sqlalchemy import (
     BigInteger,
     Column,
+    Integer,
     MetaData,
     String,
     Table,
     cast,
+    delete,
     func,
     select,
     update,
@@ -25,9 +27,15 @@ _lease_lock = Table(
     "lease_lock",
     _metadata,
     Column("key", String, primary_key=True),
-    Column("generation", BigInteger, nullable=False),
+    Column("fencing_token", BigInteger, nullable=False),
     Column("lease_id", String, nullable=True),
     Column("expires_at_ms", BigInteger, nullable=True),
+)
+_counter = Table(
+    "lease_lock_counter",
+    _metadata,
+    Column("id", Integer, primary_key=True),
+    Column("value", BigInteger, nullable=False),
 )
 
 
@@ -50,9 +58,15 @@ class SQLLeaseStore:
         self._engine = engine
 
     async def startup(self) -> None:
-        """Create the lock table if it does not already exist."""
+        """Create the lock and durable fencing counter tables."""
         async with self._engine.begin() as conn:
             await conn.run_sync(_metadata.create_all)
+            values = {"id": 1, "value": 0}
+            if self._engine.dialect.name == "sqlite":
+                statement = sqlite_insert(_counter).values(**values)
+            else:
+                statement = pg_insert(_counter).values(**values)
+            await conn.execute(statement.on_conflict_do_nothing(index_elements=["id"]))
 
     @asynccontextmanager
     async def _transaction(self) -> AsyncGenerator[AsyncConnection, None]:
@@ -70,23 +84,36 @@ class SQLLeaseStore:
                 yield conn
 
     async def _lock_resource(
-        self, conn: AsyncConnection, key: str
-    ) -> tuple[int, str | None, int | None]:
-        values = {"key": key, "generation": 0}
-        if self._engine.dialect.name == "sqlite":
-            statement = sqlite_insert(_lease_lock).values(**values)
-        else:
-            statement = pg_insert(_lease_lock).values(**values)
-        await conn.execute(statement.on_conflict_do_nothing(index_elements=["key"]))
+        self, conn: AsyncConnection, key: str, *, create: bool = False
+    ) -> tuple[str | None, int | None] | None:
+        if create:
+            values = {"key": key, "fencing_token": 0}
+            if self._engine.dialect.name == "sqlite":
+                statement = sqlite_insert(_lease_lock).values(**values)
+            else:
+                statement = pg_insert(_lease_lock).values(**values)
+            await conn.execute(statement.on_conflict_do_nothing(index_elements=["key"]))
         query = select(
-            _lease_lock.c.generation,
             _lease_lock.c.lease_id,
             _lease_lock.c.expires_at_ms,
         ).where(_lease_lock.c.key == key)
         if self._engine.dialect.name == "postgresql":
             query = query.with_for_update()
-        row = (await conn.execute(query)).one()
-        return int(row.generation), row.lease_id, row.expires_at_ms
+        row = (await conn.execute(query)).one_or_none()
+        if row is None:
+            return None
+        return row.lease_id, row.expires_at_ms
+
+    async def _next_token(self, conn: AsyncConnection) -> int:
+        token = (
+            await conn.execute(
+                update(_counter)
+                .where(_counter.c.id == 1)
+                .values(value=_counter.c.value + 1)
+                .returning(_counter.c.value)
+            )
+        ).scalar_one()
+        return int(token)
 
     async def _now_ms(self, conn: AsyncConnection) -> int:
         if self._engine.dialect.name == "sqlite":
@@ -102,18 +129,20 @@ class SQLLeaseStore:
         if not key or duration_ms <= 0:
             raise ValueError("key and duration must be valid")
         async with self._transaction() as conn:
-            generation, holder_id, expiry = await self._lock_resource(conn, key)
+            resource = await self._lock_resource(conn, key, create=True)
+            assert resource is not None
+            holder_id, expiry = resource
             now_ms = await self._now_ms(conn)
             if holder_id is not None and expiry is not None and expiry > now_ms:
                 return None
-            token = generation + 1
+            token = await self._next_token(conn)
             lease_id = uuid4().hex
             expires_at_ms = now_ms + duration_ms
             await conn.execute(
                 update(_lease_lock)
                 .where(_lease_lock.c.key == key)
                 .values(
-                    generation=token,
+                    fencing_token=token,
                     lease_id=lease_id,
                     expires_at_ms=expires_at_ms,
                 )
@@ -130,7 +159,10 @@ class SQLLeaseStore:
         if duration_ms <= 0:
             raise ValueError("duration must be positive")
         async with self._transaction() as conn:
-            _, holder_id, expiry = await self._lock_resource(conn, key)
+            resource = await self._lock_resource(conn, key)
+            if resource is None:
+                return None
+            holder_id, expiry = resource
             now_ms = await self._now_ms(conn)
             if holder_id != lease_id or expiry is None or expiry <= now_ms:
                 return None
@@ -143,15 +175,18 @@ class SQLLeaseStore:
             return expires_at_ms
 
     async def release(self, key: str, lease_id: str) -> bool:
-        """Clear a live lease without resetting its fencing generation."""
+        """Delete a live lease row while retaining the global token counter."""
         async with self._transaction() as conn:
-            _, holder_id, expiry = await self._lock_resource(conn, key)
+            resource = await self._lock_resource(conn, key)
+            if resource is None:
+                return False
+            holder_id, expiry = resource
             now_ms = await self._now_ms(conn)
             if holder_id != lease_id or expiry is None or expiry <= now_ms:
                 return False
             await conn.execute(
-                update(_lease_lock)
-                .where(_lease_lock.c.key == key)
-                .values(lease_id=None, expires_at_ms=None)
+                delete(_lease_lock).where(
+                    _lease_lock.c.key == key, _lease_lock.c.lease_id == lease_id
+                )
             )
             return True
