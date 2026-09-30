@@ -22,6 +22,7 @@ from memmachine_server.semantic_memory.storage.storage_base import SemanticStora
 class MockSemanticStorage(SemanticStorage):
     def __init__(self):
         self.get_history_messages_mock = AsyncMock()
+        self.get_history_registration_times_mock = AsyncMock(return_value={})
         self.get_feature_set_mock = AsyncMock()
         self.add_feature_mock = AsyncMock()
         self.add_citations_mock = AsyncMock()
@@ -159,6 +160,11 @@ class MockSemanticStorage(SemanticStorage):
         )
         for message in messages:
             yield message
+
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        return await self.get_history_registration_times_mock(set_id, history_ids)
 
     async def get_history_messages_count(
         self,

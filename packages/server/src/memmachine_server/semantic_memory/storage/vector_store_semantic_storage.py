@@ -462,6 +462,25 @@ class VectorStoreSemanticStorage(SemanticStorage):
             result = await session.execute(stmt)
             return int(result.scalar_one())
 
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        if not history_ids:
+            return {}
+        stmt = select(
+            VectorSemanticSetIngestedHistory.history_id,
+            VectorSemanticSetIngestedHistory.created_at,
+        ).where(
+            VectorSemanticSetIngestedHistory.set_id == set_id,
+            VectorSemanticSetIngestedHistory.history_id.in_(map(str, history_ids)),
+        )
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            return {
+                UUID(history_id): ensure_tz_aware(created_at).astimezone(UTC)
+                for history_id, created_at in result
+            }
+
     async def add_history_to_set(
         self,
         set_id: SetIdT,

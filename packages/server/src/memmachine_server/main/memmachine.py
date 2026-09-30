@@ -792,7 +792,8 @@ class MemMachine:
         for task_name, result in zip(task_names, results, strict=True):
             if isinstance(result, BaseException):
                 logger.error(
-                    "Failed to add episodes to %s",
+                    "Failed to add episodes %s to %s",
+                    episode_ids,
                     task_name,
                     exc_info=(type(result), result, result.__traceback__),
                 )

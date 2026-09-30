@@ -879,14 +879,16 @@ async def test_add_episodes_reports_every_failed_write(
         return_value=episodic_manager
     )
 
+    entry = EpisodeEntry(content="hello", producer_id="user", producer_role="user")
     with pytest.raises(RuntimeError, match="store failed"):
         await memmachine.add_episodes(
             DummySessionData("failed-writes"),
-            [EpisodeEntry(content="hello", producer_id="user", producer_role="user")],
+            [entry],
             target_memories=[MemoryType.Episodic],
         )
 
     assert "episodic failed" in caplog.text
+    assert str(entry.uid) in caplog.text
 
 
 @pytest.mark.asyncio

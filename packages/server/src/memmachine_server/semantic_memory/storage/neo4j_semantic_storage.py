@@ -47,7 +47,10 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine_server.common.neo4j_utils import coerce_datetime_to_timestamp
+from memmachine_server.common.neo4j_utils import (
+    coerce_datetime_to_timestamp,
+    value_from_neo4j,
+)
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
@@ -588,6 +591,27 @@ class Neo4jSemanticStorage(SemanticStorage):
         )
         for record in records:
             yield UUID(record["history_id"])
+
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        if not history_ids:
+            return {}
+        records, _, _ = await self._driver.execute_query(
+            """
+            MATCH (h:SetHistory {set_id: $set_id})
+            WHERE h.history_id IN $history_ids
+            RETURN h.history_id AS history_id, h.created_at AS created_at
+            """,
+            set_id=set_id,
+            history_ids=[str(history_id) for history_id in history_ids],
+        )
+        return {
+            UUID(record["history_id"]): ensure_tz_aware(
+                cast(datetime, value_from_neo4j(record["created_at"]))
+            ).astimezone(UTC)
+            for record in records
+        }
 
     async def get_history_messages_count(
         self,

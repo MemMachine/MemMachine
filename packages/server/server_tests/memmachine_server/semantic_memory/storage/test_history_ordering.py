@@ -66,6 +66,22 @@ def history_storage(request: pytest.FixtureRequest) -> SemanticStorage:
     return request.getfixturevalue(request.param)
 
 
+async def test_history_registration_times_are_scoped_to_set(
+    history_storage: SemanticStorage,
+):
+    history_id = UUID("10000000-0000-4000-8000-000000000000")
+    other_id = UUID("20000000-0000-4000-8000-000000000000")
+    registered_at = datetime(2025, 1, 1, tzinfo=timezone(timedelta(hours=5)))
+    await history_storage.add_history_to_set(
+        "target", history_id, registered_at=registered_at
+    )
+    await history_storage.add_history_to_set("other", other_id)
+
+    assert await history_storage.get_history_registration_times(
+        "target", [history_id, other_id]
+    ) == {history_id: registered_at.astimezone(UTC)}
+
+
 async def test_history_limit_selects_oldest_episode_times(
     history_storage: SemanticStorage,
 ):

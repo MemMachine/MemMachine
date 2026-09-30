@@ -1,6 +1,5 @@
 """Tests for the ingestion service using the in-memory semantic storage."""
 
-import time
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from unittest.mock import AsyncMock
@@ -757,13 +756,17 @@ async def test_debug_mode_defers_transient_missing_episode(
 
 
 @pytest.mark.asyncio
-async def test_missing_episode_tracking_expires_after_history_is_deleted(
+async def test_missing_episode_grace_uses_history_registration_time(
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     resource_retriever: MockResourceRetriever,
 ):
     missing_id = UUID("550e8400-e29b-41d4-a716-446655449997")
-    await semantic_storage.add_history_to_set("user-888", missing_id)
+    await semantic_storage.add_history_to_set(
+        "user-888",
+        missing_id,
+        registered_at=datetime.now(UTC) - timedelta(seconds=120),
+    )
     ingestion_service = IngestionService(
         IngestionService.Params(
             semantic_storage=semantic_storage,
@@ -772,13 +775,9 @@ async def test_missing_episode_tracking_expires_after_history_is_deleted(
         )
     )
     await ingestion_service._process_single_set("user-888")
-    assert missing_id in ingestion_service._missing_episode_first_seen
-
-    await semantic_storage.delete_history([missing_id])
-    ingestion_service._missing_episode_last_seen[missing_id] = time.monotonic() - 120
-    await ingestion_service._process_single_set("user-888")
-
-    assert missing_id not in ingestion_service._missing_episode_first_seen
+    assert missing_id not in await _collect(
+        semantic_storage.get_history_messages(set_ids=["user-888"])
+    )
 
 
 @pytest.mark.asyncio
