@@ -126,6 +126,8 @@ class ShortTermMemory:
         self._current_message_len = 0
         self._session_key = param.session_key
         self._closed = False
+        self._close_task: asyncio.Task[None] | None = None
+        self._clear_tasks: set[asyncio.Task[None]] = set()
         self._lock = rw_locks.AsyncRWLock()
         params = ShortTermMemoryConsolidator.Params(
             summary_user_prompt=param.summary_prompt_user,
@@ -197,9 +199,9 @@ class ShortTermMemory:
             otherwise.
 
         """
+        if self._closed:
+            raise ShortTermMemoryClosedError(self._session_key)
         async with self._lock.write_lock():
-            if self._closed:
-                raise ShortTermMemoryClosedError(self._session_key)
             self._memory.extend(episodes)
 
             self._current_episode_count += len(episodes)
@@ -212,13 +214,6 @@ class ShortTermMemory:
     async def _get_total_message_len(self) -> int:
         """Get the total message length in short-term memory."""
         return self._current_message_len + await self.get_summary_length()
-
-    async def _wait_for_summary_to_finish(self) -> None:
-        """Wait for any ongoing summarization to complete."""
-        async with self._lock.read_lock():
-            if self._closed:
-                raise ShortTermMemoryClosedError(self._session_key)
-            await self._consolidator.wait_until_done()
 
     async def _do_evict(self) -> None:
         """
@@ -242,27 +237,59 @@ class ShortTermMemory:
 
     async def close(self) -> None:
         """
-        Clear all events and the summary from the short-term memory.
+        Close the short-term memory and clear its episodes and summary.
 
-        Resets the message length to zero.
+        Once this is called, add_episodes(), get_summary() and
+        get_short_term_memory_context() raise ShortTermMemoryClosedError, and
+        clear_memory() does nothing. Calls made before it still complete: those
+        methods check _closed before taking the lock, so they queue ahead of
+        the cleanup. The cleanup waits for in-flight summarization, so its
+        result is persisted for the next instance, and runs to completion even
+        if this call is cancelled; a repeated close() waits for the same
+        cleanup.
         """
-        async with self._lock.write_lock():
-            await self._do_reset()
-            self._closed = True
+        self._closed = True
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(self._clear_on_close())
+        await asyncio.shield(self._close_task)
 
-    async def _do_reset(self) -> None:
-        """Reset the status of the short-term memory."""
+    async def _clear_on_close(self) -> None:
+        async with self._lock.write_lock():
+            await self._consolidator.wait_until_done()
+            await self._consolidator.clear()
+            self._clear_episodes()
+
+    async def clear_memory(self) -> None:
+        """
+        Clear all episodes and the summary, including the persisted summary.
+
+        In-flight summarization is cancelled rather than awaited, as its result
+        would summarize the content being cleared. If a query is already
+        waiting on it, the query holds the lock, so clearing waits for that
+        summary instead and then discards it. Like close(), clearing runs to
+        completion even if this call is cancelled, so the lock stays held until
+        the cancelled worker has stopped. If overwriting the persisted summary
+        fails, the error propagates after memory has been cleared. Once close()
+        has been called, a new call does nothing.
+        """
         if self._closed:
             return
-        await self._consolidator.wait_until_done()
+        clear = asyncio.create_task(self._clear_memory())
+        self._clear_tasks.add(clear)
+        clear.add_done_callback(self._clear_tasks.discard)
+        await asyncio.shield(clear)
+
+    async def _clear_memory(self) -> None:
+        async with self._lock.write_lock():
+            await self._consolidator.cancel()
+            await self._consolidator.clear()
+            self._clear_episodes()
+            await self._consolidator.clear_persisted()
+
+    def _clear_episodes(self) -> None:
         self._memory.clear()
         self._current_episode_count = 0
         self._current_message_len = 0
-
-    async def clear_memory(self) -> None:
-        """Clear all events and summary. Reset the message length to zero."""
-        async with self._lock.write_lock():
-            await self._do_reset()
 
     async def delete_episode(self, uid: str) -> bool:
         """Delete one episode by UID."""
@@ -385,8 +412,11 @@ class ShortTermMemory:
 
     async def get_summary(self) -> str:
         """Get the current summary."""
-        await self._wait_for_summary_to_finish()
-        return await self._consolidator.summary
+        if self._closed:
+            raise ShortTermMemoryClosedError(self._session_key)
+        async with self._lock.read_lock():
+            await self._consolidator.wait_until_done()
+            return await self._consolidator.summary
 
     async def get_summary_length(self) -> int:
         """Get the current summary length."""
@@ -417,9 +447,9 @@ class ShortTermMemory:
 
         """
         logger.debug("Get session for %s", query)
+        if self._closed:
+            raise ShortTermMemoryClosedError(self._session_key)
         async with self._lock.read_lock():
-            if self._closed:
-                raise ShortTermMemoryClosedError(self._session_key)
             await self._consolidator.wait_until_done()
             summary = await self._consolidator.summary
             length = len(summary)
@@ -563,6 +593,34 @@ class ShortTermMemoryConsolidator:
             async with self._summary_lock.write_lock():
                 self._summary = summary
 
+    async def clear(self) -> None:
+        """Discard the summary and any episodes still queued for summarization."""
+        async with self._lock:
+            self._pending_episodes.clear()
+        async with self._summary_lock.write_lock():
+            self._summary = ""
+
+    async def cancel(self) -> None:
+        """
+        Cancel in-flight summarization and wait for the worker to stop.
+
+        Unlike wait_until_done(), this discards the work, and cancels anything
+        waiting in wait_until_done() along with it. Callers must hold the
+        owning ShortTermMemory's write lock until this returns, which keeps
+        out both the readers that wait there and summarize(): while the
+        worker is stopping, summarize() queues episodes but starts no
+        replacement, and the stopping worker never drains them.
+        """
+        task = self._worker_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.wait({task})
+
+    async def clear_persisted(self) -> None:
+        """Overwrite the saved summary so a later create() restores nothing."""
+        if self._data_manager is not None:
+            await self._data_manager.save_short_term_memory(self._session_key, "", 0, 0)
+
     @property
     async def summary_len(self) -> int:
         """Get the length of the current summary."""
@@ -573,7 +631,10 @@ class ShortTermMemoryConsolidator:
         """Wait for the background summarization to catch up."""
         task = self._worker_task
         if task is not None and not task.done():
-            await task
+            # Shield the worker: awaiting a task directly makes the awaiter's
+            # cancellation propagate into it, so one abandoned request would
+            # kill the shared summarization and every other waiter with it.
+            await asyncio.shield(task)
 
     @staticmethod
     def _is_exceed_context_window_error(e: Exception) -> bool:
