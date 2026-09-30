@@ -22,6 +22,7 @@ class ContentType(Enum):
 class EpisodeEntry(BaseModel):
     """Payload used when creating a new episode entry."""
 
+    # Keep the name aligned with the public EpisodeResponse and AddMemoryResult APIs.
     uid: UUID = Field(default_factory=uuid4)
     content: str
 

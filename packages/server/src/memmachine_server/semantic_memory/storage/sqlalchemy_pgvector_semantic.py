@@ -482,6 +482,24 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
         return count
 
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        if not history_ids:
+            return {}
+        stmt = select(
+            SetIngestedHistory.history_id, SetIngestedHistory.created_at
+        ).where(
+            SetIngestedHistory.set_id == set_id,
+            SetIngestedHistory.history_id.in_(map(str, history_ids)),
+        )
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            return {
+                UUID(history_id): ensure_tz_aware(created_at).astimezone(UTC)
+                for history_id, created_at in result
+            }
+
     async def mark_messages_ingested(
         self,
         *,

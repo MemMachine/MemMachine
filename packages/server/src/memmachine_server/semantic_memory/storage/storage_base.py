@@ -145,6 +145,13 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        """Return registration times for history rows in a set."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_history_messages_count(
         self,
         *,

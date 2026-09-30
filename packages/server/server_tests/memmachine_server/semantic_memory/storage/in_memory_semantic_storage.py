@@ -305,6 +305,16 @@ class InMemorySemanticStorage(SemanticStorage):
             filtered_rows = self._filter_history_rows(rows, is_ingested)
             return len(filtered_rows)
 
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        async with self._lock:
+            return {
+                history_id: self._history_created_at[(set_id, history_id)]
+                for history_id in history_ids
+                if (set_id, history_id) in self._history_created_at
+            }
+
     def get_history_set_ids(
         self,
         *,

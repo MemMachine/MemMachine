@@ -3,8 +3,8 @@
 import asyncio
 import itertools
 import logging
-import time
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from itertools import chain
 from uuid import UUID
 
@@ -102,8 +102,6 @@ class IngestionService:
         self._consolidation_threshold = params.consolidated_threshold
         self._debug_fail_loudly = params.debug_fail_loudly
         self._missing_episode_grace_period_sec = params.missing_episode_grace_period_sec
-        self._missing_episode_first_seen: dict[UUID, float] = {}
-        self._missing_episode_last_seen: dict[UUID, float] = {}
         self._max_features_per_update = params.max_features_per_update
 
     async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
@@ -136,13 +134,6 @@ class IngestionService:
                 is_ingested=False,
             )
         ]
-        now = time.monotonic()
-        stale_cutoff = now - max(self._missing_episode_grace_period_sec * 2, 60)
-        for history_id, last_seen in list(self._missing_episode_last_seen.items()):
-            if last_seen < stale_cutoff:
-                self._missing_episode_last_seen.pop(history_id, None)
-                self._missing_episode_first_seen.pop(history_id, None)
-
         if len(resources.semantic_categories) == 0:
             logger.debug(
                 "No semantic categories configured for set %s, skipping ingestion",
@@ -168,20 +159,23 @@ class IngestionService:
         ]
         none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
-        for message in raw_messages:
-            self._missing_episode_first_seen.pop(message.uid, None)
-            self._missing_episode_last_seen.pop(message.uid, None)
-
         if len(none_h_ids) != 0:
+            registration_times = (
+                await self._semantic_storage.get_history_registration_times(
+                    set_id, none_h_ids
+                )
+            )
+            now = datetime.now(UTC)
             expired_h_ids = []
             deferred_h_ids = []
             for history_id in none_h_ids:
-                self._missing_episode_last_seen[history_id] = now
-                first_seen = self._missing_episode_first_seen.setdefault(
-                    history_id,
-                    now,
-                )
-                if now - first_seen >= self._missing_episode_grace_period_sec:
+                registered_at = registration_times.get(history_id)
+                if registered_at is None:
+                    # Another worker may have deleted the history row.
+                    continue
+                if (
+                    now - registered_at
+                ).total_seconds() >= self._missing_episode_grace_period_sec:
                     expired_h_ids.append(history_id)
                 else:
                     deferred_h_ids.append(history_id)
@@ -208,9 +202,6 @@ class IngestionService:
                     await self._semantic_storage.delete_history(
                         history_ids=expired_h_ids,
                     )
-                    for history_id in expired_h_ids:
-                        self._missing_episode_first_seen.pop(history_id, None)
-                        self._missing_episode_last_seen.pop(history_id, None)
                 except Exception:
                     logger.exception(
                         "Failed to delete messages with invalid episode_ids for set_id %s",
