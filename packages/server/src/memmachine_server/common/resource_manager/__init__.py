@@ -13,7 +13,7 @@ from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
-from memmachine_server.common.sql_lease_lock import SqlLeaseRWLockService
+from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.event_memory.segment_store import (
@@ -75,7 +75,7 @@ class CommonResourceManager(Protocol):
         """Return the session data manager."""
         raise NotImplementedError
 
-    async def get_sql_lock_service(self) -> SqlLeaseRWLockService:
+    async def get_sql_lock_service(self) -> SQLLeaseLockService:
         """Return the SQL lock service backed by the session database."""
         raise NotImplementedError
 

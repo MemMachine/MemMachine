@@ -3,7 +3,6 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Literal
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -20,9 +19,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-
-# Temporary compatibility for the public API until its exclusive replacement.
-LockMode = Literal["read", "write"]
 
 _metadata = MetaData()
 _lease_lock = Table(
@@ -159,7 +155,3 @@ class SQLLeaseStore:
                 .values(lease_id=None, expires_at_ms=None)
             )
             return True
-
-
-# Removed when the public service migrates to the exclusive API.
-SqlLeaseStore = SQLLeaseStore
