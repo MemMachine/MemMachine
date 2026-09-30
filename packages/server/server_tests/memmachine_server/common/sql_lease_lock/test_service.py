@@ -360,6 +360,39 @@ async def test_cancellation_after_sql_grant_releases_lease(
 
 
 @pytest.mark.asyncio
+async def test_repeated_cancellation_after_sql_grant_releases_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        real_try_acquire = service._store.try_acquire
+        granted_in_store = asyncio.Event()
+        resume_store = asyncio.Event()
+
+        async def delayed_grant(key, duration_ms):
+            result = await real_try_acquire(key, duration_ms)
+            granted_in_store.set()
+            await resume_store.wait()
+            return result
+
+        monkeypatch.setattr(service._store, "try_acquire", delayed_grant)
+        waiter = asyncio.create_task(
+            service.acquire("resource", lease_duration=timedelta(seconds=1))
+        )
+        await granted_in_store.wait()
+        waiter.cancel()
+        await asyncio.sleep(0)
+        waiter.cancel()
+        resume_store.set()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        monkeypatch.setattr(service._store, "try_acquire", real_try_acquire)
+        replacement = await service.try_acquire(
+            "resource", lease_duration=timedelta(seconds=1)
+        )
+        assert replacement is not None
+
+
+@pytest.mark.asyncio
 async def test_context_waits_for_in_flight_renewal_before_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -391,6 +424,43 @@ async def test_context_waits_for_in_flight_renewal_before_release(
             "resource", lease_duration=timedelta(seconds=1)
         )
         assert writer is not None
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_context_exit_releases_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        renewing = asyncio.Event()
+        finish_renewal = asyncio.Event()
+        body_finished = asyncio.Event()
+
+        async def work() -> None:
+            async with service.lock(
+                "resource", lease_duration=timedelta(milliseconds=500)
+            ) as lease:
+                real_renew = lease.renew
+
+                async def delayed_renew() -> None:
+                    renewing.set()
+                    await finish_renewal.wait()
+                    await real_renew()
+
+                monkeypatch.setattr(lease, "renew", delayed_renew)
+                await renewing.wait()
+                body_finished.set()
+
+        task = asyncio.create_task(work())
+        await body_finished.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        finish_renewal.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        replacement = await service.try_acquire(
+            "resource", lease_duration=timedelta(seconds=1)
+        )
+        assert replacement is not None
 
 
 @pytest.mark.asyncio

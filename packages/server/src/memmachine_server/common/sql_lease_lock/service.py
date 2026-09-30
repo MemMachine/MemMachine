@@ -22,6 +22,17 @@ class LockAcquireTimeout(TimeoutError):  # noqa: N818 - name fixed by public API
     """A lock remained unavailable until the wait deadline."""
 
 
+async def _await_cleanup[T](task: asyncio.Task[T], cancellations: list[bool]) -> T:
+    """Drain a cleanup task despite cancellation of its caller."""
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.cancelled():
+                raise
+            cancellations.append(True)
+
+
 def _duration_ms(duration: timedelta) -> int:
     microseconds = (
         duration.days * 86_400 + duration.seconds
@@ -76,6 +87,32 @@ class Lease:
             raise LeaseLostError(f"Lease {self.lease_id} is no longer held")
 
 
+async def _finish_and_release(renewal_task: asyncio.Task[None], lease: Lease) -> None:
+    try:
+        await renewal_task
+    finally:
+        await lease.release()
+
+
+async def _finish_lock_context(
+    renewal_task: asyncio.Task[None],
+    lease: Lease,
+    body_error: BaseException | None,
+    renewal_errors: list[Exception],
+) -> None:
+    cleanup = asyncio.create_task(_finish_and_release(renewal_task, lease))
+    cancellations: list[bool] = []
+    try:
+        await _await_cleanup(cleanup, cancellations)
+    except Exception:
+        if body_error is None and not renewal_errors and not cancellations:
+            raise
+    if cancellations:
+        raise asyncio.CancelledError
+    if body_error is None and renewal_errors:
+        raise renewal_errors[0]
+
+
 class SQLLeaseLockService:
     """Grant exclusive leases for distributed tasks that outlive SQL transactions.
 
@@ -107,9 +144,13 @@ class SQLLeaseLockService:
         except asyncio.CancelledError:
             # Let the database transaction finish before returning cancellation.
             # If it granted a lease, release that grant before the caller exits.
-            stored = await operation
-            if stored is not None:
-                await self._store.release(key, stored.lease_id)
+            async def discard_grant() -> None:
+                stored = await operation
+                if stored is not None:
+                    await self._store.release(key, stored.lease_id)
+
+            cleanup = asyncio.create_task(discard_grant())
+            await _await_cleanup(cleanup, [])
             raise
         if stored is None:
             return None
@@ -227,11 +268,4 @@ class SQLLeaseLockService:
                 # The renewal loop issued one cancel request. Remove only that
                 # request when this context substitutes its renewal error.
                 owner.uncancel()
-            await renewal_task
-            try:
-                await lease.release()
-            except Exception:
-                if body_error is None and not renewal_errors:
-                    raise
-            if body_error is None and renewal_errors:
-                raise renewal_errors[0]
+            await _finish_lock_context(renewal_task, lease, body_error, renewal_errors)
