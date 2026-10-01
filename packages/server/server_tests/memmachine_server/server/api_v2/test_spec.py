@@ -451,14 +451,18 @@ def test_search_top_k_must_be_positive(top_k):
     "no limit", the other as "no results" -- which is the other reason to
     refuse it at the edge rather than interpret it.
     """
-    with pytest.raises(ValidationError, match="greater_than_equal|greater than or equal"):
+    with pytest.raises(
+        ValidationError, match=r"greater_than_equal|greater than or equal"
+    ):
         SearchMemoriesSpec.model_validate(
             {"query": "anything", "top_k": top_k, "project_id": "p"}
         )
 
 
 def test_search_top_k_accepts_one_and_the_default():
-    assert SearchMemoriesSpec.model_validate({"query": "q", "project_id": "p"}).top_k == 10
+    assert (
+        SearchMemoriesSpec.model_validate({"query": "q", "project_id": "p"}).top_k == 10
+    )
     assert (
         SearchMemoriesSpec.model_validate(
             {"query": "q", "top_k": 1, "project_id": "p"}
