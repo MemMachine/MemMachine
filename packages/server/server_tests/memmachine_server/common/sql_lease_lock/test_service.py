@@ -16,7 +16,8 @@ from memmachine_server.common.sql_lease_lock import (
     LockAcquireTimeout,
     SQLLeaseLockService,
 )
-from memmachine_server.common.sql_lease_lock._store import SQLLeaseStore
+from memmachine_server.common.sql_lease_lock import service as lease_service_module
+from memmachine_server.common.sql_lease_lock._store import SQLLeaseStore, StoredLease
 
 
 @asynccontextmanager
@@ -248,6 +249,158 @@ async def test_waiting_acquire_gets_lock_after_release(tmp_path: Path) -> None:
         granted = await waiter
         assert granted.lease_id != holder.lease_id
         await granted.release()
+
+
+@pytest.mark.asyncio
+async def test_waiting_acquire_backs_off_to_thirty_seconds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        attempts = 0
+        delays: list[float] = []
+        granted = object()
+
+        async def contended_then_granted(
+            key: str, duration: timedelta
+        ) -> object | None:
+            nonlocal attempts
+            assert key == "resource"
+            assert duration == timedelta(seconds=1)
+            attempts += 1
+            return granted if attempts == 13 else None
+
+        async def record_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr(service, "_try_acquire", contended_then_granted)
+        monkeypatch.setattr(lease_service_module, "uniform", lambda _low, high: high)
+        monkeypatch.setattr(lease_service_module.asyncio, "sleep", record_sleep)
+
+        assert (
+            await service.acquire("resource", lease_duration=timedelta(seconds=1))
+            is granted
+        )
+        assert delays == [
+            0.05,
+            0.1,
+            0.2,
+            0.4,
+            0.8,
+            1.6,
+            3.2,
+            6.4,
+            12.8,
+            25.6,
+            30.0,
+            30.0,
+        ]
+
+
+@pytest.mark.asyncio
+async def test_retry_window_respects_short_wait_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        attempts = 0
+        delays: list[float] = []
+        granted = object()
+
+        async def contended_then_granted(
+            _key: str, _duration: timedelta
+        ) -> object | None:
+            nonlocal attempts
+            attempts += 1
+            return granted if attempts == 2 else None
+
+        async def record_sleep(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr(service, "_try_acquire", contended_then_granted)
+        monkeypatch.setattr(lease_service_module, "uniform", lambda low, _high: low)
+        monkeypatch.setattr(lease_service_module.asyncio, "sleep", record_sleep)
+
+        assert (
+            await service.acquire(
+                "resource",
+                lease_duration=timedelta(seconds=1),
+                wait_timeout=timedelta(milliseconds=10),
+            )
+            is granted
+        )
+        assert delays == [0.005]
+
+
+@pytest.mark.asyncio
+async def test_acquire_returns_grant_after_sleep_crosses_wait_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        attempts = 0
+        real_sleep = asyncio.sleep
+
+        async def contended_then_granted(
+            _key: str, _duration: timedelta
+        ) -> object | None:
+            nonlocal attempts
+            attempts += 1
+            return object() if attempts == 2 else None
+
+        async def sleep_past_deadline(_delay: float) -> None:
+            await real_sleep(0.02)
+
+        monkeypatch.setattr(service, "_try_acquire", contended_then_granted)
+        monkeypatch.setattr(lease_service_module.asyncio, "sleep", sleep_past_deadline)
+
+        assert (
+            await service.acquire(
+                "resource",
+                lease_duration=timedelta(seconds=1),
+                wait_timeout=timedelta(milliseconds=10),
+            )
+            is not None
+        )
+        assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_slow_database_grant_is_returned_after_wait_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        finish_attempt = asyncio.Event()
+        grant = StoredLease("resource", "late-grant", 1_000_000, 1)
+
+        async def slow_grant(key: str, duration_ms: int) -> StoredLease:
+            assert key == "resource"
+            assert duration_ms == 1_000
+            await finish_attempt.wait()
+            return grant
+
+        monkeypatch.setattr(service._store, "try_acquire", slow_grant)
+        waiter = asyncio.create_task(
+            service.acquire(
+                "resource",
+                lease_duration=timedelta(seconds=1),
+                wait_timeout=timedelta(milliseconds=10),
+            )
+        )
+        await asyncio.sleep(0.05)
+        finish_attempt.set()
+        lease = await waiter
+        assert lease.lease_id == "late-grant"
+
+
+@pytest.mark.asyncio
+async def test_zero_wait_timeout_still_attempts_uncontended_lock(
+    tmp_path: Path,
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        lease = await service.acquire(
+            "resource",
+            lease_duration=timedelta(seconds=1),
+            wait_timeout=timedelta(0),
+        )
+        await lease.release()
 
 
 @pytest.mark.asyncio
