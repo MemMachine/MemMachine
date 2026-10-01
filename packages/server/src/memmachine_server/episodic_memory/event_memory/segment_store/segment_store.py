@@ -60,6 +60,10 @@ class SegmentStorePartition(ABC):
         """
         Get a window of segments around each of the seed segments.
 
+        An implementation may bound how far from each seed it looks for
+        context, so a side can come back with fewer segments than requested
+        even when more exist further away.
+
         Args:
             seed_segment_uuids (Iterable[UUID]):
                 The UUIDs of the seed segments for which to retrieve contexts.

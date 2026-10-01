@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import operator
 import random
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta, timezone
@@ -26,7 +27,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from memmachine_server.common.filter.filter_parser import Comparison, parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    And,
+    Comparison,
+    FilterExpr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    parse_filter,
+)
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
 )
@@ -596,6 +606,52 @@ async def test_contexts_property_filter(
 
 
 @pytest.mark.asyncio
+async def test_context_comes_from_the_segments_nearest_the_seed(
+    partition: SQLAlchemySegmentStorePartition,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A context read takes its context from a bounded number of segments on each side.
+
+    With the bound at 4 segments, a match 5 or more segments from the seed
+    is not context, however few matches lie within the bound, and an
+    unfiltered read returns no segment beyond it either.
+    """
+    monkeypatch.setattr(sqlalchemy_segment_store, "_MAX_CONTEXT_DISTANCE", 4)
+    tags = {1: "a", 2: "b", 3: "b", 4: "a", 5: "a", 6: "a"}
+    seed = _seg(ts_offset_seconds=0, properties={"tag": "a"})
+    backward = {
+        d: _seg(ts_offset_seconds=-d, properties={"tag": t}) for d, t in tags.items()
+    }
+    forward = {
+        d: _seg(ts_offset_seconds=d, properties={"tag": t}) for d, t in tags.items()
+    }
+    await partition.add_segments(_links(seed, *backward.values(), *forward.values()))
+
+    filtered = await partition.get_segment_contexts(
+        [seed.uuid],
+        max_backward_segments=5,
+        max_forward_segments=5,
+        property_filter=Comparison(field="m.tag", op="=", value="a"),
+    )
+    assert [segment.uuid for segment in filtered[seed.uuid]] == [
+        backward[4].uuid,
+        backward[1].uuid,
+        seed.uuid,
+        forward[1].uuid,
+        forward[4].uuid,
+    ]
+
+    unfiltered = await partition.get_segment_contexts(
+        [seed.uuid], max_backward_segments=6, max_forward_segments=6
+    )
+    assert [segment.uuid for segment in unfiltered[seed.uuid]] == [
+        *(backward[distance].uuid for distance in (4, 3, 2, 1)),
+        seed.uuid,
+        *(forward[distance].uuid for distance in (1, 2, 3, 4)),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_contexts_filter_by_context_producer(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
@@ -740,6 +796,181 @@ async def test_context_preserved_in_segment_contexts(
     assert ctx[0].context == ctx_user
     assert ctx[1].context == ctx_assistant
     assert ctx[2].context == ctx_user
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("random_seed", [1, 2, 3])
+async def test_random_context_reads_agree_with_a_model(
+    store: SQLAlchemySegmentStore,
+    random_seed: int,
+) -> None:
+    """Random context reads agree with an in-memory model of the timeline.
+
+    Several seeds per read, filters of every node type, and many segments
+    sharing a timestamp, with another partition's segments at the same
+    times. The partition is far smaller than a filtered read's window, so
+    every match on a side is within it. Events take random UUIDs in sorted
+    order, so events sharing a timestamp come in the same order every run.
+    """
+    rng = random.Random(random_seed)
+    config = _plaintext_partition_config()
+    partition = await store.open_or_create_partition(PARTITION_KEY, config)
+    other_partition = await store.open_or_create_partition("other_partition", config)
+    event_uuids = iter(sorted(uuid4() for _ in range(45)))
+    segments = [
+        segment
+        for _ in range(30)
+        for segment in _random_event_segments(rng, next(event_uuids))
+    ]
+    await partition.add_segments(_links(*segments))
+    await other_partition.add_segments(
+        _links(
+            *(
+                segment
+                for _ in range(15)
+                for segment in _random_event_segments(rng, next(event_uuids))
+            )
+        )
+    )
+    timeline = sorted(
+        segments,
+        key=lambda segment: (
+            segment.timestamp,
+            segment.event_uuid,
+            segment.index,
+            segment.offset,
+        ),
+    )
+
+    filters: list[FilterExpr | None] = [
+        None,
+        Comparison(field="m.tag", op="=", value="a"),
+        In(field="m.tag", values=["a", "b"]),
+        Not(Comparison(field="m.opt", op="=", value="x")),
+        And(
+            Comparison(field="m.tag", op="=", value="b"),
+            Comparison(field="m.role", op="=", value="user"),
+        ),
+        Or(Comparison(field="m.tag", op="=", value="c"), IsNull(field="m.opt")),
+        Comparison(field="timestamp", op=">=", value=BASE_TIME + timedelta(seconds=8)),
+    ]
+    for _ in range(40):
+        seeds = rng.sample(segments, rng.randint(1, 5))
+        max_backward_segments = rng.randint(0, 4)
+        max_forward_segments = rng.randint(0, 4)
+        property_filter = rng.choice(filters)
+
+        result = await partition.get_segment_contexts(
+            [seed.uuid for seed in seeds],
+            max_backward_segments=max_backward_segments,
+            max_forward_segments=max_forward_segments,
+            property_filter=property_filter,
+        )
+        assert {
+            seed_uuid: [segment.uuid for segment in context]
+            for seed_uuid, context in result.items()
+        } == _model_context_uuids(
+            timeline,
+            seeds,
+            max_backward_segments=max_backward_segments,
+            max_forward_segments=max_forward_segments,
+            property_filter=property_filter,
+        ), (property_filter, max_backward_segments, max_forward_segments)
+
+
+def _random_event_segments(rng: random.Random, event_uuid: UUID) -> list[Segment]:
+    """One event's segments at one random time, each with random properties.
+
+    Every segment has `tag` and `role`; about half have `opt`.
+    """
+    ts_offset_seconds = rng.randrange(20)
+    segments = []
+    for index in range(rng.randint(1, 2)):
+        for offset in range(rng.randint(1, 2)):
+            properties = {
+                "tag": rng.choice("abc"),
+                "role": rng.choice(["user", "assistant"]),
+            }
+            if rng.random() < 0.5:
+                properties["opt"] = rng.choice("xy")
+            segments.append(
+                _seg(
+                    event_uuid=event_uuid,
+                    index=index,
+                    offset=offset,
+                    ts_offset_seconds=ts_offset_seconds,
+                    properties=properties,
+                )
+            )
+    return segments
+
+
+def _model_context_uuids(
+    timeline: list[Segment],
+    seeds: list[Segment],
+    *,
+    max_backward_segments: int,
+    max_forward_segments: int,
+    property_filter: FilterExpr | None,
+) -> dict[UUID, list[UUID]]:
+    """What get_segment_contexts returns for `seeds`, as segment UUIDs.
+
+    `timeline` is the partition's segments in chronological order.
+    """
+
+    def matches(segment: Segment) -> bool:
+        return property_filter is None or _sql_truth(segment, property_filter) is True
+
+    contexts: dict[UUID, list[UUID]] = {}
+    for seed in seeds:
+        if not matches(seed):
+            continue
+        position = timeline.index(seed)
+        before = [segment for segment in timeline[:position] if matches(segment)]
+        after = [segment for segment in timeline[position + 1 :] if matches(segment)]
+        context = [
+            *(before[-max_backward_segments:] if max_backward_segments else []),
+            seed,
+            *after[:max_forward_segments],
+        ]
+        contexts[seed.uuid] = [segment.uuid for segment in context]
+    return contexts
+
+
+def _sql_truth(segment: Segment, expr: FilterExpr) -> bool | None:
+    """`expr`'s value for `segment` in SQL's logic: None where SQL has NULL."""
+    if isinstance(expr, And):
+        left, right = _sql_truth(segment, expr.left), _sql_truth(segment, expr.right)
+        if left is False or right is False:
+            return False
+        return None if left is None or right is None else True
+    if isinstance(expr, Or):
+        left, right = _sql_truth(segment, expr.left), _sql_truth(segment, expr.right)
+        if left is True or right is True:
+            return True
+        return None if left is None or right is None else False
+    if isinstance(expr, Not):
+        inner = _sql_truth(segment, expr.expr)
+        return None if inner is None else not inner
+    assert isinstance(expr, Comparison | In | IsNull)
+    return _sql_leaf_truth(segment, expr)
+
+
+def _sql_leaf_truth(segment: Segment, expr: Comparison | In | IsNull) -> bool | None:
+    """A leaf's value for `segment`: a missing property compares as NULL."""
+    if expr.field == "timestamp":
+        actual = segment.timestamp
+    else:
+        key = expr.field.removeprefix("m.")
+        if isinstance(expr, IsNull):
+            return key not in segment.properties
+        if key not in segment.properties:
+            return None
+        actual = segment.properties[key]
+    if isinstance(expr, In):
+        return actual in expr.values
+    assert isinstance(expr, Comparison)
+    return {"=": operator.eq, ">=": operator.ge}[expr.op](actual, expr.value)
 
 
 # ===================================================================
