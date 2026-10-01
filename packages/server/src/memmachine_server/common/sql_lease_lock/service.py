@@ -180,6 +180,10 @@ class SQLLeaseLockService:
         deadline = (
             None if wait_timeout is None else loop.time() + wait_timeout.total_seconds()
         )
+        retry_cap = (
+            30.0 if wait_timeout is None else min(30.0, wait_timeout.total_seconds())
+        )
+        retry_max_delay = min(0.05, retry_cap)
         while True:
             lease = await self._try_acquire(key, lease_duration)
             if lease is not None:
@@ -187,8 +191,9 @@ class SQLLeaseLockService:
             remaining = None if deadline is None else deadline - loop.time()
             if remaining is not None and remaining <= 0:
                 raise LockAcquireTimeout(f"Timed out acquiring lock for {key!r}")
-            delay = uniform(0.025, 0.05)
+            delay = uniform(retry_max_delay / 2, retry_max_delay)
             await asyncio.sleep(delay if remaining is None else min(delay, remaining))
+            retry_max_delay = min(retry_max_delay * 2, retry_cap)
 
     def lock(
         self,
