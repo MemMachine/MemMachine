@@ -905,13 +905,25 @@ wait_for_health() {
         exit 1
     fi
     
-    # Wait for Neo4j
-    print_info "Waiting for Neo4j to be ready..."
-    if timeout 120 bash -c "until docker exec memmachine-neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
-        print_success "Neo4j is ready"
+    # Wait for the long-term memory store; only the one COMPOSE_PROFILES
+    # selects was started.
+    if [ "$(get_ltm_backend)" = "declarative" ]; then
+        print_info "Waiting for Neo4j to be ready..."
+        if timeout 120 bash -c "until docker exec memmachine-neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
+            print_success "Neo4j is ready"
+        else
+            print_error "Neo4j failed to become ready in 120 seconds. Check container logs and configuration."
+            exit 1
+        fi
     else
-        print_error "Neo4j failed to become ready in 120 seconds. Check container logs and configuration."
-        exit 1
+        # The Qdrant image has no curl, so probe its published port from the host.
+        print_info "Waiting for Qdrant to be ready..."
+        if timeout 120 bash -c "until curl -fs http://localhost:${QDRANT_PORT:-6333}/healthz > /dev/null 2>&1; do sleep 2; done"; then
+            print_success "Qdrant is ready"
+        else
+            print_error "Qdrant failed to become ready in 120 seconds. Check container logs and configuration."
+            exit 1
+        fi
     fi
     
     # Wait for MemMachine
@@ -926,17 +938,27 @@ wait_for_health() {
 
 # Show service information
 show_service_info() {
+    local backend
+    backend=$(get_ltm_backend)
     print_success "🎉 MemMachine is now running!"
     echo ""
     echo "Service URLs:"
     echo "  📊 MemMachine API Docs: http://localhost:${MEMORY_SERVER_PORT:-8080}/docs"
-    echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
+    if [ "$backend" = "declarative" ]; then
+        echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
+    else
+        echo "  🗄️  Qdrant Dashboard: http://localhost:${QDRANT_PORT:-6333}/dashboard"
+    fi
     echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/health"
     echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/metrics"
     echo ""
     echo "Database Access:"
     echo "  🐘 PostgreSQL: localhost:${POSTGRES_PORT:-5432} (user: ${POSTGRES_USER:-memmachine}, db: ${POSTGRES_DB:-memmachine})"
-    echo "  🔗 Neo4j Bolt: localhost:${NEO4J_PORT:-7687} (user: ${NEO4J_USER:-neo4j})"
+    if [ "$backend" = "declarative" ]; then
+        echo "  🔗 Neo4j Bolt: localhost:${NEO4J_PORT:-7687} (user: ${NEO4J_USER:-neo4j})"
+    else
+        echo "  🔎 Qdrant: localhost:${QDRANT_PORT:-6333} (REST), localhost:${QDRANT_GRPC_PORT:-6334} (gRPC)"
+    fi
     echo ""
     echo "Useful Commands:"
     echo "  📋 View logs: ${COMPOSE_CMD} logs -f"
