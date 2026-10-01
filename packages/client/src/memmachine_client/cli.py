@@ -453,7 +453,9 @@ def build_parser(prog: str = DEFAULT_PROG) -> argparse.ArgumentParser:
         delete_parser = memory_subparsers.add_parser(name, help=f"{name} memory ids.")
         add_project_context_args(delete_parser)
         delete_parser.add_argument("--metadata", action="append", default=[])
-        delete_parser.add_argument("--id", default="")
+        delete_parser.add_argument(
+            "--id", default=None if name == "delete-episodic" else ""
+        )
         delete_parser.add_argument("--ids", action="append", default=[])
         delete_parser.add_argument(
             "--create", action="store_true", help="Create the project if missing."

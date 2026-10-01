@@ -1040,6 +1040,23 @@ class TestMemory:
         assert json_data["project_id"] == "test_project"
         assert json_data["episodic_id"] == episodic_id
 
+    def test_delete_episodic_with_ids_only(self, mock_client):
+        """Batch deletion should omit the unused single ID."""
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_client.request.return_value = mock_response
+        memory = Memory(
+            client=mock_client,
+            org_id="test_org",
+            project_id="test_project",
+        )
+
+        assert memory.delete_episodic(episodic_ids=[EPISODE_UID_1]) is True
+
+        json_data = mock_client.request.call_args.kwargs["json"]
+        assert json_data["episodic_ids"] == [EPISODE_UID_1]
+        assert "episodic_id" not in json_data
+
     def test_delete_episodic_with_timeout(self, mock_client):
         """Test delete_episodic with custom timeout."""
         mock_response = Mock()
