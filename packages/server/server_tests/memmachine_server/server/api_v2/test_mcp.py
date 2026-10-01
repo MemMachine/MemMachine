@@ -1,6 +1,7 @@
 import os
 import re
-from unittest.mock import AsyncMock, Mock, patch
+from typing import cast
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -164,7 +165,7 @@ async def test_mcp_tool_description(mcp_client):
 def patch_memmachine():
     import memmachine_server.server.api_v2.mcp as mcp_module
 
-    mcp_module.mem_machine = Mock()
+    mcp_module.mem_machine = AsyncMock()
     yield
     mcp_module.mem_machine = None  # cleanup
 
@@ -186,6 +187,34 @@ async def test_add_memory_success(mock_add, params, mcp_client):
     root = result.data
     assert root.status == 200
     assert root.message == "Success"
+
+
+@pytest.mark.asyncio
+@patch("memmachine_server.server.api_v2.mcp._add_messages_to", new_callable=AsyncMock)
+async def test_add_memory_creates_the_project_it_names_on_first_use(
+    mock_add, params, mcp_client
+):
+    import memmachine_server.server.api_v2.mcp as mcp_module
+
+    mem_machine = cast(AsyncMock, mcp_module.mem_machine)
+    arguments = {
+        "content": "hello memory",
+        "org_id": params.org_id,
+        "proj_id": params.proj_id,
+        "user_id": params.user_id,
+    }
+
+    mem_machine.get_session.return_value = None
+    await mcp_client.call_tool(name="add_memory", arguments=arguments)
+    mem_machine.create_session.assert_awaited_once_with(
+        f"{params.org_id}/{params.proj_id}"
+    )
+
+    mem_machine.create_session.reset_mock()
+    mem_machine.get_session.return_value = object()
+    await mcp_client.call_tool(name="add_memory", arguments=arguments)
+    mem_machine.create_session.assert_not_awaited()
+    assert mock_add.await_count == 2
 
 
 @pytest.mark.asyncio

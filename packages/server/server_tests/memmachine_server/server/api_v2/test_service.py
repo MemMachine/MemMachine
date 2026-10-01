@@ -15,9 +15,11 @@ from memmachine_common.api.spec import (
     SearchMemoriesSpec,
 )
 
+from memmachine_server.common.errors import SessionAlreadyExistsError
 from memmachine_server.server.api_v2.service import (
     _list_target_memories,
     _search_target_memories,
+    ensure_default_project,
 )
 
 # ---------------------------------------------------------------------------
@@ -218,3 +220,33 @@ async def test_list_target_memories_other_fields_still_passed():
     assert call_kwargs["page_size"] == 25
     assert call_kwargs["page_num"] == 2
     assert call_kwargs["set_metadata"] == {"user_id": "u2"}
+
+
+@pytest.mark.asyncio
+async def test_ensure_default_project_creates_the_promised_project_once():
+    """The project a request that names none goes to exists after startup."""
+    memmachine = MagicMock()
+    memmachine.get_session = AsyncMock(return_value=None)
+    memmachine.create_session = AsyncMock()
+
+    await ensure_default_project(memmachine)
+
+    memmachine.create_session.assert_awaited_once()
+    assert memmachine.create_session.await_args_list[0].args == ("universal/universal",)
+
+    memmachine.create_session.reset_mock()
+    memmachine.get_session = AsyncMock(return_value=object())
+    await ensure_default_project(memmachine)
+    memmachine.create_session.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ensure_default_project_accepts_a_concurrent_creation():
+    """A worker that loses the creation race to one with another configuration goes on."""
+    memmachine = MagicMock()
+    memmachine.get_session = AsyncMock(return_value=None)
+    memmachine.create_session = AsyncMock(
+        side_effect=SessionAlreadyExistsError("universal/universal")
+    )
+
+    await ensure_default_project(memmachine)

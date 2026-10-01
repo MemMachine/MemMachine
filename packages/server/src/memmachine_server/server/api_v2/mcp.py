@@ -37,6 +37,8 @@ from memmachine_server.server.api_v2.service import (
     _delete_memories,
     _search_target_memories,
     _session_key_to_session_data,
+    _SessionData,
+    ensure_default_project,
 )
 from memmachine_server.server.diagnostics import dump_traceback, install_sigusr1_handler
 
@@ -381,6 +383,7 @@ async def init_global_memory() -> None:
     mem_machine = await initialize_resource()
     if mem_machine is not None:
         await mem_machine.start(_session_key_to_session_data)
+        await ensure_default_project(mem_machine)
 
 
 async def shutdown_global_memory() -> None:
@@ -435,7 +438,8 @@ async def mcp_add_memory(
 
     The model should call this whenever it detects new information
     worth remembering — for example, user preferences, recurring topics,
-    or summaries of recent exchanges.
+    or summaries of recent exchanges. The project the memory goes to is
+    created on first use, with the server's default configuration.
 
     This function supports both nested and flat parameter styles:
     - Nested: pass an AddMemoryParam object to the param argument
@@ -464,6 +468,13 @@ async def mcp_add_memory(
             user_id=user_id,
         )
         spec = param.to_add_memories_spec(content)
+        # This tool names its own project and has no create-project
+        # counterpart, so it creates the project it writes to.
+        session_key = _SessionData(
+            org_id=spec.org_id, project_id=spec.project_id
+        ).session_key
+        if await mem_machine.get_session(session_key) is None:
+            await mem_machine.create_session(session_key)
         await _add_messages_to(
             target_memories=ALL_MEMORY_TYPES, spec=spec, memmachine=mem_machine
         )

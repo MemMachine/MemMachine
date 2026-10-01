@@ -54,3 +54,23 @@ class MemMachineClient:
             return payload
         # normalize non-dict JSON payloads
         return {"data": payload}
+
+    def ensure_project(self, org_id: str, project_id: str) -> None:
+        """Create the project if it does not exist.
+
+        Called before a write, so the tool never relies on a write creating
+        the project. A 409 means it already exists, which is the state asked
+        for.
+        """
+        url = self.base_url.rstrip("/") + "/projects"
+        resp = requests.post(
+            url,
+            headers=self._headers(),
+            json={"org_id": org_id, "project_id": project_id},
+            timeout=self.timeout,
+        )
+        if not resp.ok and resp.status_code != 409:
+            raise requests.HTTPError(
+                f"MemMachine API error {resp.status_code}",
+                response=resp,
+            )

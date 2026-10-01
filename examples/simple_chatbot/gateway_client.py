@@ -8,6 +8,29 @@ MEMMACHINE_PORT = os.getenv("MEMORY_SERVER_URL", "http://localhost:8080")
 ORG_ID = os.getenv("ORG_ID", "default-org")
 PROJECT_ID = os.getenv("PROJECT_ID", "simple_chatbot")
 
+_project_ensured = False
+
+
+def ensure_project() -> None:
+    """Create the chatbot's project if it does not exist.
+
+    Runs once per process, before the first memory request, so the example
+    never relies on a memory request creating the project it names.
+    """
+    global _project_ensured
+    if _project_ensured:
+        return
+    resp = requests.post(
+        f"{MEMMACHINE_PORT}/api/v2/projects",
+        json={"org_id": ORG_ID, "project_id": PROJECT_ID},
+        timeout=10,
+    )
+    # 409: the project already exists, which is the state this asks for.
+    if resp.status_code != 409:
+        resp.raise_for_status()
+    _project_ensured = True
+
+
 PROMPT = """You are a helpful AI assistant. Use the provided context and profile information to answer the user's question accurately and helpfully.
 
 <CURRENT_DATE>
@@ -49,6 +72,7 @@ def _dict_to_filter_string(filter_dict: dict[str, str]) -> str:
 def ingest_and_rewrite(user_id: str, query: str) -> str:
     """Pass a raw user message through the memory server and get context-aware response."""
     print("entered ingest_and_rewrite")
+    ensure_project()
 
     # Ingest memory with user_id in metadata for filtering
     requests.post(
@@ -153,6 +177,7 @@ def ingest_and_rewrite(user_id: str, query: str) -> str:
 def get_memories(user_id: str) -> dict:
     """Fetch all memories for a given user_id"""
     try:
+        ensure_project()
         # Use metadata filter to get only this user's memories
         filter_str = f"metadata.user_id='{user_id}'"
         resp = requests.post(
@@ -182,6 +207,7 @@ def ingest_memories(user_id: str, memories_text: str) -> bool:
         True if successful, False otherwise
     """
     try:
+        ensure_project()
         # Ingest the memories as an episode using v2 API with user_id in metadata
         resp = requests.post(
             f"{MEMMACHINE_PORT}/api/v2/memories",

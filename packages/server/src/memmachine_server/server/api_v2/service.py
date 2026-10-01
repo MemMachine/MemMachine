@@ -1,6 +1,7 @@
 """API v2 service implementations."""
 
 import asyncio
+import contextlib
 import logging
 from dataclasses import dataclass
 from typing import cast
@@ -8,6 +9,7 @@ from typing import cast
 from fastapi import Request
 from memmachine_common.api import MemoryType as MemoryTypeE
 from memmachine_common.api.spec import (
+    DEFAULT_ORG_AND_PROJECT_ID,
     AddMemoriesSpec,
     AddMemoryResult,
     DeleteMemoriesSpec,
@@ -25,6 +27,7 @@ from pydantic import JsonValue
 
 from memmachine_server import MemMachine
 from memmachine_server.common.episode_store.episode_model import EpisodeEntry
+from memmachine_server.common.errors import SessionAlreadyExistsError
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,28 @@ class _SessionData:
     @property
     def session_key(self) -> str:
         return f"{self.org_id}/{self.project_id}"
+
+
+async def ensure_default_project(memmachine: MemMachine) -> None:
+    """Create the project a request that names none is routed to.
+
+    `org_id` and `project_id` default to `DEFAULT_ORG_AND_PROJECT_ID`, so the
+    API promises that project. Only the create-project request creates a
+    project, so the server creates this one itself, once, at startup, and
+    leaves one that already exists,
+    with whatever configuration it was created with, as it is.
+    """
+    session_key = _SessionData(
+        org_id=DEFAULT_ORG_AND_PROJECT_ID, project_id=DEFAULT_ORG_AND_PROJECT_ID
+    ).session_key
+    if await memmachine.get_session(session_key) is not None:
+        return
+    # Another worker may create it, with another configuration, meanwhile.
+    with contextlib.suppress(SessionAlreadyExistsError):
+        await memmachine.create_session(
+            session_key,
+            description="The project a request that names none is routed to",
+        )
 
 
 def _session_key_to_session_data(session_key: str) -> _SessionData:

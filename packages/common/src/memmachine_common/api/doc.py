@@ -16,7 +16,9 @@ class SpecDoc:
       characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols
       are allowed.
 
-    This value determines the namespace the project belongs to.
+    This value determines the namespace the project belongs to. When
+    omitted, `universal`: the server creates the project `universal/universal`
+    at startup, so a request that names no project always has one.
     """
 
     ORG_ID_RETURN = """
@@ -720,7 +722,9 @@ class RouterDoc:
     """
 
     ADD_MEMORIES = """
-    Add memory messages to a project.
+    Add memory messages to a project. The project must exist; an unknown
+    project is not created, and the request is answered with 404. The default
+    project, used when `org_id` and `project_id` are omitted, always exists.
 
     The `types` field in the request specifies which memory types to add to:
     - If `types` is empty or not provided, memories are added to all types (episodic and semantic)

@@ -53,6 +53,7 @@ class AddMemoryTool(Tool):
         }
 
         try:
+            client.ensure_project(DEFAULT_ORG_ID, DEFAULT_PROJECT_ID)
             result = client.post("/memories", body)
             yield self.create_json_message(result)
         except requests.HTTPError as e:
