@@ -83,6 +83,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionDeletionPendingError,
     SessionNotFoundError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
@@ -187,6 +188,15 @@ async def create_project(
         raise RestError(code=500, message="configuration error: " + str(e), ex=e) from e
     except SessionAlreadyExistsError as e:
         raise RestError(code=409, message="Project already exists", ex=e) from e
+    except SessionDeletionPendingError as e:
+        # Not 409: clients read 409 as "it exists" and fetch it, which would
+        # 404 while the delete runs. 503 says "temporary, retry".
+        raise RestError(
+            code=503,
+            message="Project is still being deleted; retry shortly",
+            ex=e,
+            headers={"Retry-After": "1"},
+        ) from e
     except ValueError as e:
         raise RestError(
             code=500, message="server internal error: " + str(e), ex=e

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -26,7 +27,10 @@ from memmachine_server.common.episode_store import (
     EpisodeEntry,
     EpisodeResponse,
 )
-from memmachine_server.common.errors import SessionNotFoundError
+from memmachine_server.common.errors import (
+    SessionDeletionPendingError,
+    SessionNotFoundError,
+)
 from memmachine_server.common.filter.filter_parser import And as FilterAnd
 from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
 from memmachine_server.common.session_manager.session_data_manager import (
@@ -324,6 +328,76 @@ async def test_create_session_passes_generated_config(
     assert episodic_conf.long_term_memory.reranker == "custom-reranker"
     assert episodic_conf.short_term_memory.session_key == "alpha"
     assert kwargs["description"] == "demo"
+
+
+def _session_info(status: str) -> MagicMock:
+    info = MagicMock()
+    info.status = status
+    return info
+
+
+@pytest.mark.asyncio
+async def test_create_session_waits_for_pending_delete(
+    minimal_conf, patched_resource_manager
+):
+    """A create issued while the old session is purging waits, then succeeds."""
+    # The purge finishes on the third poll; until then the row is Deleted.
+    row: dict[str, str | None] = {"status": SessionDataManager.SessionStatus.Deleted}
+    polls = 0
+
+    async def get_session_info(session_key, status=None):
+        nonlocal polls
+        polls += 1
+        if polls == 3:
+            row["status"] = None
+        if row["status"] is None or (status is not None and row["status"] != status):
+            return None
+        return _session_info(row["status"])
+
+    async def create_or_validate_session(**kwargs):
+        assert row["status"] is None, "created while the old row still existed"
+        row["status"] = SessionDataManager.SessionStatus.Active
+
+    session_manager = AsyncMock()
+    session_manager.get_session_info = AsyncMock(side_effect=get_session_info)
+    session_manager.create_or_validate_session = AsyncMock(
+        side_effect=create_or_validate_session
+    )
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=session_manager
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    memmachine._await_pending_delete = functools.partial(
+        memmachine._await_pending_delete, interval=0.001
+    )
+
+    info = await memmachine.create_session("alpha")
+
+    assert info.status == SessionDataManager.SessionStatus.Active
+    session_manager.create_or_validate_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_session_raises_when_delete_does_not_finish(
+    minimal_conf, patched_resource_manager
+):
+    """A purge that outlasts the wait fails the create without touching the row."""
+    session_manager = AsyncMock()
+    session_manager.get_session_info = AsyncMock(
+        return_value=_session_info(SessionDataManager.SessionStatus.Deleted)
+    )
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=session_manager
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    memmachine._await_pending_delete = functools.partial(
+        memmachine._await_pending_delete, max_wait=0.05, interval=0.001
+    )
+
+    with pytest.raises(SessionDeletionPendingError):
+        await memmachine.create_session("alpha")
+
+    session_manager.create_or_validate_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio

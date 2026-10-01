@@ -91,6 +91,19 @@ class SessionAlreadyExistsError(MemMachineError):
         return f"SessionAlreadyExistsError('{self.session_key}')"
 
 
+class SessionDeletionPendingError(MemMachineError):
+    """Error when a session cannot be created because its delete is unfinished."""
+
+    def __init__(self, session_key: str) -> None:
+        """Initialize with the session key whose delete is still running."""
+        self.session_key = session_key
+        super().__init__(f"Session '{session_key}' is still being deleted.")
+
+    def __repr__(self) -> str:
+        """Return a helpful debug representation."""
+        return f"SessionDeletionPendingError('{self.session_key}')"
+
+
 class SessionNotFoundError(MemMachineError):
     """Error when trying to retrieve a session."""
 
