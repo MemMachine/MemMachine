@@ -438,3 +438,30 @@ def test_timestamp_invalid_type():
         MemoryMessage.model_validate(
             {"content": "hello", "timestamp": {"bad": "value"}}
         )
+
+
+@pytest.mark.parametrize("top_k", [0, -1])
+def test_search_top_k_must_be_positive(top_k):
+    """A non-positive top_k is refused by the schema, not by the store.
+
+    Without a bound it reached retrieval, which cannot use it: the answer was
+    500 with a bare "Internal Server Error" body, so nothing caught it and
+    nothing logged it through the API's exception handler. The two guards that
+    exist further down disagree about what it should mean -- one treats <= 0 as
+    "no limit", the other as "no results" -- which is the other reason to
+    refuse it at the edge rather than interpret it.
+    """
+    with pytest.raises(ValidationError, match="greater_than_equal|greater than or equal"):
+        SearchMemoriesSpec.model_validate(
+            {"query": "anything", "top_k": top_k, "project_id": "p"}
+        )
+
+
+def test_search_top_k_accepts_one_and_the_default():
+    assert SearchMemoriesSpec.model_validate({"query": "q", "project_id": "p"}).top_k == 10
+    assert (
+        SearchMemoriesSpec.model_validate(
+            {"query": "q", "top_k": 1, "project_id": "p"}
+        ).top_k
+        == 1
+    )
