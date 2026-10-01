@@ -787,6 +787,10 @@ class MemMachine:
             )
             task_names.append("semantic memory")
 
+        # TODO: These writes run in parallel without a shared transaction. If
+        # one backend fails after another succeeds, episode storage and memory
+        # can diverge. Making the operation atomic requires coordinated commits
+        # or rollback across the backends.
         results = await asyncio.gather(*tasks, return_exceptions=True)
         first_error: BaseException | None = None
         for task_name, result in zip(task_names, results, strict=True):
