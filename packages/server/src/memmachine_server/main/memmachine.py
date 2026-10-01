@@ -27,6 +27,7 @@ from memmachine_server.common.episode_store import (
 from memmachine_server.common.errors import (
     ConfigurationError,
     ResourceNotReadyError,
+    SessionAlreadyExistsError,
     SessionNotFoundError,
 )
 from memmachine_server.common.filter.filter_parser import (
@@ -532,6 +533,25 @@ class MemMachine:
             )
 
         session_data_manager = await self._resources.get_session_data_manager()
+
+        # A session being deleted still has its row. delete_session marks the
+        # row Deleted and hands the real purge to the deletion queue, which
+        # removes the row when it finishes -- so for the length of that purge
+        # the key exists in a state that is neither usable nor absent.
+        #
+        # create_or_validate_session matches on session_key alone, so it finds
+        # that row, sees the configuration matches, and returns as though the
+        # session were created. The read-back below asks for an *Active*
+        # session, gets None, and raised RuntimeError: a 500 with no handler,
+        # for the ordinary sequence of deleting a project and creating it again.
+        #
+        # Waiting is the honest answer: the caller asked for a session with
+        # this name, one is on its way out, and it will be gone in under a
+        # second. Polling the row rather than an in-process event, because the
+        # purge may be running in another worker and the row is what both of
+        # them agree on.
+        await self._await_pending_delete(session_key)
+
         await session_data_manager.create_or_validate_session(
             session_key=session_key,
             configuration={},
@@ -541,8 +561,47 @@ class MemMachine:
         )
         ret = await self.get_session(session_key=session_key)
         if ret is None:
-            raise RuntimeError(f"Failed to create session {session_key}")
+            # Reached when the row exists but is not Active -- the purge did
+            # not finish inside the window above. SessionAlreadyExistsError
+            # rather than RuntimeError: the API maps it to 409, which is true
+            # (the name is taken, briefly) and actionable (retry), where a 500
+            # is neither and escapes the exception handler entirely.
+            # The constructor formats the key into its own message, so it
+            # takes the key and nothing else.
+            raise SessionAlreadyExistsError(session_key)
         return ret
+
+    async def _await_pending_delete(
+        self, session_key: str, timeout: float = 10.0, interval: float = 0.05
+    ) -> None:
+        """Wait for a queued purge of this session to finish, if one is running.
+
+        Returns as soon as the key is free -- the row gone, or Active again --
+        and simply returns after `timeout` so a stuck purge cannot wedge a
+        create. The caller then fails with a 409 rather than hanging.
+        """
+        manager = await self._resources.get_session_data_manager()
+        deadline = asyncio.get_running_loop().time() + timeout
+        waited = False
+        while True:
+            info = await manager.get_session_info(session_key)
+            if info is None or info.status != SessionDataManager.SessionStatus.Deleted:
+                if waited:
+                    logger.info(
+                        "Waited for the pending delete of %s before creating it",
+                        session_key,
+                    )
+                return
+            if asyncio.get_running_loop().time() >= deadline:
+                logger.warning(
+                    "The delete of %s has not finished after %.0fs; "
+                    "creating it again will fail with a conflict",
+                    session_key,
+                    timeout,
+                )
+                return
+            waited = True
+            await asyncio.sleep(interval)
 
     async def get_session(
         self, session_key: str
