@@ -1,3 +1,4 @@
+import sqlite3
 from typing import cast
 
 import pytest
@@ -747,3 +748,14 @@ async def test_get_category_set_ids_for_set_type_category_with_different_categor
     assert len(config_2.categories) == 2
     category_names = {c.name for c in config_2.categories}
     assert category_names == {"org-category", "different-category"}
+
+
+@pytest.mark.asyncio
+async def test_old_sqlite_runtime_is_rejected(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Inserts depend on RETURNING; refuse an older SQLite loudly."""
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 1))
+    with pytest.raises(ValueError, match="RETURNING"):
+        SemanticConfigStorageSqlAlchemy(sqlalchemy_sqlite_engine)

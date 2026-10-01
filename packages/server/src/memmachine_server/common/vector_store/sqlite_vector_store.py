@@ -48,6 +48,7 @@ from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
 )
+from memmachine_server.common.utils import require_sqlite_returning
 
 from .data_types import (
     QueryMatch,
@@ -658,6 +659,7 @@ class SQLiteVectorStoreParams(BaseModel):
                 "Engine uses ephemeral SQLite, where each connection gets a separate "
                 "database. Use a file path instead."
             )
+        require_sqlite_returning(engine)
         return engine
 
 

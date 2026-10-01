@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 
 import numpy as np
@@ -139,3 +140,15 @@ async def test_vector_search_returns_relational_features_in_similarity_order(
     finally:
         await storage.delete_all()
         await storage.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_old_sqlite_runtime_is_rejected(
+    sqlalchemy_sqlite_engine,
+    vector_collection: InMemoryVectorStoreCollection,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """add_feature depends on RETURNING; refuse an older SQLite loudly."""
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 1))
+    with pytest.raises(ValueError, match="RETURNING"):
+        VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)

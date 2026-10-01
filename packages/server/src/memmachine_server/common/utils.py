@@ -4,6 +4,7 @@ import asyncio
 import functools
 import math
 import re
+import sqlite3
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
@@ -11,6 +12,7 @@ from typing import Any, ParamSpec, TypeVar, cast
 
 import numpy as np
 from nltk import sent_tokenize
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from .data_types import SimilarityMetric
 
@@ -364,3 +366,20 @@ def similarity_gt(
             return operator.lt
         case _:
             return operator.gt
+
+
+# SQLite added RETURNING in 3.35.
+_MIN_SQLITE_RETURNING_VERSION = (3, 35)
+
+
+def require_sqlite_returning(engine: AsyncEngine) -> None:
+    """Raise ValueError if the engine uses a SQLite runtime that lacks RETURNING."""
+    if (
+        engine.dialect.name == "sqlite"
+        and sqlite3.sqlite_version_info < _MIN_SQLITE_RETURNING_VERSION
+    ):
+        minimum = ".".join(str(part) for part in _MIN_SQLITE_RETURNING_VERSION)
+        raise ValueError(
+            f"SQLite runtime {sqlite3.sqlite_version} lacks the RETURNING "
+            f"support the store depends on. Use SQLite {minimum} or newer."
+        )

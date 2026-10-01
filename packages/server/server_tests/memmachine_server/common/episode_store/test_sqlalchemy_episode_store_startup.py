@@ -1,6 +1,7 @@
-"""Tests for SqlAlchemyEpisodeStore.startup().
+"""Tests for SqlAlchemyEpisodeStore construction and startup().
 
 Covers:
+- Refusal of a SQLite runtime without RETURNING
 - Connection-failure wrapping (OperationalError, socket.gaierror → ConfigurationError)
 - Idempotent episode_type enum creation on PostgreSQL (GH-1174):
   - Unit tests verify savepoint usage, dialect guard, and checkfirst flag.
@@ -11,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import socket
+import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,6 +50,8 @@ class _FailingBeginContext:
 class _FakeAsyncEngine:
     def __init__(self, exc: Exception):
         self._exc = exc
+        self.dialect = MagicMock()
+        self.dialect.name = "postgresql"
 
     def begin(self):
         return _FailingBeginContext(self._exc)
@@ -92,6 +96,22 @@ async def _cleanup(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.execute(text("DROP TABLE IF EXISTS episodestore CASCADE"))
         await conn.execute(text("DROP TYPE IF EXISTS episode_type"))
+
+
+# ---------------------------------------------------------------------------
+# Construction tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_old_sqlite_runtime_is_rejected(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """add_episodes depends on RETURNING; refuse an older SQLite loudly."""
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 1))
+    with pytest.raises(ValueError, match="RETURNING"):
+        SqlAlchemyEpisodeStore(sqlalchemy_sqlite_engine)
 
 
 # ---------------------------------------------------------------------------

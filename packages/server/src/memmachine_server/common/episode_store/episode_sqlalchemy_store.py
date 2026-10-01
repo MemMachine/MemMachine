@@ -61,7 +61,7 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
-from memmachine_server.common.utils import ensure_tz_aware
+from memmachine_server.common.utils import ensure_tz_aware, require_sqlite_returning
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         metrics_factory: MetricsFactory | None = None,
     ) -> None:
         """Initialize the store with an async SQLAlchemy engine."""
+        require_sqlite_returning(engine)
         self._engine: AsyncEngine = engine
         self._session_factory = async_sessionmaker(
             self._engine,

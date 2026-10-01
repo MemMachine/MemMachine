@@ -1,6 +1,7 @@
 """Tests for SQLiteVectorStore."""
 
 import math
+import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -1483,3 +1484,22 @@ class TestIndexFileDurability:
 
         await store2.shutdown()
         await engine2.dispose()
+
+
+# ── Params validation ──
+
+
+class TestParamsValidation:
+    @pytest.mark.asyncio
+    async def test_old_sqlite_runtime_is_rejected(self, tmp_path, monkeypatch):
+        """Upsert depends on RETURNING; refuse an older SQLite loudly."""
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+        monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 1))
+        try:
+            with pytest.raises(ValueError, match="RETURNING"):
+                SQLiteVectorStoreParams(
+                    sqlalchemy_engine=engine,
+                    vector_search_engine_factory=_engine_factory,
+                )
+        finally:
+            await engine.dispose()

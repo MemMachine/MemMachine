@@ -1011,3 +1011,19 @@ class TestFilterEdgeCases:
         assert r1.uuid in uuids
         assert r3.uuid in uuids
         assert r2.uuid not in uuids
+
+
+# ── Params validation ──
+
+
+class TestParamsValidation:
+    @pytest.mark.asyncio
+    async def test_old_sqlite_runtime_is_rejected(self, tmp_path, monkeypatch):
+        """Upsert depends on RETURNING; refuse an older SQLite loudly."""
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+        monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 1))
+        try:
+            with pytest.raises(ValueError, match="RETURNING"):
+                SQLiteVecVectorStoreParams(engine=engine)
+        finally:
+            await engine.dispose()

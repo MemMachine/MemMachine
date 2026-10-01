@@ -42,7 +42,7 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
-from memmachine_server.common.utils import ensure_tz_aware
+from memmachine_server.common.utils import ensure_tz_aware, require_sqlite_returning
 from memmachine_server.common.vector_store import Record, VectorStoreCollection
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
@@ -182,6 +182,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         vector_collection: VectorStoreCollection,
     ) -> None:
         """Initialize storage with an async SQLAlchemy engine and vector collection."""
+        require_sqlite_returning(sqlalchemy_engine)
         self._engine = sqlalchemy_engine
         self._vector_collection = vector_collection
         self._session_factory = async_sessionmaker(
