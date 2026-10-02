@@ -338,7 +338,7 @@ def _session_info(status: str) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_create_session_waits_for_pending_delete(
-    minimal_conf, patched_resource_manager
+    minimal_conf, patched_resource_manager, monkeypatch
 ):
     """A create issued while the old session is purging waits, then succeeds."""
     # The purge finishes on the third poll; until then the row is Deleted.
@@ -367,8 +367,10 @@ async def test_create_session_waits_for_pending_delete(
         return_value=session_manager
     )
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
-    memmachine._await_pending_delete = functools.partial(
-        memmachine._await_pending_delete, interval=0.001
+    monkeypatch.setattr(
+        memmachine,
+        "_await_pending_delete",
+        functools.partial(memmachine._await_pending_delete, interval=0.001),
     )
 
     info = await memmachine.create_session("alpha")
@@ -379,7 +381,7 @@ async def test_create_session_waits_for_pending_delete(
 
 @pytest.mark.asyncio
 async def test_create_session_raises_when_delete_does_not_finish(
-    minimal_conf, patched_resource_manager
+    minimal_conf, patched_resource_manager, monkeypatch
 ):
     """A purge that outlasts the wait fails the create without touching the row."""
     session_manager = AsyncMock()
@@ -390,8 +392,12 @@ async def test_create_session_raises_when_delete_does_not_finish(
         return_value=session_manager
     )
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
-    memmachine._await_pending_delete = functools.partial(
-        memmachine._await_pending_delete, max_wait=0.05, interval=0.001
+    monkeypatch.setattr(
+        memmachine,
+        "_await_pending_delete",
+        functools.partial(
+            memmachine._await_pending_delete, max_wait=0.05, interval=0.001
+        ),
     )
 
     with pytest.raises(SessionDeletionPendingError):
