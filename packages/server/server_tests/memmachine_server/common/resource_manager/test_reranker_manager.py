@@ -12,7 +12,6 @@ from memmachine_server.common.configuration.reranker_conf import (
     RerankersConf,
     RRFHybridRerankerConf,
 )
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.errors import InvalidRerankerError
 from memmachine_server.common.resource_manager.reranker_manager import (
@@ -78,10 +77,6 @@ class FakeEmbedder(Embedder):
     @property
     def dimensions(self) -> int:
         return 0
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        return SimilarityMetric.COSINE
 
 
 class FakeEmbedderFactory:

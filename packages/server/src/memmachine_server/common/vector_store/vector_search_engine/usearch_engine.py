@@ -1,14 +1,12 @@
 """USearch HNSW implementation of VectorSearchEngine."""
 
 import asyncio
-import math
 from collections.abc import Container, Iterable, Mapping, Sequence
 from typing import ClassVar, override
 
 import numpy as np
 from usearch.index import Index, MetricKind
 
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.rw_locks import AsyncRWLock
 
 from .vector_search_engine import SearchMatch, SearchResult, VectorSearchEngine
@@ -17,11 +15,7 @@ from .vector_search_engine import SearchMatch, SearchResult, VectorSearchEngine
 class USearchVectorSearchEngine(VectorSearchEngine):
     """Vector search engine backed by USearch HNSW."""
 
-    _METRIC_MAP: ClassVar[dict[SimilarityMetric, MetricKind]] = {
-        SimilarityMetric.COSINE: MetricKind.Cos,
-        SimilarityMetric.EUCLIDEAN: MetricKind.L2sq,
-        SimilarityMetric.DOT: MetricKind.IP,
-    }
+    _METRIC_KIND: ClassVar[MetricKind] = MetricKind.Cos
 
     _DEFAULT_M: ClassVar[int] = 16
     _DEFAULT_EF_CONSTRUCTION: ClassVar[int] = 128
@@ -33,42 +27,26 @@ class USearchVectorSearchEngine(VectorSearchEngine):
         self,
         *,
         num_dimensions: int,
-        similarity_metric: SimilarityMetric,
         m: int = _DEFAULT_M,
         ef_construction: int = _DEFAULT_EF_CONSTRUCTION,
         ef_search: int = _DEFAULT_EF_SEARCH,
     ) -> None:
         """Initialize."""
-        usearch_metric = self._METRIC_MAP.get(similarity_metric)
-        if usearch_metric is None:
-            supported = ", ".join(
-                similarity_metric.value for similarity_metric in self._METRIC_MAP
-            )
-            raise ValueError(
-                f"USearch does not support {similarity_metric.value!r}. Supported: {supported}"
-            )
-
         self._index = Index(
             ndim=num_dimensions,
-            metric=usearch_metric,
+            metric=self._METRIC_KIND,
             dtype="f32",
             connectivity=m,
             expansion_add=ef_construction,
             expansion_search=ef_search,
         )
-        self._similarity_metric = similarity_metric
 
         self._lock = AsyncRWLock()
 
-    def _distance_to_score(self, distance: float) -> float:
-        """Convert a USearch distance to a pure metric score."""
-        match self._similarity_metric:
-            case SimilarityMetric.COSINE | SimilarityMetric.DOT:
-                return 1.0 - distance
-            case SimilarityMetric.EUCLIDEAN:
-                return math.sqrt(max(0.0, distance))
-            case _:
-                raise NotImplementedError(self._similarity_metric)
+    @staticmethod
+    def _distance_to_cosine_similarity(distance: float) -> float:
+        """Convert a USearch cosine distance to a cosine similarity."""
+        return 1.0 - distance
 
     @override
     async def add(self, vectors: Mapping[int, Sequence[float]]) -> None:
@@ -139,7 +117,9 @@ class USearchVectorSearchEngine(VectorSearchEngine):
                     matches.append(
                         SearchMatch(
                             key=int_key,
-                            score=self._distance_to_score(float(dist)),
+                            cosine_similarity=self._distance_to_cosine_similarity(
+                                float(dist)
+                            ),
                         )
                     )
                     if len(matches) >= limit:
@@ -154,24 +134,6 @@ class USearchVectorSearchEngine(VectorSearchEngine):
             overfetch_factor *= USearchVectorSearchEngine._OVERFETCH_BASE
 
         return [r if r is not None else SearchResult(matches=[]) for r in final_results]
-
-    @override
-    async def get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        keys = list(keys)
-        if not keys:
-            return {}
-
-        keys_array = np.array(keys, dtype=np.int64)
-        async with self._lock.read_lock():
-            vectors = await asyncio.to_thread(self._index.get, keys_array)
-
-        result: dict[int, list[float]] = {}
-        for i, key in enumerate(keys):
-            vector = vectors[i] if vectors is not None else None
-            if vector is not None:
-                result[key] = list(vector)
-
-        return result
 
     @override
     async def remove(self, keys: Iterable[int]) -> None:

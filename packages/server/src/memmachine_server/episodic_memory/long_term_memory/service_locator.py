@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+from uuid import UUID, uuid5
 
 from pydantic import InstanceOf
 
@@ -10,35 +11,27 @@ from memmachine_server.common.configuration.episodic_config import (
     DeriverConf,
     EventLongTermMemoryConf,
     LongTermMemoryConf,
-    PassthroughSegmenterConf,
     SegmenterConf,
     SentenceTextDeriverConf,
-    TextSegmenterConf,
     WholeTextDeriverConf,
 )
-from memmachine_server.common.data_types import (
-    PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
-    PropertyValue,
-)
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
+from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
     WholeTextDeriver,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStorePartitionConfig,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStorePartitionConfig,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+from memmachine_server.episodic_memory.event_memory.event_memory_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
-from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
-    PassthroughSegmenter,
-)
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
@@ -52,7 +45,16 @@ from .long_term_memory import (
 
 logger = logging.getLogger(__name__)
 
-_EVENT_BACKEND_NAMESPACE = "long_term_memory"
+_EVENT_BACKEND_VECTOR_STORE_NAMESPACE = UUID("d545833c-59ce-46ee-a325-c1a6222159a8")
+"""The UUIDv5 namespace of the event backend's vector store names.
+
+The event backend keeps one store per vector store backend and embedder. Its
+name is the UUIDv5 of the embedder id in the UUIDv5 of the backend's key in
+this namespace, in hex: a vector store name whatever the key and the id are,
+never another backend's store name, so stores whose registries share a
+database stay apart, and never the name of another memory's store. Fixed,
+because the name locates the store's data.
+"""
 
 
 async def long_term_memory_params_from_config(
@@ -93,9 +95,11 @@ async def _event_params(
     config: EventLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
 ) -> EventBackendParams:
-    vector_store = await resource_manager.get_vector_store(config.vector_store)
-    segment_store = await resource_manager.get_segment_store(config.segment_store)
+    event_memory_store = await resource_manager.get_event_memory_store(
+        config.event_memory_store
+    )
     embedder = await resource_manager.get_embedder(config.embedder, validate=True)
+    vector_store = await event_backend_vector_store(config, resource_manager)
     reranker = (
         await resource_manager.get_reranker(config.reranker, validate=True)
         if config.reranker is not None
@@ -105,41 +109,13 @@ async def _event_params(
 
     partition_key = partition_key_for_session(config.session_id)
 
-    # Open the existing collection if any (preserves the original schema). Only
-    # create with our merged schema if the partition does not yet exist.
-    collection = await vector_store.open_collection(
-        namespace=_EVENT_BACKEND_NAMESPACE,
-        name=partition_key,
-    )
-    if collection is None:
-        user_schema = _resolve_user_properties_schema(config.properties_schema)
-        collection_config = VectorStoreCollectionConfig(
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties_schema={
-                **EventMemory.expected_vector_store_collection_schema(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-                **user_schema,
-            },
-        )
-        await vector_store.create_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-            config=collection_config,
-        )
-        collection = await vector_store.open_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-        )
-        if collection is None:
-            raise RuntimeError(
-                f"Failed to open vector store collection after creation for "
-                f"partition {partition_key!r}"
-            )
+    # A creation that loses a race to another caller, or finds another
+    # caller's still pending, opens that caller's partition once it is live.
+    vector_store_partition = await vector_store.open_or_create_partition(partition_key)
 
-    partition = await segment_store.open_or_create_partition(
+    partition = await event_memory_store.open_or_create_partition(
         partition_key,
-        SegmentStorePartitionConfig(),
+        EventMemoryStorePartitionConfig(),
     )
 
     segmenter = _build_segmenter(config.segmenter)
@@ -148,24 +124,51 @@ async def _event_params(
     return EventBackendParams(
         session_id=config.session_id,
         vector_store=vector_store,
-        vector_store_collection=collection,
-        vector_store_collection_namespace=_EVENT_BACKEND_NAMESPACE,
-        segment_store=segment_store,
-        segment_store_partition=partition,
+        vector_store_partition=vector_store_partition,
+        event_memory_store=event_memory_store,
+        event_memory_store_partition=partition,
         partition_key=partition_key,
         episode_storage=episode_storage,
         embedder=embedder,
         reranker=reranker,
         segmenter=segmenter,
         deriver=deriver,
-        user_property_keys=frozenset(config.properties_schema),
         metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
     )
 
 
+async def event_backend_vector_store(
+    config: EventLongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> VectorStore:
+    """The event backend's vector store: the store of its backend and embedder, built for it."""
+    embedder = await resource_manager.get_embedder(config.embedder, validate=True)
+    return await resource_manager.get_vector_store(
+        config.vector_store,
+        vector_store_name=uuid5(
+            uuid5(_EVENT_BACKEND_VECTOR_STORE_NAMESPACE, config.vector_store),
+            config.embedder,
+        ).hex,
+        vector_dimensions=embedder.dimensions,
+        indexed_properties=event_backend_indexed_properties(),
+    )
+
+
+def event_backend_indexed_properties() -> dict[str, PropertyType]:
+    """The system keys the event backend writes into every vector record.
+
+    EventMemory's reserved keys and the adapter's own event fields; the
+    vector store is built with these.
+    """
+    return {
+        **EventMemory.expected_vector_store_collection_schema(),
+        **EVENT_BACKEND_SYSTEM_FIELDS,
+    }
+
+
 def partition_key_for_session(session_id: str) -> str:
     """
-    Derive a partition key satisfying the segment store's contract.
+    Derive a partition key satisfying the event memory store's contract.
 
     If the session_id already satisfies it (checked by the store's own
     validator, so the two can never disagree), use it directly to keep
@@ -190,47 +193,20 @@ def partition_key_for_session(session_id: str) -> str:
     return partition_key
 
 
-def _resolve_user_properties_schema(
-    raw: dict[str, str],
-) -> dict[str, type[PropertyValue]]:
-    resolved: dict[str, type[PropertyValue]] = {}
-    for key, type_name in raw.items():
-        if key.startswith("_"):
-            # `_`-prefixed keys are reserved for system-defined event fields
-            # (`_episode_uid`, `_session_key`, `_producer_id`, ...). Allowing a
-            # user property to share that namespace would let it overwrite the
-            # system slot in the merged collection schema (dict-spread is last-
-            # wins) and silently change its declared type.
-            raise ValueError(
-                f"Property {key!r}: keys starting with '_' are reserved for "
-                "system-defined event fields and cannot be used as user "
-                "property names."
-            )
-        prop_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
-        if prop_type is None:
-            raise ValueError(f"Property {key!r}: unknown type name {type_name!r}")
-        resolved[key] = prop_type
-    return resolved
-
-
-def _build_segmenter(conf: SegmenterConf) -> Segmenter:
-    match conf:
-        case PassthroughSegmenterConf():
-            return PassthroughSegmenter()
-        case TextSegmenterConf(max_chunk_length=max_chunk_length):
-            return TextSegmenter(max_chunk_length=max_chunk_length)
-        case _:
-            raise NotImplementedError(
-                f"Unsupported segmenter config: {type(conf).__name__}"
-            )
+def _build_segmenter(conf: SegmenterConf | None) -> Segmenter:
+    # No configured handler: the table's own fallback, one segment per
+    # block, unchanged.
+    if conf is None:
+        return Segmenter()
+    return Segmenter([TextSegmenter(max_chunk_length=conf.max_chunk_length)])
 
 
 def _build_deriver(conf: DeriverConf) -> Deriver:
     match conf:
         case WholeTextDeriverConf():
-            return WholeTextDeriver()
+            return Deriver([WholeTextDeriver()])
         case SentenceTextDeriverConf():
-            return SentenceTextDeriver()
+            return Deriver([SentenceTextDeriver()])
         case _:
             raise NotImplementedError(
                 f"Unsupported deriver config: {type(conf).__name__}"
