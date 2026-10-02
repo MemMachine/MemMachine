@@ -1,0 +1,312 @@
+---
+title: "Coding Agents"
+description: "Memory for Claude Code and Codex from a MemMachine server"
+icon: "terminal"
+---
+
+## What a coding agent gets
+
+A MemMachine server serves an MCP endpoint at `<server>/v1/mcp` with two
+memory tools on it. An agent that points at the endpoint can call them
+during a session:
+
+- `memory_query(cue, ...)` returns the passages whose surroundings match
+  the cue, best first, each one rendered with the ids it was found under.
+  A cue is the context a memory was encoded in, not a bare entity: the
+  user's own wording of what they are after works well.
+- `memory_expand(id, direction)` reads more of the session a passage came
+  from, a fixed step at a time, `around`, `earlier` or `later`. Following
+  a lead the passage mentions is another query; reading around it is an
+  expansion.
+
+Both tools run against one tenant's memory, and the tenant travels with
+every request in the `X-MemMachine-Tenant` header the installer writes.
+The tools and their prompting live on the server, so a deployment can
+improve them without touching any machine an agent runs on.
+
+What they read is what the agent's own sessions wrote: the installer
+also registers a `Stop` hook that posts each session to the same tenant
+as it happens ("What capture records", below).
+
+## Reading a result
+
+Every passage carries markers that name where it sits:
+
+```text
+[session:"019b2f1c-6c7a-7bd4-9f3a-4c2d8e5b1a70"]
+[segment:4f9c1a2b3d4e5f60718293a4b5c6d7e8] The user asked why the installer
+backs the file up before it writes.
+```
+
+- `[session:"<id>"]` is the agent session a passage belongs to, the
+  conversation it happened in. It is what `memory_query`'s `within`
+  argument takes.
+- `[segment:<hex>]` is one passage. It is what `memory_expand` takes,
+  with or without the wrapper.
+- `[segments:<first>..<last>]` is a run of neighboring passages, rendered
+  as one. Its two ends are the handles a further expansion continues
+  from.
+
+A side the session has run out of answers with a sentence saying so,
+`Nothing earlier: the session starts here.` or `Nothing later: the
+session ends here.`
+
+## Choosing a tenant name
+
+A tenant is one human user: every session of every agent that user runs
+shares one memory, so a name like `alice` or a work email is the right
+grain. Sessions are the agent's own session ids and need no setting up,
+and the project an agent runs in is recorded on what it captures rather
+than kept in a tenant of its own. Pick the name once and use it for
+every agent on every machine that user works on.
+
+The installer touches only the agent's files and makes no request to the
+server, so the tenant has to exist there before either tool answers or a
+capture is held. Create it once with the v1 API:
+
+```bash
+curl -X PUT https://memmachine.example.com/v1/tenants/alice
+```
+
+Until it exists, the tools answer an error naming the tenant, and the
+capture hook leaves its mark where it is and posts again on the next
+turn.
+
+## Claude Code
+
+Install for every project this user opens (user scope):
+
+```bash
+memmachine agent install claude-code \
+  --server https://memmachine.example.com \
+  --tenant alice
+```
+
+This runs Claude Code's own command, which stores the entry in
+`~/.claude.json`:
+
+```bash
+claude mcp add --transport http --scope user memmachine \
+  https://memmachine.example.com/v1/mcp \
+  --header "X-MemMachine-Tenant: alice"
+```
+
+The `claude` executable has to be on `PATH`. Without it the installer
+prints that command and exits non-zero, so it can be run where Claude
+Code is installed.
+
+Install for one repository, in a file that can be committed (project
+scope):
+
+```bash
+memmachine agent install claude-code \
+  --server https://memmachine.example.com \
+  --tenant alice \
+  --scope project
+```
+
+This writes `.mcp.json` in the current directory, keeping every other
+server in it:
+
+```json
+{
+  "mcpServers": {
+    "memmachine": {
+      "type": "http",
+      "url": "https://memmachine.example.com/v1/mcp",
+      "headers": {
+        "X-MemMachine-Tenant": "alice"
+      }
+    }
+  }
+}
+```
+
+Take it back out with `memmachine agent disable claude-code`, or
+`--scope project` for the repository's file. User scope runs
+`claude mcp remove --scope user memmachine`.
+
+## Codex
+
+Install for this user (user scope):
+
+```bash
+memmachine agent install codex \
+  --server https://memmachine.example.com \
+  --tenant alice
+```
+
+This writes two tables into `$CODEX_HOME/config.toml`, which defaults to
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.memmachine]
+url = "https://memmachine.example.com/v1/mcp"
+
+[mcp_servers.memmachine.http_headers]
+X-MemMachine-Tenant = "alice"
+```
+
+Install for one repository (project scope) with `--scope project`, which
+writes the same two tables into `<cwd>/.codex/config.toml`. Codex reads a
+project's configuration only for a project it has been told to trust.
+
+Take it back out with `memmachine agent disable codex`, or
+`--scope project` for the repository's file. Only those two tables are
+removed; every other table, comment and blank line in the file stays as
+it was.
+
+## What capture records
+
+At the end of every turn, the `Stop` hook the installer registers runs
+the capture client. It reads the session's transcript from where the
+last run left off and posts what is new to
+`<server>/v1/tenants/<tenant>/events`:
+
+- Messages: what the user typed, and what the assistant answered.
+- Tool calls, with the arguments the agent gave them, and the results
+  they returned.
+- The assistant's thinking, wherever the transcript carries it.
+- Injected text, which is what entered the conversation without being
+  typed -- hook context, skill bodies, system reminders, slash-command
+  echoes, compaction summaries -- each carrying which of those it is.
+
+Capture posts every entry the transcript holds since the mark, and no
+tool the model can call writes to memory: what a session remembers is
+what it did, not what it chose to record.
+
+One kind of record is left out, and only because it is already there:
+Codex writes each message and each tool call twice, once as the
+conversation (`response_item`) and once for its own interface
+(`event_msg`), so the second is passed over rather than remembered
+twice. Claude Code's transcript repeats nothing this way.
+
+Thinking is written down where the agent's file carries it. Claude
+Code's transcripts hold the text of a `thinking` block, so it is
+captured. Codex carries its reasoning encrypted, with the readable
+`summary` and `content` of a `reasoning` record empty in every rollout
+written here, so those records usually produce nothing; where a rollout
+does carry that text, it is captured the same way.
+
+Only messages are embedded, so `memory_query` answers with messages and
+nothing else: a tool call, its result, thinking and an injected passage
+are reachable by expansion only, and a query never matches one. They sit
+on the session's timeline beside the message they happened around, and
+`memory_expand` is what reads them. That is what makes a past procedure
+readable again: find the message where the work was discussed, expand
+around it, and the commands, their arguments and their output are there.
+
+A tool result, a passage of thinking and an injected passage are each
+one segment on the server, however long they are, and an expansion step
+is counted in segments, so what they carry is capped at 8192 bytes. Text
+over the cap is cut at a character boundary and carries one line saying
+so:
+
+```text
+[truncated: 8192 of 41983 bytes]
+```
+
+A message's text is never capped, and neither are the arguments a tool
+call was made with.
+
+Every event carries the agent it came from (`claude-code` or `codex`),
+the project it happened in (the repository root of the session's
+directory, or the directory itself), and, on a tool event, the tool's
+name. A subagent's turns are a session of their own, with the session
+that launched it recorded on them.
+
+### The hook the installer writes
+
+Claude Code reads it from `~/.claude/settings.json` for user scope, and
+from `.claude/settings.json` in the current directory for project scope:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/venv/bin/python3 -m memmachine_client.cli agent capture claude-code --server https://memmachine.example.com --tenant alice",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Codex reads the same shape from `$CODEX_HOME/hooks.json`, or from
+`<cwd>/.codex/hooks.json` for project scope, with `codex` in place of
+`claude-code`.
+
+The command names the interpreter this client is installed in by its own
+path, because both agents run a hook's command through a shell whose
+`PATH` need not hold that interpreter.
+
+### How far a session has been posted
+
+A mark per session is kept in the agent's own directory:
+`~/.claude/memmachine/capture-state.json` for Claude Code, and
+`$CODEX_HOME/memmachine/capture-state.json` for Codex. It holds the byte
+offset the next read starts at, so a session is read once however many
+turns it runs for.
+
+The mark is a shortcut rather than a record. An event's id comes from
+the transcript, so deleting the state file costs one rejected batch per
+session, never a second copy of anything. A batch the server answers
+`event_exists` to is posted again an event at a time, and the mark moves
+past each event the server holds, so a session resumed or forked from
+another, whose transcript repeats entries that are already stored, loses
+neither what it repeats nor what is new, and a conflicting batch over a
+slow link makes progress on every turn instead of starting over.
+
+A failure -- a server that does not answer, or answers anything else --
+leaves the mark at the last event the server holds and exits non-zero,
+so the next `Stop` posts what is left. The whole capture runs under a
+budget of five seconds, which bounds what the agent waits for.
+
+### Running capture by hand
+
+The same command the hook runs takes a transcript by name, which is how
+a session from before the install is written to memory:
+
+```bash
+memmachine agent capture claude-code \
+  --server https://memmachine.example.com \
+  --tenant alice \
+  --transcript ~/.claude/projects/<directory slug>/<session id>.jsonl \
+  --session-id <session id>
+```
+
+Codex's transcripts are the rollout files under
+`$CODEX_HOME/sessions/<year>/<month>/<day>/`, whose names carry the
+session id. Nothing is written to standard output, since an agent reads
+a hook's output as context; what was posted is reported on standard
+error.
+
+## What the installer writes, and what it keeps
+
+- Installing twice leaves one entry and one hook. A file that already
+  reads the way an install would leave it is not written again.
+- Every write first copies the file to `<file>.bak` beside it, so the
+  version an install replaced is one `mv` away. Claude Code's MCP entry
+  in user scope is the exception: that file belongs to the `claude`
+  executable, which keeps its own backups.
+- `--dry-run` prints the command that would run, and a diff of every
+  file that would change, and writes nothing.
+- Disabling removes what the installer wrote and nothing else: the MCP
+  entry, and the `Stop` handler that runs capture. Every other hook, and
+  every other key of the file, stays as it was.
+
+## What is coming
+
+A session outline, a table of contents of what a session did, which
+needs turn boundaries the timeline does not record yet.
+
+Ambient recall, where memory arrives with a prompt instead of being asked
+for, stays designed and off: injected context changes answers often
+enough to need a benefit that has not been measured yet. The two tools
+above are the whole recall surface.
