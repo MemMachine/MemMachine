@@ -13,7 +13,7 @@ drop_session_partition all dispatch correctly through the event backend.
 
 import logging
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Any, override
 from unittest.mock import create_autospec
@@ -81,8 +81,16 @@ class FakeEpisodeStorage(EpisodeStorage):
         self._episodes.clear()
 
     @override
+    async def reserve_sequence_numbers(self, count: int) -> list[int]:
+        raise NotImplementedError
+
+    @override
     async def add_episodes(
-        self, session_key: str, episodes: list[EpisodeEntry]
+        self,
+        session_key: str,
+        episodes: list[EpisodeEntry],
+        *,
+        sequence_nums: Sequence[int] | None = None,
     ) -> list[Episode]:
         raise NotImplementedError
 

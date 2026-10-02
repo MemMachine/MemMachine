@@ -705,7 +705,7 @@ class MemMachine:
             and self._conf.semantic_memory.enabled
         )
 
-    async def add_episodes(
+    async def add_episodes(  # noqa: C901
         self,
         session_data: InstanceOf[SessionData],
         episode_entries: list[EpisodeEntry],
@@ -725,6 +725,11 @@ class MemMachine:
 
         """
         episode_storage = await self._resources.get_episode_storage()
+        if not episode_entries:
+            return []
+        sequence_nums = await episode_storage.reserve_sequence_numbers(
+            len(episode_entries)
+        )
         created_at = datetime.now(UTC)
         episode_entries = [
             entry
@@ -735,10 +740,11 @@ class MemMachine:
         episodes = [
             Episode(
                 session_key=session_data.session_key,
+                sequence_num=sequence_num,
                 metadata=entry.metadata or None,
                 **entry.model_dump(exclude_none=True, exclude={"metadata"}),
             )
-            for entry in episode_entries
+            for entry, sequence_num in zip(episode_entries, sequence_nums, strict=True)
         ]
         episode_ids = [e.uid for e in episodes]
 
@@ -770,6 +776,7 @@ class MemMachine:
             episode_storage.add_episodes(
                 session_data.session_key,
                 episode_entries,
+                sequence_nums=sequence_nums,
             )
         ]
         task_names = ["episode storage"]
