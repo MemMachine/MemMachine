@@ -11,7 +11,7 @@ Covers:
 from __future__ import annotations
 
 import socket
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import Uuid, text
@@ -72,6 +72,7 @@ def _make_pg_engine() -> tuple[MagicMock, MagicMock, MagicMock]:
     engine = MagicMock()
 
     conn = MagicMock()
+    conn.execute = AsyncMock()
     conn.dialect = MagicMock()
     conn.dialect.name = "postgresql"
 
@@ -226,6 +227,7 @@ async def test_startup_skips_enum_creation_on_non_postgresql():
     engine = MagicMock()
 
     conn = MagicMock()
+    conn.execute = AsyncMock()
     conn.dialect = MagicMock()
     conn.dialect.name = "sqlite"
 

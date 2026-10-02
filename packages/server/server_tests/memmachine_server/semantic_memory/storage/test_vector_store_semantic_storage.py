@@ -5,6 +5,7 @@ from uuid import UUID
 
 import numpy as np
 import pytest
+from sqlalchemy import text
 
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.filter.filter_parser import parse_filter
@@ -33,6 +34,47 @@ def vector_collection() -> InMemoryVectorStoreCollection:
             },
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_startup_migrates_existing_history_position(
+    sqlalchemy_sqlite_engine,
+    vector_collection: InMemoryVectorStoreCollection,
+):
+    history_id = UUID("550e8400-e29b-41d4-a716-446655440019")
+    async with sqlalchemy_sqlite_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE vector_semantic_set_ingested_history ("
+                "set_id VARCHAR NOT NULL, history_id VARCHAR NOT NULL, "
+                "created_at DATETIME, episode_created_at DATETIME, "
+                "batch_position INTEGER NOT NULL DEFAULT 0, ingested BOOLEAN NOT NULL, "
+                "PRIMARY KEY (set_id, history_id))"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO vector_semantic_set_ingested_history "
+                "(set_id, history_id, batch_position, ingested) "
+                "VALUES ('user', :history_id, 42, 0)"
+            ),
+            {"history_id": str(history_id)},
+        )
+
+    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.startup()
+    assert [item async for item in storage.get_history_messages(set_ids=["user"])] == [
+        history_id
+    ]
+    async with sqlalchemy_sqlite_engine.begin() as conn:
+        result = await conn.execute(
+            text(
+                "SELECT sequence_num FROM vector_semantic_set_ingested_history "
+                "WHERE history_id = :history_id"
+            ),
+            {"history_id": str(history_id)},
+        )
+        assert result.scalar_one() == 42
 
 
 @pytest.mark.asyncio

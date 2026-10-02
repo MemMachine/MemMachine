@@ -204,9 +204,9 @@ async def test_add_episodes_persists_sequence_numbers(
     try:
         assert stored[0].sequence_num > 0
         assert stored[1].sequence_num == stored[0].sequence_num + 1
-        assert (await episode_storage.get_episode(entries[0].uid)).sequence_num == (
-            stored[0].sequence_num
-        )
+        retrieved = await episode_storage.get_episode(entries[0].uid)
+        assert retrieved is not None
+        assert retrieved.sequence_num == stored[0].sequence_num
     finally:
         await episode_storage.delete_episodes([entry.uid for entry in entries])
 
