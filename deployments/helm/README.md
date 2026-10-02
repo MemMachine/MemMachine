@@ -229,7 +229,7 @@ picks which, and the chart deploys only the store that choice needs:
 
 | `backend`     | Store deployed | `long_term_memory` wiring                            |
 |---------------|----------------|------------------------------------------------------|
-| `event` (default) | Qdrant     | `vector_store: event_vector_store`, `segment_store: db_postgres` |
+| `event` (default) | Qdrant     | `vector_store: event_vector_store`, `event_memory_store: db_postgres` |
 | `declarative` | Neo4j          | `vector_graph_store: db_neo4j`                        |
 
 ```bash
