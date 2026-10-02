@@ -563,6 +563,22 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             default=10,
             description=SpecDoc.TOP_K,
             examples=Examples.TOP_K,
+            # Rejected at the schema, where a client's number belongs.
+            #
+            # Without a bound, 0 and -1 passed validation and reached
+            # retrieval, which cannot use them: the Qdrant path answered 500
+            # with a bare "Internal Server Error" body, so nothing caught it
+            # and nothing logged it through the API's handler.
+            #
+            # A bound rather than a guard, because the two guards that already
+            # exist disagree about what a non-positive limit means --
+            # agent_api treats <= 0 as "no limit" and returns everything,
+            # sqlite_vector_store treats it as "no results" and returns
+            # nothing. Picking either would make one of them wrong; refusing
+            # the input makes neither reachable. top_k is documented as "the
+            # maximum number of memories to return", and -1 has no reading at
+            # all under that.
+            ge=1,
         ),
     ]
     query: Annotated[
