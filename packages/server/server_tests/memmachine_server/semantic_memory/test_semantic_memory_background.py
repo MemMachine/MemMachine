@@ -1,6 +1,8 @@
 """Tests for SemanticService background ingestion functionality."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
@@ -73,6 +75,39 @@ async def test_stop_when_not_started(
 
     # Then no error occurs
     assert semantic_service._ingestion_task is None
+
+
+async def test_background_age_trigger_uses_storage_clock(
+    semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
+    monkeypatch,
+):
+    storage_now = datetime(2025, 1, 1, tzinfo=UTC)
+    clock = AsyncMock(return_value=storage_now)
+    monkeypatch.setattr(semantic_storage, "get_storage_time", clock)
+    captured = []
+
+    async def capture_sets(*, older_than, **kwargs):
+        captured.append(older_than)
+        semantic_service._is_shutting_down = True
+        if False:
+            yield "unused"
+
+    monkeypatch.setattr(semantic_storage, "get_history_set_ids", capture_sets)
+    monkeypatch.setattr(semantic_service, "_interruptible_sleep", AsyncMock())
+
+    class SkewedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return storage_now + timedelta(days=1)
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_memory.datetime",
+        SkewedDatetime,
+    )
+    await semantic_service._background_ingestion_task()
+    clock.assert_awaited_once()
+    assert captured == [storage_now - semantic_service._feature_time_limit]
 
 
 async def test_background_ingestion_handles_errors_gracefully(

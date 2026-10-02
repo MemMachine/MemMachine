@@ -8,6 +8,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 import numpy as np
 
@@ -41,7 +42,7 @@ class ClusterSplitterProtocol(Protocol):
         self,
         *,
         cluster_messages: Sequence[tuple[str, Sequence[Episode]]],
-        cluster_embeddings: Mapping[str, Sequence[float]],
+        cluster_embeddings: Mapping[UUID, Sequence[float]],
         state: ClusterState,
         reranker: Reranker | None,
     ) -> tuple[list[tuple[str, Sequence[Episode]]], ClusterState]: ...
@@ -54,7 +55,7 @@ class NoOpClusterSplitter:
         self,
         *,
         cluster_messages: Sequence[tuple[str, Sequence[Episode]]],
-        cluster_embeddings: Mapping[str, Sequence[float]],  # noqa: ARG002
+        cluster_embeddings: Mapping[UUID, Sequence[float]],  # noqa: ARG002
         state: ClusterState,
         reranker: Reranker | None,  # noqa: ARG002
     ) -> tuple[list[tuple[str, Sequence[Episode]]], ClusterState]:
@@ -107,12 +108,10 @@ class RerankerClusterSplitter:
     @staticmethod
     def _collect_embeddings(
         messages: Sequence[Episode],
-        cluster_embeddings: Mapping[str, Sequence[float]],
-    ) -> tuple[list[Sequence[float]], list[str]]:
-        ordered_embeddings = [
-            cluster_embeddings[m.uid] for m in messages if m.uid is not None
-        ]
-        event_ids = [m.uid for m in messages if m.uid is not None]
+        cluster_embeddings: Mapping[UUID, Sequence[float]],
+    ) -> tuple[list[Sequence[float]], list[UUID]]:
+        ordered_embeddings = [cluster_embeddings[m.uid] for m in messages]
+        event_ids = [m.uid for m in messages]
         return ordered_embeddings, event_ids
 
     def _replay_if_unchanged(
@@ -187,7 +186,7 @@ class RerankerClusterSplitter:
         *,
         cluster_id: str,
         messages: Sequence[Episode],
-        cluster_embeddings: Mapping[str, Sequence[float]],
+        cluster_embeddings: Mapping[UUID, Sequence[float]],
         state: ClusterState,
         reranker: Reranker | None,
     ) -> list[tuple[str, Sequence[Episode]]]:
@@ -279,7 +278,7 @@ class RerankerClusterSplitter:
         self,
         *,
         cluster_messages: Sequence[tuple[str, Sequence[Episode]]],
-        cluster_embeddings: Mapping[str, Sequence[float]],
+        cluster_embeddings: Mapping[UUID, Sequence[float]],
         state: ClusterState,
         reranker: Reranker | None,
     ) -> tuple[list[tuple[str, Sequence[Episode]]], ClusterState]:
@@ -374,10 +373,7 @@ class RerankerClusterSplitter:
         for seg_id in segment_ids[1:]:
             for i in range(search_from, len(messages)):
                 msg = messages[i]
-                if (
-                    msg.uid is not None
-                    and state.event_to_cluster.get(msg.uid) == seg_id
-                ):
+                if state.event_to_cluster.get(msg.uid) == seg_id:
                     boundaries.append(i)
                     search_from = i
                     break
@@ -427,8 +423,8 @@ class RerankerClusterSplitter:
         )
 
     @staticmethod
-    def _input_hash(event_ids: Sequence[str]) -> str:
-        raw = ",".join(event_ids)
+    def _input_hash(event_ids: Sequence[UUID]) -> str:
+        raw = ",".join(str(event_id) for event_id in event_ids)
         return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -492,8 +488,7 @@ def apply_cluster_split(
             last_ts=max(m.created_at for m in seg_messages),
         )
         for msg in seg_messages:
-            if msg.uid is not None:
-                state.event_to_cluster[msg.uid] = seg_id
+            state.event_to_cluster[msg.uid] = seg_id
 
         segments.append((seg_id, seg_messages))
         segment_ids.append(seg_id)

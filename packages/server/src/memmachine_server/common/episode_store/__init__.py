@@ -5,7 +5,6 @@ from .episode_model import (
     ContentType,
     Episode,
     EpisodeEntry,
-    EpisodeIdT,
     EpisodeResponse,
     EpisodeType,
 )
@@ -16,7 +15,6 @@ __all__ = [
     "CountCachingEpisodeStorage",
     "Episode",
     "EpisodeEntry",
-    "EpisodeIdT",
     "EpisodeResponse",
     "EpisodeStorage",
     "EpisodeType",

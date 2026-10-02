@@ -6,11 +6,11 @@ from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar
+from uuid import UUID
 
 import numpy as np
 from pydantic import InstanceOf
 
-from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.errors import InvalidArgumentError
 from memmachine_server.common.filter.filter_parser import (
     USER_METADATA_STORAGE_PREFIX,
@@ -67,7 +67,7 @@ class _FeatureEntry:
     value: str
     embedding: np.ndarray
     metadata: dict[str, Any] | None = None
-    citations: list[EpisodeIdT] = field(default_factory=list)
+    citations: list[UUID] = field(default_factory=list)
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
 
@@ -79,9 +79,11 @@ class InMemorySemanticStorage(SemanticStorage):
         self._features_by_id: dict[FeatureIdT, _FeatureEntry] = {}
         self._feature_ids_by_set: dict[str, list[FeatureIdT]] = {}
         # History tracking mirrors the SetIngestedHistory table
-        self._set_history_map: dict[str, dict[EpisodeIdT, bool]] = {}
-        self._history_created_at: dict[tuple[str, EpisodeIdT], datetime] = {}
-        self._history_to_sets: dict[EpisodeIdT, dict[str, bool]] = {}
+        self._set_history_map: dict[str, dict[UUID, bool]] = {}
+        self._history_created_at: dict[tuple[str, UUID], datetime] = {}
+        self._history_episode_created_at: dict[tuple[str, UUID], datetime] = {}
+        self._history_sequence_num: dict[tuple[str, UUID], int] = {}
+        self._history_to_sets: dict[UUID, dict[str, bool]] = {}
         self._next_feature_id = 1
         self._next_history_id = 1
         self._lock = asyncio.Lock()
@@ -98,6 +100,8 @@ class InMemorySemanticStorage(SemanticStorage):
             self._feature_ids_by_set.clear()
             self._set_history_map.clear()
             self._history_created_at.clear()
+            self._history_episode_created_at.clear()
+            self._history_sequence_num.clear()
             self._history_to_sets.clear()
             self._next_feature_id = 1
             self._next_history_id = 1
@@ -254,7 +258,7 @@ class InMemorySemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         if not history_ids:
             return
@@ -265,9 +269,8 @@ class InMemorySemanticStorage(SemanticStorage):
             if entry is None:
                 return
 
-            existing: set[EpisodeIdT] = set(entry.citations)
+            existing: set[UUID] = set(entry.citations)
             for history_id in history_ids:
-                history_id = EpisodeIdT(history_id)
                 if history_id not in existing:
                     entry.citations.append(history_id)
                     existing.add(history_id)
@@ -279,7 +282,7 @@ class InMemorySemanticStorage(SemanticStorage):
         set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> AsyncIterator[EpisodeIdT]:
+    ) -> AsyncIterator[UUID]:
         async with self._lock:
             rows = self._history_rows_for_sets(set_ids)
             rows = self._filter_history_rows(rows, is_ingested)
@@ -301,6 +304,20 @@ class InMemorySemanticStorage(SemanticStorage):
             rows = self._history_rows_for_sets(set_ids)
             filtered_rows = self._filter_history_rows(rows, is_ingested)
             return len(filtered_rows)
+
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        async with self._lock:
+            return {
+                history_id: self._history_created_at[(set_id, history_id)]
+                for history_id in history_ids
+                if (set_id, history_id) in self._history_created_at
+            }
+
+    async def get_storage_time(self) -> datetime:
+        """Use the same local clock as in-memory history registration."""
+        return datetime.now(UTC)
 
     def get_history_set_ids(
         self,
@@ -455,21 +472,27 @@ class InMemorySemanticStorage(SemanticStorage):
     def _history_rows_for_sets(
         self,
         set_ids: Sequence[SetIdT] | None,
-    ) -> list[tuple[EpisodeIdT, bool]]:
+    ) -> list[tuple[UUID, bool]]:
         rows = [
-            (history_id, ingested)
+            (
+                history_id,
+                ingested,
+                self._history_episode_created_at[(set_id, history_id)],
+                self._history_created_at[(set_id, history_id)],
+                self._history_sequence_num[(set_id, history_id)],
+            )
             for set_id, history_map in self._set_history_map.items()
             if set_ids is None or set_id in set_ids
             for history_id, ingested in history_map.items()
         ]
-        rows.sort(key=lambda pair: pair[0])
-        return rows
+        rows.sort(key=lambda row: (row[2], row[4], row[3], row[0]))
+        return [(history_id, ingested) for history_id, ingested, *_ in rows]
 
     @staticmethod
     def _filter_history_rows(
-        rows: list[tuple[EpisodeIdT, bool]],
+        rows: list[tuple[UUID, bool]],
         is_ingested: bool | None,
-    ) -> list[tuple[EpisodeIdT, bool]]:
+    ) -> list[tuple[UUID, bool]]:
         if is_ingested is None:
             return rows
         return [pair for pair in rows if pair[1] == is_ingested]
@@ -477,28 +500,35 @@ class InMemorySemanticStorage(SemanticStorage):
     async def add_history_to_set(
         self,
         set_id: SetIdT,
-        history_id: EpisodeIdT,
+        history_id: UUID,
+        *,
+        created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        sequence_num: int = 0,
     ) -> None:
         async with self._lock:
             history_map = self._set_history_map.setdefault(set_id, {})
-            history_id = EpisodeIdT(history_id)
             is_new_association = history_id not in history_map
             history_map[history_id] = history_map.get(history_id, False)
             if is_new_association:
-                self._history_created_at[(set_id, history_id)] = _utcnow()
+                registration_time = registered_at or _utcnow()
+                self._history_created_at[(set_id, history_id)] = registration_time
+                self._history_episode_created_at[(set_id, history_id)] = (
+                    created_at or registration_time
+                )
+                self._history_sequence_num[(set_id, history_id)] = sequence_num
             self._history_to_sets.setdefault(history_id, {})[set_id] = history_map[
                 history_id
             ]
 
-    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
         if not history_ids:
             return
 
         async with self._lock:
-            ids = {EpisodeIdT(history_id) for history_id in history_ids}
+            ids = set(history_ids)
             for history_id in history_ids:
-                normalized_id = EpisodeIdT(history_id)
-                referencing_sets = self._history_to_sets.pop(normalized_id, None)
+                referencing_sets = self._history_to_sets.pop(history_id, None)
                 if referencing_sets is None:
                     continue
 
@@ -507,8 +537,10 @@ class InMemorySemanticStorage(SemanticStorage):
                     if history_map is None:
                         continue
 
-                    history_map.pop(normalized_id, None)
-                    self._history_created_at.pop((set_id, normalized_id), None)
+                    history_map.pop(history_id, None)
+                    self._history_created_at.pop((set_id, history_id), None)
+                    self._history_episode_created_at.pop((set_id, history_id), None)
+                    self._history_sequence_num.pop((set_id, history_id), None)
                     if not history_map:
                         self._set_history_map.pop(set_id, None)
 
@@ -532,6 +564,8 @@ class InMemorySemanticStorage(SemanticStorage):
 
                 for history_id in list(history_map.keys()):
                     self._history_created_at.pop((set_id, history_id), None)
+                    self._history_episode_created_at.pop((set_id, history_id), None)
+                    self._history_sequence_num.pop((set_id, history_id), None)
                     sets_map = self._history_to_sets.get(history_id)
                     if sets_map is None:
                         continue
@@ -544,7 +578,7 @@ class InMemorySemanticStorage(SemanticStorage):
         self,
         *,
         set_id: SetIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         if not history_ids:
             raise ValueError("No ids provided")
@@ -555,7 +589,6 @@ class InMemorySemanticStorage(SemanticStorage):
                 return
 
             for history_id in history_ids:
-                history_id = EpisodeIdT(history_id)
                 if history_id in set_map:
                     set_map[history_id] = True
                     self._history_to_sets.setdefault(history_id, {})[set_id] = True
@@ -566,7 +599,7 @@ class InMemorySemanticStorage(SemanticStorage):
         *,
         load_citations: bool,
     ) -> SemanticFeature:
-        citations: list[EpisodeIdT] | None = None
+        citations: list[UUID] | None = None
         if load_citations:
             citations = list(entry.citations)
 

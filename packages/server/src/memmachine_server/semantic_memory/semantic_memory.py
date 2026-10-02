@@ -12,14 +12,15 @@ import contextlib
 import logging
 from asyncio import Task
 from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
+from uuid import UUID
 
 import numpy as np
-from pydantic import BaseModel, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import EpisodeIdT, EpisodeStorage
+from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import (
     CategoryNotFoundError,
     InvalidSetIdConfigurationError,
@@ -99,6 +100,7 @@ class SemanticService:
 
         uningested_message_limit: int = 5
         uningested_time_limit: timedelta = timedelta(minutes=5)
+        missing_episode_grace_period_sec: float = Field(default=30.0, ge=0)
 
         max_features_per_update: int = 50
 
@@ -139,6 +141,7 @@ class SemanticService:
             1,
         )
         self._feature_time_limit = params.uningested_time_limit
+        self._missing_episode_grace_period_sec = params.missing_episode_grace_period_sec
 
         self._ingestion_task: Task | None = None
         self._is_shutting_down = False
@@ -228,16 +231,27 @@ class SemanticService:
         async for feature in merge_async_iterators(iterators):
             yield feature
 
-    async def add_messages(
-        self, set_id: SetIdT, history_ids: Sequence[EpisodeIdT]
-    ) -> None:
+    async def add_messages(self, set_id: SetIdT, history_ids: Sequence[UUID]) -> None:
         logger.debug("Adding %d messages to set %s", len(history_ids), set_id)
+        if not history_ids:
+            return
 
+        episodes_by_id = {
+            episode.uid: episode
+            for episode in await self._episode_storage.get_episodes(history_ids)
+        }
         res = await asyncio.gather(
             *[
                 self._semantic_storage.add_history_to_set(
                     set_id=set_id,
                     history_id=h_id,
+                    # Missing episodes remain queued for ingestion's recovery path.
+                    created_at=episodes_by_id[h_id].created_at
+                    if h_id in episodes_by_id
+                    else None,
+                    sequence_num=episodes_by_id[h_id].sequence_num
+                    if h_id in episodes_by_id
+                    else 0,
                 )
                 for h_id in history_ids
             ],
@@ -248,18 +262,32 @@ class SemanticService:
 
     async def add_message_to_sets(
         self,
-        history_id: EpisodeIdT,
+        history_id: UUID,
         set_ids: Sequence[SetIdT],
+        *,
+        created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        sequence_num: int = 0,
     ) -> None:
         assert len(set_ids) == len(set(set_ids))
+        if not set_ids:
+            return
 
         logger.debug("Adding message id %s to sets %s", history_id, set_ids)
+        if created_at is None:
+            episode = await self._episode_storage.get_episode(history_id)
+            if episode is not None:
+                created_at = episode.created_at
+                sequence_num = episode.sequence_num
 
         res = await asyncio.gather(
             *[
                 self._semantic_storage.add_history_to_set(
                     set_id=set_id,
                     history_id=history_id,
+                    created_at=created_at,
+                    registered_at=registered_at,
+                    sequence_num=sequence_num,
                 )
                 for set_id in set_ids
             ],
@@ -290,7 +318,7 @@ class SemanticService:
         value: str,
         tag: str,
         metadata: Mapping[str, str] | None = None,
-        citations: Sequence[EpisodeIdT] | None = None,
+        citations: Sequence[UUID] | None = None,
     ) -> FeatureIdT:
         logger.debug("Adding new feature %s to set %s", feature, set_id)
 
@@ -402,7 +430,7 @@ class SemanticService:
             embedding=embedding,
         )
 
-    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
         logger.info("Deleting history ids %s", history_ids)
 
         await self._semantic_storage.delete_history(history_ids)
@@ -787,6 +815,8 @@ class SemanticService:
                 resource_retriever=self._set_id_resource,
                 history_store=self._episode_storage,
                 max_features_per_update=self._max_features_per_update,
+                missing_episode_grace_period_sec=self._missing_episode_grace_period_sec,
+                debug_fail_loudly=self._debug_fail_loudly,
             ),
         )
 
@@ -797,7 +827,8 @@ class SemanticService:
                 s
                 async for s in self._semantic_storage.get_history_set_ids(
                     min_uningested_messages=self._feature_update_message_limit,
-                    older_than=datetime.now(tz=UTC) - self._feature_time_limit,
+                    older_than=(await self._semantic_storage.get_storage_time())
+                    - self._feature_time_limit,
                 )
             ]
 

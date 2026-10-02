@@ -172,6 +172,11 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
+    missing_episode_grace_period_sec: float = Field(
+        default=30.0,
+        ge=0,
+        description="Seconds to retry a semantic history row while its episode is missing.",
+    )
     max_features_per_update: int = Field(
         default=50,
         description=(

@@ -14,10 +14,11 @@ from collections.abc import (
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 from pydantic import BaseModel, JsonValue
 
-from memmachine_server.common.episode_store import Episode, EpisodeIdT
+from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage as ESemanticConfigStorage,
@@ -114,7 +115,9 @@ class SemanticSessionManager:
         self._semantic_config: SemanticConfigStorage = semantic_config_storage
 
     async def _add_single_episode(
-        self, episode: Episode, session_data: SessionData
+        self,
+        episode: Episode,
+        session_data: SessionData,
     ) -> None:
         episode_metadata: MutableMapping[str, JsonValue] = (
             dict(episode.metadata) if episode.metadata is not None else {}
@@ -126,7 +129,12 @@ class SemanticSessionManager:
             session_data=session_data,
             metadata=episode_metadata,
         )
-        await self._semantic_service.add_message_to_sets(episode.uid, list(set_ids))
+        await self._semantic_service.add_message_to_sets(
+            episode.uid,
+            list(set_ids),
+            created_at=episode.created_at,
+            sequence_num=episode.sequence_num,
+        )
 
     @staticmethod
     def _assert_session_data_implements_protocol(session_data: SessionData) -> None:
@@ -148,8 +156,8 @@ class SemanticSessionManager:
         assert len(episode_ids) == len(set(episode_ids)), "Episodes must be unique"
 
         async with asyncio.TaskGroup() as tg:
-            for e in episodes:
-                tg.create_task(self._add_single_episode(e, session_data))
+            for episode in episodes:
+                tg.create_task(self._add_single_episode(episode, session_data))
 
     async def search(
         self,
@@ -205,7 +213,7 @@ class SemanticSessionManager:
         feature: str,
         value: str,
         tag: str,
-        citations: Sequence[EpisodeIdT] | None = None,
+        citations: Sequence[UUID] | None = None,
     ) -> FeatureIdT:
         metadata = (
             {k: str(v) for k, v in feature_metadata.items()}

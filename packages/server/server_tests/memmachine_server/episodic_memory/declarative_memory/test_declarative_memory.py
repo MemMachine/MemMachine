@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 import pytest_asyncio
@@ -40,6 +40,10 @@ from server_tests.memmachine_server.conftest import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def _uid(label: str) -> UUID:
+    return uuid5(NAMESPACE_URL, label)
 
 
 @pytest.fixture(scope="module")
@@ -201,7 +205,7 @@ async def test_add_episodes(declarative_memory):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             timestamp=now,
             source="Alice",
             content_type=ContentType.MESSAGE,
@@ -210,7 +214,7 @@ async def test_add_episodes(declarative_memory):
             user_metadata={"some_key": "some_value"},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             timestamp=now + timedelta(seconds=10),
             source="Bob",
             content_type=ContentType.MESSAGE,
@@ -218,7 +222,7 @@ async def test_add_episodes(declarative_memory):
             user_metadata={"some_other_key": "some_other_value"},
         ),
         Episode(
-            uid="episode3",
+            uid=_uid("episode3"),
             timestamp=now + timedelta(seconds=20),
             source="textbook",
             content_type=ContentType.TEXT,
@@ -226,7 +230,7 @@ async def test_add_episodes(declarative_memory):
             filterable_properties={"project": "other", "length": "short"},
         ),
         Episode(
-            uid="episode4",
+            uid=_uid("episode4"),
             timestamp=now + timedelta(seconds=30),
             source="pet rock",
             content_type=ContentType.MESSAGE,
@@ -246,7 +250,7 @@ async def test_search(declarative_memory):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now - i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -261,7 +265,7 @@ async def test_search(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now - i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -276,7 +280,7 @@ async def test_search(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             timestamp=now,
             source="Alice",
             content_type=ContentType.MESSAGE,
@@ -285,7 +289,7 @@ async def test_search(declarative_memory):
             user_metadata={"some_key": "some_value"},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             timestamp=now + timedelta(seconds=10),
             source="Bob",
             content_type=ContentType.MESSAGE,
@@ -294,21 +298,21 @@ async def test_search(declarative_memory):
             user_metadata={"some_other_key": "some_other_value"},
         ),
         Episode(
-            uid="episode3",
+            uid=_uid("episode3"),
             timestamp=now + timedelta(seconds=20),
             source="textbook",
             content_type=ContentType.TEXT,
             content="The mitochondria is the powerhouse of the cell.",
         ),
         Episode(
-            uid="episode4",
+            uid=_uid("episode4"),
             timestamp=now + timedelta(seconds=30),
             source="pet rock",
             content_type=ContentType.MESSAGE,
             content="",
         ),
         Episode(
-            uid="episode5",
+            uid=_uid("episode5"),
             timestamp=now + timedelta(seconds=40),
             source="Charlie",
             content_type=ContentType.MESSAGE,
@@ -316,7 +320,7 @@ async def test_search(declarative_memory):
             filterable_properties={"project": "memmachine"},
         ),
         Episode(
-            uid="episode6",
+            uid=_uid("episode6"),
             timestamp=now + timedelta(seconds=50),
             source="Edwin",
             content_type=ContentType.MESSAGE,
@@ -326,7 +330,7 @@ async def test_search(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now + i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -341,7 +345,7 @@ async def test_search(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now + i * timedelta(seconds=100),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -363,7 +367,7 @@ async def test_search(declarative_memory):
     )
 
     assert len(results) == 1
-    assert results[0].uid == "episode1" or results[0].uid == "episode6"
+    assert results[0].uid == _uid("episode1") or results[0].uid == _uid("episode6")
 
     results = await declarative_memory.search(
         query="Who wrote the test?",
@@ -373,8 +377,8 @@ async def test_search(declarative_memory):
 
     assert len(results) == 4
     # Most relevant.
-    assert "episode1" in [result.uid for result in results]
-    assert "episode6" in [result.uid for result in results]
+    assert _uid("episode1") in [result.uid for result in results]
+    assert _uid("episode6") in [result.uid for result in results]
 
     results = await declarative_memory.search(
         query="Who wrote the test?",
@@ -384,13 +388,13 @@ async def test_search(declarative_memory):
 
     assert len(results) == 4
     # Most relevant.
-    assert "episode1" in [result.uid for result in results] or "episode6" in [
-        result.uid for result in results
-    ]
+    assert _uid("episode1") in [result.uid for result in results] or _uid(
+        "episode6"
+    ) in [result.uid for result in results]
     # Relevant but first result consumes entire budget.
-    assert "episode1" not in [result.uid for result in results] or "episode6" not in [
-        result.uid for result in results
-    ]
+    assert _uid("episode1") not in [result.uid for result in results] or _uid(
+        "episode6"
+    ) not in [result.uid for result in results]
 
     results = await declarative_memory.search(
         query="Who wrote the test?",
@@ -402,8 +406,8 @@ async def test_search(declarative_memory):
         ),
     )
     assert len(results) == 10
-    assert "episode1" in [result.uid for result in results]
-    assert "episode5" in [result.uid for result in results]
+    assert _uid("episode1") in [result.uid for result in results]
+    assert _uid("episode5") in [result.uid for result in results]
 
     results = await declarative_memory.search(
         query="Who wrote the test?",
@@ -416,9 +420,9 @@ async def test_search(declarative_memory):
     )
 
     assert len(results) == 3
-    assert "episode1" in [result.uid for result in results]
-    assert "episode2" in [result.uid for result in results]
-    assert "episode6" in [result.uid for result in results]
+    assert _uid("episode1") in [result.uid for result in results]
+    assert _uid("episode2") in [result.uid for result in results]
+    assert _uid("episode6") in [result.uid for result in results]
 
 
 @requires_sentence_transformers
@@ -427,7 +431,7 @@ async def test_get_episodes(declarative_memory):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now - i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -442,7 +446,7 @@ async def test_get_episodes(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now - i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -457,7 +461,7 @@ async def test_get_episodes(declarative_memory):
     ]
     special_episodes = [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             timestamp=now,
             source="Alice",
             content_type=ContentType.MESSAGE,
@@ -466,7 +470,7 @@ async def test_get_episodes(declarative_memory):
             user_metadata={"some_key": "some_value"},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             timestamp=now + timedelta(seconds=10),
             source="Bob",
             content_type=ContentType.MESSAGE,
@@ -475,21 +479,21 @@ async def test_get_episodes(declarative_memory):
             user_metadata={"some_other_key": "some_other_value"},
         ),
         Episode(
-            uid="episode3",
+            uid=_uid("episode3"),
             timestamp=now + timedelta(seconds=20),
             source="textbook",
             content_type=ContentType.TEXT,
             content="The mitochondria is the powerhouse of the cell.",
         ),
         Episode(
-            uid="episode4",
+            uid=_uid("episode4"),
             timestamp=now + timedelta(seconds=30),
             source="pet rock",
             content_type=ContentType.MESSAGE,
             content="",
         ),
         Episode(
-            uid="episode5",
+            uid=_uid("episode5"),
             timestamp=now + timedelta(seconds=40),
             source="Charlie",
             content_type=ContentType.MESSAGE,
@@ -500,7 +504,7 @@ async def test_get_episodes(declarative_memory):
     episodes += special_episodes
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now + i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -515,7 +519,7 @@ async def test_get_episodes(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now + i * timedelta(seconds=100),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -533,12 +537,12 @@ async def test_get_episodes(declarative_memory):
 
     results = await declarative_memory.get_episodes(
         [
-            "episode1",
-            "episode2",
-            "episode3",
-            "episode4",
-            "episode5",
-            "nonexistent_episode",
+            _uid("episode1"),
+            _uid("episode2"),
+            _uid("episode3"),
+            _uid("episode4"),
+            _uid("episode5"),
+            _uid("nonexistent_episode"),
         ],
     )
     assert len(results) == 5
@@ -552,7 +556,7 @@ async def test_get_matching_episodes(declarative_memory):
 
     episodes = [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now - i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -567,7 +571,7 @@ async def test_get_matching_episodes(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now - i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -582,7 +586,7 @@ async def test_get_matching_episodes(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             timestamp=now,
             source="Alice",
             content_type=ContentType.MESSAGE,
@@ -591,7 +595,7 @@ async def test_get_matching_episodes(declarative_memory):
             user_metadata={"some_key": "some_value"},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             timestamp=now + timedelta(seconds=10),
             source="Bob",
             content_type=ContentType.MESSAGE,
@@ -600,21 +604,21 @@ async def test_get_matching_episodes(declarative_memory):
             user_metadata={"some_other_key": "some_other_value"},
         ),
         Episode(
-            uid="episode3",
+            uid=_uid("episode3"),
             timestamp=now + timedelta(seconds=20),
             source="textbook",
             content_type=ContentType.TEXT,
             content="The mitochondria is the powerhouse of the cell.",
         ),
         Episode(
-            uid="episode4",
+            uid=_uid("episode4"),
             timestamp=now + timedelta(seconds=30),
             source="pet rock",
             content_type=ContentType.MESSAGE,
             content="",
         ),
         Episode(
-            uid="episode5",
+            uid=_uid("episode5"),
             timestamp=now + timedelta(seconds=40),
             source="Charlie",
             content_type=ContentType.MESSAGE,
@@ -624,7 +628,7 @@ async def test_get_matching_episodes(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now + i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -639,7 +643,7 @@ async def test_get_matching_episodes(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now + i * timedelta(seconds=100),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -713,7 +717,7 @@ async def test_delete_episodes(declarative_memory):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now - i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -728,7 +732,7 @@ async def test_delete_episodes(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now - i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -743,7 +747,7 @@ async def test_delete_episodes(declarative_memory):
     ]
     special_episodes = [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             timestamp=now,
             source="Alice",
             content_type=ContentType.MESSAGE,
@@ -752,7 +756,7 @@ async def test_delete_episodes(declarative_memory):
             user_metadata={"some_key": "some_value"},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             timestamp=now + timedelta(seconds=10),
             source="Bob",
             content_type=ContentType.MESSAGE,
@@ -761,21 +765,21 @@ async def test_delete_episodes(declarative_memory):
             user_metadata={"some_other_key": "some_other_value"},
         ),
         Episode(
-            uid="episode3",
+            uid=_uid("episode3"),
             timestamp=now + timedelta(seconds=20),
             source="textbook",
             content_type=ContentType.TEXT,
             content="The mitochondria is the powerhouse of the cell.",
         ),
         Episode(
-            uid="episode4",
+            uid=_uid("episode4"),
             timestamp=now + timedelta(seconds=30),
             source="pet rock",
             content_type=ContentType.MESSAGE,
             content="",
         ),
         Episode(
-            uid="episode5",
+            uid=_uid("episode5"),
             timestamp=now + timedelta(seconds=40),
             source="Charlie",
             content_type=ContentType.MESSAGE,
@@ -786,7 +790,7 @@ async def test_delete_episodes(declarative_memory):
     episodes += special_episodes
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now + i * timedelta(seconds=1),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -801,7 +805,7 @@ async def test_delete_episodes(declarative_memory):
     ]
     episodes += [
         Episode(
-            uid=str(uuid4()),
+            uid=uuid4(),
             timestamp=now + i * timedelta(seconds=100),
             source="filler",
             content_type=ContentType.MESSAGE,
@@ -833,21 +837,21 @@ async def test_delete_episodes(declarative_memory):
 def test_string_from_episode_context():
     now = datetime.now(tz=UTC)
     episode1 = Episode(
-        uid="episode1",
+        uid=_uid("episode1"),
         timestamp=now,
         source="Alice",
         content_type=ContentType.MESSAGE,
         content="This test is broken. Who wrote this test?",
     )
     episode2 = Episode(
-        uid="episode2",
+        uid=_uid("episode2"),
         timestamp=now + timedelta(seconds=10),
         source="Bob",
         content_type=ContentType.MESSAGE,
         content="Edwin.",
     )
     episode3 = Episode(
-        uid="episode3",
+        uid=_uid("episode3"),
         timestamp=now + timedelta(seconds=20),
         source="textbook",
         content_type=ContentType.TEXT,
@@ -869,7 +873,7 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             timestamp=now,
             source="Alice",
             content_type=ContentType.MESSAGE,
@@ -878,7 +882,7 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
             user_metadata={"some_key": "some_value"},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             timestamp=now + timedelta(seconds=10),
             source="Bob",
             content_type=ContentType.MESSAGE,
@@ -887,7 +891,7 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
             user_metadata={"some_other_key": "some_other_value"},
         ),
         Episode(
-            uid="episode3",
+            uid=_uid("episode3"),
             timestamp=now + timedelta(seconds=20),
             source="textbook",
             content_type=ContentType.TEXT,
@@ -895,14 +899,14 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
             filterable_properties={"project": "testing", "length": "long"},
         ),
         Episode(
-            uid="episode4",
+            uid=_uid("episode4"),
             timestamp=now + timedelta(seconds=30),
             source="pet rock",
             content_type=ContentType.MESSAGE,
             content="",
         ),
         Episode(
-            uid="episode5",
+            uid=_uid("episode5"),
             timestamp=now + timedelta(seconds=40),
             source="Charlie",
             content_type=ContentType.MESSAGE,
@@ -922,10 +926,10 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
         ),
     )
     result_uids = {r.uid for r in results}
-    assert "episode2" in result_uids
-    assert "episode3" in result_uids
-    assert "episode1" not in result_uids
-    assert "episode5" not in result_uids
+    assert _uid("episode2") in result_uids
+    assert _uid("episode3") in result_uids
+    assert _uid("episode1") not in result_uids
+    assert _uid("episode5") not in result_uids
 
     # In on project
     results = await declarative_memory.get_matching_episodes(
@@ -935,9 +939,9 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
         ),
     )
     result_uids = {r.uid for r in results}
-    assert "episode1" in result_uids
-    assert "episode2" in result_uids
-    assert "episode5" in result_uids
+    assert _uid("episode1") in result_uids
+    assert _uid("episode2") in result_uids
+    assert _uid("episode5") in result_uids
 
     # Not: NOT length = 'short'
     results = await declarative_memory.get_matching_episodes(
@@ -950,9 +954,9 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
         ),
     )
     result_uids = {r.uid for r in results}
-    assert "episode1" not in result_uids
-    assert "episode2" not in result_uids
-    assert "episode3" in result_uids
+    assert _uid("episode1") not in result_uids
+    assert _uid("episode2") not in result_uids
+    assert _uid("episode3") in result_uids
 
     # Or: project = 'other' OR length = 'short'
     results = await declarative_memory.get_matching_episodes(
@@ -970,5 +974,5 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
         ),
     )
     result_uids = {r.uid for r in results}
-    assert "episode1" in result_uids
-    assert "episode2" in result_uids
+    assert _uid("episode1") in result_uids
+    assert _uid("episode2") in result_uids

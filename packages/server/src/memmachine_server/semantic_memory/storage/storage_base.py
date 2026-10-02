@@ -5,11 +5,11 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 import numpy as np
 from pydantic import InstanceOf
 
-from memmachine_server.common.episode_store.episode_model import EpisodeIdT
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
@@ -128,7 +128,7 @@ class SemanticStorage(ABC):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         """Associate history ids as citations for a feature."""
         raise NotImplementedError
@@ -140,8 +140,20 @@ class SemanticStorage(ABC):
         set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> AsyncIterator[EpisodeIdT]:
-        """Retrieve history messages with optional ingestion status."""
+    ) -> AsyncIterator[UUID]:
+        """Order by episode time, sequence, registration time, then ID."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        """Return registration times for history rows in a set."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_storage_time(self) -> datetime:
+        """Return the clock used to stamp history registrations."""
         raise NotImplementedError
 
     @abstractmethod
@@ -155,12 +167,20 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def add_history_to_set(self, set_id: SetIdT, history_id: EpisodeIdT) -> None:
-        """Attach a history id to a feature set."""
+    async def add_history_to_set(
+        self,
+        set_id: SetIdT,
+        history_id: UUID,
+        *,
+        created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        sequence_num: int = 0,
+    ) -> None:
+        """Attach an episode with event time, registration time, and sequence."""
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
         """Delete history references and citations for the episode IDs."""
         raise NotImplementedError
 
@@ -173,7 +193,7 @@ class SemanticStorage(ABC):
         self,
         *,
         set_id: SetIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         """Mark the provided history messages as ingested."""
         raise NotImplementedError

@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timezone
+from uuid import UUID
 
 from memmachine_common.api.spec import (
     Episode,
@@ -29,7 +30,7 @@ class TestFormatEpisodes:
 
     def test_single_episode_response(self):
         ep = EpisodeResponse(
-            uid="1",
+            uid=UUID(int=1),
             content="Hello world",
             producer_id="user_1",
             producer_role="user",
@@ -43,14 +44,14 @@ class TestFormatEpisodes:
     def test_multiple_episodes(self):
         eps = [
             EpisodeResponse(
-                uid="1",
+                uid=UUID(int=1),
                 content="First message",
                 producer_id="user_1",
                 producer_role="user",
                 created_at=datetime(2024, 3, 5, 9, 0, tzinfo=timezone.utc),
             ),
             EpisodeResponse(
-                uid="2",
+                uid=UUID(int=2),
                 content="Second message",
                 producer_id="assistant_1",
                 producer_role="assistant",
@@ -65,7 +66,7 @@ class TestFormatEpisodes:
 
     def test_episode_without_created_at(self):
         ep = EpisodeResponse(
-            uid="1",
+            uid=UUID(int=1),
             content="No timestamp",
             producer_id="user_1",
             producer_role="user",
@@ -76,7 +77,7 @@ class TestFormatEpisodes:
 
     def test_list_episode_type(self):
         ep = Episode(
-            uid="1",
+            uid=UUID(int=1),
             content="Listed episode",
             session_key="sess_1",
             producer_id="user_1",
@@ -90,7 +91,7 @@ class TestFormatEpisodes:
 
     def test_content_json_escaped(self):
         ep = EpisodeResponse(
-            uid="1",
+            uid=UUID(int=1),
             content='She said "hello"',
             producer_id="user_1",
             producer_role="user",
@@ -104,7 +105,7 @@ class TestFormatEpisodes:
         as ``\\uXXXX`` escapes — escaping bloats token counts and degrades
         recall on multilingual content."""
         ep = EpisodeResponse(
-            uid="1",
+            uid=UUID(int=1),
             content="寿司 café 🍕 naïve résumé Привет",
             producer_id="user_1",
             producer_role="user",
@@ -126,7 +127,7 @@ class TestFormatEpisodes:
         post-processing) still see correct text."""
         original = '日本語 — "quoted" + emoji 🎉'
         ep = EpisodeResponse(
-            uid="1",
+            uid=UUID(int=1),
             content=original,
             producer_id="user_1",
             producer_role="user",
@@ -142,7 +143,7 @@ class TestFormatEpisodes:
         unescaped surrogates only for malformed inputs; clean Unicode must
         encode without error."""
         ep = EpisodeResponse(
-            uid="1",
+            uid=UUID(int=1),
             content="Mixed: ASCII + 中文 + 🚀",
             producer_id="user_1",
             producer_role="user",
@@ -234,7 +235,7 @@ class TestFormatSemanticMemories:
             value="Alice",
             metadata=SemanticFeature.Metadata(
                 id="feat_1",
-                citations=["ep_1", "ep_2"],
+                citations=[UUID(int=1), UUID(int=2)],
                 other={"source": "conversation"},
             ),
         )
@@ -262,7 +263,7 @@ class TestFormatSearchResult:
 
     def test_episodic_only(self):
         ep = EpisodeResponse(
-            uid="1",
+            uid=UUID(int=1),
             content="Hello",
             producer_id="user_1",
             producer_role="user",
@@ -308,7 +309,7 @@ class TestFormatSearchResult:
 
     def test_combined(self):
         ep = EpisodeResponse(
-            uid="1",
+            uid=UUID(int=1),
             content="I like pizza",
             producer_id="user_1",
             producer_role="user",

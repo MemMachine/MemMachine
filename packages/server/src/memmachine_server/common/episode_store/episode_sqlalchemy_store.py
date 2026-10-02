@@ -2,27 +2,30 @@
 
 import logging
 import socket
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import UTC
 from typing import Any, TypeVar, overload
+from uuid import UUID
 
 from pydantic import (
     AwareDatetime,
-    TypeAdapter,
-    ValidationError,
     validate_call,
 )
 from sqlalchemy import (
     JSON,
+    BigInteger,
     DateTime,
     Delete,
     Index,
     Integer,
     String,
+    Uuid,
     delete,
     func,
     insert,
     select,
+    text,
+    update,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects import postgresql as pg_dialect
@@ -39,13 +42,11 @@ from memmachine_server.common.episode_store.episode_model import (
     EpisodeType,
 )
 from memmachine_server.common.episode_store.episode_storage import (
-    EpisodeIdT,
     EpisodeStorage,
 )
 from memmachine_server.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
-    ResourceNotFoundError,
 )
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -84,7 +85,8 @@ class Episode(BaseEpisodeStore):
     """SQLAlchemy mapping for stored conversation messages."""
 
     __tablename__ = "episodestore"
-    id = mapped_column(Integer, primary_key=True)
+    uid = mapped_column(Uuid, primary_key=True, autoincrement=False)
+    sequence_num = mapped_column(BigInteger, nullable=False, unique=True)
 
     content = mapped_column(String, nullable=False)
 
@@ -127,7 +129,8 @@ class Episode(BaseEpisodeStore):
     def to_typed_model(self) -> EpisodeE:
         created_at = ensure_tz_aware(self.created_at)
         return EpisodeE(
-            uid=EpisodeIdT(self.id),
+            uid=self.uid,
+            sequence_num=self.sequence_num,
             content=self.content,
             session_key=self.session_key,
             producer_id=self.producer_id,
@@ -137,6 +140,14 @@ class Episode(BaseEpisodeStore):
             created_at=created_at,
             metadata=self.json_metadata or None,
         )
+
+
+class EpisodeSequenceCounter(BaseEpisodeStore):
+    """Allocates one global episode order across processes and sessions."""
+
+    __tablename__ = "episode_sequence_counter"
+    id = mapped_column(Integer, primary_key=True)
+    next_value = mapped_column(BigInteger, nullable=False)
 
 
 class SqlAlchemyEpisodeStore(EpisodeStorage):
@@ -178,6 +189,12 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
                         )
 
                 await conn.run_sync(BaseEpisodeStore.metadata.create_all)
+                await conn.execute(
+                    text(
+                        "INSERT INTO episode_sequence_counter (id, next_value) "
+                        "VALUES (1, 0) ON CONFLICT (id) DO NOTHING"
+                    )
+                )
         except (OperationalError, socket.gaierror) as err:
             raise ConfigurationError(
                 "Failed to connect to the database during startup, please check your configuration."
@@ -188,19 +205,53 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             await session.execute(delete(Episode))
             await session.commit()
 
+    async def reserve_sequence_numbers(self, count: int) -> list[int]:
+        if count <= 0:
+            raise InvalidArgumentError("Sequence reservation count must be positive")
+
+        stmt = (
+            update(EpisodeSequenceCounter)
+            .where(EpisodeSequenceCounter.id == 1)
+            .values(next_value=EpisodeSequenceCounter.next_value + count)
+            .returning(EpisodeSequenceCounter.next_value)
+        )
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            end = result.scalar_one_or_none()
+            if end is None:
+                raise ConfigurationError("Episode sequence counter is not initialized")
+            await session.commit()
+
+        return list(range(end - count + 1, end + 1))
+
     @validate_call
     @timed("add_episodes")
     async def add_episodes(
         self,
         session_key: str,
         episodes: list[EpisodeEntry],
+        *,
+        sequence_nums: Sequence[int] | None = None,
     ) -> list[EpisodeE]:
         if not episodes:
             return []
 
+        if sequence_nums is None:
+            sequence_nums = await self.reserve_sequence_numbers(len(episodes))
+        if (
+            len(sequence_nums) != len(episodes)
+            or any(number <= 0 for number in sequence_nums)
+            or len(set(sequence_nums)) != len(sequence_nums)
+        ):
+            raise InvalidArgumentError(
+                "Episode sequence numbers must be positive and unique per episode"
+            )
+
         values_to_insert: list[dict[str, Any]] = []
-        for entry in episodes:
+        for entry, sequence_num in zip(episodes, sequence_nums, strict=True):
             entry_values: dict[str, Any] = {
+                "uid": entry.uid,
+                "sequence_num": sequence_num,
                 "content": entry.content,
                 "session_key": session_key,
                 "producer_id": entry.producer_id,
@@ -233,21 +284,19 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
             await session.commit()
 
-            res_episodes = [e.to_typed_model() for e in persisted_episodes]
+            persisted_by_uid = {episode.uid: episode for episode in persisted_episodes}
+            res_episodes = [
+                persisted_by_uid[entry.uid].to_typed_model() for entry in episodes
+            ]
 
         return res_episodes
 
     @validate_call
-    async def get_episode(self, episode_id: EpisodeIdT) -> EpisodeE | None:
-        try:
-            int_episode_id = int(episode_id)
-        except (TypeError, ValueError) as e:
-            raise ResourceNotFoundError("Invalid episode ID") from e
-
+    async def get_episode(self, episode_id: UUID) -> EpisodeE | None:
         stmt = (
             select(Episode)
-            .where(Episode.id == int_episode_id)
-            .order_by(Episode.created_at.asc())
+            .where(Episode.uid == episode_id)
+            .order_by(Episode.created_at.asc(), Episode.sequence_num.asc())
         )
 
         async with self._create_session() as session:
@@ -259,19 +308,13 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     @timed("get_episodes")
     async def get_episodes(
         self,
-        episode_ids: Iterable[EpisodeIdT],
+        episode_ids: Iterable[UUID],
     ) -> list[EpisodeE]:
-        int_ids: set[int] = set()
-        for episode_id in episode_ids:
-            try:
-                int_ids.add(int(episode_id))
-            except (TypeError, ValueError) as e:
-                raise ResourceNotFoundError("Invalid episode ID") from e
-
-        if not int_ids:
+        ids = set(episode_ids)
+        if not ids:
             return []
 
-        stmt = select(Episode).where(Episode.id.in_(int_ids))
+        stmt = select(Episode).where(Episode.uid.in_(ids))
 
         async with self._create_session() as session:
             result = await session.execute(stmt)
@@ -347,8 +390,8 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         # Check for system field mappings (case-insensitive)
         normalized = internal_name.lower()
         field_mapping: dict[str, ColumnElement] = {
-            "uid": Episode.id.expression,
-            "id": Episode.id.expression,
+            "uid": Episode.uid.expression,
+            "id": Episode.uid.expression,
             "session_key": Episode.session_key.expression,
             "session": Episode.session_key.expression,
             "producer_id": Episode.producer_id.expression,
@@ -360,7 +403,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         }
 
         if normalized in field_mapping:
-            return field_mapping[normalized], "column"
+            return field_mapping[normalized], (
+                "uuid" if normalized in {"uid", "id"} else "column"
+            )
 
         raise ValueError(f"Unknown filter field: {field!r}")
 
@@ -383,9 +428,10 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             end_time=end_time,
         )
 
+        stmt = stmt.order_by(Episode.created_at.asc(), Episode.sequence_num.asc())
+
         if page_size is not None:
             stmt = stmt.limit(page_size)
-            stmt = stmt.order_by(Episode.created_at.asc())
 
             if page_num is not None:
                 stmt = stmt.offset(page_size * page_num)
@@ -407,7 +453,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         start_time: AwareDatetime | None = None,
         end_time: AwareDatetime | None = None,
     ) -> int:
-        stmt = select(func.count(Episode.id))
+        stmt = select(func.count(Episode.uid))
 
         stmt = self._apply_episode_filter(
             stmt,
@@ -428,31 +474,28 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         *,
         page_size: int,
         filter_expr: FilterExpr | None = None,
-    ) -> list[EpisodeIdT]:
-        stmt = select(Episode.id)
+    ) -> list[UUID]:
+        stmt = select(Episode.uid)
 
         stmt = self._apply_episode_filter(
             stmt,
             filter_expr=filter_expr,
         )
 
-        stmt = stmt.order_by(Episode.created_at.asc()).limit(page_size)
+        stmt = stmt.order_by(
+            Episode.created_at.asc(), Episode.sequence_num.asc()
+        ).limit(page_size)
 
         async with self._create_session() as session:
             result = await session.execute(stmt)
             rows = result.scalars().all()
 
-        return [EpisodeIdT(row) for row in rows]
+        return list(rows)
 
     @validate_call
     @timed("delete_episodes")
-    async def delete_episodes(self, episode_ids: list[EpisodeIdT]) -> None:
-        try:
-            int_episode_ids = TypeAdapter(list[int]).validate_python(episode_ids)
-        except ValidationError as e:
-            raise ResourceNotFoundError("Invalid episode IDs") from e
-
-        stmt = delete(Episode).where(Episode.id.in_(int_episode_ids))
+    async def delete_episodes(self, episode_ids: list[UUID]) -> None:
+        stmt = delete(Episode).where(Episode.uid.in_(episode_ids))
 
         async with self._create_session() as session:
             await session.execute(stmt)

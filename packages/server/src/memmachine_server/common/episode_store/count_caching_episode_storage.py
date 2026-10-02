@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from uuid import UUID
 
 from pydantic import AwareDatetime
 
 from memmachine_server.common.episode_store.episode_model import (
     Episode,
     EpisodeEntry,
-    EpisodeIdT,
 )
 from memmachine_server.common.episode_store.episode_storage import EpisodeStorage
 from memmachine_server.common.filter.filter_parser import Comparison, FilterExpr
@@ -56,12 +56,22 @@ class CountCachingEpisodeStorage(EpisodeStorage):
         await self._wrapped.delete_all()
         await self._clear_cache()
 
+    async def reserve_sequence_numbers(self, count: int) -> list[int]:
+        return await self._wrapped.reserve_sequence_numbers(count)
+
     async def add_episodes(
         self,
         session_key: str,
         episodes: list[EpisodeEntry],
+        *,
+        sequence_nums: Sequence[int] | None = None,
     ) -> list[Episode]:
-        stored = await self._wrapped.add_episodes(session_key, episodes)
+        if sequence_nums is None:
+            stored = await self._wrapped.add_episodes(session_key, episodes)
+        else:
+            stored = await self._wrapped.add_episodes(
+                session_key, episodes, sequence_nums=sequence_nums
+            )
 
         async with self._lock:
             entry = self._count_cache.get(session_key)
@@ -74,13 +84,13 @@ class CountCachingEpisodeStorage(EpisodeStorage):
 
     async def get_episode(
         self,
-        episode_id: EpisodeIdT,
+        episode_id: UUID,
     ) -> Episode | None:
         return await self._wrapped.get_episode(episode_id)
 
     async def get_episodes(
         self,
-        episode_ids: Iterable[EpisodeIdT],
+        episode_ids: Iterable[UUID],
     ) -> list[Episode]:
         return await self._wrapped.get_episodes(episode_ids)
 
@@ -106,7 +116,7 @@ class CountCachingEpisodeStorage(EpisodeStorage):
         *,
         page_size: int,
         filter_expr: FilterExpr | None = None,
-    ) -> list[EpisodeIdT]:
+    ) -> list[UUID]:
         return await self._wrapped.get_episode_ids(
             page_size=page_size,
             filter_expr=filter_expr,
@@ -147,7 +157,7 @@ class CountCachingEpisodeStorage(EpisodeStorage):
 
     async def delete_episodes(
         self,
-        episode_ids: list[EpisodeIdT],
+        episode_ids: list[UUID],
     ) -> None:
         await self._wrapped.delete_episodes(episode_ids)
         await self._clear_cache()

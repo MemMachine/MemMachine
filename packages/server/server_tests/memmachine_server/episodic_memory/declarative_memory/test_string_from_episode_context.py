@@ -7,6 +7,7 @@ by ``test_declarative_memory.py``.
 
 import json
 from datetime import UTC, datetime
+from uuid import NAMESPACE_URL, uuid5
 
 from memmachine_server.episodic_memory.declarative_memory import (
     ContentType,
@@ -17,7 +18,7 @@ from memmachine_server.episodic_memory.declarative_memory import (
 
 def _make_episode(content):
     return Episode(
-        uid="ep_1",
+        uid=uuid5(NAMESPACE_URL, "ep_1"),
         timestamp=datetime(2026, 1, 14, 13, 30, tzinfo=UTC),
         source="user_1",
         content_type=ContentType.MESSAGE,

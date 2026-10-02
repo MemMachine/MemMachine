@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import numpy as np
 import pytest
@@ -9,7 +10,6 @@ import pytest_asyncio
 
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
-    EpisodeIdT,
     EpisodeStorage,
 )
 from memmachine_server.common.errors import InvalidArgumentError
@@ -19,6 +19,10 @@ from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+
+
+def _uid(label: str) -> UUID:
+    return uuid5(NAMESPACE_URL, label)
 
 
 def _expr(spec: str | None) -> FilterExpr | None:
@@ -122,15 +126,15 @@ async def test_get_set_ids_starts_with_with_cross_table(
 
     await semantic_storage.add_history_to_set(
         set_id="user1",
-        history_id="episode_id_a",
+        history_id=_uid("episode_id_a"),
     )
     await semantic_storage.add_history_to_set(
         set_id="user1",
-        history_id="episode_id_b",
+        history_id=_uid("episode_id_b"),
     )
     await semantic_storage.add_history_to_set(
         set_id="user2",
-        history_id="episode_id_c",
+        history_id=_uid("episode_id_c"),
     )
 
     set_ids = sorted(await _collect(semantic_storage.get_set_ids_starts_with("user")))
@@ -572,7 +576,7 @@ async def feature_and_citations(
 @pytest.mark.asyncio
 async def test_add_feature_with_citations(
     semantic_storage: SemanticStorage,
-    feature_and_citations: tuple[FeatureIdT, set[EpisodeIdT]],
+    feature_and_citations: tuple[FeatureIdT, set[UUID]],
 ):
     feature_id, citations = feature_and_citations
 
@@ -976,7 +980,7 @@ async def test_complex_semantic_search_and_citations(
     assert len(filtered) == 1
     assert filtered[0].value == "ai"
 
-    history_id_set: set[EpisodeIdT] = set()
+    history_id_set: set[UUID] = set()
     for entry in results:
         if entry.metadata.citations is not None:
             for citation in entry.metadata.citations:
@@ -1043,15 +1047,15 @@ async def test_get_set_ids(
 ):
     await semantic_storage.add_history_to_set(
         set_id="user_a",
-        history_id="fake_a",
+        history_id=_uid("fake_a"),
     )
     await semantic_storage.add_history_to_set(
         set_id="user_b",
-        history_id="fake_b",
+        history_id=_uid("fake_b"),
     )
     await semantic_storage.add_history_to_set(
         set_id="user_c",
-        history_id="fake_c",
+        history_id=_uid("fake_c"),
     )
 
     set_ids = [sid async for sid in semantic_storage.get_history_set_ids()]
@@ -1066,32 +1070,32 @@ async def test_get_set_ids_with_min_uningested(
 ):
     await semantic_storage.add_history_to_set(
         set_id="user_a",
-        history_id="fake_a",
+        history_id=_uid("fake_a"),
     )
     await semantic_storage.add_history_to_set(
         set_id="user_a",
-        history_id="fake_b",
+        history_id=_uid("fake_b"),
     )
     await semantic_storage.add_history_to_set(
         set_id="user_b",
-        history_id="fake_c",
+        history_id=_uid("fake_c"),
     )
     await semantic_storage.add_history_to_set(
         set_id="user_c",
-        history_id="fake_d",
+        history_id=_uid("fake_d"),
     )
     await semantic_storage.add_history_to_set(
         set_id="user_c",
-        history_id="fake_a",
+        history_id=_uid("fake_a"),
     )
 
     await semantic_storage.mark_messages_ingested(
         set_id="user_a",
-        history_ids=["fake_a"],
+        history_ids=[_uid("fake_a")],
     )
     await semantic_storage.mark_messages_ingested(
         set_id="user_b",
-        history_ids=["fake_c"],
+        history_ids=[_uid("fake_c")],
     )
 
     set_ids = [

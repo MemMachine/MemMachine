@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -30,13 +31,17 @@ from memmachine_server.semantic_memory.cluster_splitter import (
 
 def _make_episode(uid: str, content: str, minutes_offset: int = 0) -> Episode:
     return Episode(
-        uid=uid,
+        uid=uuid5(NAMESPACE_URL, uid),
         content=content,
         session_key="test-session",
         producer_id="test-producer",
         producer_role="user",
         created_at=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(minutes=minutes_offset),
     )
+
+
+def _uid(value: str):
+    return uuid5(NAMESPACE_URL, value)
 
 
 def _make_signals(
@@ -199,7 +204,7 @@ class TestApplyClusterSplit:
         embeddings = [[float(i), 0.0] for i in range(6)]
         state = ClusterState(
             clusters={"cluster_0": ClusterInfo([0.5, 0.0], 6, messages[0].created_at)},
-            event_to_cluster={f"m{i}": "cluster_0" for i in range(6)},
+            event_to_cluster={_uid(f"m{i}"): "cluster_0" for i in range(6)},
             next_cluster_id=1,
         )
 
@@ -231,10 +236,10 @@ class TestApplyClusterSplit:
             "cluster_0", messages, embeddings, [2], state
         )
 
-        assert state.event_to_cluster["m0"] == "cluster_0"
-        assert state.event_to_cluster["m1"] == "cluster_0"
-        assert state.event_to_cluster["m2"] == segment_ids[1]
-        assert state.event_to_cluster["m3"] == segment_ids[1]
+        assert state.event_to_cluster[_uid("m0")] == "cluster_0"
+        assert state.event_to_cluster[_uid("m1")] == "cluster_0"
+        assert state.event_to_cluster[_uid("m2")] == segment_ids[1]
+        assert state.event_to_cluster[_uid("m3")] == segment_ids[1]
 
     def test_centroids_recomputed(self):
         messages = [_make_episode(f"m{i}", f"msg {i}", i) for i in range(4)]
@@ -264,7 +269,7 @@ class TestNoOpClusterSplitter:
 
         result, _result_state = await splitter.maybe_split_clusters(
             cluster_messages=clusters,
-            cluster_embeddings={"m1": [1.0, 0.0]},
+            cluster_embeddings={_uid("m1"): [1.0, 0.0]},
             state=state,
             reranker=AsyncMock(),
         )
@@ -285,7 +290,7 @@ class TestRerankerClusterSplitter:
         splitter = RerankerClusterSplitter(params)
         messages = [_make_episode(f"m{i}", f"msg {i}") for i in range(3)]
         clusters = [("cluster_0", messages)]
-        embeddings = {f"m{i}": [float(i), 0.0] for i in range(3)}
+        embeddings = {_uid(f"m{i}"): [float(i), 0.0] for i in range(3)}
         state = ClusterState()
         reranker = StubReranker(scores=[0.9, 0.9])
 
@@ -310,7 +315,9 @@ class TestRerankerClusterSplitter:
 
         messages = [_make_episode(f"m{i}", f"msg {i}", i) for i in range(8)]
         # First 4 messages similar, last 4 different
-        embeddings = {f"m{i}": [1.0, 0.0] if i < 4 else [0.0, 1.0] for i in range(8)}
+        embeddings = {
+            _uid(f"m{i}"): [1.0, 0.0] if i < 4 else [0.0, 1.0] for i in range(8)
+        }
         clusters = [("cluster_0", messages)]
         state = ClusterState()
         reranker = StubReranker(scores=[0.9, 0.9, 0.9, 0.1, 0.9, 0.9, 0.9])
@@ -337,7 +344,9 @@ class TestRerankerClusterSplitter:
         splitter = RerankerClusterSplitter(params)
 
         messages = [_make_episode(f"m{i}", f"msg {i}", i) for i in range(6)]
-        embeddings = {f"m{i}": [1.0, 0.0] if i < 3 else [0.0, 1.0] for i in range(6)}
+        embeddings = {
+            _uid(f"m{i}"): [1.0, 0.0] if i < 3 else [0.0, 1.0] for i in range(6)
+        }
         clusters = [("cluster_0", messages)]
         state = ClusterState()
         reranker = StubReranker(scores=[0.9, 0.9, 0.9, 0.9, 0.9])
@@ -361,9 +370,9 @@ class TestRerankerClusterSplitter:
         splitter = RerankerClusterSplitter(params)
 
         messages = [_make_episode(f"m{i}", f"msg {i}", i) for i in range(6)]
-        embeddings = {f"m{i}": [1.0, 0.0] for i in range(6)}
+        embeddings = {_uid(f"m{i}"): [1.0, 0.0] for i in range(6)}
         clusters = [("cluster_0", messages)]
-        input_hash = splitter._input_hash([f"m{i}" for i in range(6)])
+        input_hash = splitter._input_hash([_uid(f"m{i}") for i in range(6)])
         state = ClusterState(
             split_records={
                 "cluster_0": ClusterSplitRecord(
@@ -396,9 +405,9 @@ class TestRerankerClusterSplitter:
 
         messages = [_make_episode(f"m{i}", f"msg {i}", i) for i in range(3)]
         embeddings = {
-            "m0": [1.0, 0.0],
-            "m1": [0.0, 1.0],
-            "m2": [1.0, 0.0],
+            _uid("m0"): [1.0, 0.0],
+            _uid("m1"): [0.0, 1.0],
+            _uid("m2"): [1.0, 0.0],
         }
         clusters = [("cluster_0", messages)]
         state = ClusterState(
@@ -435,7 +444,9 @@ class TestRerankerClusterSplitter:
         splitter = RerankerClusterSplitter(params)
 
         messages = [_make_episode(f"m{i}", f"msg {i}", i) for i in range(6)]
-        embeddings = {f"m{i}": [1.0, 0.0] if i < 3 else [0.0, 1.0] for i in range(6)}
+        embeddings = {
+            _uid(f"m{i}"): [1.0, 0.0] if i < 3 else [0.0, 1.0] for i in range(6)
+        }
         clusters = [("cluster_0", messages)]
         state = ClusterState()
         reranker = StubReranker(error=RuntimeError("Reranker unavailable"))
@@ -463,7 +474,9 @@ class TestRerankerClusterSplitter:
 
         messages = [_make_episode(f"m{i}", f"msg {i}", i) for i in range(6)]
         # Mix embeddings so adjacent similarity drops below threshold
-        embeddings = {f"m{i}": [1.0, 0.0] if i < 3 else [0.0, 1.0] for i in range(6)}
+        embeddings = {
+            _uid(f"m{i}"): [1.0, 0.0] if i < 3 else [0.0, 1.0] for i in range(6)
+        }
         clusters = [("cluster_0", messages)]
         state = ClusterState()
         reranker = StubReranker(error=RuntimeError("Reranker unavailable"))

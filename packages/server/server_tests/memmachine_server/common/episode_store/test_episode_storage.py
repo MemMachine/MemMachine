@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -9,9 +11,12 @@ from pydantic import JsonValue
 
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
-    EpisodeIdT,
     EpisodeStorage,
     EpisodeType,
+)
+from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
+    Episode,
+    SqlAlchemyEpisodeStore,
 )
 from memmachine_server.common.errors import InvalidArgumentError
 from memmachine_server.common.filter.filter_parser import FilterExpr, parse_filter
@@ -34,7 +39,7 @@ async def create_history_entry(
     metadata: dict[str, JsonValue] | None = None,
     created_at: datetime | None = None,
     episode_type: EpisodeType | None = None,
-) -> EpisodeIdT:
+) -> UUID:
     params = {
         "producer_id": producer_id or DEFAULT_HISTORY_ARGS["producer_id"],
         "producer_role": producer_role or DEFAULT_HISTORY_ARGS["producer_role"],
@@ -91,7 +96,7 @@ async def test_add_and_get_history(episode_storage: EpisodeStorage):
         episode_type=EpisodeType.MESSAGE,
     )
 
-    assert type(history_id) is EpisodeIdT
+    assert isinstance(history_id, UUID)
 
     history = await episode_storage.get_episode(history_id)
     assert history is not None
@@ -113,7 +118,9 @@ async def test_get_episodes_batch(episode_storage: EpisodeStorage):
 
     try:
         # All present; duplicates are deduped; missing IDs are absent.
-        fetched = await episode_storage.get_episodes([first, third, first, "999999999"])
+        fetched = await episode_storage.get_episodes(
+            [first, third, first, UUID("550e8400-e29b-41d4-a716-446655449999")]
+        )
         by_uid = {ep.uid: ep for ep in fetched}
         assert set(by_uid.keys()) == {first, third}
         assert by_uid[first].content == "first"
@@ -151,6 +158,9 @@ async def test_add_multiple_episodes_returns_models(
 
     try:
         assert [e.content for e in episodes] == ["first", "second"]
+        assert all(e.uid.version == 4 for e in episodes)
+        assert episodes[0].uid != episodes[1].uid
+        assert [episode.uid for episode in episodes] == [entry.uid for entry in entries]
         assert all(e.session_key == "batch-session" for e in episodes)
         assert episodes[0].created_at == created_at
         assert episodes[0].metadata == {"key": "value"}
@@ -160,6 +170,176 @@ async def test_add_multiple_episodes_returns_models(
         await episode_storage.delete_episodes([e.uid for e in episodes])
 
     assert await episode_storage.get_episode_messages() == []
+
+
+@pytest.mark.asyncio
+async def test_reserve_sequence_numbers_concurrently(
+    episode_storage: EpisodeStorage,
+):
+    first, second = await asyncio.gather(
+        episode_storage.reserve_sequence_numbers(3),
+        episode_storage.reserve_sequence_numbers(2),
+    )
+
+    assert len(first) == 3
+    assert len(second) == 2
+    assert first == list(range(first[0], first[0] + 3))
+    assert second == list(range(second[0], second[0] + 2))
+    assert first[0] > 0
+    assert set(first).isdisjoint(second)
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_persists_sequence_numbers(
+    episode_storage: EpisodeStorage,
+):
+    entries = [
+        EpisodeEntry(
+            content=f"message-{index}", producer_id="user", producer_role="user"
+        )
+        for index in range(2)
+    ]
+    stored = await episode_storage.add_episodes("sequence-session", entries)
+
+    try:
+        assert stored[0].sequence_num > 0
+        assert stored[1].sequence_num == stored[0].sequence_num + 1
+        retrieved = await episode_storage.get_episode(entries[0].uid)
+        assert retrieved is not None
+        assert retrieved.sequence_num == stored[0].sequence_num
+    finally:
+        await episode_storage.delete_episodes([entry.uid for entry in entries])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("numbers", [[], [0], [1, 1]])
+async def test_add_episodes_rejects_invalid_sequence_numbers(
+    episode_storage: EpisodeStorage,
+    numbers: list[int],
+):
+    entries = [
+        EpisodeEntry(
+            content=f"message-{index}", producer_id="user", producer_role="user"
+        )
+        for index in range(2)
+    ]
+    with pytest.raises(InvalidArgumentError):
+        await episode_storage.add_episodes(
+            "sequence-session", entries, sequence_nums=numbers
+        )
+    assert await episode_storage.get_episodes([entry.uid for entry in entries]) == []
+
+
+@pytest.mark.asyncio
+async def test_equal_timestamp_batches_paginate_in_sequence_order(
+    episode_storage: EpisodeStorage,
+):
+    created_at = datetime(2025, 1, 1, tzinfo=UTC)
+    entries = [
+        EpisodeEntry(
+            uid=UUID(f"{prefix}0000000-0000-4000-8000-000000000000"),
+            content=f"message-{index}",
+            producer_id="user",
+            producer_role="user",
+            created_at=created_at,
+        )
+        for index, prefix in enumerate("fed")
+    ]
+    sequence_nums = await episode_storage.reserve_sequence_numbers(3)
+    # The later reservation can commit first when writes run concurrently.
+    await episode_storage.add_episodes(
+        "sequence-session", entries[2:], sequence_nums=sequence_nums[2:]
+    )
+    await episode_storage.add_episodes(
+        "sequence-session", entries[:2], sequence_nums=sequence_nums[:2]
+    )
+
+    try:
+        assert [
+            episode.uid for episode in await episode_storage.get_episode_messages()
+        ] == [entry.uid for entry in entries]
+        assert [
+            episode.uid
+            for episode in await episode_storage.get_episode_messages(
+                page_size=2, page_num=0
+            )
+        ] == [entry.uid for entry in entries[:2]]
+        assert [
+            episode.uid
+            for episode in await episode_storage.get_episode_messages(
+                page_size=2, page_num=1
+            )
+        ] == [entries[2].uid]
+        assert await episode_storage.get_episode_ids(page_size=3) == [
+            entry.uid for entry in entries
+        ]
+    finally:
+        await episode_storage.delete_episodes([entry.uid for entry in entries])
+
+
+@pytest.mark.asyncio
+async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered():
+    entries = [
+        EpisodeEntry(
+            uid="550e8400-e29b-41d4-a716-446655440000",
+            content="first",
+            producer_id="p-1",
+            producer_role="role-1",
+        ),
+        EpisodeEntry(
+            uid="550e8400-e29b-41d4-a716-446655440001",
+            content="second",
+            producer_id="p-2",
+            producer_role="role-2",
+        ),
+    ]
+    created_at = datetime.now(tz=UTC)
+    sequence_by_uid = {entry.uid: index + 1 for index, entry in enumerate(entries)}
+    returned_rows = [
+        Episode(
+            uid=entry.uid,
+            sequence_num=sequence_by_uid[entry.uid],
+            content=entry.content,
+            session_key="batch-session",
+            producer_id=entry.producer_id,
+            producer_role=entry.producer_role,
+            episode_type=EpisodeType.MESSAGE,
+            created_at=created_at,
+        )
+        for entry in reversed(entries)
+    ]
+
+    class ReorderedResult:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return returned_rows
+
+    class ReorderedSession:
+        async def execute(self, *_args):
+            return ReorderedResult()
+
+        async def commit(self):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+    store = SqlAlchemyEpisodeStore(MagicMock())
+    reordered_session = ReorderedSession()
+    with patch.object(store, "_create_session", return_value=reordered_session):
+        episodes = await store.add_episodes(
+            "batch-session", entries, sequence_nums=[1, 2]
+        )
+
+    assert [episode.uid for episode in episodes] == [entry.uid for entry in entries]
+    assert [episode.content for episode in episodes] == [
+        entry.content for entry in entries
+    ]
 
 
 @pytest.mark.asyncio
@@ -220,21 +400,20 @@ async def test_history_identity_filters(episode_storage: EpisodeStorage):
 
 
 @pytest.mark.asyncio
-async def test_history_comparison_filters(episode_storage: EpisodeStorage):
+async def test_history_identifier_filters(episode_storage: EpisodeStorage):
     first = await create_history_entry(episode_storage, content="first")
     second = await create_history_entry(episode_storage, content="second")
     third = await create_history_entry(episode_storage, content="third")
 
     try:
-        greater_than_first = await episode_storage.get_episode_messages(
-            filter_expr=_filter(f"id > {first}"),
+        exact = await episode_storage.get_episode_messages(
+            filter_expr=_filter(f"uid = '{second}'"),
         )
-        assert {entry.uid for entry in greater_than_first} == {second, third}
-
-        up_to_second = await episode_storage.get_episode_messages(
-            filter_expr=_filter(f"id <= {second}"),
+        excluding_second = await episode_storage.get_episode_messages(
+            filter_expr=_filter(f"id != '{second}'"),
         )
-        assert {entry.uid for entry in up_to_second} == {first, second}
+        assert [entry.uid for entry in exact] == [second]
+        assert {entry.uid for entry in excluding_second} == {first, third}
     finally:
         await episode_storage.delete_episodes([first, second, third])
 
@@ -395,6 +574,39 @@ async def test_delete_history(episode_storage: EpisodeStorage):
     history = await episode_storage.get_episode(history_id)
 
     assert history is None
+
+
+@pytest.mark.asyncio
+async def test_store_preserves_preassigned_episode_uuid(episode_storage):
+    supplied_id = UUID("550e8400-e29b-41d4-a716-446655440000")
+    stored = await episode_storage.add_episodes(
+        "uuid-session",
+        [
+            EpisodeEntry(
+                uid=supplied_id,
+                content="hello",
+                producer_id="user",
+                producer_role="user",
+            )
+        ],
+    )
+
+    try:
+        loaded = await episode_storage.get_episode(supplied_id)
+        assert stored[0].uid == supplied_id
+        assert loaded is not None
+        assert loaded.uid == supplied_id
+        assert supplied_id in await episode_storage.get_episode_ids(page_size=100)
+    finally:
+        await episode_storage.delete_episodes([supplied_id])
+
+
+@pytest.mark.asyncio
+async def test_unknown_uuid_episode_ids_are_no_match(episode_storage):
+    missing_id = UUID("550e8400-e29b-41d4-a716-446655449999")
+    assert await episode_storage.get_episode(missing_id) is None
+    assert await episode_storage.get_episodes([missing_id]) == []
+    await episode_storage.delete_episodes([missing_id])
 
 
 @pytest.mark.asyncio

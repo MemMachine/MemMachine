@@ -186,6 +186,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         with_config_cache: true
         ingestion_trigger_messages: 5
         ingestion_trigger_age: 00:05:00
+        missing_episode_grace_period_sec: 30
       ```
       </Tab>
       <Tab title="With Comments">
@@ -199,6 +200,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         with_config_cache: true # Whether to use in-memory semantic config caching
         ingestion_trigger_messages: 5 # Number of un-ingested messages before ingestion runs
         ingestion_trigger_age: 00:05:00 # Time (HH:MM:SS) before ingestion runs when messages are pending
+        missing_episode_grace_period_sec: 30 # Seconds to retry a missing episode before dropping its semantic history
       ```
       </Tab>
     </Tabs>
@@ -214,6 +216,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `with_config_cache` | Whether to use an in-memory cache for semantic memory configurations. | `true` |
     | `ingestion_trigger_messages` | Number of pending messages before semantic ingestion triggers. | `5` |
     | `ingestion_trigger_age` | Max age of pending messages before ingestion triggers (duration in HH:MM:SS). | `00:05:00` |
+    | `missing_episode_grace_period_sec` | Seconds to retain semantic history for a missing episode while its storage write may still complete. | `30` |
   </Accordion>
 
   <Accordion title="Session Manager">

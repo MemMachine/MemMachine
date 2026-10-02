@@ -11,6 +11,7 @@ import numpy as np
 from pydantic import AwareDatetime, InstanceOf, TypeAdapter, ValidationError
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     ColumnElement,
@@ -22,7 +23,9 @@ from sqlalchemy import (
     Table,
     delete,
     insert,
+    inspect,
     select,
+    text,
     union,
     update,
 )
@@ -31,7 +34,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, aliased, mapped_column
 from sqlalchemy.sql import Delete, Select, func
 
-from memmachine_server.common.episode_store.episode_model import EpisodeIdT
 from memmachine_server.common.errors import InvalidArgumentError, ResourceNotFoundError
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -136,7 +138,7 @@ class VectorSemanticFeature(BaseVectorSemanticStorage):
     def to_typed_model(
         self,
         *,
-        citations: Sequence[EpisodeIdT] | None = None,
+        citations: Sequence[UUID] | None = None,
     ) -> SemanticFeature:
         return SemanticFeature(
             metadata=SemanticFeature.Metadata(
@@ -160,6 +162,8 @@ class VectorSemanticSetIngestedHistory(BaseVectorSemanticStorage):
     set_id = mapped_column(String, primary_key=True, index=True)
     history_id = mapped_column(String, primary_key=True)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
+    episode_created_at = mapped_column(DateTime(timezone=True), nullable=True)
+    sequence_num = mapped_column(BigInteger, nullable=False, server_default="0")
     ingested = mapped_column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
@@ -195,6 +199,28 @@ class VectorStoreSemanticStorage(SemanticStorage):
     async def startup(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseVectorSemanticStorage.metadata.create_all)
+            columns = await conn.run_sync(
+                lambda sync_conn: {
+                    column["name"]
+                    for column in inspect(sync_conn).get_columns(
+                        "vector_semantic_set_ingested_history"
+                    )
+                }
+            )
+            if "batch_position" in columns and "sequence_num" not in columns:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE vector_semantic_set_ingested_history "
+                        "RENAME COLUMN batch_position TO sequence_num"
+                    )
+                )
+                if conn.dialect.name == "postgresql":
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE vector_semantic_set_ingested_history "
+                            "ALTER COLUMN sequence_num TYPE BIGINT"
+                        )
+                    )
 
     async def cleanup(self) -> None:
         await self._engine.dispose()
@@ -319,7 +345,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         feature_id_int = self._coerce_feature_id(feature_id)
         async with self._create_session() as session:
             feature = await session.get(VectorSemanticFeature, feature_id_int)
-            citations_map: Mapping[int, Sequence[EpisodeIdT]] = {}
+            citations_map: Mapping[int, Sequence[UUID]] = {}
             if feature is not None and load_citations:
                 citations_map = await self._load_feature_citations(
                     session,
@@ -403,7 +429,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
     async def add_citations(
         self,
         feature_id: FeatureIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         if not history_ids:
             return
@@ -424,9 +450,15 @@ class VectorStoreSemanticStorage(SemanticStorage):
         set_ids: Sequence[SetIdT] | None = None,
         limit: int | None = None,
         is_ingested: bool | None = None,
-    ) -> AsyncIterator[EpisodeIdT]:
+    ) -> AsyncIterator[UUID]:
         stmt = select(VectorSemanticSetIngestedHistory.history_id).order_by(
-            VectorSemanticSetIngestedHistory.history_id.asc()
+            func.coalesce(
+                VectorSemanticSetIngestedHistory.episode_created_at,
+                VectorSemanticSetIngestedHistory.created_at,
+            ).asc(),
+            VectorSemanticSetIngestedHistory.sequence_num.asc(),
+            VectorSemanticSetIngestedHistory.created_at.asc(),
+            VectorSemanticSetIngestedHistory.history_id.asc(),
         )
         stmt = self._apply_history_filter(
             stmt,
@@ -437,7 +469,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         async with self._create_session() as session:
             result = await session.stream(stmt)
             async for history_id in result.scalars():
-                yield EpisodeIdT(history_id)
+                yield UUID(history_id)
 
     async def get_history_messages_count(
         self,
@@ -455,27 +487,71 @@ class VectorStoreSemanticStorage(SemanticStorage):
             result = await session.execute(stmt)
             return int(result.scalar_one())
 
-    async def add_history_to_set(self, set_id: SetIdT, history_id: EpisodeIdT) -> None:
-        stmt = insert(VectorSemanticSetIngestedHistory).values(
-            set_id=set_id,
-            history_id=history_id,
+    async def get_history_registration_times(
+        self, set_id: SetIdT, history_ids: Sequence[UUID]
+    ) -> dict[UUID, datetime]:
+        if not history_ids:
+            return {}
+        stmt = select(
+            VectorSemanticSetIngestedHistory.history_id,
+            VectorSemanticSetIngestedHistory.created_at,
+        ).where(
+            VectorSemanticSetIngestedHistory.set_id == set_id,
+            VectorSemanticSetIngestedHistory.history_id.in_(map(str, history_ids)),
         )
+        async with self._create_session() as session:
+            result = await session.execute(stmt)
+            return {
+                UUID(history_id): ensure_tz_aware(created_at).astimezone(UTC)
+                for history_id, created_at in result
+            }
+
+    async def get_storage_time(self) -> datetime:
+        """Read the database clock used by history defaults."""
+        async with self._create_session() as session:
+            result = await session.execute(select(func.now()))
+            return ensure_tz_aware(result.scalar_one()).astimezone(UTC)
+
+    async def add_history_to_set(
+        self,
+        set_id: SetIdT,
+        history_id: UUID,
+        *,
+        created_at: datetime | None = None,
+        registered_at: datetime | None = None,
+        sequence_num: int = 0,
+    ) -> None:
+        values = {
+            "set_id": set_id,
+            "history_id": str(history_id),
+            "episode_created_at": ensure_tz_aware(created_at).astimezone(UTC)
+            if created_at is not None
+            else None,
+            "sequence_num": sequence_num,
+        }
+        if registered_at is not None:
+            values["created_at"] = ensure_tz_aware(registered_at).astimezone(UTC)
+        stmt = insert(VectorSemanticSetIngestedHistory).values(**values)
         async with self._create_session() as session:
             await session.execute(stmt)
             await session.commit()
 
-    async def delete_history(self, history_ids: Sequence[EpisodeIdT]) -> None:
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
         if not history_ids:
             return
         async with self._create_session() as session:
             await session.execute(
                 delete(vector_citation_association_table).where(
-                    vector_citation_association_table.c.history_id.in_(history_ids)
+                    vector_citation_association_table.c.history_id.in_(
+                        map(str, history_ids)
+                    )
                 )
             )
             await session.execute(
                 delete(VectorSemanticSetIngestedHistory).where(
-                    VectorSemanticSetIngestedHistory.history_id.in_(history_ids)
+                    VectorSemanticSetIngestedHistory.history_id.in_(
+                        map(str, history_ids)
+                    )
                 )
             )
             await session.commit()
@@ -495,14 +571,16 @@ class VectorStoreSemanticStorage(SemanticStorage):
         self,
         *,
         set_id: SetIdT,
-        history_ids: Sequence[EpisodeIdT],
+        history_ids: Sequence[UUID],
     ) -> None:
         if len(history_ids) == 0:
             raise ValueError("No ids provided")
         stmt = (
             update(VectorSemanticSetIngestedHistory)
             .where(VectorSemanticSetIngestedHistory.set_id == set_id)
-            .where(VectorSemanticSetIngestedHistory.history_id.in_(history_ids))
+            .where(
+                VectorSemanticSetIngestedHistory.history_id.in_(map(str, history_ids))
+            )
             .values(ingested=True)
         )
         async with self._create_session() as session:
@@ -693,7 +771,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         async with self._create_session() as session:
             result = await session.execute(stmt)
             rows = list(result.scalars())
-            citations_map: Mapping[int, Sequence[EpisodeIdT]] = {}
+            citations_map: Mapping[int, Sequence[UUID]] = {}
             if load_citations and rows:
                 citations_map = await self._load_feature_citations(
                     session,
@@ -721,7 +799,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             ordered_rows = [
                 rows_by_id[row_id] for row_id in int_ids if row_id in rows_by_id
             ]
-            citations_map: Mapping[int, Sequence[EpisodeIdT]] = {}
+            citations_map: Mapping[int, Sequence[UUID]] = {}
             if load_citations and ordered_rows:
                 citations_map = await self._load_feature_citations(
                     session,
@@ -807,7 +885,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         self,
         session: AsyncSession,
         feature_ids: Sequence[int],
-    ) -> Mapping[int, Sequence[EpisodeIdT]]:
+    ) -> Mapping[int, Sequence[UUID]]:
         if not feature_ids:
             return {}
         stmt = select(
@@ -815,11 +893,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
             vector_citation_association_table.c.history_id,
         ).where(vector_citation_association_table.c.feature_id.in_(feature_ids))
         result = await session.execute(stmt)
-        citations: MutableMapping[int, list[EpisodeIdT]] = {
+        citations: MutableMapping[int, list[UUID]] = {
             feature_id: [] for feature_id in feature_ids
         }
         for feature_id, history_id in result:
-            citations.setdefault(feature_id, []).append(EpisodeIdT(history_id))
+            citations.setdefault(feature_id, []).append(UUID(history_id))
         return citations
 
     @staticmethod

@@ -1,12 +1,15 @@
 """Unit tests for MemMachineClient class (v2 API)."""
 
 from unittest.mock import Mock, patch
+from uuid import UUID
 
 import pytest
 import requests
 from memmachine_common.api import MemoryType
 
 from memmachine_client import MemMachineClient, Memory, Project
+
+EPISODE_UID = "550e8400-e29b-41d4-a716-446655440001"
 
 
 class TestMemMachineClient:
@@ -451,7 +454,7 @@ class TestMemory:
             "content": {
                 "episodic_memory": [
                     {
-                        "uid": "e1",
+                        "uid": EPISODE_UID,
                         "content": "hello",
                         "session_key": "org1/proj1",
                         "created_at": "2025-01-01T00:00:00Z",
@@ -493,7 +496,7 @@ class TestMemory:
 
             assert isinstance(result, ListResult)
             assert result.content.episodic_memory is not None
-            assert result.content.episodic_memory[0].uid == "e1"
+            assert result.content.episodic_memory[0].uid == UUID(EPISODE_UID)
             assert result.content.semantic_memory == []
 
 
