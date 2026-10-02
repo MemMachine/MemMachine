@@ -15,6 +15,10 @@ NC='\033[0m' # No Color
 
 is_first_run=false
 
+# COMPOSE_PROFILES from the caller's shell, captured before .env is sourced.
+# It would override .env in Compose, so start_services pins .env's value.
+SHELL_COMPOSE_PROFILES="${COMPOSE_PROFILES-}"
+
 ## Function to run a command with a timeout
 timeout() {
     local duration=$1
@@ -138,11 +142,18 @@ ensure_compose_profile() {
     print_warning ".env had no COMPOSE_PROFILES; set it to '$profile' to match configuration.yml"
 }
 
+# COMPOSE_PROFILES as set in .env, unquoted. Drop an inline comment first, as
+# Compose does (a # after whitespace), so "event # qdrant" reads as "event".
+get_compose_profiles() {
+    grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -n 1 | cut -d= -f2- \
+        | sed -E 's/[[:space:]]+#.*$//' | tr -d "\"' \r"
+}
+
 # Long-term memory backend selected by COMPOSE_PROFILES in .env: declarative if
 # that profile is listed, otherwise event (the default).
 get_ltm_backend() {
     local profiles
-    profiles=$(grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"' \r")
+    profiles=$(get_compose_profiles)
     case ",${profiles}," in
         *,declarative,*) echo "declarative" ;;
         *) echo "event" ;;
@@ -851,6 +862,15 @@ check_required_config() {
 start_services() {
     local memmachine_image_tmp="${ENV_MEMMACHINE_IMAGE:-}"
 
+    # configuration.yml and the health checks follow .env's backend, so start
+    # exactly those profiles even if the shell exports a different value.
+    local profiles
+    profiles=$(get_compose_profiles)
+    if [ -n "$SHELL_COMPOSE_PROFILES" ] && [ "$SHELL_COMPOSE_PROFILES" != "$profiles" ]; then
+        print_warning "Ignoring COMPOSE_PROFILES='$SHELL_COMPOSE_PROFILES' from the environment; using '$profiles' from .env"
+    fi
+    export COMPOSE_PROFILES="$profiles"
+
     print_info "Pulling and starting MemMachine services..."
     
     # Determine the target image
@@ -905,13 +925,25 @@ wait_for_health() {
         exit 1
     fi
     
-    # Wait for Neo4j
-    print_info "Waiting for Neo4j to be ready..."
-    if timeout 120 bash -c "until docker exec memmachine-neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
-        print_success "Neo4j is ready"
+    # Wait for the long-term memory store; only the one COMPOSE_PROFILES
+    # selects was started.
+    if [ "$(get_ltm_backend)" = "declarative" ]; then
+        print_info "Waiting for Neo4j to be ready..."
+        if timeout 120 bash -c "until docker exec memmachine-neo4j cypher-shell -u ${NEO4J_USER:-neo4j} -p ${NEO4J_PASSWORD:-neo4j_password} 'RETURN 1' > /dev/null 2>&1; do sleep 2; done"; then
+            print_success "Neo4j is ready"
+        else
+            print_error "Neo4j failed to become ready in 120 seconds. Check container logs and configuration."
+            exit 1
+        fi
     else
-        print_error "Neo4j failed to become ready in 120 seconds. Check container logs and configuration."
-        exit 1
+        # The Qdrant image has no curl, so probe its published port from the host.
+        print_info "Waiting for Qdrant to be ready..."
+        if timeout 120 bash -c "until curl -fs http://localhost:${QDRANT_PORT:-6333}/healthz > /dev/null 2>&1; do sleep 2; done"; then
+            print_success "Qdrant is ready"
+        else
+            print_error "Qdrant failed to become ready in 120 seconds. Check container logs and configuration."
+            exit 1
+        fi
     fi
     
     # Wait for MemMachine
@@ -926,17 +958,27 @@ wait_for_health() {
 
 # Show service information
 show_service_info() {
+    local backend
+    backend=$(get_ltm_backend)
     print_success "🎉 MemMachine is now running!"
     echo ""
     echo "Service URLs:"
     echo "  📊 MemMachine API Docs: http://localhost:${MEMORY_SERVER_PORT:-8080}/docs"
-    echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
+    if [ "$backend" = "declarative" ]; then
+        echo "  🗄️  Neo4j Browser: http://localhost:${NEO4J_HTTP_PORT:-7474}"
+    else
+        echo "  🗄️  Qdrant Dashboard: http://localhost:${QDRANT_PORT:-6333}/dashboard"
+    fi
     echo "  📈 Health Check: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/health"
     echo "  📊 Metrics: http://localhost:${MEMORY_SERVER_PORT:-8080}/api/v2/metrics"
     echo ""
     echo "Database Access:"
     echo "  🐘 PostgreSQL: localhost:${POSTGRES_PORT:-5432} (user: ${POSTGRES_USER:-memmachine}, db: ${POSTGRES_DB:-memmachine})"
-    echo "  🔗 Neo4j Bolt: localhost:${NEO4J_PORT:-7687} (user: ${NEO4J_USER:-neo4j})"
+    if [ "$backend" = "declarative" ]; then
+        echo "  🔗 Neo4j Bolt: localhost:${NEO4J_PORT:-7687} (user: ${NEO4J_USER:-neo4j})"
+    else
+        echo "  🔎 Qdrant: localhost:${QDRANT_PORT:-6333} (REST), localhost:${QDRANT_GRPC_PORT:-6334} (gRPC)"
+    fi
     echo ""
     echo "Useful Commands:"
     echo "  📋 View logs: ${COMPOSE_CMD} logs -f"
