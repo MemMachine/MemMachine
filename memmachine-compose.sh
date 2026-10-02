@@ -142,9 +142,11 @@ ensure_compose_profile() {
     print_warning ".env had no COMPOSE_PROFILES; set it to '$profile' to match configuration.yml"
 }
 
-# COMPOSE_PROFILES as set in .env, unquoted.
+# COMPOSE_PROFILES as set in .env, unquoted. Drop an inline comment first, as
+# Compose does (a # after whitespace), so "event # qdrant" reads as "event".
 get_compose_profiles() {
-    grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"' \r"
+    grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -n 1 | cut -d= -f2- \
+        | sed -E 's/[[:space:]]+#.*$//' | tr -d "\"' \r"
 }
 
 # Long-term memory backend selected by COMPOSE_PROFILES in .env: declarative if
