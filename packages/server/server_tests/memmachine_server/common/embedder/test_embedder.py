@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder.embedder import Embedder
 
 
@@ -42,10 +41,6 @@ class MockEmbedder(Embedder):
     @property
     def dimensions(self) -> int:
         return 2
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        return SimilarityMetric.COSINE
 
 
 @pytest.mark.asyncio

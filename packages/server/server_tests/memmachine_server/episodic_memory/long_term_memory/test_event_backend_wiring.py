@@ -20,7 +20,6 @@ from unittest.mock import create_autospec
 
 import pytest
 
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import (
     Episode,
@@ -32,9 +31,6 @@ from memmachine_server.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
 from memmachine_server.common.vector_store import VectorStore
-from memmachine_server.common.vector_store.data_types import (
-    VectorStoreCollectionConfig,
-)
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
 )
@@ -57,8 +53,8 @@ from memmachine_server.episodic_memory.long_term_memory import (
     LongTermMemory,
 )
 from server_tests.memmachine_server.common.reranker.fake_embedder import FakeEmbedder
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
-    InMemoryVectorStoreCollection,
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    InMemoryVectorStorePartition,
 )
 from server_tests.memmachine_server.episodic_memory.event_memory.conftest import (
     InMemorySegmentStorePartition,
@@ -149,21 +145,18 @@ def fake_embedder() -> FakeEmbedder:
 
 @pytest.fixture
 def vector_store():
-    """Stand-in for the parent VectorStore: only delete_collection is invoked."""
+    """Stand-in for the parent VectorStore: only delete_partition is invoked."""
     return create_autospec(VectorStore, instance=True)
 
 
 @pytest.fixture
-def vector_store_collection(fake_embedder):
-    config = VectorStoreCollectionConfig(
-        vector_dimensions=fake_embedder.dimensions,
-        similarity_metric=fake_embedder.similarity_metric,
-        indexed_properties_schema={
+def vector_store_partition(fake_embedder):
+    return InMemoryVectorStorePartition(
+        indexed_properties={
             **EventMemory.expected_vector_store_collection_schema(),
             **EVENT_BACKEND_SYSTEM_FIELDS,
         },
     )
-    return InMemoryVectorStoreCollection(config)
 
 
 @pytest.fixture
@@ -183,7 +176,7 @@ def segment_store_partition() -> InMemorySegmentStorePartition:
 def long_term_memory(
     fake_embedder,
     vector_store,
-    vector_store_collection,
+    vector_store_partition,
     segment_store,
     segment_store_partition,
     fake_episode_storage,
@@ -192,8 +185,7 @@ def long_term_memory(
         EventBackendParams(
             session_id="sess1",
             vector_store=vector_store,
-            vector_store_collection=vector_store_collection,
-            vector_store_collection_namespace="long_term_memory",
+            vector_store_partition=vector_store_partition,
             segment_store=segment_store,
             segment_store_partition=segment_store_partition,
             partition_key="sess1",
@@ -298,10 +290,7 @@ async def test_drop_session_partition_calls_parent_lifecycle_hooks(
     segment_store,
 ):
     await long_term_memory.drop_session_partition()
-    vector_store.delete_collection.assert_awaited_once_with(
-        namespace="long_term_memory",
-        name="sess1",
-    )
+    vector_store.delete_partition.assert_awaited_once_with("sess1")
     segment_store.delete_partition.assert_awaited_once_with("sess1")
     # Reclamation is the sweeper's; the delete path never purges.
     segment_store.purge_deleted_partitions.assert_not_awaited()
@@ -421,13 +410,8 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
         )
 
 
-async def test_unknown_user_metadata_field_passes_when_no_schema(long_term_memory):
-    """With empty `user_property_keys`, any `m.<x>` is accepted.
-
-    The default fixture leaves `properties_schema` unset, so validation is
-    permissive on user metadata. Matches the documented behavior in
-    `_validate_event_backend_filter`.
-    """
+async def test_any_user_metadata_field_is_accepted(long_term_memory):
+    """Any `m.<x>` is a valid filter field; only bare names are checked."""
     # Doesn't raise.
     scored = await long_term_memory.search_scored(
         "msg",
@@ -435,41 +419,6 @@ async def test_unknown_user_metadata_field_passes_when_no_schema(long_term_memor
         property_filter=FilterComparison(field="m.anything", op="=", value="x"),
     )
     assert scored == []
-
-
-async def test_unknown_user_metadata_field_raises_when_schema_configured(
-    fake_embedder,
-    vector_store,
-    vector_store_collection,
-    segment_store,
-    segment_store_partition,
-    fake_episode_storage,
-):
-    """With a configured schema, typo'd `m.<x>` surfaces as ValueError."""
-    ltm = LongTermMemory(
-        EventBackendParams(
-            session_id="sess1",
-            vector_store=vector_store,
-            vector_store_collection=vector_store_collection,
-            vector_store_collection_namespace="long_term_memory",
-            segment_store=segment_store,
-            segment_store_partition=segment_store_partition,
-            partition_key="sess1",
-            episode_storage=fake_episode_storage,
-            embedder=fake_embedder,
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
-            user_property_keys=frozenset({"color"}),
-        ),
-    )
-    with pytest.raises(
-        ValueError, match=r"Unknown user-metadata filter field 'm\.coloor'"
-    ):
-        await ltm.search_scored(
-            "msg",
-            num_episodes_limit=10,
-            property_filter=FilterComparison(field="m.coloor", op="=", value="red"),
-        )
 
 
 async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
@@ -495,27 +444,21 @@ def _make_ltm(
 ) -> LongTermMemory:
     """Build a self-contained LongTermMemory around `embedder` and `segmenter`.
 
-    Avoids the shared fixtures so each test can pick its own similarity metric
-    (the vector store takes the embedder's) or segmenter (passthrough unless
-    given). No reranker is configured — that's the failure mode under
-    euclidean.
+    Avoids the shared fixtures so each test can pick its own embedder or
+    segmenter (passthrough unless given). No reranker is configured, so
+    scores come straight from the vector store.
     """
-    vector_store_collection = InMemoryVectorStoreCollection(
-        VectorStoreCollectionConfig(
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties_schema={
-                **EventMemory.expected_vector_store_collection_schema(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-            },
-        )
+    vector_store_partition = InMemoryVectorStorePartition(
+        indexed_properties={
+            **EventMemory.expected_vector_store_collection_schema(),
+            **EVENT_BACKEND_SYSTEM_FIELDS,
+        },
     )
     return LongTermMemory(
         EventBackendParams(
             session_id="sess1",
             vector_store=create_autospec(VectorStore, instance=True),
-            vector_store_collection=vector_store_collection,
-            vector_store_collection_namespace="long_term_memory",
+            vector_store_partition=vector_store_partition,
             segment_store=create_autospec(SegmentStore, instance=True),
             segment_store_partition=InMemorySegmentStorePartition(),
             partition_key="sess1",
@@ -536,7 +479,7 @@ async def test_score_threshold_drops_low_scores_under_cosine():
         _episode("near", "abc"),
         _episode("far", "abcdefghij"),
     ]
-    ltm = _make_ltm(FakeEmbedder(similarity_metric=SimilarityMetric.COSINE), episodes)
+    ltm = _make_ltm(FakeEmbedder(), episodes)
     await ltm.add_episodes(episodes)
 
     kept_all = await ltm.search_scored("abc", num_episodes_limit=10)
@@ -546,66 +489,6 @@ async def test_score_threshold_drops_low_scores_under_cosine():
         "abc", num_episodes_limit=10, score_threshold=2.0
     )
     assert kept_none == []
-
-
-async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
-    """Regression: with no reranker the threshold filter must respect
-    similarity_metric.higher_is_better. Under euclidean, scores are distances
-    (lower = better). The filter must DROP scores ABOVE the threshold, not
-    BELOW it.
-
-    Without this fix, `score < threshold` keeps far matches and drops close
-    ones — leaking unrelated content past a "max-distance" gate.
-    """
-    # FakeEmbedder maps text -> [len, -len], so a shorter embedded anchor lands
-    # closer to the short query "abc". "near" (content "abc") is therefore a
-    # closer euclidean match than "far" (content "abcdefghij"). The exact
-    # distances depend on the embedding format (producer prefix, JSON quoting,
-    # date stamp), so we read the actual scores and pick a threshold strictly
-    # between them rather than hard-coding the arithmetic.
-    episodes = [
-        _episode("near", "abc"),
-        _episode("far", "abcdefghij"),
-    ]
-    ltm = _make_ltm(
-        FakeEmbedder(similarity_metric=SimilarityMetric.EUCLIDEAN), episodes
-    )
-    await ltm.add_episodes(episodes)
-
-    scores_by_uid = {
-        ep.uid: score
-        for score, ep in await ltm.search_scored("abc", num_episodes_limit=10)
-    }
-    assert scores_by_uid["near"] < scores_by_uid["far"], (
-        "FakeEmbedder should make the shorter 'near' anchor a closer "
-        "euclidean match than 'far'."
-    )
-    midpoint_threshold = (scores_by_uid["near"] + scores_by_uid["far"]) / 2
-
-    kept = await ltm.search_scored(
-        "abc", num_episodes_limit=10, score_threshold=midpoint_threshold
-    )
-    uids = {ep.uid for _, ep in kept}
-    assert "near" in uids, (
-        "Close match was dropped — threshold filter is inverted for euclidean."
-    )
-    assert "far" not in uids, (
-        "Far match was kept — threshold filter is inverted for euclidean."
-    )
-
-
-async def test_score_threshold_none_keeps_all_results_under_euclidean():
-    """Regression for the prior `-inf` sentinel: under euclidean (lower=better)
-    the default "no threshold" must NOT drop everything. Default is now
-    `score_threshold=None` which short-circuits the filter."""
-    episodes = [_episode("only", "abc")]
-    ltm = _make_ltm(
-        FakeEmbedder(similarity_metric=SimilarityMetric.EUCLIDEAN), episodes
-    )
-    await ltm.add_episodes(episodes)
-
-    scored = await ltm.search_scored("abc", num_episodes_limit=10)
-    assert [ep.uid for _, ep in scored] == ["only"]
 
 
 def _timeline_episode(uid: str, content: str, minute: int) -> Episode:
@@ -704,19 +587,18 @@ def timeline_storage(timeline_episodes) -> FakeEpisodeStorage:
 @pytest.fixture
 def timeline_long_term_memory(
     vector_store,
-    vector_store_collection,
+    vector_store_partition,
     segment_store,
     segment_store_partition,
     timeline_storage,
 ) -> LongTermMemory:
-    # `RankedEmbedder` shares FakeEmbedder's dimensions and similarity metric,
-    # so the shared `vector_store_collection` config still applies.
+    # `RankedEmbedder` shares FakeEmbedder's dimensions, so the shared
+    # `vector_store_partition` config still applies.
     return LongTermMemory(
         EventBackendParams(
             session_id="sess1",
             vector_store=vector_store,
-            vector_store_collection=vector_store_collection,
-            vector_store_collection_namespace="long_term_memory",
+            vector_store_partition=vector_store_partition,
             segment_store=segment_store,
             segment_store_partition=segment_store_partition,
             partition_key="sess1",
