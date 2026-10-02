@@ -173,6 +173,111 @@ async def test_add_multiple_episodes_returns_models(
 
 
 @pytest.mark.asyncio
+async def test_reserve_sequence_numbers_concurrently(
+    episode_storage: EpisodeStorage,
+):
+    first, second = await asyncio.gather(
+        episode_storage.reserve_sequence_numbers(3),
+        episode_storage.reserve_sequence_numbers(2),
+    )
+
+    assert len(first) == 3
+    assert len(second) == 2
+    assert first == list(range(first[0], first[0] + 3))
+    assert second == list(range(second[0], second[0] + 2))
+    assert first[0] > 0
+    assert set(first).isdisjoint(second)
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_persists_sequence_numbers(
+    episode_storage: EpisodeStorage,
+):
+    entries = [
+        EpisodeEntry(
+            content=f"message-{index}", producer_id="user", producer_role="user"
+        )
+        for index in range(2)
+    ]
+    stored = await episode_storage.add_episodes("sequence-session", entries)
+
+    try:
+        assert stored[0].sequence_num > 0
+        assert stored[1].sequence_num == stored[0].sequence_num + 1
+        assert (await episode_storage.get_episode(entries[0].uid)).sequence_num == (
+            stored[0].sequence_num
+        )
+    finally:
+        await episode_storage.delete_episodes([entry.uid for entry in entries])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("numbers", [[], [0], [1, 1]])
+async def test_add_episodes_rejects_invalid_sequence_numbers(
+    episode_storage: EpisodeStorage,
+    numbers: list[int],
+):
+    entries = [
+        EpisodeEntry(
+            content=f"message-{index}", producer_id="user", producer_role="user"
+        )
+        for index in range(2)
+    ]
+    with pytest.raises(InvalidArgumentError):
+        await episode_storage.add_episodes(
+            "sequence-session", entries, sequence_nums=numbers
+        )
+    assert await episode_storage.get_episodes([entry.uid for entry in entries]) == []
+
+
+@pytest.mark.asyncio
+async def test_equal_timestamp_batches_paginate_in_sequence_order(
+    episode_storage: EpisodeStorage,
+):
+    created_at = datetime(2025, 1, 1, tzinfo=UTC)
+    entries = [
+        EpisodeEntry(
+            uid=UUID(f"{prefix}0000000-0000-4000-8000-000000000000"),
+            content=f"message-{index}",
+            producer_id="user",
+            producer_role="user",
+            created_at=created_at,
+        )
+        for index, prefix in enumerate("fed")
+    ]
+    sequence_nums = await episode_storage.reserve_sequence_numbers(3)
+    # The later reservation can commit first when writes run concurrently.
+    await episode_storage.add_episodes(
+        "sequence-session", entries[2:], sequence_nums=sequence_nums[2:]
+    )
+    await episode_storage.add_episodes(
+        "sequence-session", entries[:2], sequence_nums=sequence_nums[:2]
+    )
+
+    try:
+        assert [
+            episode.uid for episode in await episode_storage.get_episode_messages()
+        ] == [entry.uid for entry in entries]
+        assert [
+            episode.uid
+            for episode in await episode_storage.get_episode_messages(
+                page_size=2, page_num=0
+            )
+        ] == [entry.uid for entry in entries[:2]]
+        assert [
+            episode.uid
+            for episode in await episode_storage.get_episode_messages(
+                page_size=2, page_num=1
+            )
+        ] == [entries[2].uid]
+        assert await episode_storage.get_episode_ids(page_size=3) == [
+            entry.uid for entry in entries
+        ]
+    finally:
+        await episode_storage.delete_episodes([entry.uid for entry in entries])
+
+
+@pytest.mark.asyncio
 async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered():
     entries = [
         EpisodeEntry(
@@ -189,9 +294,11 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
         ),
     ]
     created_at = datetime.now(tz=UTC)
+    sequence_by_uid = {entry.uid: index + 1 for index, entry in enumerate(entries)}
     returned_rows = [
         Episode(
             uid=entry.uid,
+            sequence_num=sequence_by_uid[entry.uid],
             content=entry.content,
             session_key="batch-session",
             producer_id=entry.producer_id,
@@ -225,7 +332,9 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
     store = SqlAlchemyEpisodeStore(MagicMock())
     reordered_session = ReorderedSession()
     with patch.object(store, "_create_session", return_value=reordered_session):
-        episodes = await store.add_episodes("batch-session", entries)
+        episodes = await store.add_episodes(
+            "batch-session", entries, sequence_nums=[1, 2]
+        )
 
     assert [episode.uid for episode in episodes] == [entry.uid for entry in entries]
     assert [episode.content for episode in episodes] == [

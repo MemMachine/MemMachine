@@ -1,7 +1,7 @@
 """Abstract storage interface for episodic history."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from uuid import UUID
 
 from pydantic import AwareDatetime
@@ -25,10 +25,17 @@ class EpisodeStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def reserve_sequence_numbers(self, count: int) -> list[int]:
+        """Reserve positive, increasing numbers for a batch of episodes."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def add_episodes(
         self,
         session_key: str,
         episodes: list[EpisodeEntry],
+        *,
+        sequence_nums: Sequence[int] | None = None,
     ) -> list[Episode]:
         raise NotImplementedError
 

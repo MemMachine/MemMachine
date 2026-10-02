@@ -456,6 +456,7 @@ async def sql_db_episode_storage(sqlalchemy_engine: AsyncEngine):
         await conn.run_sync(BaseEpisodeStore.metadata.create_all)
 
     storage = SqlAlchemyEpisodeStore(engine)
+    await storage.startup()
     try:
         await storage.delete_episode_messages()
         yield storage
