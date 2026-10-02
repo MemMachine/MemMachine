@@ -110,10 +110,8 @@ class RerankerClusterSplitter:
         messages: Sequence[Episode],
         cluster_embeddings: Mapping[UUID, Sequence[float]],
     ) -> tuple[list[Sequence[float]], list[UUID]]:
-        ordered_embeddings = [
-            cluster_embeddings[m.uid] for m in messages if m.uid is not None
-        ]
-        event_ids = [m.uid for m in messages if m.uid is not None]
+        ordered_embeddings = [cluster_embeddings[m.uid] for m in messages]
+        event_ids = [m.uid for m in messages]
         return ordered_embeddings, event_ids
 
     def _replay_if_unchanged(
@@ -375,10 +373,7 @@ class RerankerClusterSplitter:
         for seg_id in segment_ids[1:]:
             for i in range(search_from, len(messages)):
                 msg = messages[i]
-                if (
-                    msg.uid is not None
-                    and state.event_to_cluster.get(msg.uid) == seg_id
-                ):
+                if state.event_to_cluster.get(msg.uid) == seg_id:
                     boundaries.append(i)
                     search_from = i
                     break
@@ -493,8 +488,7 @@ def apply_cluster_split(
             last_ts=max(m.created_at for m in seg_messages),
         )
         for msg in seg_messages:
-            if msg.uid is not None:
-                state.event_to_cluster[msg.uid] = seg_id
+            state.event_to_cluster[msg.uid] = seg_id
 
         segments.append((seg_id, seg_messages))
         segment_ids.append(seg_id)
