@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import numpy as np
 from pydantic import InstanceOf
 
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.filter.filter_parser import FilterExpr
@@ -216,10 +215,6 @@ class MockEmbedder(Embedder):
     @property
     def dimensions(self) -> int:
         return 2
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        return SimilarityMetric.COSINE
 
 
 class MockResourceRetriever:
