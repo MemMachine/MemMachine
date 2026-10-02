@@ -31,9 +31,7 @@ episodic_memory:
     embedder: openai_embedder
     reranker: my_reranker_id          # optional; omit to order by embedding score
     vector_store: event_vector_store  # Qdrant, below
-    segment_store: profile_storage    # a relational DB; the segment store is built from it
-    # properties_schema:              # optional — user-defined filterable properties
-    #   source_role: str
+    event_memory_store: profile_storage    # a relational DB; the event memory store is built from it
     # segmenter:                      # optional — defaults to passthrough
     #   type: passthrough             # or: text (with max_chunk_length)
     # deriver:                        # optional — defaults to whole_text
@@ -92,6 +90,7 @@ resources:
         grpc_port: 6334
         prefer_grpc: false
         https: false
+        partition_registry: profile_storage    # relational database holding the partition registry
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
   embedders:
     openai_embedder:
