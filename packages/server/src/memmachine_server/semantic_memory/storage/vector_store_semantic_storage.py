@@ -23,7 +23,9 @@ from sqlalchemy import (
     Table,
     delete,
     insert,
+    inspect,
     select,
+    text,
     union,
     update,
 )
@@ -197,6 +199,28 @@ class VectorStoreSemanticStorage(SemanticStorage):
     async def startup(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseVectorSemanticStorage.metadata.create_all)
+            columns = await conn.run_sync(
+                lambda sync_conn: {
+                    column["name"]
+                    for column in inspect(sync_conn).get_columns(
+                        "vector_semantic_set_ingested_history"
+                    )
+                }
+            )
+            if "batch_position" in columns and "sequence_num" not in columns:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE vector_semantic_set_ingested_history "
+                        "RENAME COLUMN batch_position TO sequence_num"
+                    )
+                )
+                if conn.dialect.name == "postgresql":
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE vector_semantic_set_ingested_history "
+                            "ALTER COLUMN sequence_num TYPE BIGINT"
+                        )
+                    )
 
     async def cleanup(self) -> None:
         await self._engine.dispose()
