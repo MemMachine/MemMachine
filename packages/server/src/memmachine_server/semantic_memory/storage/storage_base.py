@@ -152,6 +152,11 @@ class SemanticStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_storage_time(self) -> datetime:
+        """Return the clock used to stamp history registrations."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def get_history_messages_count(
         self,
         *,

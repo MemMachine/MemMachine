@@ -4,7 +4,6 @@ import asyncio
 import itertools
 import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from itertools import chain
 from uuid import UUID
 
@@ -165,7 +164,7 @@ class IngestionService:
                     set_id, none_h_ids
                 )
             )
-            now = datetime.now(UTC)
+            now = await self._semantic_storage.get_storage_time()
             expired_h_ids = []
             deferred_h_ids = []
             for history_id in none_h_ids:

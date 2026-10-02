@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator, Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -165,6 +165,9 @@ class MockSemanticStorage(SemanticStorage):
         self, set_id: SetIdT, history_ids: Sequence[UUID]
     ) -> dict[UUID, datetime]:
         return await self.get_history_registration_times_mock(set_id, history_ids)
+
+    async def get_storage_time(self) -> datetime:
+        return datetime.now(UTC)
 
     async def get_history_messages_count(
         self,

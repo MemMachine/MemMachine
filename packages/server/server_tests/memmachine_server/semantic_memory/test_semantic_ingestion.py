@@ -797,6 +797,40 @@ async def test_missing_episode_grace_uses_history_registration_time(
 
 
 @pytest.mark.asyncio
+async def test_missing_episode_grace_uses_storage_clock(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    resource_retriever: MockResourceRetriever,
+    monkeypatch,
+):
+    missing_id = UUID("550e8400-e29b-41d4-a716-446655449996")
+    await semantic_storage.add_history_to_set("user-888", missing_id)
+    storage_now = await semantic_storage.get_storage_time()
+
+    class SkewedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return storage_now + timedelta(days=1)
+
+    monkeypatch.setattr(
+        "memmachine_server.semantic_memory.semantic_ingestion.datetime",
+        SkewedDatetime,
+        raising=False,
+    )
+    ingestion_service = IngestionService(
+        IngestionService.Params(
+            semantic_storage=semantic_storage,
+            history_store=episode_storage,
+            resource_retriever=resource_retriever.get_resources,
+        )
+    )
+    await ingestion_service._process_single_set("user-888")
+    assert missing_id in await _collect(
+        semantic_storage.get_history_messages(set_ids=["user-888"])
+    )
+
+
+@pytest.mark.asyncio
 async def test_process_single_set_limits_features_sent_to_llm(
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
