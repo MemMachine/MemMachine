@@ -45,6 +45,33 @@ async def _collect_history_messages(storage: SemanticStorage, **kwargs):
     return [item async for item in storage.get_history_messages(**kwargs)]
 
 
+async def test_session_manager_registers_episode_sequence(
+    mock_session_manager: SemanticSessionManager,
+    mock_semantic_service: MagicMock,
+    session_data,
+):
+    created_at = datetime(2025, 1, 1, tzinfo=UTC)
+    episodes = [
+        Episode(
+            uid=UUID(f"{prefix}0000000-0000-4000-8000-000000000000"),
+            content=f"message-{index}",
+            session_key="sequence-session",
+            created_at=created_at,
+            producer_id="user",
+            producer_role="user",
+            sequence_num=sequence_num,
+        )
+        for index, (prefix, sequence_num) in enumerate((("f", 10), ("0", 11)))
+    ]
+
+    await mock_session_manager.add_message(episodes=episodes, session_data=session_data)
+
+    assert {
+        call.args[0]: call.kwargs["sequence_num"]
+        for call in mock_semantic_service.add_message_to_sets.await_args_list
+    } == {episodes[0].uid: 10, episodes[1].uid: 11}
+
+
 @dataclass
 class _SessionData:
     org_id: str
@@ -408,7 +435,7 @@ async def test_add_message_uses_all_isolations(
     mock_semantic_service.add_message_to_sets.assert_awaited_once()
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
     assert kwargs["created_at"] == created_at
-    assert kwargs["batch_position"] == 0
+    assert kwargs["sequence_num"] == 0
     assert isinstance(kwargs["registered_at"], datetime)
 
     assert args[0] == history_id
@@ -438,7 +465,7 @@ async def test_add_message_with_session_only_isolation(
     mock_semantic_service.add_message_to_sets.assert_awaited_once()
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
     assert kwargs["created_at"] == created_at
-    assert kwargs["batch_position"] == 0
+    assert kwargs["sequence_num"] == 0
     assert isinstance(kwargs["registered_at"], datetime)
 
     project_id = mock_session_manager._generate_set_id(

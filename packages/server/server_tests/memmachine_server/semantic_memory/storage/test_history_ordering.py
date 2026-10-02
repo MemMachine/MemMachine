@@ -117,23 +117,29 @@ async def test_history_limit_selects_oldest_episode_times(
     ] == ids[5:]
 
 
-async def test_history_equal_times_preserve_batch_order(
+async def test_history_equal_times_preserve_global_sequence(
     history_storage: SemanticStorage,
 ):
     created_at = datetime(2025, 1, 1, tzinfo=UTC)
-    registered_at = datetime.now(UTC)
     ids = [
         UUID("f0000000-0000-4000-8000-000000000000"),
         UUID("00000000-0000-4000-8000-000000000000"),
     ]
-    for position, history_id in enumerate(ids):
-        await history_storage.add_history_to_set(
-            "ties",
-            history_id,
-            created_at=created_at,
-            registered_at=registered_at,
-            batch_position=position,
-        )
+    # The later sequence registers first and has the earlier registration time.
+    await history_storage.add_history_to_set(
+        "ties",
+        ids[1],
+        created_at=created_at,
+        registered_at=created_at,
+        sequence_num=11,
+    )
+    await history_storage.add_history_to_set(
+        "ties",
+        ids[0],
+        created_at=created_at,
+        registered_at=created_at + timedelta(hours=1),
+        sequence_num=10,
+    )
 
     assert [
         history_id
@@ -228,7 +234,7 @@ async def test_neo4j_history_query_orders_before_limit():
     ] == []
     query = driver.execute_query.call_args.args[0]
     assert (
-        "ORDER BY coalesce(h.episode_created_at, h.created_at), h.created_at, h.batch_position, h.history_id LIMIT $limit"
+        "ORDER BY coalesce(h.episode_created_at, h.created_at), h.sequence_num, h.created_at, h.history_id LIMIT $limit"
         in " ".join(query.text.split())
     )
     assert driver.execute_query.call_args.kwargs == {
@@ -252,5 +258,5 @@ async def test_neo4j_history_write_preserves_episode_time():
         "set_id": "ordered",
         "history_id": str(episode_id),
         "episode_created_at": created_at,
-        "batch_position": 0,
+        "sequence_num": 0,
     }

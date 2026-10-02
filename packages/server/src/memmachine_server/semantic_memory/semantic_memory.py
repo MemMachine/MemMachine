@@ -236,8 +236,8 @@ class SemanticService:
         if not history_ids:
             return
 
-        created_at_by_id = {
-            episode.uid: episode.created_at
+        episodes_by_id = {
+            episode.uid: episode
             for episode in await self._episode_storage.get_episodes(history_ids)
         }
         registered_at = datetime.now(UTC)
@@ -248,11 +248,15 @@ class SemanticService:
                     set_id=set_id,
                     history_id=h_id,
                     # Missing episodes remain queued for ingestion's recovery path.
-                    created_at=created_at_by_id.get(h_id),
+                    created_at=episodes_by_id[h_id].created_at
+                    if h_id in episodes_by_id
+                    else None,
                     registered_at=registered_at,
-                    batch_position=position,
+                    sequence_num=episodes_by_id[h_id].sequence_num
+                    if h_id in episodes_by_id
+                    else 0,
                 )
-                for position, h_id in enumerate(history_ids)
+                for h_id in history_ids
             ],
             return_exceptions=True,
         )
@@ -266,7 +270,7 @@ class SemanticService:
         *,
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
-        batch_position: int = 0,
+        sequence_num: int = 0,
     ) -> None:
         assert len(set_ids) == len(set(set_ids))
         if not set_ids:
@@ -277,6 +281,7 @@ class SemanticService:
             episode = await self._episode_storage.get_episode(history_id)
             if episode is not None:
                 created_at = episode.created_at
+                sequence_num = episode.sequence_num
 
         res = await asyncio.gather(
             *[
@@ -285,7 +290,7 @@ class SemanticService:
                     history_id=history_id,
                     created_at=created_at,
                     registered_at=registered_at,
-                    batch_position=batch_position,
+                    sequence_num=sequence_num,
                 )
                 for set_id in set_ids
             ],

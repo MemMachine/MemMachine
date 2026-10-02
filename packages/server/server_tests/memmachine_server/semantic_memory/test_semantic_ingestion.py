@@ -1,6 +1,7 @@
 """Tests for the ingestion service using the in-memory semantic storage."""
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 from uuid import UUID
@@ -29,6 +30,9 @@ from memmachine_server.semantic_memory.semantic_model import (
     SemanticCommandType,
     SemanticFeature,
     SemanticPrompt,
+)
+from memmachine_server.semantic_memory.semantic_session_manager import (
+    SemanticSessionManager,
 )
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from server_tests.memmachine_server.semantic_memory.mock_semantic_memory_objects import (
@@ -238,6 +242,7 @@ async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
     semantic_service: SemanticService,
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
+    semantic_config_storage,
     monkeypatch: pytest.MonkeyPatch,
     same_timestamp: bool,
 ):
@@ -258,7 +263,18 @@ async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
         ],
     )
     history_ids = episodes if same_timestamp else list(reversed(episodes))
-    await semantic_service.add_messages("colors", [e.uid for e in history_ids])
+    session_manager = SemanticSessionManager(
+        semantic_service=semantic_service,
+        semantic_config_storage=semantic_config_storage,
+    )
+    monkeypatch.setattr(
+        session_manager,
+        "_get_set_ids_str_from_metadata",
+        AsyncMock(return_value={"colors"}),
+    )
+    session_data = SimpleNamespace(org_id="org", project_id="project")
+    for batch in (history_ids[:3], history_ids[3:]):
+        await session_manager.add_message(episodes=batch, session_data=session_data)
     seen_messages: list[str] = []
 
     async def update_color(*, message_content: str, **_kwargs) -> list[SemanticCommand]:

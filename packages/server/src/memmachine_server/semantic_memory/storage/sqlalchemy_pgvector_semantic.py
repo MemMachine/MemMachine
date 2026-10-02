@@ -13,6 +13,7 @@ from alembic.config import Config
 from pgvector.sqlalchemy import Vector
 from pydantic import AwareDatetime, InstanceOf, TypeAdapter, ValidationError
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     ColumnElement,
@@ -165,7 +166,7 @@ class SetIngestedHistory(BaseSemanticStorage):
         server_default=func.now(),
     )
     episode_created_at = mapped_column(DateTime(timezone=True), nullable=True)
-    batch_position = mapped_column(Integer, nullable=False, server_default="0")
+    sequence_num = mapped_column(BigInteger, nullable=False, server_default="0")
     ingested = mapped_column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
@@ -445,8 +446,8 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             func.coalesce(
                 SetIngestedHistory.episode_created_at, SetIngestedHistory.created_at
             ).asc(),
+            SetIngestedHistory.sequence_num.asc(),
             SetIngestedHistory.created_at.asc(),
-            SetIngestedHistory.batch_position.asc(),
             SetIngestedHistory.history_id.asc(),
         )
 
@@ -527,7 +528,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         *,
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
-        batch_position: int = 0,
+        sequence_num: int = 0,
     ) -> None:
         registration_time = ensure_tz_aware(
             registered_at or datetime.now(UTC)
@@ -539,7 +540,7 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
             episode_created_at=ensure_tz_aware(created_at).astimezone(UTC)
             if created_at is not None
             else registration_time,
-            batch_position=batch_position,
+            sequence_num=sequence_num,
         )
 
         async with self._create_session() as session:

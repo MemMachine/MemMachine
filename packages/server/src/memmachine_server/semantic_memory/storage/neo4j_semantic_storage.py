@@ -580,7 +580,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         if conditions:
             query.append("WHERE " + " AND ".join(conditions))
         query.append(
-            "RETURN h.history_id AS history_id ORDER BY coalesce(h.episode_created_at, h.created_at), h.created_at, h.batch_position, h.history_id"
+            "RETURN h.history_id AS history_id ORDER BY coalesce(h.episode_created_at, h.created_at), h.sequence_num, h.created_at, h.history_id"
         )
         if limit is not None:
             query.append("LIMIT $limit")
@@ -758,7 +758,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         *,
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
-        batch_position: int = 0,
+        sequence_num: int = 0,
     ) -> None:
         registration_time = ensure_tz_aware(
             registered_at or datetime.now(UTC)
@@ -769,7 +769,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             ON CREATE SET h.is_ingested = false,
                           h.created_at = $created_at,
                           h.episode_created_at = $episode_created_at,
-                          h.batch_position = $batch_position
+                          h.sequence_num = $sequence_num
             """,
             set_id=set_id,
             history_id=str(history_id),
@@ -777,7 +777,7 @@ class Neo4jSemanticStorage(SemanticStorage):
             episode_created_at=ensure_tz_aware(created_at).astimezone(UTC)
             if created_at is not None
             else registration_time,
-            batch_position=batch_position,
+            sequence_num=sequence_num,
         )
 
     async def delete_history(self, history_ids: Sequence[UUID]) -> None:
