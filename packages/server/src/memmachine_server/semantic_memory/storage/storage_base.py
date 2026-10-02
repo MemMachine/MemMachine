@@ -141,7 +141,7 @@ class SemanticStorage(ABC):
         limit: int | None = None,
         is_ingested: bool | None = None,
     ) -> AsyncIterator[UUID]:
-        """Retrieve history by creation time, then ID, before applying the limit."""
+        """Order by episode time, sequence, registration time, then ID."""
         raise NotImplementedError
 
     @abstractmethod
@@ -169,9 +169,9 @@ class SemanticStorage(ABC):
         *,
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
-        batch_position: int = 0,
+        sequence_num: int = 0,
     ) -> None:
-        """Attach an episode with its event time, registration time, and batch order."""
+        """Attach an episode with event time, registration time, and sequence."""
         raise NotImplementedError
 
     @abstractmethod

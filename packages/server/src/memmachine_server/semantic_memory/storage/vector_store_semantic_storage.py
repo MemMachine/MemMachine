@@ -11,6 +11,7 @@ import numpy as np
 from pydantic import AwareDatetime, InstanceOf, TypeAdapter, ValidationError
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     Column,
     ColumnElement,
@@ -160,7 +161,7 @@ class VectorSemanticSetIngestedHistory(BaseVectorSemanticStorage):
     history_id = mapped_column(String, primary_key=True)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
     episode_created_at = mapped_column(DateTime(timezone=True), nullable=True)
-    batch_position = mapped_column(Integer, nullable=False, server_default="0")
+    sequence_num = mapped_column(BigInteger, nullable=False, server_default="0")
     ingested = mapped_column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
@@ -431,8 +432,8 @@ class VectorStoreSemanticStorage(SemanticStorage):
                 VectorSemanticSetIngestedHistory.episode_created_at,
                 VectorSemanticSetIngestedHistory.created_at,
             ).asc(),
+            VectorSemanticSetIngestedHistory.sequence_num.asc(),
             VectorSemanticSetIngestedHistory.created_at.asc(),
-            VectorSemanticSetIngestedHistory.batch_position.asc(),
             VectorSemanticSetIngestedHistory.history_id.asc(),
         )
         stmt = self._apply_history_filter(
@@ -488,7 +489,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         *,
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
-        batch_position: int = 0,
+        sequence_num: int = 0,
     ) -> None:
         registration_time = ensure_tz_aware(
             registered_at or datetime.now(UTC)
@@ -500,7 +501,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             episode_created_at=ensure_tz_aware(created_at).astimezone(UTC)
             if created_at is not None
             else registration_time,
-            batch_position=batch_position,
+            sequence_num=sequence_num,
         )
         async with self._create_session() as session:
             await session.execute(stmt)

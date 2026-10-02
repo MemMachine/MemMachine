@@ -120,7 +120,6 @@ class SemanticSessionManager:
         episode: Episode,
         session_data: SessionData,
         registered_at: datetime,
-        batch_position: int,
     ) -> None:
         episode_metadata: MutableMapping[str, JsonValue] = (
             dict(episode.metadata) if episode.metadata is not None else {}
@@ -137,7 +136,7 @@ class SemanticSessionManager:
             list(set_ids),
             created_at=episode.created_at,
             registered_at=registered_at,
-            batch_position=batch_position,
+            sequence_num=episode.sequence_num,
         )
 
     @staticmethod
@@ -161,11 +160,9 @@ class SemanticSessionManager:
 
         registered_at = datetime.now(UTC)
         async with asyncio.TaskGroup() as tg:
-            for position, episode in enumerate(episodes):
+            for episode in episodes:
                 tg.create_task(
-                    self._add_single_episode(
-                        episode, session_data, registered_at, position
-                    )
+                    self._add_single_episode(episode, session_data, registered_at)
                 )
 
     async def search(
