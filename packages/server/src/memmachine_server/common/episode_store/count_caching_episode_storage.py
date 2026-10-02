@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -56,12 +56,22 @@ class CountCachingEpisodeStorage(EpisodeStorage):
         await self._wrapped.delete_all()
         await self._clear_cache()
 
+    async def reserve_sequence_numbers(self, count: int) -> list[int]:
+        return await self._wrapped.reserve_sequence_numbers(count)
+
     async def add_episodes(
         self,
         session_key: str,
         episodes: list[EpisodeEntry],
+        *,
+        sequence_nums: Sequence[int] | None = None,
     ) -> list[Episode]:
-        stored = await self._wrapped.add_episodes(session_key, episodes)
+        if sequence_nums is None:
+            stored = await self._wrapped.add_episodes(session_key, episodes)
+        else:
+            stored = await self._wrapped.add_episodes(
+                session_key, episodes, sequence_nums=sequence_nums
+            )
 
         async with self._lock:
             entry = self._count_cache.get(session_key)
