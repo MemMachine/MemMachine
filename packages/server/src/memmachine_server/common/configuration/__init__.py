@@ -172,6 +172,14 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=timedelta(minutes=5),
         description="The amount of time a message is uningested before triggering an ingestion.",
     )
+    ingestion_poll_interval_seconds: int = Field(
+        default=2,
+        description=(
+            "How often, in seconds, the background ingestion loop polls for "
+            "sets with uningested messages."
+        ),
+        gt=0,
+    )
     max_features_per_update: int = Field(
         default=50,
         description=(
@@ -180,6 +188,16 @@ class SemanticMemoryConf(YamlSerializableMixin):
             "has grown very large."
         ),
         gt=0,
+    )
+    consolidation_threshold: int = Field(
+        default=20,
+        description=(
+            "Minimum number of features sharing a tag before they are "
+            "consolidated during ingestion. Set to 0 to consolidate every "
+            "tag group regardless of size; this makes one LLM call per tag "
+            "group on each ingestion, so it is mainly useful for testing."
+        ),
+        ge=0,
     )
 
     @model_validator(mode="after")

@@ -478,6 +478,11 @@ class SpecDoc:
     The maximum age (in seconds) of uningested messages before
     triggering an ingestion cycle."""
 
+    SEMANTIC_INGESTION_POLL_INTERVAL = """
+    How often, in seconds, the background ingestion loop polls for
+    sets with uningested messages. Takes effect on the next server
+    restart; updating it does not affect an already-running loop."""
+
     UPDATE_EPISODIC_MEMORY = """
     Partial update for episodic memory configuration. Only supplied
     fields are updated; omitted fields remain unchanged."""
@@ -1142,6 +1147,8 @@ class RouterDoc:
     - embedding_model: The embedder to use for semantic similarity
     - ingestion_trigger_messages: Number of messages before triggering ingestion
     - ingestion_trigger_age_seconds: Age threshold for triggering ingestion
+    - ingestion_poll_interval_seconds: How often the background ingestion
+      loop polls for pending messages (takes effect on the next restart)
     """
 
     # --- Semantic Set Type API Router Docs ---

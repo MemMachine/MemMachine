@@ -352,6 +352,12 @@ def _apply_semantic_memory_updates(
         changes.append(
             f"semantic_memory.ingestion_trigger_age={spec.ingestion_trigger_age_seconds}s"
         )
+    if spec.ingestion_poll_interval_seconds is not None:
+        sm.ingestion_poll_interval_seconds = spec.ingestion_poll_interval_seconds
+        changes.append(
+            "semantic_memory.ingestion_poll_interval_seconds="
+            f"{spec.ingestion_poll_interval_seconds}"
+        )
 
     return changes
 
