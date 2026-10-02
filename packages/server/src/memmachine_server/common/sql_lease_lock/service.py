@@ -1,6 +1,7 @@
 """Exclusive SQL leases for distributed tasks across server instances."""
 
 import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,14 @@ from memmachine_server.common.sql_lease_lock._store import (
     StoredLease,
 )
 
+logger = logging.getLogger(__name__)
+_CLEANUP_TIMEOUT_SECONDS = 5.0
+
+
+def _observe_late_cleanup(task: asyncio.Task[object]) -> None:
+    if not task.cancelled() and (error := task.exception()) is not None:
+        logger.error("SQL lease cleanup failed after its deadline", exc_info=error)
+
 
 class LeaseLostError(RuntimeError):
     """The caller no longer owns its lease."""
@@ -23,14 +32,22 @@ class LockAcquireTimeout(TimeoutError):  # noqa: N818 - name fixed by public API
 
 
 async def _await_cleanup[T](task: asyncio.Task[T], cancellations: list[bool]) -> T:
-    """Drain a cleanup task despite cancellation of its caller."""
+    """Allow cleanup a bounded time despite cancellation of its caller."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _CLEANUP_TIMEOUT_SECONDS
     while True:
         try:
-            return await asyncio.shield(task)
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError("SQL lease cleanup timed out")  # noqa: TRY301
+            return await asyncio.wait_for(asyncio.shield(task), remaining)
         except asyncio.CancelledError:
             if task.cancelled():
                 raise
             cancellations.append(True)
+        except TimeoutError:
+            task.add_done_callback(_observe_late_cleanup)
+            raise
 
 
 def _duration_ms(duration: timedelta) -> int:
@@ -39,6 +56,8 @@ def _duration_ms(duration: timedelta) -> int:
     ) * 1_000_000 + duration.microseconds
     if microseconds <= 0:
         raise ValueError("lease duration must be positive")
+    if microseconds < 100_000:
+        raise ValueError("lease duration must be at least 100 milliseconds")
     return (microseconds + 999) // 1_000
 
 
@@ -46,13 +65,18 @@ class Lease:
     """A handle that can renew or release one specific SQL lease."""
 
     def __init__(
-        self, store: SQLLeaseStore, stored: StoredLease, duration_ms: int
+        self,
+        store: SQLLeaseStore,
+        stored: StoredLease,
+        duration_ms: int,
+        granted_after: float,
     ) -> None:
         """Bind this handle to one granted lease."""
         self._store = store
         self._stored = stored
         self._duration_ms = duration_ms
         self._expires_at_ms = stored.expires_at_ms
+        self._safe_until = granted_after + duration_ms / 1_000
 
     @property
     def key(self) -> str:
@@ -66,7 +90,7 @@ class Lease:
 
     @property
     def fencing_token(self) -> int:
-        """A resource-local token that grows with each grant."""
+        """A global token that grows with each successful grant."""
         return self._stored.fencing_token
 
     @property
@@ -76,10 +100,12 @@ class Lease:
 
     async def renew(self) -> None:
         """Extend this lease from database time or raise if it was lost."""
+        started = asyncio.get_running_loop().time()
         expiry = await self._store.renew(self.key, self.lease_id, self._duration_ms)
         if expiry is None:
             raise LeaseLostError(f"Lease {self.lease_id} is no longer held")
         self._expires_at_ms = expiry
+        self._safe_until = started + self._duration_ms / 1_000
 
     async def release(self) -> None:
         """Remove this lease or raise if it was already lost."""
@@ -107,7 +133,10 @@ async def _finish_lock_context(
     except Exception:
         if body_error is None and not renewal_errors and not cancellations:
             raise
+        logger.exception("Failed to release SQL lease during context cleanup")
     if cancellations:
+        if renewal_errors:
+            logger.error("SQL lease renewal also failed", exc_info=renewal_errors[0])
         raise asyncio.CancelledError
     if body_error is None and renewal_errors:
         raise renewal_errors[0]
@@ -140,6 +169,7 @@ class SQLLeaseLockService:
         if not key:
             raise ValueError("resource key must be nonempty")
         duration_ms = _duration_ms(duration)
+        started = asyncio.get_running_loop().time()
         operation = asyncio.create_task(self._store.try_acquire(key, duration_ms))
         try:
             stored = await asyncio.shield(operation)
@@ -152,11 +182,14 @@ class SQLLeaseLockService:
                     await self._store.release(key, stored.lease_id)
 
             cleanup = asyncio.create_task(discard_grant())
-            await _await_cleanup(cleanup, [])
+            try:
+                await _await_cleanup(cleanup, [])
+            except Exception:
+                logger.exception("Failed to clean up cancelled lock acquisition")
             raise
         if stored is None:
             return None
-        return Lease(self._store, stored, duration_ms)
+        return Lease(self._store, stored, duration_ms, started)
 
     async def acquire(
         self,
@@ -183,6 +216,7 @@ class SQLLeaseLockService:
         retry_cap = (
             30.0 if wait_timeout is None else min(30.0, wait_timeout.total_seconds())
         )
+        retry_cap = min(retry_cap, lease_duration.total_seconds())
         retry_max_delay = min(0.05, retry_cap)
         while True:
             lease = await self._try_acquire(key, lease_duration)
@@ -202,7 +236,11 @@ class SQLLeaseLockService:
         lease_duration: timedelta,
         wait_timeout: timedelta | None = None,
     ) -> AbstractAsyncContextManager[Lease]:
-        """Hold an exclusive lease, renewing it until the block exits."""
+        """Hold and renew a lease until exit.
+
+        Releasing the handle inside the block or allowing the lease to expire
+        raises LeaseLostError, possibly after cancelling the body.
+        """
         return self._lock_context(key, lease_duration, wait_timeout)
 
     @staticmethod
@@ -214,9 +252,10 @@ class SQLLeaseLockService:
         errors: list[Exception],
         owner_cancellations: list[bool],
     ) -> None:
+        retry_delay = interval
         while not stop_renewal.is_set():
             try:
-                await asyncio.wait_for(stop_renewal.wait(), timeout=interval)
+                await asyncio.wait_for(stop_renewal.wait(), timeout=retry_delay)
             except TimeoutError:
                 pass
             else:
@@ -224,14 +263,31 @@ class SQLLeaseLockService:
             if stop_renewal.is_set():
                 return
             try:
-                await lease.renew()
+                remaining = lease._safe_until - asyncio.get_running_loop().time()  # noqa: SLF001
+                if remaining <= 0:
+                    raise LeaseLostError(  # noqa: TRY301
+                        f"Lease {lease.lease_id} can no longer be trusted"
+                    )
+                async with asyncio.timeout(remaining):
+                    await lease.renew()
             except Exception as err:
+                if not isinstance(err, LeaseLostError):
+                    remaining = lease._safe_until - asyncio.get_running_loop().time()  # noqa: SLF001
+                    if remaining > 0:
+                        logger.debug("Retrying failed SQL lease renewal", exc_info=err)
+                        retry_delay = min(0.05, max(0.005, remaining / 2))
+                        continue
+                    err = LeaseLostError(
+                        f"Lease {lease.lease_id} can no longer be trusted"
+                    )
+                    logger.exception("SQL lease renewal failed until expiry")
                 errors.append(err)
                 if stop_renewal.is_set():
                     return
                 owner_cancellations.append(True)
                 owner.cancel()
                 return
+            retry_delay = interval
 
     @asynccontextmanager
     async def _lock_context(
@@ -247,6 +303,7 @@ class SQLLeaseLockService:
         stop_renewal = asyncio.Event()
         renewal_errors: list[Exception] = []
         owner_cancellations: list[bool] = []
+        initial_cancellations = owner.cancelling()
         renewal_task = asyncio.create_task(
             self._renew_loop(
                 lease,
@@ -262,6 +319,9 @@ class SQLLeaseLockService:
             yield lease
         except asyncio.CancelledError as err:
             if renewal_errors:
+                if owner.cancelling() > initial_cancellations + 1:
+                    body_error = err
+                    raise
                 body_error = renewal_errors[0]
                 raise renewal_errors[0] from err
             body_error = err
