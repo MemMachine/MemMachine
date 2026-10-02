@@ -1,4 +1,4 @@
-"""Shared utilities for segment store implementations."""
+"""Shared utilities for event memory store implementations."""
 
 import re
 
