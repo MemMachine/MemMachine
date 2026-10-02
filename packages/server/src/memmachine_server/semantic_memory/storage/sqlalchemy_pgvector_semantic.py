@@ -501,6 +501,12 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
                 for history_id, created_at in result
             }
 
+    async def get_storage_time(self) -> datetime:
+        """Read the database clock used by history defaults."""
+        async with self._create_session() as session:
+            result = await session.execute(select(func.now()))
+            return ensure_tz_aware(result.scalar_one()).astimezone(UTC)
+
     async def mark_messages_ingested(
         self,
         *,
@@ -530,18 +536,17 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
         registered_at: datetime | None = None,
         sequence_num: int = 0,
     ) -> None:
-        registration_time = ensure_tz_aware(
-            registered_at or datetime.now(UTC)
-        ).astimezone(UTC)
-        stmt = insert(SetIngestedHistory).values(
-            set_id=set_id,
-            history_id=str(history_id),
-            created_at=registration_time,
-            episode_created_at=ensure_tz_aware(created_at).astimezone(UTC)
+        values = {
+            "set_id": set_id,
+            "history_id": str(history_id),
+            "episode_created_at": ensure_tz_aware(created_at).astimezone(UTC)
             if created_at is not None
-            else registration_time,
-            sequence_num=sequence_num,
-        )
+            else None,
+            "sequence_num": sequence_num,
+        }
+        if registered_at is not None:
+            values["created_at"] = ensure_tz_aware(registered_at).astimezone(UTC)
+        stmt = insert(SetIngestedHistory).values(**values)
 
         async with self._create_session() as session:
             await session.execute(stmt)

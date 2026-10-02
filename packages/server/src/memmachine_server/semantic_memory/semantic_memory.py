@@ -12,7 +12,7 @@ import contextlib
 import logging
 from asyncio import Task
 from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
@@ -240,8 +240,6 @@ class SemanticService:
             episode.uid: episode
             for episode in await self._episode_storage.get_episodes(history_ids)
         }
-        registered_at = datetime.now(UTC)
-
         res = await asyncio.gather(
             *[
                 self._semantic_storage.add_history_to_set(
@@ -251,7 +249,6 @@ class SemanticService:
                     created_at=episodes_by_id[h_id].created_at
                     if h_id in episodes_by_id
                     else None,
-                    registered_at=registered_at,
                     sequence_num=episodes_by_id[h_id].sequence_num
                     if h_id in episodes_by_id
                     else 0,
@@ -830,7 +827,8 @@ class SemanticService:
                 s
                 async for s in self._semantic_storage.get_history_set_ids(
                     min_uningested_messages=self._feature_update_message_limit,
-                    older_than=datetime.now(tz=UTC) - self._feature_time_limit,
+                    older_than=(await self._semantic_storage.get_storage_time())
+                    - self._feature_time_limit,
                 )
             ]
 

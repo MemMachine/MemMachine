@@ -249,14 +249,13 @@ async def test_neo4j_history_write_preserves_episode_time():
     storage = Neo4jSemanticStorage(driver)
     created_at = datetime(2025, 1, 1, 12, 34, 56, 123456, tzinfo=UTC)
     episode_id = UUID("550e8400-e29b-41d4-a716-446655440001")
-    before = datetime.now(UTC)
     await storage.add_history_to_set("ordered", episode_id, created_at=created_at)
-    after = datetime.now(UTC)
     kwargs = dict(driver.execute_query.call_args.kwargs)
-    assert before <= kwargs.pop("created_at") <= after
     assert kwargs == {
         "set_id": "ordered",
         "history_id": str(episode_id),
+        "registered_at": None,
         "episode_created_at": created_at,
         "sequence_num": 0,
     }
+    assert "WITH datetime() AS storage_now" in driver.execute_query.call_args.args[0]

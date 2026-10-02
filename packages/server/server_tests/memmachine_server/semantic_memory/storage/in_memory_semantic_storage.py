@@ -315,6 +315,10 @@ class InMemorySemanticStorage(SemanticStorage):
                 if (set_id, history_id) in self._history_created_at
             }
 
+    async def get_storage_time(self) -> datetime:
+        """Use the same local clock as in-memory history registration."""
+        return datetime.now(UTC)
+
     def get_history_set_ids(
         self,
         *,

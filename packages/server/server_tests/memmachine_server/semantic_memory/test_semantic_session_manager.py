@@ -436,7 +436,7 @@ async def test_add_message_uses_all_isolations(
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
     assert kwargs["created_at"] == created_at
     assert kwargs["sequence_num"] == 0
-    assert isinstance(kwargs["registered_at"], datetime)
+    assert "registered_at" not in kwargs
 
     assert args[0] == history_id
     assert set(args[1]) == {profile_id, session_id, user_set_id}
@@ -466,7 +466,7 @@ async def test_add_message_with_session_only_isolation(
     args, kwargs = mock_semantic_service.add_message_to_sets.await_args
     assert kwargs["created_at"] == created_at
     assert kwargs["sequence_num"] == 0
-    assert isinstance(kwargs["registered_at"], datetime)
+    assert "registered_at" not in kwargs
 
     project_id = mock_session_manager._generate_set_id(
         org_id=session_data.org_id,

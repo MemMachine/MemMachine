@@ -613,6 +613,15 @@ class Neo4jSemanticStorage(SemanticStorage):
             for record in records
         }
 
+    async def get_storage_time(self) -> datetime:
+        """Read the Neo4j clock used by history creation."""
+        records, _, _ = await self._driver.execute_query(
+            "RETURN datetime() AS storage_time"
+        )
+        return ensure_tz_aware(
+            cast(datetime, value_from_neo4j(records[0]["storage_time"]))
+        ).astimezone(UTC)
+
     async def get_history_messages_count(
         self,
         *,
@@ -760,23 +769,23 @@ class Neo4jSemanticStorage(SemanticStorage):
         registered_at: datetime | None = None,
         sequence_num: int = 0,
     ) -> None:
-        registration_time = ensure_tz_aware(
-            registered_at or datetime.now(UTC)
-        ).astimezone(UTC)
         await self._driver.execute_query(
             """
+            WITH datetime() AS storage_now
             MERGE (h:SetHistory {set_id: $set_id, history_id: $history_id})
             ON CREATE SET h.is_ingested = false,
-                          h.created_at = $created_at,
-                          h.episode_created_at = $episode_created_at,
+                          h.created_at = coalesce($registered_at, storage_now),
+                          h.episode_created_at = coalesce($episode_created_at, $registered_at, storage_now),
                           h.sequence_num = $sequence_num
             """,
             set_id=set_id,
             history_id=str(history_id),
-            created_at=registration_time,
+            registered_at=ensure_tz_aware(registered_at).astimezone(UTC)
+            if registered_at is not None
+            else None,
             episode_created_at=ensure_tz_aware(created_at).astimezone(UTC)
             if created_at is not None
-            else registration_time,
+            else None,
             sequence_num=sequence_num,
         )
 

@@ -12,7 +12,6 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from enum import Enum
 from typing import Protocol, runtime_checkable
 from uuid import UUID
@@ -119,7 +118,6 @@ class SemanticSessionManager:
         self,
         episode: Episode,
         session_data: SessionData,
-        registered_at: datetime,
     ) -> None:
         episode_metadata: MutableMapping[str, JsonValue] = (
             dict(episode.metadata) if episode.metadata is not None else {}
@@ -135,7 +133,6 @@ class SemanticSessionManager:
             episode.uid,
             list(set_ids),
             created_at=episode.created_at,
-            registered_at=registered_at,
             sequence_num=episode.sequence_num,
         )
 
@@ -158,12 +155,9 @@ class SemanticSessionManager:
         episode_ids = [e.uid for e in episodes]
         assert len(episode_ids) == len(set(episode_ids)), "Episodes must be unique"
 
-        registered_at = datetime.now(UTC)
         async with asyncio.TaskGroup() as tg:
             for episode in episodes:
-                tg.create_task(
-                    self._add_single_episode(episode, session_data, registered_at)
-                )
+                tg.create_task(self._add_single_episode(episode, session_data))
 
     async def search(
         self,
