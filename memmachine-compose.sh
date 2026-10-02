@@ -15,6 +15,10 @@ NC='\033[0m' # No Color
 
 is_first_run=false
 
+# COMPOSE_PROFILES from the caller's shell, captured before .env is sourced.
+# It would override .env in Compose, so start_services pins .env's value.
+SHELL_COMPOSE_PROFILES="${COMPOSE_PROFILES-}"
+
 ## Function to run a command with a timeout
 timeout() {
     local duration=$1
@@ -138,11 +142,16 @@ ensure_compose_profile() {
     print_warning ".env had no COMPOSE_PROFILES; set it to '$profile' to match configuration.yml"
 }
 
+# COMPOSE_PROFILES as set in .env, unquoted.
+get_compose_profiles() {
+    grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"' \r"
+}
+
 # Long-term memory backend selected by COMPOSE_PROFILES in .env: declarative if
 # that profile is listed, otherwise event (the default).
 get_ltm_backend() {
     local profiles
-    profiles=$(grep -E '^COMPOSE_PROFILES=' .env 2>/dev/null | tail -n 1 | cut -d= -f2- | tr -d "\"' \r")
+    profiles=$(get_compose_profiles)
     case ",${profiles}," in
         *,declarative,*) echo "declarative" ;;
         *) echo "event" ;;
@@ -850,6 +859,15 @@ check_required_config() {
 # Pull and start services
 start_services() {
     local memmachine_image_tmp="${ENV_MEMMACHINE_IMAGE:-}"
+
+    # configuration.yml and the health checks follow .env's backend, so start
+    # exactly those profiles even if the shell exports a different value.
+    local profiles
+    profiles=$(get_compose_profiles)
+    if [ -n "$SHELL_COMPOSE_PROFILES" ] && [ "$SHELL_COMPOSE_PROFILES" != "$profiles" ]; then
+        print_warning "Ignoring COMPOSE_PROFILES='$SHELL_COMPOSE_PROFILES' from the environment; using '$profiles' from .env"
+    fi
+    export COMPOSE_PROFILES="$profiles"
 
     print_info "Pulling and starting MemMachine services..."
     

@@ -36,8 +36,15 @@ cp sample_configs/configuration.event.yml configuration.yml
 For the `declarative` backend, start from `sample_configs/episodic_memory_config.cpu.sample`
 (or `.gpu.sample`) and update:
 - Replace `<YOUR_API_KEY>` with your OpenAI API key
-- Replace `<YOUR_PASSWORD_HERE>` with your Neo4j password
 - Change database hosts from `localhost` to the service names `postgres` and `neo4j`
+- Under `profile_storage` (PostgreSQL), match `POSTGRES_*` in `.env`: set
+  `user` and `db_name` to `memmachine` (or your `POSTGRES_USER` and
+  `POSTGRES_DB`) and `password` to `$POSTGRES_PASSWORD`
+- Under the Neo4j store, set `user` to your `NEO4J_USER` (default `neo4j`) and
+  `password` to `$NEO4J_PASSWORD`
+
+Only `password` and `api_key` read `$ENV_NAME` values from `.env`; `user` and
+`db_name` must be written out literally.
 
 ### 3. Start Services
 
