@@ -465,8 +465,8 @@ class Config:
         embedding_model: str | None = None,
         ingestion_trigger_messages: int | None = None,
         ingestion_trigger_age_seconds: int | None = None,
-        ingestion_poll_interval_seconds: int | None = None,
         timeout: int | None = None,
+        ingestion_poll_interval_seconds: int | None = None,
     ) -> UpdateMemoryConfigResponse:
         """
         Update semantic memory configuration.
@@ -482,10 +482,10 @@ class Config:
             embedding_model: Name of the embedder to use for semantic similarity
             ingestion_trigger_messages: Number of messages before triggering ingestion
             ingestion_trigger_age_seconds: Age threshold in seconds for triggering ingestion
+            timeout: Request timeout in seconds (uses client default if not provided)
             ingestion_poll_interval_seconds: How often, in seconds, the background
                 ingestion loop polls for sets with uningested messages. Takes
                 effect on the next server restart, not immediately
-            timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
             UpdateMemoryConfigResponse indicating success

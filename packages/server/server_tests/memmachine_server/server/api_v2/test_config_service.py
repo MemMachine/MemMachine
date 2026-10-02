@@ -213,15 +213,15 @@ def memory_resource_manager():
         enabled=True,
     )
 
-    semantic_memory = MagicMock()
-    semantic_memory.database = "old-db"
-    semantic_memory.feature_store = "old-feature-db"
-    semantic_memory.vector_collection = "old-vector-store"
-    semantic_memory.llm_model = "old-llm"
-    semantic_memory.embedding_model = "old-embedder"
-    semantic_memory.ingestion_trigger_messages = 5
-    semantic_memory.ingestion_trigger_age = timedelta(minutes=5)
-    resource_manager.config.semantic_memory = semantic_memory
+    resource_manager.config.semantic_memory = SemanticMemoryConf(
+        database="old-db",
+        feature_store="old-feature-db",
+        vector_collection="old-vector-store",
+        llm_model="old-llm",
+        embedding_model="old-embedder",
+        ingestion_trigger_messages=5,
+        ingestion_trigger_age=timedelta(minutes=5),
+    )
 
     return resource_manager
 
@@ -404,6 +404,17 @@ def test_update_semantic_ingestion_poll_interval(memory_resource_manager):
     sm = memory_resource_manager.config.semantic_memory
     assert sm.ingestion_poll_interval_seconds == 15
     assert "ingestion_poll_interval_seconds=15" in message
+
+
+@pytest.mark.parametrize("value", [0, -1])
+def test_update_semantic_spec_rejects_non_positive_poll_interval(value):
+    """The API spec rejects a poll interval that is not positive."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="ingestion_poll_interval_seconds"):
+        UpdateSemanticMemorySpec.model_validate(
+            {"ingestion_poll_interval_seconds": value}
+        )
 
 
 def test_update_both_episodic_and_semantic(memory_resource_manager):

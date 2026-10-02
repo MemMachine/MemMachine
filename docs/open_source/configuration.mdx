@@ -214,6 +214,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `with_config_cache` | Whether to use an in-memory cache for semantic memory configurations. | `true` |
     | `ingestion_trigger_messages` | Number of pending messages before semantic ingestion triggers. | `5` |
     | `ingestion_trigger_age` | Max age of pending messages before ingestion triggers (duration in HH:MM:SS). | `00:05:00` |
+    | `ingestion_poll_interval_seconds` | How often, in seconds, the background ingestion loop polls for pending messages. Must be greater than 0. | `2` |
+    | `consolidation_threshold` | Minimum number of features sharing a tag before they are consolidated during ingestion. Set to `0` to consolidate every tag group regardless of size; this makes one LLM call per tag group on each ingestion, so it is mainly useful for testing. | `20` |
   </Accordion>
 
   <Accordion title="Session Manager">

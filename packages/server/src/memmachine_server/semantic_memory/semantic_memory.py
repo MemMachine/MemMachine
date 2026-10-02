@@ -831,9 +831,11 @@ class SemanticService:
 
             if had_errors:
                 await self._interruptible_sleep(backoff_sec)
+                # Cap at 60s or 4x the poll interval, whichever is larger,
+                # so backoff still slows retries for long poll intervals.
                 backoff_sec = min(
                     backoff_sec * 2,
-                    max(60.0, self._background_ingestion_interval_sec),
+                    max(60.0, 4 * self._background_ingestion_interval_sec),
                 )
             else:
                 backoff_sec = self._background_ingestion_interval_sec

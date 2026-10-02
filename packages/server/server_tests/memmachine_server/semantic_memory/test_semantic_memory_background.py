@@ -103,14 +103,16 @@ async def test_background_ingestion_handles_errors_gracefully(
 @pytest.mark.parametrize(
     ("interval", "expected_sleeps"),
     [
-        # Below the 60s ceiling: behavior must be unchanged from before this
-        # fix -- the backoff genuinely doubles each failure until it plateaus
-        # at 60s. This guards against a fix that disables doubling entirely.
+        # Short interval: 4x the interval is below 60s, so the backoff
+        # doubles each failure until it plateaus at the 60s ceiling. This
+        # guards against a fix that disables doubling entirely.
         pytest.param(5.0, [5.0, 10.0, 20.0, 40.0, 60.0], id="below-ceiling-doubles"),
-        # Above the 60s ceiling: doubling would immediately exceed the
-        # configured interval, so the floor pins every backoff at the
-        # interval itself rather than dropping to the old hardcoded 60s.
-        pytest.param(120.0, [120.0, 120.0, 120.0], id="above-ceiling-floored"),
+        # Long interval: the ceiling scales to 4x the interval, so the
+        # backoff starts at the interval itself (never retrying faster than
+        # configured) and still doubles up to 480s.
+        pytest.param(
+            120.0, [120.0, 240.0, 480.0, 480.0], id="long-interval-scaled-ceiling"
+        ),
     ],
 )
 async def test_background_ingestion_backoff_matches_expected_sequence(
@@ -184,7 +186,7 @@ async def test_background_ingestion_backoff_matches_expected_sequence(
 
     # Then the full backoff sequence matches exactly -- proving both that
     # doubling genuinely happens and that it never drops below the
-    # configured interval once it would otherwise have exceeded it.
+    # configured interval.
     assert recorded_sleeps == pytest.approx(expected_sleeps)
 
 

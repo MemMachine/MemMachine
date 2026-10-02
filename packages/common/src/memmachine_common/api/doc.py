@@ -1147,6 +1147,8 @@ class RouterDoc:
     - embedding_model: The embedder to use for semantic similarity
     - ingestion_trigger_messages: Number of messages before triggering ingestion
     - ingestion_trigger_age_seconds: Age threshold for triggering ingestion
+    - ingestion_poll_interval_seconds: How often the background ingestion
+      loop polls for pending messages (takes effect on the next restart)
     """
 
     # --- Semantic Set Type API Router Docs ---

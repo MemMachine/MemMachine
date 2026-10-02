@@ -193,9 +193,11 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=20,
         description=(
             "Minimum number of features sharing a tag before they are "
-            "consolidated during ingestion."
+            "consolidated during ingestion. Set to 0 to consolidate every "
+            "tag group regardless of size; this makes one LLM call per tag "
+            "group on each ingestion, so it is mainly useful for testing."
         ),
-        gt=0,
+        ge=0,
     )
 
     @model_validator(mode="after")
