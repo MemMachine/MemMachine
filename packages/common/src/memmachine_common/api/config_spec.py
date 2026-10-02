@@ -402,6 +402,27 @@ class AddAmazonBedrockLanguageModelConfig(BaseModel):
     ]
 
 
+class AddOrcaRouterLanguageModelConfig(BaseModel):
+    """Configuration for adding an OrcaRouter language model."""
+
+    api_key: Annotated[
+        str,
+        Field(..., description=SpecDoc.API_KEY_ORCAROUTER),
+    ]
+    model: Annotated[
+        str,
+        Field(default="orcarouter/auto", description=SpecDoc.MODEL_NAME),
+    ]
+    base_url: Annotated[
+        str | None,
+        Field(default=None, description=SpecDoc.ORCAROUTER_BASE_URL),
+    ]
+    max_retry_interval_seconds: Annotated[
+        int,
+        Field(default=120, description=SpecDoc.MAX_RETRY_INTERVAL),
+    ]
+
+
 class AddLanguageModelSpec(BaseModel):
     """Specification for adding a new language model."""
 
@@ -410,7 +431,12 @@ class AddLanguageModelSpec(BaseModel):
         Field(..., description=SpecDoc.LM_NAME),
     ]
     provider: Annotated[
-        Literal["openai-responses", "openai-chat-completions", "amazon-bedrock"],
+        Literal[
+            "openai-responses",
+            "openai-chat-completions",
+            "amazon-bedrock",
+            "orcarouter",
+        ],
         Field(..., description=SpecDoc.LM_PROVIDER_TYPE),
     ]
     config: Annotated[

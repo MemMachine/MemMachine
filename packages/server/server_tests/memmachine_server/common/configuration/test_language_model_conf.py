@@ -9,6 +9,7 @@ from memmachine_server.common.configuration.language_model_conf import (
     LanguageModelsConf,
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
+    OrcaRouterLanguageModelConf,
 )
 
 
@@ -49,6 +50,17 @@ def ollama_model_conf() -> dict:
 
 
 @pytest.fixture
+def orcarouter_model_conf() -> dict:
+    return {
+        "provider": "orcarouter",
+        "config": {
+            "model": "orcarouter/auto",
+            "api_key": "orca-key",
+        },
+    }
+
+
+@pytest.fixture
 def full_model_conf(openai_model_conf, aws_model_conf, ollama_model_conf) -> dict:
     return {
         "language_models": {
@@ -83,6 +95,14 @@ def test_valid_openai_chat_completions_model(ollama_model_conf):
     assert conf.max_retry_interval_seconds == 120
 
 
+def test_valid_orcarouter_model(orcarouter_model_conf):
+    conf = OrcaRouterLanguageModelConf(**orcarouter_model_conf["config"])
+    assert conf.model == "orcarouter/auto"
+    assert conf.api_key == SecretStr("orca-key")
+    assert conf.base_url == "https://api.orcarouter.ai/v1"
+    assert conf.max_retry_interval_seconds == 120
+
+
 def test_full_language_model_conf(full_model_conf):
     conf = LanguageModelsConf.parse(full_model_conf)
 
@@ -101,12 +121,32 @@ def test_full_language_model_conf(full_model_conf):
     assert chat_completions_conf.model == "llama3"
 
 
+def test_full_language_model_conf_with_orcarouter(
+    full_model_conf, orcarouter_model_conf
+):
+    full_model_conf["language_models"]["orca_model"] = orcarouter_model_conf
+    conf = LanguageModelsConf.parse(full_model_conf)
+
+    assert "orca_model" in conf.orcarouter_language_model_confs
+    orca_conf = conf.orcarouter_language_model_confs["orca_model"]
+    assert orca_conf.model == "orcarouter/auto"
+    assert orca_conf.base_url == "https://api.orcarouter.ai/v1"
+
+
 def test_get_language_model_names(full_model_conf):
     conf = LanguageModelsConf.parse(full_model_conf)
 
     assert conf.get_openai_responses_language_model_name() == "openai_model"
     assert conf.get_amazon_bedrock_language_model_name() == "aws_model"
     assert conf.get_openai_chat_completions_language_model_name() == "ollama_model"
+
+
+def test_get_orcarouter_language_model_name(full_model_conf, orcarouter_model_conf):
+    full_model_conf["language_models"]["orca_model"] = orcarouter_model_conf
+    conf = LanguageModelsConf.parse(full_model_conf)
+
+    assert conf.get_orcarouter_language_model_name() == "orca_model"
+    assert conf.contains_language_model("orca_model")
 
 
 def test_serialize_deserialize_language_model_conf(full_model_conf):
@@ -125,6 +165,23 @@ def test_serialize_deserialize_language_model_conf(full_model_conf):
     )
 
 
+def test_serialize_deserialize_orcarouter_language_model_conf(
+    full_model_conf, orcarouter_model_conf
+):
+    full_model_conf["language_models"]["orca_model"] = orcarouter_model_conf
+    conf = LanguageModelsConf.parse(full_model_conf)
+    yaml_str = conf.to_yaml()
+    conf_cp = LanguageModelsConf.parse(yaml.safe_load(yaml_str))
+    assert conf == conf_cp
+    assert len(conf.orcarouter_language_model_confs) == len(
+        conf_cp.orcarouter_language_model_confs
+    )
+    assert (
+        conf_cp.orcarouter_language_model_confs["orca_model"].base_url
+        == "https://api.orcarouter.ai/v1"
+    )
+
+
 def test_missing_required_field_openai_model():
     conf_dict: dict[str, Any] = {"model": "gpt-4o-mini"}
     with pytest.raises(ValidationError) as exc_info:
@@ -140,6 +197,17 @@ def test_invalid_base_url_in_openai_chat_completions_model():
     }
     with pytest.raises(ValidationError) as exc_info:
         OpenAIChatCompletionsLanguageModelConf(**conf_dict)
+    assert "invalid base url" in str(exc_info.value).lower()
+
+
+def test_invalid_base_url_in_orcarouter_model():
+    conf_dict: dict[str, Any] = {
+        "model": "orcarouter/auto",
+        "api_key": "orca-key",
+        "base_url": "invalid-url",
+    }
+    with pytest.raises(ValidationError) as exc_info:
+        OrcaRouterLanguageModelConf(**conf_dict)
     assert "invalid base url" in str(exc_info.value).lower()
 
 

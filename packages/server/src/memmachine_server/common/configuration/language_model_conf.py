@@ -18,6 +18,8 @@ from memmachine_server.common.language_model.amazon_bedrock_language_model impor
 
 DEFAULT_OLLAMA_BASE_URL = "http://host.docker.internal:11434/v1"
 
+DEFAULT_ORCAROUTER_BASE_URL = "https://api.orcarouter.ai/v1"
+
 
 def _clean_empty_lm_config(conf: dict) -> dict:
     """Remove empty strings and None values from config."""
@@ -84,6 +86,50 @@ class OpenAIChatCompletionsLanguageModelConf(
     max_retry_interval_seconds: int = Field(
         default=120,
         description="Maximal retry interval in seconds when retrying API calls",
+        gt=0,
+    )
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: str) -> str:
+        """Ensure the base URL includes a scheme and host."""
+        if v is not None:
+            parsed_url = urlparse(v)
+            if not parsed_url.scheme or not parsed_url.netloc:
+                raise ValueError(f"Invalid base URL: base_url={v}")
+        return v
+
+
+class OrcaRouterLanguageModelConf(
+    MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin
+):
+    """Configuration for OrcaRouter-backed language models.
+
+    OrcaRouter (https://www.orcarouter.ai) exposes an OpenAI-compatible
+    endpoint at ``https://api.orcarouter.ai/v1`` that routes to many models,
+    so this conf mirrors ``OpenAIChatCompletionsLanguageModelConf`` while
+    defaulting ``base_url`` to the OrcaRouter endpoint. Set ``model`` to an
+    OrcaRouter model or router id such as ``orcarouter/auto``.
+    """
+
+    model: str = Field(
+        default="orcarouter/auto",
+        min_length=1,
+        description="OrcaRouter model or router id (e.g. 'orcarouter/auto').",
+    )
+    api_key: SecretStr = Field(
+        ...,
+        description="OrcaRouter API key for authentication, can reference an "
+        "environment variable using `$ENV` or `${ENV}` syntax.",
+    )
+    base_url: str | None = Field(
+        default=DEFAULT_ORCAROUTER_BASE_URL,
+        description="OrcaRouter API base URL.",
+        examples=[DEFAULT_ORCAROUTER_BASE_URL],
+    )
+    max_retry_interval_seconds: int = Field(
+        default=120,
+        description="Maximal retry interval in seconds when retrying API calls.",
         gt=0,
     )
 
@@ -224,6 +270,7 @@ class LanguageModelsConf(BaseModel):
     ] = {}
     amazon_bedrock_language_model_confs: dict[str, AmazonBedrockLanguageModelConf] = {}
     litellm_language_model_confs: dict[str, LiteLLMLanguageModelConf] = {}
+    orcarouter_language_model_confs: dict[str, OrcaRouterLanguageModelConf] = {}
 
     def get_openai_responses_language_model_name(self) -> str | None:
         """Get the name of the first OpenAI Responses language model, if any."""
@@ -249,9 +296,21 @@ class LanguageModelsConf(BaseModel):
             return next(iter(self.litellm_language_model_confs))
         return None
 
+    def get_orcarouter_language_model_name(self) -> str | None:
+        """Get the name of the first OrcaRouter language model, if any."""
+        if self.orcarouter_language_model_confs:
+            return next(iter(self.orcarouter_language_model_confs))
+        return None
+
     def get_litellm_language_model_conf(self, name: str) -> "LiteLLMLanguageModelConf":
         """Get LiteLLM language model configuration by name."""
         return self.litellm_language_model_confs[name]
+
+    def get_orcarouter_language_model_conf(
+        self, name: str
+    ) -> OrcaRouterLanguageModelConf:
+        """Get OrcaRouter language model configuration by name."""
+        return self.orcarouter_language_model_confs[name]
 
     def get_openai_responses_language_model_conf(
         self, name: str
@@ -278,12 +337,14 @@ class LanguageModelsConf(BaseModel):
             or language_model_id in self.openai_chat_completions_language_model_confs
             or language_model_id in self.amazon_bedrock_language_model_confs
             or language_model_id in self.litellm_language_model_confs
+            or language_model_id in self.orcarouter_language_model_confs
         )
 
     OPENAI_RESPONSE: ClassVar[str] = "openai-responses"
     OPEN_CHAT_COMPLETION: ClassVar[str] = "openai-chat-completions"
     AMAZON_BEDROCK: ClassVar[str] = "amazon-bedrock"
     LITELLM: ClassVar[str] = "litellm"
+    ORCAROUTER: ClassVar[str] = "orcarouter"
     PROVIDER_KEY: ClassVar[str] = "provider"
     CONFIG_KEY: ClassVar[str] = "config"
 
@@ -309,6 +370,9 @@ class LanguageModelsConf(BaseModel):
         for lm_id, cfg in self.litellm_language_model_confs.items():
             add_language_model(lm_id, self.LITELLM, cfg.to_yaml_dict())
 
+        for lm_id, cfg in self.orcarouter_language_model_confs.items():
+            add_language_model(lm_id, self.ORCAROUTER, cfg.to_yaml_dict())
+
         return language_models
 
     def to_yaml(self) -> str:
@@ -332,6 +396,7 @@ class LanguageModelsConf(BaseModel):
             {},
             {},
         )
+        orcarouter_dict: dict[str, OrcaRouterLanguageModelConf] = {}
 
         for lm_id, resource_definition in lm.items():
             provider = resource_definition.get("provider")
@@ -348,6 +413,8 @@ class LanguageModelsConf(BaseModel):
                 aws_bedrock_dict[lm_id] = AmazonBedrockLanguageModelConf(**conf)
             elif provider == "litellm":
                 litellm_dict[lm_id] = LiteLLMLanguageModelConf(**conf)
+            elif provider == "orcarouter":
+                orcarouter_dict[lm_id] = OrcaRouterLanguageModelConf(**conf)
             else:
                 raise ValueError(
                     f"Unknown language model provider '{provider}' for language model id '{lm_id}'",
@@ -358,4 +425,5 @@ class LanguageModelsConf(BaseModel):
             amazon_bedrock_language_model_confs=aws_bedrock_dict,
             openai_chat_completions_language_model_confs=openai_chat_completions_dict,
             litellm_language_model_confs=litellm_dict,
+            orcarouter_language_model_confs=orcarouter_dict,
         )
