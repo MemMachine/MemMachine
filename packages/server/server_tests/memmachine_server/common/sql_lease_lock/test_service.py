@@ -1,6 +1,7 @@
 """Cross-instance behavior for SQL lease locks."""
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
@@ -137,6 +138,10 @@ async def test_public_service_validates_key_and_duration(tmp_path: Path) -> None
             await service.try_acquire("", lease_duration=timedelta(seconds=1))
         with pytest.raises(ValueError, match="lease duration"):
             await service.try_acquire("resource", lease_duration=timedelta(0))
+        with pytest.raises(ValueError, match="at least 100 milliseconds"):
+            await service.try_acquire(
+                "resource", lease_duration=timedelta(microseconds=500)
+            )
         with pytest.raises(ValueError, match="lease duration"):
             await service.try_acquire(
                 "resource", lease_duration=timedelta(milliseconds=-1)
@@ -252,7 +257,7 @@ async def test_waiting_acquire_gets_lock_after_release(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_waiting_acquire_backs_off_to_thirty_seconds(
+async def test_waiting_acquire_caps_backoff_at_lease_duration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async with one_service(tmp_path / "locks.db") as (service, _engine):
@@ -280,20 +285,7 @@ async def test_waiting_acquire_backs_off_to_thirty_seconds(
             await service.acquire("resource", lease_duration=timedelta(seconds=1))
             is granted
         )
-        assert delays == [
-            0.05,
-            0.1,
-            0.2,
-            0.4,
-            0.8,
-            1.6,
-            3.2,
-            6.4,
-            12.8,
-            25.6,
-            30.0,
-            30.0,
-        ]
+        assert delays == [0.05, 0.1, 0.2, 0.4, 0.8, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
 
 @pytest.mark.asyncio
@@ -673,7 +665,7 @@ async def test_context_reports_renewal_failure_even_if_body_swallows_cancel(
                 with suppress(asyncio.CancelledError):
                     await asyncio.sleep(0.3)
 
-        with pytest.raises(RuntimeError, match="renewal failed"):
+        with pytest.raises(LeaseLostError, match="can no longer be trusted"):
             await work()
 
 
@@ -688,23 +680,23 @@ async def test_renewal_failure_during_exit_reports_error_and_releases(
 
         async def work() -> None:
             async with service.lock(
-                "resource", lease_duration=timedelta(milliseconds=120)
+                "resource", lease_duration=timedelta(milliseconds=500)
             ) as lease:
 
                 async def failing_renew() -> None:
                     renew_started.set()
                     await finish_renewal.wait()
-                    raise RuntimeError("renew failed during exit")
+                    raise LeaseLostError("renew lost lease during exit")
 
                 monkeypatch.setattr(lease, "renew", failing_renew)
                 await renew_started.wait()
                 body_finished.set()
 
         task = asyncio.create_task(work())
-        await body_finished.wait()
+        await asyncio.wait_for(body_finished.wait(), timeout=2)
         assert not task.done()
         finish_renewal.set()
-        with pytest.raises(RuntimeError, match="renew failed during exit"):
+        with pytest.raises(LeaseLostError, match="renew lost lease during exit"):
             await task
         replacement = await service.try_acquire(
             "resource", lease_duration=timedelta(seconds=1)
@@ -738,4 +730,121 @@ async def test_renewal_failure_restores_only_its_cancellation_state(
                 return owner.cancelling()
             pytest.fail("renewal failure was not reported")
 
-        assert await asyncio.create_task(work()) == int(outside_cancel)
+        task = asyncio.create_task(work())
+        if outside_cancel:
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            assert await task == 0
+
+
+@pytest.mark.asyncio
+async def test_transient_renewal_error_does_not_cancel_body(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        attempts = 0
+
+        async def work() -> None:
+            nonlocal attempts
+            async with service.lock(
+                "resource", lease_duration=timedelta(milliseconds=240)
+            ) as lease:
+                real_renew = lease.renew
+
+                async def flaky_renew() -> None:
+                    nonlocal attempts
+                    attempts += 1
+                    if attempts == 1:
+                        raise RuntimeError("transient renewal error")
+                    await real_renew()
+
+                monkeypatch.setattr(lease, "renew", flaky_renew)
+                await asyncio.sleep(0.19)
+
+        await work()
+        assert attempts >= 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_acquire_preserves_cancellation_on_store_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+        started = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def failed_acquire(_key: str, _duration_ms: int) -> None:
+            started.set()
+            await finish.wait()
+            raise RuntimeError("database failed")
+
+        monkeypatch.setattr(service._store, "try_acquire", failed_acquire)
+        task = asyncio.create_task(
+            service.try_acquire("resource", lease_duration=timedelta(seconds=1))
+        )
+        await started.wait()
+        task.cancel()
+        finish.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_cleanup_wait_has_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(lease_service_module, "_CLEANUP_TIMEOUT_SECONDS", 0.02)
+    finish = asyncio.Event()
+    task = asyncio.create_task(finish.wait())
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    loop.call_later(0.12, finish.set)
+    try:
+        async with asyncio.timeout(0.1):
+            with pytest.raises(TimeoutError):
+                await lease_service_module._await_cleanup(task, [])
+        assert loop.time() - started < 0.08
+    finally:
+        finish.set()
+        await task
+
+
+@pytest.mark.asyncio
+async def test_repeated_cancellation_does_not_extend_cleanup_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lease_service_module, "_CLEANUP_TIMEOUT_SECONDS", 0.03)
+    finish = asyncio.Event()
+    cleanup = asyncio.create_task(finish.wait())
+    cancellations: list[bool] = []
+    owner = asyncio.create_task(
+        lease_service_module._await_cleanup(cleanup, cancellations)
+    )
+    try:
+        for _ in range(3):
+            await asyncio.sleep(0.005)
+            owner.cancel()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(owner, timeout=0.1)
+        assert len(cancellations) == 3
+    finally:
+        finish.set()
+        await cleanup
+
+
+@pytest.mark.asyncio
+async def test_release_error_is_logged_while_body_error_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async with one_service(tmp_path / "locks.db") as (service, _engine):
+
+        async def failed_release(_key: str, _lease_id: str) -> bool:
+            raise RuntimeError("release database failed")
+
+        monkeypatch.setattr(service._store, "release", failed_release)
+        with (
+            caplog.at_level(logging.ERROR),
+            pytest.raises(ValueError, match="body failed"),
+        ):
+            async with service.lock("resource", lease_duration=timedelta(seconds=1)):
+                raise ValueError("body failed")
+        assert "release database failed" in caplog.text
