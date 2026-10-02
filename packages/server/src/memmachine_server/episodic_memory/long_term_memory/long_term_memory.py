@@ -4,7 +4,7 @@ import datetime
 import logging
 from collections.abc import Iterable
 from typing import Annotated, Literal, cast
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid5
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
@@ -515,7 +515,7 @@ class LongTermMemory:
             filterable_properties[_FILTERABLE_METADATA_NONE_FLAG] = True
 
         return DeclarativeMemoryEpisode(
-            uid=episode.uid or uuid4(),
+            uid=episode.uid,
             timestamp=episode.created_at,
             source=episode.producer_id,
             content_type=LongTermMemory._declarative_memory_content_type_from_episode(

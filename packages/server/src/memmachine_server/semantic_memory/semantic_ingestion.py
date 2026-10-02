@@ -215,15 +215,6 @@ class IngestionService:
             semantic_category: InstanceOf[SemanticCategory],
         ) -> None:
             for message in messages:
-                if message.uid is None:
-                    logger.error(
-                        "Message ID is None for message %s", message.model_dump()
-                    )
-
-                    raise ValueError(
-                        f"Message ID is None for message {message.model_dump()}"
-                    )
-
                 filter_expr = And(
                     left=Comparison(field="set_id", op="=", value=set_id),
                     right=Comparison(

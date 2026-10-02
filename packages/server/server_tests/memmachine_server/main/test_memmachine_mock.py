@@ -6,7 +6,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -1153,12 +1152,6 @@ async def test_delete_episodes_forwards_to_storage_and_memories(
     session = DummySessionData("session-del")
 
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(
-        return_value=[
-            SimpleNamespace(uid=_uid("ep1")),
-            SimpleNamespace(uid=_uid("ep2")),
-        ]
-    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1187,9 +1180,6 @@ async def test_delete_episodes_finishes_episodic_write_before_closing(
     session = DummySessionData("session-delete-close")
     memory = _ClosingEpisodicSession()
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(
-        return_value=[SimpleNamespace(uid=_uid("ep1"))]
-    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1219,9 +1209,6 @@ async def test_delete_episodes_without_session_only_hits_storage(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(
-        return_value=[SimpleNamespace(uid=_uid("ep1"))]
-    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1575,9 +1562,6 @@ async def test_delete_episodes_skips_semantic_memory_when_disabled(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(
-        return_value=[SimpleNamespace(uid=_uid("e1"))]
-    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1599,9 +1583,6 @@ async def test_delete_episodes_uses_semantic_memory_when_enabled(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
-    episode_storage.get_episodes = AsyncMock(
-        return_value=[SimpleNamespace(uid=_uid("e1"))]
-    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
