@@ -744,11 +744,12 @@ async def test_transient_renewal_error_does_not_cancel_body(
 ) -> None:
     async with one_service(tmp_path / "locks.db") as (service, _engine):
         attempts = 0
+        renewed = asyncio.Event()
 
         async def work() -> None:
             nonlocal attempts
             async with service.lock(
-                "resource", lease_duration=timedelta(milliseconds=240)
+                "resource", lease_duration=timedelta(seconds=1)
             ) as lease:
                 real_renew = lease.renew
 
@@ -758,9 +759,10 @@ async def test_transient_renewal_error_does_not_cancel_body(
                     if attempts == 1:
                         raise RuntimeError("transient renewal error")
                     await real_renew()
+                    renewed.set()
 
                 monkeypatch.setattr(lease, "renew", flaky_renew)
-                await asyncio.sleep(0.19)
+                await asyncio.wait_for(renewed.wait(), timeout=2)
 
         await work()
         assert attempts >= 2
