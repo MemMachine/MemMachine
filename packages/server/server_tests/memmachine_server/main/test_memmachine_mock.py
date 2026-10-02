@@ -407,6 +407,66 @@ async def test_create_session_raises_when_delete_does_not_finish(
 
 
 @pytest.mark.asyncio
+async def test_delete_worker_retries_failed_purge(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """A purge that raises is re-queued with backoff until it succeeds."""
+    monkeypatch.setattr(
+        "memmachine_server.main.memmachine.DELETE_RETRY_BASE_SECONDS", 0.001
+    )
+    attempts = 0
+    succeeded = asyncio.Event()
+
+    async def delete_queued_session(session):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise RuntimeError("vector store unreachable")
+        succeeded.set()
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    monkeypatch.setattr(memmachine, "_delete_queued_session", delete_queued_session)
+
+    await memmachine.start()
+    memmachine._deletion_queue.put_nowait(DummySessionData("alpha"))
+    await asyncio.wait_for(succeeded.wait(), timeout=2.0)
+    await memmachine._deletion_queue.join()
+
+    assert attempts == 3
+    assert memmachine._delete_attempts == {}
+    assert not memmachine._delete_retries
+    await memmachine.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_pending_delete_retry(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """Stopping does not wait out a retry's backoff; start() re-queues later."""
+    attempts = 0
+
+    async def delete_queued_session(session):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("vector store unreachable")
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    monkeypatch.setattr(memmachine, "_delete_queued_session", delete_queued_session)
+
+    await memmachine.start()
+    memmachine._deletion_queue.put_nowait(DummySessionData("alpha"))
+    # join() returns once the failed attempt is processed and its retry set.
+    await memmachine._deletion_queue.join()
+    assert len(memmachine._delete_retries) == 1
+    retry = next(iter(memmachine._delete_retries))
+
+    await asyncio.wait_for(memmachine.stop(), timeout=1.0)
+
+    assert retry.cancelled()
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
 async def test_query_search_runs_targeted_memory_tasks(
     minimal_conf, patched_resource_manager, monkeypatch
 ):

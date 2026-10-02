@@ -1,6 +1,7 @@
 """API v2 router for MemMachine project and memory management endpoints."""
 
 import logging
+import math
 import os
 from typing import Annotated
 
@@ -190,12 +191,16 @@ async def create_project(
         raise RestError(code=409, message="Project already exists", ex=e) from e
     except SessionDeletionPendingError as e:
         # Not 409: clients read 409 as "it exists" and fetch it, which would
-        # 404 while the delete runs. 503 says "temporary, retry".
+        # 404 while the delete runs. 503 says "temporary, retry". The server
+        # already waited before raising, so ask the client to wait as long.
         raise RestError(
             code=503,
-            message="Project is still being deleted; retry shortly",
+            message=(
+                "Project is still being deleted. If this persists, the delete "
+                "may have failed; check the server log."
+            ),
             ex=e,
-            headers={"Retry-After": "1"},
+            headers={"Retry-After": str(math.ceil(e.retry_after))},
         ) from e
     except ValueError as e:
         raise RestError(

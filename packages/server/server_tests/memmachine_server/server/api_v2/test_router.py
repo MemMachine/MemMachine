@@ -104,11 +104,11 @@ def test_create_project(client, mock_memmachine):
 
     mock_memmachine.create_session.reset_mock()
     mock_memmachine.create_session.side_effect = SessionDeletionPendingError(
-        "test_org/test_proj"
+        "test_org/test_proj", retry_after=9.5
     )
     response = client.post("/api/v2/projects", json=payload)
     assert response.status_code == 503
-    assert response.headers["Retry-After"] == "1"
+    assert response.headers["Retry-After"] == "10"
     response_detail = response.json()["detail"]
     assert "being deleted" in response_detail["message"]
     assert response_detail["trace"] == ""
