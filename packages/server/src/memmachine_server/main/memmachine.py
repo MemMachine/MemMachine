@@ -27,6 +27,7 @@ from memmachine_server.common.episode_store import (
 from memmachine_server.common.errors import (
     ConfigurationError,
     ResourceNotReadyError,
+    SessionDeletionPendingError,
     SessionNotFoundError,
 )
 from memmachine_server.common.filter.filter_parser import (
@@ -74,6 +75,11 @@ logger = logging.getLogger(__name__)
 
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
 EPISODE_DELETE_BATCH_SIZE: Final[int] = 1000
+# How long a create waits for a pending delete of the same session.
+PENDING_DELETE_WAIT_SECONDS: Final[float] = 10.0
+# Backoff between retries of a failed delete: doubles from the base, capped.
+DELETE_RETRY_BASE_SECONDS: Final[float] = 1.0
+DELETE_RETRY_MAX_SECONDS: Final[float] = 60.0
 
 
 class MemMachine:
@@ -118,6 +124,9 @@ class MemMachine:
             asyncio.Queue()
         )
         self._delete_worker: asyncio.Task[None] | None = None
+        # Failed attempts per session key, and the timers that re-queue them.
+        self._delete_attempts: dict[str, int] = {}
+        self._delete_retries: set[asyncio.Task[None]] = set()
         self._started = False
 
     def _initialize_default_episodic_configuration(self) -> None:
@@ -349,10 +358,35 @@ class MemMachine:
 
             try:
                 await self._delete_queued_session(session)
+                self._delete_attempts.pop(session.session_key, None)
             except Exception:
-                logger.exception("Failed to delete session %s", session.session_key)
+                # The row stays Deleted until the purge succeeds, and a create
+                # of the same key waits on it, so retry rather than drop it.
+                attempts = self._delete_attempts.get(session.session_key, 0) + 1
+                self._delete_attempts[session.session_key] = attempts
+                delay = min(
+                    DELETE_RETRY_BASE_SECONDS * 2 ** (attempts - 1),
+                    DELETE_RETRY_MAX_SECONDS,
+                )
+                logger.exception(
+                    "Failed to delete session %s (attempt %d); retrying in %.0fs",
+                    session.session_key,
+                    attempts,
+                    delay,
+                )
+                self._schedule_delete_retry(session, delay)
             finally:
                 self._deletion_queue.task_done()
+
+    def _schedule_delete_retry(self, session: SessionData, delay: float) -> None:
+        async def requeue() -> None:
+            await asyncio.sleep(delay)
+            if self._started:
+                self._deletion_queue.put_nowait(session)
+
+        task = asyncio.create_task(requeue())
+        self._delete_retries.add(task)
+        task.add_done_callback(self._delete_retries.discard)
 
     async def _delete_queued_session(self, session: SessionData) -> None:
         tasks = [self._delete_session_episode_store(session.session_key)]
@@ -432,6 +466,12 @@ class MemMachine:
         if not self._started:
             return
         self._started = False
+        # Pending retries are dropped; their rows stay Deleted and the next
+        # start() re-queues them.
+        for task in list(self._delete_retries):
+            task.cancel()
+        self._delete_retries.clear()
+        self._delete_attempts.clear()
         self._deletion_queue.put_nowait(None)
         await self._deletion_queue.join()
         if self._delete_worker is not None:
@@ -532,6 +572,14 @@ class MemMachine:
             )
 
         session_data_manager = await self._resources.get_session_data_manager()
+
+        # A session being deleted keeps its row, marked Deleted, until the
+        # queued purge finishes. create_or_validate_session matches on the key
+        # alone, so creating during that window would "succeed" against the
+        # dying row. Wait for the purge instead. Poll the row rather than an
+        # in-process event, because the purge may run in another worker.
+        await self._await_pending_delete(session_key)
+
         await session_data_manager.create_or_validate_session(
             session_key=session_key,
             configuration={},
@@ -541,8 +589,51 @@ class MemMachine:
         )
         ret = await self.get_session(session_key=session_key)
         if ret is None:
-            raise RuntimeError(f"Failed to create session {session_key}")
+            # The row exists but is not Active: a delete started after the
+            # wait above returned.
+            raise SessionDeletionPendingError(
+                session_key, retry_after=PENDING_DELETE_WAIT_SECONDS
+            )
         return ret
+
+    async def _await_pending_delete(
+        self,
+        session_key: str,
+        max_wait: float = PENDING_DELETE_WAIT_SECONDS,
+        interval: float = 0.05,
+    ) -> None:
+        """
+        Wait for a queued purge of this session to finish, if one is running.
+
+        Returns as soon as the key is free: the row gone, or not Deleted.
+
+        Raises:
+            SessionDeletionPendingError: If the purge is still running after
+                `max_wait` seconds.
+
+        """
+        manager = await self._resources.get_session_data_manager()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max_wait
+        waited = False
+        while True:
+            info = await manager.get_session_info(session_key)
+            if info is None or info.status != SessionDataManager.SessionStatus.Deleted:
+                if waited:
+                    logger.info(
+                        "Waited for the pending delete of %s before creating it",
+                        session_key,
+                    )
+                return
+            if loop.time() >= deadline:
+                logger.warning(
+                    "The delete of %s has not finished after %.0fs",
+                    session_key,
+                    max_wait,
+                )
+                raise SessionDeletionPendingError(session_key, retry_after=max_wait)
+            waited = True
+            await asyncio.sleep(interval)
 
     async def get_session(
         self, session_key: str

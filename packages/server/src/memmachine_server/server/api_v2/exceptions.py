@@ -10,6 +10,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotReadyError,
     SessionAlreadyExistsError,
+    SessionDeletionPendingError,
     SessionNotFoundError,
 )
 
@@ -36,6 +37,7 @@ class RestError(HTTPException):
         code: int,
         message: str,
         ex: Exception | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         """Initialize RestError with structured error details."""
         self.payload: RestErrorModel | None = None
@@ -70,15 +72,18 @@ class RestError(HTTPException):
                 message,
                 self.payload,
             )
-            super().__init__(status_code=code, detail=self.payload.model_dump())
+            super().__init__(
+                status_code=code, detail=self.payload.model_dump(), headers=headers
+            )
         else:
             logger.info("error handling request, code %d, message: %s", code, message)
-            super().__init__(status_code=code, detail=message)
+            super().__init__(status_code=code, detail=message, headers=headers)
 
     @staticmethod
     def is_known_error(ex: Exception) -> bool:
         known_errors = [
             SessionAlreadyExistsError,
+            SessionDeletionPendingError,
             SessionNotFoundError,
             InvalidNameError,
             InvalidArgumentError,

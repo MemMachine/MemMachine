@@ -1,6 +1,7 @@
 """API v2 router for MemMachine project and memory management endpoints."""
 
 import logging
+import math
 import os
 from typing import Annotated
 
@@ -83,6 +84,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionDeletionPendingError,
     SessionNotFoundError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
@@ -187,6 +189,19 @@ async def create_project(
         raise RestError(code=500, message="configuration error: " + str(e), ex=e) from e
     except SessionAlreadyExistsError as e:
         raise RestError(code=409, message="Project already exists", ex=e) from e
+    except SessionDeletionPendingError as e:
+        # Not 409: clients read 409 as "it exists" and fetch it, which would
+        # 404 while the delete runs. 503 says "temporary, retry". The server
+        # already waited before raising, so ask the client to wait as long.
+        raise RestError(
+            code=503,
+            message=(
+                "Project is still being deleted. If this persists, the delete "
+                "may have failed; check the server log."
+            ),
+            ex=e,
+            headers={"Retry-After": str(math.ceil(e.retry_after))},
+        ) from e
     except ValueError as e:
         raise RestError(
             code=500, message="server internal error: " + str(e), ex=e
