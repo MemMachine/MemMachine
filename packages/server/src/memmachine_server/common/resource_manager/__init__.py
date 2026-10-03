@@ -1,10 +1,12 @@
 """Protocols for accessing shared MemMachine resources."""
 
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.language_model import LanguageModel
@@ -44,8 +46,15 @@ class CommonResourceManager(Protocol):
         """Return the vector graph store by name."""
         raise NotImplementedError
 
-    async def get_vector_store(self, name: str) -> VectorStore:
-        """Return the vector store by name."""
+    async def get_vector_store(
+        self,
+        backend: str,
+        *,
+        vector_store_name: str,
+        vector_dimensions: int,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> VectorStore:
+        """Return the store of one name on a configured backend."""
         raise NotImplementedError
 
     async def get_segment_store(self, name: str) -> SegmentStore:

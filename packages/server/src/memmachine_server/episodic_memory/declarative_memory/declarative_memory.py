@@ -167,7 +167,7 @@ class DeclarativeMemory:
                     DeclarativeMemory._embedding_name(
                         self._embedder.model_id,
                         self._embedder.dimensions,
-                    ): (embedding, self._embedder.similarity_metric),
+                    ): embedding,
                 },
             )
             for derivative, embedding in zip(
@@ -361,7 +361,6 @@ class DeclarativeMemory:
                 )
             ),
             query_embedding=query_embedding,
-            similarity_metric=self._embedder.similarity_metric,
             limit=min(5 * max_num_episodes, 200),
             property_filter=mangled_property_filter,
         )
