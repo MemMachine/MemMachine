@@ -235,7 +235,7 @@ class SessionDataManagerSQL(SessionDataManager):
         param: EpisodicMemoryConf,
         description: str,
         metadata: dict[str, JsonValue],
-    ) -> None:
+    ) -> bool:
         """Create a session, or accept an existing one with matching data."""
         param_data = param.model_dump(mode="json")
 
@@ -253,7 +253,7 @@ class SessionDataManagerSQL(SessionDataManager):
                     and session.param_data == param_data
                     and session.user_metadata == metadata
                 ):
-                    return
+                    return False
                 raise SessionAlreadyExistsError(session_key)
             # create a new entry
             new_session = self.SessionConfig(
@@ -266,6 +266,7 @@ class SessionDataManagerSQL(SessionDataManager):
             )
             dbsession.add(new_session)
             await dbsession.commit()
+            return True
 
     @timed("update_session_status")
     async def update_session_status(
