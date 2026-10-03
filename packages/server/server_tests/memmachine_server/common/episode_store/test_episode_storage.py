@@ -14,7 +14,12 @@ from memmachine_server.common.episode_store import (
     EpisodeType,
 )
 from memmachine_server.common.errors import InvalidArgumentError
-from memmachine_server.common.filter.filter_parser import FilterExpr, parse_filter
+from memmachine_server.common.filter import (
+    FilterExpr,
+)
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 
 DEFAULT_HISTORY_ARGS = {
     "session_key": "session-default",

@@ -10,7 +10,7 @@ import numpy as np
 from pydantic import InstanceOf
 
 from memmachine_server.common.episode_store.episode_model import EpisodeIdT
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
     SemanticFeature,

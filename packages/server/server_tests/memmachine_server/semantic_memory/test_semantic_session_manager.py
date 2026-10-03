@@ -9,7 +9,9 @@ import pytest_asyncio
 
 from memmachine_server.common.episode_store import Episode, EpisodeEntry, EpisodeStorage
 from memmachine_server.common.errors import InvalidSetIdConfigurationError
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )

@@ -10,7 +10,7 @@ from memmachine_server.common.episode_store.episode_model import (
     EpisodeEntry,
     EpisodeIdT,
 )
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 
 
 class EpisodeStorage(ABC):

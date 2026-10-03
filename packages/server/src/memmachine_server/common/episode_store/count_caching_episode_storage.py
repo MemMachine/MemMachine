@@ -14,7 +14,7 @@ from memmachine_server.common.episode_store.episode_model import (
     EpisodeIdT,
 )
 from memmachine_server.common.episode_store.episode_storage import EpisodeStorage
-from memmachine_server.common.filter.filter_parser import Comparison, FilterExpr
+from memmachine_server.common.filter import Equals, FilterExpr
 
 
 @dataclass(frozen=True)
@@ -24,9 +24,7 @@ class _CacheEntry:
 
 def _session_key_from_filter(filter_expr: FilterExpr | None) -> str | None:
     """Return the session_key if the filter is exactly a session equality."""
-    if not isinstance(filter_expr, Comparison):
-        return None
-    if filter_expr.op != "=":
+    if not isinstance(filter_expr, Equals):
         return None
     if filter_expr.field not in {"session_key", "session"}:
         return None

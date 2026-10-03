@@ -13,7 +13,9 @@ from memmachine_server.common.episode_store import (
     EpisodeIdT,
     EpisodeStorage,
 )
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.semantic_memory.semantic_ingestion import IngestionService
 from memmachine_server.semantic_memory.semantic_llm import (
     LLMReducedFeature,

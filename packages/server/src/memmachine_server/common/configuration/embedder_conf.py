@@ -12,7 +12,6 @@ from memmachine_server.common.configuration.mixin_confs import (
     MetricsFactoryIdMixin,
     YamlSerializableMixin,
 )
-from memmachine_server.common.data_types import SimilarityMetric
 
 
 def _clean_empty_embedder_config(conf: dict) -> dict:
@@ -44,10 +43,6 @@ class AmazonBedrockEmbedderConf(YamlSerializableMixin, AWSCredentialsMixin):
         default=None,
         description="Maximum input length for the model (in Unicode code points).",
         gt=0,
-    )
-    similarity_metric: SimilarityMetric = Field(
-        default=SimilarityMetric.COSINE,
-        description="Similarity metric to use",
     )
     max_retry_interval_seconds: int = Field(
         default=120,

@@ -18,7 +18,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, JsonValue
 
 from memmachine_server.common.episode_store import Episode, EpisodeIdT
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage as ESemanticConfigStorage,
 )

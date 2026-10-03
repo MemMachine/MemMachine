@@ -31,9 +31,7 @@ from memmachine_server.common.episode_store import (
     EpisodeResponse,
 )
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-)
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.episodic_memory.long_term_memory.long_term_memory import (
     LongTermMemory,
