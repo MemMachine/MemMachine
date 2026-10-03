@@ -27,8 +27,11 @@ class LeaseLostError(RuntimeError):
     """The caller no longer owns its lease."""
 
 
-class LockAcquireTimeout(TimeoutError):  # noqa: N818 - name fixed by public API
+class LockAcquireTimeoutError(TimeoutError):
     """A lock remained unavailable until the wait deadline."""
+
+
+LockAcquireTimeout = LockAcquireTimeoutError
 
 
 async def _await_cleanup[T](task: asyncio.Task[T], cancellations: list[bool]) -> T:
@@ -36,10 +39,11 @@ async def _await_cleanup[T](task: asyncio.Task[T], cancellations: list[bool]) ->
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _CLEANUP_TIMEOUT_SECONDS
     while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            task.add_done_callback(_observe_late_cleanup)
+            raise TimeoutError("SQL lease cleanup timed out")
         try:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                raise TimeoutError("SQL lease cleanup timed out")  # noqa: TRY301
             return await asyncio.wait_for(asyncio.shield(task), remaining)
         except asyncio.CancelledError:
             if task.cancelled():
@@ -98,6 +102,10 @@ class Lease:
         """The last known expiry, in UTC."""
         return datetime.fromtimestamp(self._expires_at_ms / 1_000, tz=UTC)
 
+    def trusted_for(self) -> float:
+        """Seconds until this handle's locally conservative lease deadline."""
+        return self._safe_until - asyncio.get_running_loop().time()
+
     async def renew(self) -> None:
         """Extend this lease from database time or raise if it was lost."""
         started = asyncio.get_running_loop().time()
@@ -111,6 +119,14 @@ class Lease:
         """Remove this lease or raise if it was already lost."""
         if not await self._store.release(self.key, self.lease_id):
             raise LeaseLostError(f"Lease {self.lease_id} is no longer held")
+
+
+async def _renew_before_deadline(lease: Lease) -> None:
+    remaining = lease.trusted_for()
+    if remaining <= 0:
+        raise LeaseLostError(f"Lease {lease.lease_id} can no longer be trusted")
+    async with asyncio.timeout(remaining):
+        await lease.renew()
 
 
 async def _finish_and_release(renewal_task: asyncio.Task[None], lease: Lease) -> None:
@@ -224,7 +240,7 @@ class SQLLeaseLockService:
                 return lease
             remaining = None if deadline is None else deadline - loop.time()
             if remaining is not None and remaining <= 0:
-                raise LockAcquireTimeout(f"Timed out acquiring lock for {key!r}")
+                raise LockAcquireTimeoutError(f"Timed out acquiring lock for {key!r}")
             delay = uniform(retry_max_delay / 2, retry_max_delay)
             await asyncio.sleep(delay if remaining is None else min(delay, remaining))
             retry_max_delay = min(retry_max_delay * 2, retry_cap)
@@ -263,16 +279,10 @@ class SQLLeaseLockService:
             if stop_renewal.is_set():
                 return
             try:
-                remaining = lease._safe_until - asyncio.get_running_loop().time()  # noqa: SLF001
-                if remaining <= 0:
-                    raise LeaseLostError(  # noqa: TRY301
-                        f"Lease {lease.lease_id} can no longer be trusted"
-                    )
-                async with asyncio.timeout(remaining):
-                    await lease.renew()
+                await _renew_before_deadline(lease)
             except Exception as err:
                 if not isinstance(err, LeaseLostError):
-                    remaining = lease._safe_until - asyncio.get_running_loop().time()  # noqa: SLF001
+                    remaining = lease.trusted_for()
                     if remaining > 0:
                         logger.debug("Retrying failed SQL lease renewal", exc_info=err)
                         retry_delay = min(0.05, max(0.005, remaining / 2))
