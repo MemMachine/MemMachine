@@ -3,7 +3,13 @@
 from collections.abc import Mapping
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    FiniteFloat,
+    field_serializer,
+    field_validator,
+)
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
@@ -109,32 +115,27 @@ class VectorStoreCollectionConfigMismatchError(Exception):
 
 class Record(BaseModel):
     """
-    A record in the vector store.
+    A record to write to a vector store collection.
 
     Attributes:
         uuid (UUID):
             Unique identifier for the record.
-        vector (list[float] | None):
-            Vector for similarity search.
-            `None` is not allowed on input.
-            `None` on output means the vector was not requested (`return_vector=False`)
-            (default: None).
-        properties (dict[str, PropertyValue] | None):
-            Property key-value pairs.
-            Use `{}` to represent missing properties; `None` on input is treated as `{}`.
-            `None` on output means the properties were not requested (`return_properties=False`)
-            (default: None).
+        vector (list[float]):
+            Vector for similarity search, of finite coordinates.
+        properties (dict[str, PropertyValue]):
+            Property key-value pairs to filter on
+            (default: `{}`).
     """
 
     uuid: UUID
-    vector: list[float] | None = None
-    properties: dict[str, PropertyValue] | None = None
+    vector: list[FiniteFloat]
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
-    @field_validator("properties")
+    @field_validator("properties", mode="after")
     @classmethod
     def _validate_property_keys(
-        cls, v: dict[str, PropertyValue] | None
-    ) -> dict[str, PropertyValue] | None:
+        cls, v: dict[str, PropertyValue]
+    ) -> dict[str, PropertyValue]:
         if v:
             for key in v:
                 if not validate_identifier(key):
@@ -162,12 +163,12 @@ class QueryMatch(BaseModel):
 
             Use `SimilarityMetric.higher_is_better` to determine which
             direction indicates a better match.
-        record (Record):
-            The matched record.
+        record_uuid (UUID):
+            UUID of the matched record.
     """
 
     score: float
-    record: Record
+    record_uuid: UUID
 
 
 class QueryResult(BaseModel):

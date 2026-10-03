@@ -41,11 +41,10 @@ from sqlalchemy.orm import DeclarativeBase, MappedColumn, Session, mapped_column
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.filter.sql_filter_util import compile_sql_filter
 from memmachine_server.common.properties_json import (
-    decode_properties,
     encode_properties,
 )
 
@@ -57,7 +56,15 @@ from .data_types import (
     VectorStoreCollectionConfig,
     VectorStoreCollectionConfigMismatchError,
 )
-from .utils import validate_filter, validate_identifier
+from .utils import (
+    require_declared_types,
+    require_dimensions,
+    require_valid_limit,
+    require_valid_query_vector,
+    require_valid_score_threshold,
+    validate_filter,
+    validate_identifier,
+)
 from .vector_search_engine import VectorSearchEngine
 from .vector_store import VectorStore, VectorStoreCollection
 
@@ -276,12 +283,11 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         records = list(records)
         if not records:
             return
-
         for record in records:
-            if record.vector is None:
-                raise ValueError(
-                    f"Record {record.uuid} has vector=None, which is not allowed on input."
-                )
+            require_declared_types(
+                record.properties, self._config.indexed_properties_schema
+            )
+            require_dimensions(record.vector, self._config.vector_dimensions)
 
         async with self._create_session() as session, session.begin():
             upsert_records = (
@@ -377,15 +383,14 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         limit: int,
         score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
+        require_valid_limit(limit)
         query_vectors = list(query_vectors)
         if not query_vectors:
             return []
-
-        if limit <= 0:
-            return [QueryResult(matches=[]) for _ in query_vectors]
+        for query_vector in query_vectors:
+            require_valid_query_vector(query_vector, self._config.vector_dimensions)
+        require_valid_score_threshold(score_threshold)
 
         if property_filter is not None and not validate_filter(property_filter):
             raise ValueError("Filter contains invalid field names")
@@ -404,8 +409,6 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
             matches = await self._build_matches(
                 row_id_to_score={m.key: m.score for m in search_result.matches},
                 score_threshold=score_threshold,
-                return_vector=return_vector,
-                return_properties=return_properties,
             )
             results.append(QueryResult(matches=matches))
 
@@ -433,25 +436,15 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
         self,
         row_id_to_score: Mapping[int, float],
         score_threshold: float | None,
-        return_vector: bool,
-        return_properties: bool,
     ) -> list[QueryMatch]:
-        matched_row_ids = list(row_id_to_score.keys())
-
-        selected_columns = [self._records_table.c.uuid, self._records_table.c.row_id]
-        if return_properties:
-            selected_columns.append(self._records_table.c.properties)
-
-        fetch_records = select(*selected_columns).where(
-            self._records_table.c.row_id.in_(matched_row_ids),
+        fetch_records = select(
+            self._records_table.c.uuid, self._records_table.c.row_id
+        ).where(
+            self._records_table.c.row_id.in_(list(row_id_to_score)),
         )
 
         async with self._create_session() as session:
             matched_rows = (await session.execute(fetch_records)).all()
-
-        vector_map: dict[int, list[float]] = {}
-        if return_vector:
-            vector_map = await self._search_engine.get_vectors(matched_row_ids)
 
         higher_is_better = self._config.similarity_metric.higher_is_better
         matches: list[QueryMatch] = []
@@ -465,75 +458,13 @@ class SQLiteVectorStoreCollection(VectorStoreCollection):
             ):
                 continue
 
-            properties: dict[str, PropertyValue] | None = None
-            if return_properties:
-                properties = decode_properties(row.properties)
-
-            vector: list[float] | None = vector_map.get(row.row_id)
-
-            matches.append(
-                QueryMatch(
-                    score=score,
-                    record=Record(uuid=row.uuid, vector=vector, properties=properties),
-                )
-            )
+            matches.append(QueryMatch(score=score, record_uuid=row.uuid))
 
         matches.sort(
             key=lambda match: match.score,
             reverse=self._config.similarity_metric.higher_is_better,
         )
         return matches
-
-    @override
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        record_uuids = list(record_uuids)
-        if not record_uuids:
-            return []
-
-        selected_columns = [self._records_table.c.uuid, self._records_table.c.row_id]
-        if return_properties:
-            selected_columns.append(self._records_table.c.properties)
-
-        async with self._create_session() as session:
-            fetched_rows = (
-                await session.execute(
-                    select(*selected_columns).where(
-                        self._records_table.c.uuid.in_(record_uuids),
-                    )
-                )
-            ).all()
-
-        row_id_to_vector: dict[int, list[float]] = {}
-        if return_vector:
-            row_id_to_vector = await self._search_engine.get_vectors(
-                [row.row_id for row in fetched_rows]
-            )
-
-        record_map: dict[UUID, Record] = {}
-        for row in fetched_rows:
-            record_uuid = row.uuid
-
-            properties: dict[str, PropertyValue] | None = None
-            if return_properties:
-                properties = decode_properties(row.properties)
-
-            vector: list[float] | None = row_id_to_vector.get(row.row_id)
-
-            record_map[record_uuid] = Record(
-                uuid=record_uuid, vector=vector, properties=properties
-            )
-
-        return [
-            record_map[record_uuid]
-            for record_uuid in record_uuids
-            if record_uuid in record_map
-        ]
 
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
@@ -921,10 +852,6 @@ class SQLiteVectorStore(VectorStore):
             index_path=str(index_path) if index_path is not None else None,
             save_threshold=self._save_threshold,
         )
-
-    @override
-    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
-        self._require_started()
 
     @override
     async def delete_collection(self, *, namespace: str, name: str) -> None:

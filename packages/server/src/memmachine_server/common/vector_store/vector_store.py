@@ -26,8 +26,11 @@ class VectorStoreCollection(ABC):
     Identified by a (namespace, name) pair.
     All data operations are scoped to this logical collection.
 
-    Implementations must support storing, filtering on, and returning
-    record properties not declared in the configured indexed properties schema.
+    An `upsert` or `delete` is durable once it returns; queries may not
+    reflect it right away. A store that guarantees more states it.
+
+    Implementations must support storing and filtering on record properties
+    not declared in the configured indexed properties schema.
 
     The schema exists to support indexing on fixed-type record properties.
     Record properties not declared in the schema may have mixed-type values.
@@ -57,6 +60,12 @@ class VectorStoreCollection(ABC):
                 Records containing properties
                 not in the indexed properties schema
                 are allowed.
+
+        Raises:
+            ValueError:
+                If a record's declared property holds a value of another
+                type, or its vector does not have the collection's
+                dimensions.
         """
         raise NotImplementedError
 
@@ -68,17 +77,18 @@ class VectorStoreCollection(ABC):
         limit: int,
         score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
         """
         Query for records matching the criteria by query vectors.
+
+        Each match holds a record's UUID and score.
 
         Args:
             query_vectors (Iterable[Sequence[float]]):
                 The vectors to compare against.
             limit (int):
-                Maximum number of matching records to return per query vector.
+                Maximum number of matching records to return per query vector;
+                positive.
             score_threshold (float | None):
                 Score threshold to consider a match
                 (default: None).
@@ -86,45 +96,18 @@ class VectorStoreCollection(ABC):
                 Filter expression tree.
                 If None or empty, no property filtering is applied
                 (default: None).
-            return_vector (bool):
-                Whether to include the vector in the returned records
-                (default: False).
-            return_properties (bool):
-                Whether to include the properties in the returned records
-                (default: True).
 
         Returns:
             list[QueryResult]:
                 Results for each query vector,
                 ordered as in the input iterable.
-        """
-        raise NotImplementedError
 
-    @abstractmethod
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        """
-        Get records from the collection by their UUIDs.
-
-        Args:
-            record_uuids (Iterable[UUID]):
-                Iterable of UUIDs of the records to retrieve.
-            return_vector (bool):
-                Whether to include the vector in the returned records
-                (default: False).
-            return_properties (bool):
-                Whether to include the properties in the returned records
-                (default: True).
-
-        Returns:
-            list[Record]:
-                Iterable of records with the specified UUIDs,
-                ordered as in the input iterable.
+        Raises:
+            ValueError:
+                If the limit is not positive, a query vector does not have
+                the collection's dimensions or has a coordinate that is not
+                finite, the score threshold is not finite, or the property
+                filter names an invalid property key.
         """
         raise NotImplementedError
 
@@ -181,7 +164,7 @@ class VectorStore(ABC):
         config: VectorStoreCollectionConfig,
     ) -> None:
         """
-        Create a logical collection in the vector store and return a handle to it.
+        Create a logical collection in the vector store.
 
         A (namespace, name) pair uniquely identifies a collection.
         The configuration (dimensions, similarity metric, schema)
@@ -248,17 +231,6 @@ class VectorStore(ABC):
         Returns:
             VectorStoreCollection | None:
                 A handle to the opened collection, or None if it does not exist.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
-        """
-        Close a collection handle.
-
-        Args:
-            collection (Collection):
-                The handle of the collection to close.
         """
         raise NotImplementedError
 

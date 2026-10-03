@@ -1042,6 +1042,119 @@ async def test_get_derivative_uuids_by_segment_uuids_unknown(
 
 
 # ===================================================================
+# get_segment_uuids_by_derivative_uuids
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    seg = _seg()
+    d1, d2 = uuid4(), uuid4()
+    await partition.add_segments({seg: [d1, d2]})
+
+    result = await partition.get_segment_uuids_by_derivative_uuids([d1, d2])
+    assert result == {d1: seg.uuid, d2: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_agrees_with_the_forward_lookup(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Every derivative belongs to exactly one segment, so the two agree."""
+    segments = [_seg(offset=i, ts_offset_seconds=i) for i in range(3)]
+    links = {seg: [uuid4(), uuid4()] for seg in segments}
+    await partition.add_segments(links)
+
+    forward = await partition.get_derivative_uuids_by_segment_uuids(
+        [seg.uuid for seg in segments]
+    )
+    all_derivative_uuids = [
+        derivative_uuid
+        for derivative_uuids in forward.values()
+        for derivative_uuid in derivative_uuids
+    ]
+    backward = await partition.get_segment_uuids_by_derivative_uuids(
+        all_derivative_uuids
+    )
+
+    assert backward == {
+        derivative_uuid: segment_uuid
+        for segment_uuid, derivative_uuids in forward.items()
+        for derivative_uuid in derivative_uuids
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_empty(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    result = await partition.get_segment_uuids_by_derivative_uuids([])
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_omits_unknown(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """UUIDs the partition does not hold are omitted, not raised on."""
+    seg = _seg()
+    known = uuid4()
+    await partition.add_segments({seg: [known]})
+
+    unknown = uuid4()
+    result = await partition.get_segment_uuids_by_derivative_uuids([known, unknown])
+    assert result == {known: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_session_isolation(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """A derivative another partition owns is invisible here."""
+    other_partition = await store.open_or_create_partition(
+        "other_derivatives",
+        _plaintext_partition_config(),
+    )
+    other_seg = _seg()
+    other_derivative = uuid4()
+    await other_partition.add_segments({other_seg: [other_derivative]})
+
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
+    seg = _seg()
+    derivative = uuid4()
+    await partition.add_segments({seg: [derivative]})
+
+    result = await partition.get_segment_uuids_by_derivative_uuids(
+        [derivative, other_derivative]
+    )
+    assert result == {derivative: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_after_delete_segments(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Deleting a segment takes its derivatives' mapping with it."""
+    kept, dropped = _seg(offset=0), _seg(offset=1)
+    kept_derivative, dropped_derivative = uuid4(), uuid4()
+    await partition.add_segments(
+        {kept: [kept_derivative], dropped: [dropped_derivative]}
+    )
+
+    await partition.delete_segments([dropped.uuid])
+
+    result = await partition.get_segment_uuids_by_derivative_uuids(
+        [kept_derivative, dropped_derivative]
+    )
+    assert result == {kept_derivative: kept.uuid}
+
+
+# ===================================================================
 # delete_segments
 # ===================================================================
 
@@ -1561,6 +1674,8 @@ async def test_stale_handle_raises_after_delete(
     with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.get_derivative_uuids_by_segment_uuids([seg.uuid])
     with pytest.raises(SegmentStorePartitionHandleStaleError):
+        await partition.get_segment_uuids_by_derivative_uuids([uuid4()])
+    with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.delete_segments([seg.uuid])
     # The stale handle deleted nothing; the rows wait for the purge.
     assert await _row_counts(store, partition._incarnation) == (1, 1)
@@ -1581,13 +1696,15 @@ async def test_reads_check_liveness_inside_the_data_statement(
         "folded", _plaintext_partition_config()
     )
     seg = _seg()
-    await partition.add_segments(_links(seg))
+    derivative_uuids = [uuid4()]
+    await partition.add_segments({seg: derivative_uuids})
     recorded_statements.clear()
 
     await partition.get_segment_contexts([seg.uuid])
     await partition.get_segment_uuids_by_event_uuids([seg.event_uuid])
     await partition.get_derivative_uuids_by_segment_uuids([seg.uuid])
-    assert len(recorded_statements) == 3
+    await partition.get_segment_uuids_by_derivative_uuids(derivative_uuids)
+    assert len(recorded_statements) == 4
     assert all(
         "EXISTS (SELECT" in s and "segment_store_pt" in s for s in recorded_statements
     )
