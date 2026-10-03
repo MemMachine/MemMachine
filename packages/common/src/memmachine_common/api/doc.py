@@ -207,7 +207,7 @@ class SpecDoc:
     ADD_MEMORY_RESULTS = "The list of results for each added memory message."
 
     TOP_K = """
-    The maximum number of memories to return in the search results.
+    The maximum number of memories to return in the search results; positive.
     """
 
     EXPAND_CONTEXT = """

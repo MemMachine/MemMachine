@@ -168,22 +168,20 @@ config:
 - `hnsw_ef_construction`: 200 (default), 400 (better quality)
 - `hnsw_ef_search`: 40 (default), 100 (higher recall), 200 (maximum recall)
 
-### Similarity Metric Support
+### Similarity
 
-NebulaGraph has native support for three of the four similarity metrics. The search mode
-(ANN or KNN) depends on both index availability and the metric's capabilities:
+Every score is a cosine similarity. NebulaGraph's `cosine()` function does not accept
+the `APPROXIMATE` keyword, and its vector indexes offer only L2 and IP — so cosine is
+spelled as an inner product instead:
 
-| Metric | NebulaGraph Function | Index Metric | ANN Supported? |
-|--------|---------------------|--------------|----------------|
-| `EUCLIDEAN` | `euclidean()` ASC | L2 | Yes — vector index required |
-| `DOT` | `inner_product()` DESC | IP | Yes — vector index required |
-| `COSINE` | `cosine()` DESC | — | No — KNN only (NebulaGraph limitation) |
-| `MANHATTAN` | — | — | No — unsupported, raises error |
+| NebulaGraph Function | Index Metric | ANN Supported? |
+|---------------------|--------------|----------------|
+| `inner_product()` DESC | IP | Yes — vector index required |
 
-**Key points:**
-- `COSINE` always uses exact KNN search regardless of whether an index exists. NebulaGraph's `cosine()` function does not support the `APPROXIMATE` keyword.
-- `DOT` (inner product) and `COSINE` are mathematically different: DOT is the raw dot product; COSINE normalizes by vector magnitudes.
-- `MANHATTAN` is not supported by NebulaGraph and will raise an error.
+Cosine similarity between unit vectors *is* their inner product, so embeddings are
+normalized on the way in and compared with `inner_product()` against an IP index. The
+ranking is cosine ranking, and unlike `cosine()` it can be approximate. Without a
+vector index the same comparison runs as exact KNN.
 
 ### Force Exact Search
 

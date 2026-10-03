@@ -3,12 +3,14 @@
 import asyncio
 import logging
 from asyncio import Lock
+from collections.abc import Mapping
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.mixin_confs import MetricsFactoryIdMixin
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import (
     CountCachingEpisodeStorage,
@@ -57,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 _SEGMENT_STORE_PURGE_INTERVAL_SECONDS = 60.0
 _SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
+_VECTOR_STORE_PURGE_INTERVAL_SECONDS = 60.0
+_VECTOR_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
 
 
 async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
@@ -90,6 +94,29 @@ async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
         )
 
 
+async def _purge_deleted_vector_store_partitions_forever(
+    store: VectorStore, label: str
+) -> None:
+    """Run the store's purge rounds for as long as the task runs.
+
+    A call that ran a round is followed after a short pause, one that found
+    nothing due after the idle interval, and one that raised is logged and
+    retried a tick later. Sweepers in other processes may run
+    the same store's purge at the same time.
+    """
+    while True:
+        try:
+            more = await store.purge_deleted_partitions()
+        except Exception:
+            logger.exception("%s purge failed; retrying next tick", label)
+            more = False
+        await asyncio.sleep(
+            _VECTOR_STORE_PURGE_BUSY_PAUSE_SECONDS
+            if more
+            else _VECTOR_STORE_PURGE_INTERVAL_SECONDS
+        )
+
+
 class ResourceManagerImpl:
     """Concrete resource manager for MemMachine services."""
 
@@ -118,6 +145,8 @@ class ResourceManagerImpl:
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
         self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
+        # One sweeper per vector store, keyed by its backend and its name.
+        self._vector_store_purge_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
 
         self._session_data_manager_lock = Lock()
         self._episodic_memory_manager_lock = Lock()
@@ -142,6 +171,8 @@ class ResourceManagerImpl:
         """Close resources and clean up state."""
         purge_tasks = list(self._segment_store_purge_tasks)
         self._segment_store_purge_tasks.clear()
+        purge_tasks.extend(self._vector_store_purge_tasks.values())
+        self._vector_store_purge_tasks.clear()
         segment_stores = list(self._segment_stores.values())
         self._segment_stores.clear()
 
@@ -175,9 +206,32 @@ class ResourceManagerImpl:
         """Return a vector graph store by name."""
         return await self._database_manager.get_vector_graph_store(name)
 
-    async def get_vector_store(self, name: str) -> VectorStore:
-        """Return a vector store by name."""
-        return await self._database_manager.get_vector_store(name)
+    async def get_vector_store(
+        self,
+        backend: str,
+        *,
+        vector_store_name: str,
+        vector_dimensions: int,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> VectorStore:
+        """Return the store of one name on a configured backend.
+
+        The first time a store is handed out, its purge sweeper starts.
+        """
+        store = await self._database_manager.get_vector_store(
+            backend,
+            vector_store_name=vector_store_name,
+            vector_dimensions=vector_dimensions,
+            indexed_properties=indexed_properties,
+        )
+        key = (backend, vector_store_name)
+        if key not in self._vector_store_purge_tasks:
+            self._vector_store_purge_tasks[key] = asyncio.create_task(
+                _purge_deleted_vector_store_partitions_forever(
+                    store, f"Vector store {backend}/{vector_store_name}"
+                )
+            )
+        return store
 
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return a segment store by name, constructing it on first access."""

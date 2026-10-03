@@ -71,7 +71,6 @@ qdrant = [
 ]
 milvus = [
     "pymilvus>=3.0.0",
-    "milvus-lite>=3.0.0",
 ]
 litellm = [
     # 1.93 is the first release that supports Python 3.14; 1.83.8 through
