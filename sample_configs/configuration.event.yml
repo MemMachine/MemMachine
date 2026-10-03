@@ -92,6 +92,7 @@ resources:
         grpc_port: 6334
         prefer_grpc: false
         https: false
+        collection_registry: profile_storage    # relational database holding the collection registry
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
   embedders:
     openai_embedder:

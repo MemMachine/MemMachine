@@ -1,9 +1,16 @@
 """Data types for vector store."""
 
 from collections.abc import Mapping
+from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    FiniteFloat,
+    field_serializer,
+    field_validator,
+)
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
@@ -85,6 +92,41 @@ class VectorStoreCollectionAlreadyExistsError(Exception):
         super().__init__(f"Collection ({namespace!r}, {name!r}) already exists.")
 
 
+class VectorStoreCollectionPendingError(Exception):
+    """Raised when opening a collection whose creation has not completed."""
+
+    def __init__(
+        self,
+        namespace: str,
+        name: str,
+        registered_at: datetime,
+        config: VectorStoreCollectionConfig,
+    ) -> None:
+        """Initialize with the pending collection's namespace, name, registration time and configuration."""
+        self.namespace = namespace
+        self.name = name
+        self.registered_at = registered_at
+        self.config = config
+        super().__init__(
+            f"Collection ({namespace!r}, {name!r}) has been pending since "
+            f"{registered_at.isoformat()}; if its creation was abandoned, "
+            "delete it to create it again."
+        )
+
+
+class VectorStoreCollectionDeletedError(Exception):
+    """Raised when a collection is deleted before its creation completes."""
+
+    def __init__(self, namespace: str, name: str) -> None:
+        """Initialize with the namespace and name of the deleted collection."""
+        self.namespace = namespace
+        self.name = name
+        super().__init__(
+            f"Collection ({namespace!r}, {name!r}) was deleted before its "
+            "creation completed"
+        )
+
+
 class VectorStoreCollectionConfigMismatchError(Exception):
     """Raised when opening a collection with a different configuration than it was created with."""
 
@@ -107,34 +149,46 @@ class VectorStoreCollectionConfigMismatchError(Exception):
         )
 
 
+class VectorStoreCollectionHandleStaleError(Exception):
+    """Raised when a handle is used after its collection was deleted."""
+
+    def __init__(self, namespace: str, name: str) -> None:
+        """Record the namespace and name the stale handle belonged to."""
+        self.namespace = namespace
+        self.name = name
+        super().__init__(
+            f"Stale handle for collection ({namespace!r}, {name!r}): the collection "
+            "was deleted (or re-created) after this handle was bound"
+        )
+
+
+class VectorStoreAttemptsExhaustedError(Exception):
+    """Raised when an operation gave up after repeated attempts that made no progress."""
+
+
 class Record(BaseModel):
     """
-    A record in the vector store.
+    A record to write to a vector store collection.
 
     Attributes:
         uuid (UUID):
             Unique identifier for the record.
-        vector (list[float] | None):
-            Vector for similarity search.
-            `None` is not allowed on input.
-            `None` on output means the vector was not requested (`return_vector=False`)
-            (default: None).
-        properties (dict[str, PropertyValue] | None):
-            Property key-value pairs.
-            Use `{}` to represent missing properties; `None` on input is treated as `{}`.
-            `None` on output means the properties were not requested (`return_properties=False`)
-            (default: None).
+        vector (list[float]):
+            Vector for similarity search, of finite coordinates.
+        properties (dict[str, PropertyValue]):
+            Property key-value pairs to filter on
+            (default: `{}`).
     """
 
     uuid: UUID
-    vector: list[float] | None = None
-    properties: dict[str, PropertyValue] | None = None
+    vector: list[FiniteFloat]
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
-    @field_validator("properties")
+    @field_validator("properties", mode="after")
     @classmethod
     def _validate_property_keys(
-        cls, v: dict[str, PropertyValue] | None
-    ) -> dict[str, PropertyValue] | None:
+        cls, v: dict[str, PropertyValue]
+    ) -> dict[str, PropertyValue]:
         if v:
             for key in v:
                 if not validate_identifier(key):
@@ -162,12 +216,12 @@ class QueryMatch(BaseModel):
 
             Use `SimilarityMetric.higher_is_better` to determine which
             direction indicates a better match.
-        record (Record):
-            The matched record.
+        record_uuid (UUID):
+            UUID of the matched record.
     """
 
     score: float
-    record: Record
+    record_uuid: UUID
 
 
 class QueryResult(BaseModel):

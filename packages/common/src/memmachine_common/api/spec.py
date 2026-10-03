@@ -561,6 +561,7 @@ class SearchMemoriesSpec(_WithOrgAndProj):
         int,
         Field(
             default=10,
+            gt=0,
             description=SpecDoc.TOP_K,
             examples=Examples.TOP_K,
         ),
