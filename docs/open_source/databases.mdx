@@ -30,8 +30,14 @@ keeps event segments in a relational database. Configure the VectorStore under
 `episodic_memory.long_term_memory.vector_store`.
 
 Supported VectorStore providers include Qdrant, Milvus, SQLiteVectorStore, and
-SQLiteVecVectorStore. Milvus supports three deployment shapes through the same
-configuration fields:
+SQLiteVecVectorStore. Qdrant keeps the registry of its logical collections in
+a relational database named by `collection_registry`, so any number of server
+processes can share one Qdrant. A backend's registry is kept under its key in
+`resources.databases`, so several backends can keep their registries in one
+relational database. Every process must configure a given Qdrant server under
+the same key, so that they share its registry.
+
+Milvus supports three deployment shapes through the same configuration fields:
 
 - **Milvus Lite:** set `uri` to a local `.db` path such as
   `./memmachine_milvus.db`.
@@ -58,6 +64,11 @@ episodic_memory:
     vector_store: milvus_vector_store
     segment_store: profile_storage
 ```
+
+Upgrading does not carry existing vector store data over: drop the existing
+Qdrant collections before upgrading. The store keeps the native collections'
+names, so points left in one stay there, invisible to every search and never
+purged, and dropping the collection after the upgrade drops the new data too.
 
 ## neo4j
 Neo4j is a leading **graph database**, which means it's specially designed to store and manage highly connected data. Instead of rows and columns, Neo4j works with three fundamental building blocks:

@@ -33,6 +33,10 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStoreParams,
 )
 from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store.collection_registry.sqlalchemy_collection_registry import (
+    SQLAlchemyVectorStoreCollectionRegistry,
+    SQLAlchemyVectorStoreCollectionRegistryParams,
+)
 from memmachine_server.common.vector_store.vector_search_engine import (
     VectorSearchEngine,
 )
@@ -615,9 +619,21 @@ class DatabaseManager:
                 "grpc_port": conf.grpc_port,
                 "prefer_grpc": conf.prefer_grpc,
                 "https": conf.https,
+                "timeout": conf.request_timeout_seconds,
             }
             if conf.api_key.get_secret_value():
                 client_kwargs["api_key"] = conf.api_key.get_secret_value()
+
+            # The registry first, so a failed lookup or startup leaves no
+            # client open.
+            collection_registry = SQLAlchemyVectorStoreCollectionRegistry(
+                SQLAlchemyVectorStoreCollectionRegistryParams(
+                    engine=await self.async_get_sql_engine(conf.collection_registry),
+                    vector_store_name=name,
+                    tombstone_retention_seconds=conf.tombstone_retention_seconds,
+                )
+            )
+            await collection_registry.startup()
 
             client = AsyncQdrantClient(**client_kwargs)
 
@@ -631,7 +647,7 @@ class DatabaseManager:
 
             params = QdrantVectorStoreParams(
                 client=client,
-                registry_replication_factor=conf.registry_replication_factor,
+                collection_registry=collection_registry,
                 metrics_factory=conf.get_metrics_factory(),
             )
             try:

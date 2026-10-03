@@ -1,5 +1,6 @@
 """Helpers for building long-term memory from configuration."""
 
+import asyncio
 import hashlib
 import logging
 
@@ -21,7 +22,12 @@ from memmachine_server.common.data_types import (
     PropertyValue,
 )
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
+from memmachine_server.common.vector_store import (
+    VectorStoreCollectionAlreadyExistsError,
+    VectorStoreCollectionConfig,
+    VectorStoreCollectionDeletedError,
+    VectorStoreCollectionPendingError,
+)
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
@@ -53,6 +59,10 @@ from .long_term_memory import (
 logger = logging.getLogger(__name__)
 
 _EVENT_BACKEND_NAMESPACE = "long_term_memory"
+# Attempts, _OPEN_RETRY_DELAY_SECONDS apart, to open or create a partition's
+# collection before the locator gives up waiting for it to become live.
+_MAX_OPEN_ATTEMPTS = 10
+_OPEN_RETRY_DELAY_SECONDS = 1
 
 
 async def long_term_memory_params_from_config(
@@ -106,36 +116,52 @@ async def _event_params(
     partition_key = partition_key_for_session(config.session_id)
 
     # Open the existing collection if any (preserves the original schema). Only
-    # create with our merged schema if the partition does not yet exist.
-    collection = await vector_store.open_collection(
-        namespace=_EVENT_BACKEND_NAMESPACE,
-        name=partition_key,
-    )
-    if collection is None:
-        user_schema = _resolve_user_properties_schema(config.properties_schema)
-        collection_config = VectorStoreCollectionConfig(
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties_schema={
-                **EventMemory.expected_vector_store_collection_schema(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-                **user_schema,
-            },
-        )
-        await vector_store.create_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-            config=collection_config,
-        )
-        collection = await vector_store.open_collection(
-            namespace=_EVENT_BACKEND_NAMESPACE,
-            name=partition_key,
-        )
-        if collection is None:
-            raise RuntimeError(
-                f"Failed to open vector store collection after creation for "
-                f"partition {partition_key!r}"
+    # create with our merged schema if the partition does not yet exist. A
+    # create that loses a race to another caller or to a deletion, or an open
+    # of a collection another caller is still creating, is retried until the
+    # collection opens.
+    last_error: Exception | None = None
+    for attempt in range(_MAX_OPEN_ATTEMPTS):
+        if attempt:
+            await asyncio.sleep(_OPEN_RETRY_DELAY_SECONDS)
+        try:
+            collection = await vector_store.open_collection(
+                namespace=_EVENT_BACKEND_NAMESPACE,
+                name=partition_key,
             )
+            if collection is None:
+                user_schema = _resolve_user_properties_schema(config.properties_schema)
+                await vector_store.create_collection(
+                    namespace=_EVENT_BACKEND_NAMESPACE,
+                    name=partition_key,
+                    config=VectorStoreCollectionConfig(
+                        vector_dimensions=embedder.dimensions,
+                        similarity_metric=embedder.similarity_metric,
+                        indexed_properties_schema={
+                            **EventMemory.expected_vector_store_collection_schema(),
+                            **EVENT_BACKEND_SYSTEM_FIELDS,
+                            **user_schema,
+                        },
+                    ),
+                )
+                collection = await vector_store.open_collection(
+                    namespace=_EVENT_BACKEND_NAMESPACE,
+                    name=partition_key,
+                )
+        except (
+            VectorStoreCollectionAlreadyExistsError,
+            VectorStoreCollectionDeletedError,
+            VectorStoreCollectionPendingError,
+        ) as error:
+            last_error = error
+            continue
+        if collection is not None:
+            break
+    else:
+        raise RuntimeError(
+            f"The vector store collection of partition {partition_key!r} was "
+            f"not live after {_MAX_OPEN_ATTEMPTS} attempts to open or create it"
+        ) from last_error
 
     partition = await segment_store.open_or_create_partition(
         partition_key,

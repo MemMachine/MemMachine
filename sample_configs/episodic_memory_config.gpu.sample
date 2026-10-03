@@ -104,7 +104,9 @@ resources:
         grpc_port: 6334
         prefer_grpc: false
         https: false
+        request_timeout_seconds: 30
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
+        collection_registry: profile_storage    # relational database holding the collection registry
     # VectorStore for vector-backed semantic memory.
     # Wire it via `semantic_memory.vector_collection`.
     semantic_vector_store:
@@ -115,7 +117,9 @@ resources:
         grpc_port: 6334
         prefer_grpc: false
         https: false
+        request_timeout_seconds: 30
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
+        collection_registry: profile_storage    # relational database holding the collection registry
     #
     # Alternative: Milvus. The local .db URI uses Milvus Lite; replace it with
     # http(s)://... plus token/db_name for Milvus server or Zilliz Cloud.

@@ -156,24 +156,6 @@ class USearchVectorSearchEngine(VectorSearchEngine):
         return [r if r is not None else SearchResult(matches=[]) for r in final_results]
 
     @override
-    async def get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        keys = list(keys)
-        if not keys:
-            return {}
-
-        keys_array = np.array(keys, dtype=np.int64)
-        async with self._lock.read_lock():
-            vectors = await asyncio.to_thread(self._index.get, keys_array)
-
-        result: dict[int, list[float]] = {}
-        for i, key in enumerate(keys):
-            vector = vectors[i] if vectors is not None else None
-            if vector is not None:
-                result[key] = list(vector)
-
-        return result
-
-    @override
     async def remove(self, keys: Iterable[int]) -> None:
         async with self._lock.write_lock():
             await asyncio.to_thread(self._sync_remove, keys)

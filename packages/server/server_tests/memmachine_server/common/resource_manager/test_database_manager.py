@@ -23,6 +23,9 @@ from memmachine_server.common.errors import (
 )
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+from memmachine_server.common.vector_store.collection_registry.sqlalchemy_collection_registry import (
+    SQLAlchemyVectorStoreCollectionRegistryParams,
+)
 
 requires_pymilvus = pytest.mark.skipif(
     importlib.util.find_spec("pymilvus") is None,
@@ -289,14 +292,21 @@ async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted():
 # --- Qdrant ---
 
 
+_REGISTRY_DB = SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path=":memory:")
+
+
 def _qdrant_only_conf() -> MagicMock:
     """Build a DatabasesConf mock with only a Qdrant entry."""
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {}
+    conf.relational_db_confs = {"registry": _REGISTRY_DB}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {
-        "qdrant1": QdrantConf(host="localhost", port=6333),
+        "qdrant1": QdrantConf(
+            collection_registry="registry",
+            host="localhost",
+            port=6333,
+        ),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -308,6 +318,7 @@ async def test_qdrant_client_kwargs_forwarded():
     """host, port, grpc_port, prefer_grpc, and https are forwarded to AsyncQdrantClient."""
     conf = _qdrant_only_conf()
     conf.qdrant_confs["qdrant1"] = QdrantConf(
+        collection_registry="registry",
         host="qdrant.example.com",
         port=7333,
         grpc_port=7334,
@@ -342,6 +353,7 @@ async def test_qdrant_client_kwargs_forwarded():
     assert call_kwargs["grpc_port"] == 7334
     assert call_kwargs["prefer_grpc"] is True
     assert call_kwargs["https"] is True
+    assert call_kwargs["timeout"] == 30
     assert call_kwargs["api_key"] == "secret-key"
 
 
@@ -377,7 +389,10 @@ async def test_qdrant_api_key_omitted_when_empty():
 async def test_qdrant_creates_vector_store():
     """async_get_qdrant_client creates a QdrantVectorStore and stores it."""
     conf = _qdrant_only_conf()
-    conf.qdrant_confs["qdrant1"] = QdrantConf(registry_replication_factor=3)
+    conf.qdrant_confs["qdrant1"] = QdrantConf(
+        collection_registry="registry",
+        tombstone_retention_seconds=3600,
+    )
 
     mock_client = AsyncMock()
     mock_client.close = AsyncMock()
@@ -390,18 +405,30 @@ async def test_qdrant_creates_vector_store():
             "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
+            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyVectorStoreCollectionRegistry",
+        ) as mock_registry_cls,
+        patch(
             "qdrant_client.AsyncQdrantClient",
             return_value=mock_client,
         ),
     ):
+        mock_registry_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_qdrant_client("qdrant1")
 
+    mock_registry_cls.assert_called_once_with(
+        SQLAlchemyVectorStoreCollectionRegistryParams(
+            engine=builder.sql_engines["registry"],
+            vector_store_name="qdrant1",
+            tombstone_retention_seconds=3600,
+        )
+    )
+    mock_registry_cls.return_value.startup.assert_awaited_once()
     mock_params_cls.assert_called_once()
     kwargs = mock_params_cls.call_args.kwargs
     assert kwargs["client"] is mock_client
-    assert kwargs["registry_replication_factor"] == 3
+    assert kwargs["collection_registry"] is mock_registry_cls.return_value
     # Asserted as "not None" rather than pinned to a value: OperationTracker
     # accepts None and then discards every timing without error, so passing the
     # keyword is not the property that matters - passing a factory is.
@@ -409,6 +436,22 @@ async def test_qdrant_creates_vector_store():
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
     assert "qdrant1" in builder.vector_stores
+
+
+@pytest.mark.asyncio
+async def test_qdrant_client_is_not_opened_when_the_registry_database_is_unknown():
+    """The registry database is resolved before the client is opened, so a
+    bad collection_registry leaves no client behind."""
+    conf = _qdrant_only_conf()
+    conf.qdrant_confs["qdrant1"] = QdrantConf(collection_registry="missing")
+
+    with patch("qdrant_client.AsyncQdrantClient") as mock_cls:
+        builder = DatabaseManager(conf)
+        with pytest.raises(ValueError, match="missing"):
+            await builder.async_get_qdrant_client("qdrant1")
+
+    mock_cls.assert_not_called()
+    assert "qdrant1" not in builder.qdrant_clients
 
 
 @pytest.mark.asyncio
