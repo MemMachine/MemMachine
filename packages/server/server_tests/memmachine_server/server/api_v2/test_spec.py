@@ -232,6 +232,13 @@ def test_search_memories_spec():
     assert spec.types == []
 
 
+@pytest.mark.parametrize("top_k", [0, -1])
+def test_search_memories_spec_refuses_a_top_k_that_is_not_positive(top_k):
+    with pytest.raises(ValidationError) as exc_info:
+        SearchMemoriesSpec.model_validate({"query": "Find this", "top_k": top_k})
+    assert_pydantic_errors(exc_info, {"top_k": "greater_than"})
+
+
 def test_search_memories_spec_with_set_metadata():
     spec = SearchMemoriesSpec.model_validate(
         {

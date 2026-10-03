@@ -108,11 +108,10 @@ class EventMemory:
     """Event memory system."""
 
     # System-defined metadata field names. Reserved.
-    _SEGMENT_UUID_FIELD_NAME = "_segment_uuid"
     _TIMESTAMP_FIELD_NAME = "_timestamp"
 
     _BASE_EVENT_MEMORY_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {_SEGMENT_UUID_FIELD_NAME, _TIMESTAMP_FIELD_NAME}
+        {_TIMESTAMP_FIELD_NAME}
     )
 
     @classmethod
@@ -124,7 +123,6 @@ class EventMemory:
         when creating the collection so that EventMemory's reserved fields are efficiently filterable.
         """
         return {
-            cls._SEGMENT_UUID_FIELD_NAME: cast(type[PropertyValue], str),
             cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
         }
 
@@ -325,7 +323,6 @@ class EventMemory:
         properties: dict[str, PropertyValue] = {}
 
         # System-defined metadata (underscore-prefixed).
-        properties[cls._SEGMENT_UUID_FIELD_NAME] = str(derivative.segment_uuid)
         properties[cls._TIMESTAMP_FIELD_NAME] = derivative.timestamp
 
         # User-defined properties.
@@ -424,24 +421,24 @@ class EventMemory:
             query_vectors=[query_embedding],
             limit=vector_search_limit,
             property_filter=collection_filter,
-            return_vector=False,
-            return_properties=True,
         )
         t_vector_query = time.monotonic()
+
+        segments_by_derivatives = (
+            await self._segment_store_partition.get_segment_uuids_by_derivative_uuids(
+                match.record_uuid for match in query_result.matches
+            )
+        )
 
         # Extract seed segment UUIDs and their best embedding scores.
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
         # First occurrence has the best score since matches are ordered best-to-worst.
         seed_embedding_scores: dict[UUID, float] = {}
         for match in query_result.matches:
-            segment_uuid = UUID(
-                str(
-                    cast(
-                        dict[str, PropertyValue],
-                        match.record.properties,
-                    )[EventMemory._SEGMENT_UUID_FIELD_NAME]
-                )
-            )
+            segment_uuid = segments_by_derivatives.get(match.record_uuid)
+            if segment_uuid is None:
+                # The derivative's segment is gone; its vector outlived it.
+                continue
             if segment_uuid not in seed_embedding_scores:
                 seed_embedding_scores[segment_uuid] = match.score
 

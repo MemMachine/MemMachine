@@ -52,7 +52,15 @@ from .data_types import (
     VectorStoreCollectionConfig,
     VectorStoreCollectionConfigMismatchError,
 )
-from .utils import validate_filter, validate_identifier
+from .utils import (
+    require_declared_types,
+    require_dimensions,
+    require_identifiers,
+    require_valid_limit,
+    require_valid_query_vector,
+    require_valid_score_threshold,
+    validate_filter,
+)
 from .vector_store import VectorStore, VectorStoreCollection
 
 # Point payload keys (stored on every Qdrant point).
@@ -252,42 +260,18 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
 
     def _build_payload(
         self,
-        properties: dict[str, PropertyValue] | None,
+        properties: dict[str, PropertyValue],
     ) -> dict[str, PropertyValue]:
         """Build Qdrant-compatible payload from record properties."""
         payload: dict[str, PropertyValue] = {
             _PAYLOAD_PARTITION_KEY: self._partition_key,
         }
-        if properties:
-            for key, value in properties.items():
-                if value is None:
-                    continue
-                if isinstance(value, datetime):
-                    payload[key] = ensure_tz_aware(value)
-                else:
-                    payload[key] = value
-        return payload
-
-    def _parse_payload(
-        self,
-        payload: dict[str, Any] | None,
-    ) -> dict[str, PropertyValue] | None:
-        """Parse record properties from Qdrant payload."""
-        if payload is None:
-            return None
-
-        indexed_properties_schema = self._config.indexed_properties_schema
-        result: dict[str, PropertyValue] = {}
-        for key, value in payload.items():
-            if key == _PAYLOAD_PARTITION_KEY or value is None:
-                continue
-            if indexed_properties_schema.get(key) is datetime and isinstance(
-                value, str
-            ):
-                result[key] = datetime.fromisoformat(value)
+        for key, value in properties.items():
+            if isinstance(value, datetime):
+                payload[key] = ensure_tz_aware(value)
             else:
-                result[key] = cast(PropertyValue, value)
-        return result
+                payload[key] = value
+        return payload
 
     @override
     async def upsert(
@@ -297,20 +281,20 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
     ) -> None:
         """Upsert records into the collection."""
         async with self._tracker("upsert"):
-            points: list[models.PointStruct] = []
+            records = list(records)
             for record in records:
-                if record.vector is None:
-                    raise ValueError(
-                        f"Record {record.uuid} has vector=None, which is not allowed on input."
-                    )
-                properties = record.properties if record.properties is not None else {}
-                points.append(
-                    models.PointStruct(
-                        id=record.uuid,
-                        vector=record.vector,
-                        payload=self._build_payload(properties),
-                    )
+                require_declared_types(
+                    record.properties, self._config.indexed_properties_schema
                 )
+                require_dimensions(record.vector, self._config.vector_dimensions)
+            points = [
+                models.PointStruct(
+                    id=record.uuid,
+                    vector=record.vector,
+                    payload=self._build_payload(record.properties),
+                )
+                for record in records
+            ]
             if points:
                 await self._upsert_with_backoff(points)
 
@@ -337,19 +321,21 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
         limit: int,
         score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
         """Query for records matching the criteria by query vectors."""
         async with self._tracker("query"):
             query_vectors = [list(query_vector) for query_vector in query_vectors]
+            for query_vector in query_vectors:
+                require_valid_query_vector(query_vector, self._config.vector_dimensions)
+            require_valid_score_threshold(score_threshold)
+            require_valid_limit(limit)
+            if property_filter is not None and not validate_filter(property_filter):
+                raise ValueError("Filter contains an invalid property key")
             if not query_vectors:
                 return []
 
             partition_key_filter = _partition_filter(self._partition_key)
             if property_filter:
-                if not validate_filter(property_filter):
-                    raise ValueError("Filter contains an invalid property key")
                 property_qdrant_filter = (
                     QdrantVectorStoreCollection._build_qdrant_filter(property_filter)
                 )
@@ -365,8 +351,8 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
                     filter=qdrant_filter,
                     score_threshold=score_threshold,
                     limit=limit,
-                    with_vector=return_vector,
-                    with_payload=return_properties,
+                    with_vector=False,
+                    with_payload=False,
                 )
                 for query_vector in query_vectors
             ]
@@ -376,87 +362,15 @@ class QdrantVectorStoreCollection(VectorStoreCollection):
                 requests=requests,
             )
 
-            query_results: list[QueryResult] = []
-            for batch in batch_results:
-                matches: list[QueryMatch] = []
-                for point in batch.points:
-                    vector: list[float] | None = None
-                    if return_vector and point.vector is not None:
-                        vector = cast(list[float], point.vector)
-
-                    properties: dict[str, PropertyValue] | None = None
-                    if return_properties and point.payload is not None:
-                        properties = self._parse_payload(point.payload)
-
-                    matches.append(
-                        QueryMatch(
-                            score=point.score,
-                            record=Record(
-                                uuid=UUID(str(point.id)),
-                                vector=vector,
-                                properties=properties,
-                            ),
-                        ),
-                    )
-                query_results.append(QueryResult(matches=matches))
-
-            return query_results
-
-    @override
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        """Get records from the collection by their UUIDs."""
-        async with self._tracker("get"):
-            uuid_list = list(record_uuids)
-            if not uuid_list:
-                return []
-
-            # Always get payload so we can check partition_key.
-            points = await self._client.retrieve(
-                collection_name=self._collection_name,
-                ids=list(uuid_list),
-                with_vectors=return_vector,
-                with_payload=True,
-            )
-
-            points_by_uuid: dict[UUID, models.Record] = {
-                UUID(str(point.id)): point
-                for point in points
-                if point.payload
-                and cast(dict[str, Any], point.payload).get(_PAYLOAD_PARTITION_KEY)
-                == self._partition_key
-            }
-
-            records: list[Record] = []
-            for point_uuid in uuid_list:
-                point = points_by_uuid.get(point_uuid)
-                if point is None:
-                    continue
-
-                vector: list[float] | None = None
-                if return_vector and point.vector is not None:
-                    vector = cast(list[float], point.vector)
-
-                properties: dict[str, PropertyValue] | None = None
-                if return_properties and point.payload is not None:
-                    properties = self._parse_payload(
-                        cast(dict[str, Any] | None, point.payload),
-                    )
-
-                records.append(
-                    Record(
-                        uuid=point_uuid,
-                        vector=vector,
-                        properties=properties,
-                    ),
+            return [
+                QueryResult(
+                    matches=[
+                        QueryMatch(score=point.score, record_uuid=UUID(str(point.id)))
+                        for point in batch.points
+                    ]
                 )
-
-            return records
+                for batch in batch_results
+            ]
 
     @override
     async def delete(
@@ -521,7 +435,13 @@ class QdrantVectorStoreParams(BaseModel):
 
 
 class QdrantVectorStore(VectorStore):
-    """Asynchronous Qdrant-based implementation of VectorStore."""
+    """
+    Asynchronous Qdrant-based implementation of VectorStore.
+
+    One process at a time may manage a given collection. A handle used
+    after its collection is deleted acts on a collection created again
+    under its (namespace, name).
+    """
 
     _SIMILARITY_METRIC_TO_QDRANT_DISTANCE: ClassVar[
         dict[SimilarityMetric, models.Distance]
@@ -798,14 +718,7 @@ class QdrantVectorStore(VectorStore):
         config: VectorStoreCollectionConfig,
     ) -> None:
         """Create a logical collection in the Qdrant vector store."""
-        if not validate_identifier(namespace):
-            raise ValueError(
-                f"Namespace {namespace!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
-        if not validate_identifier(name):
-            raise ValueError(
-                f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
+        require_identifiers(namespace, name)
         async with (
             self._client_name_locks[(namespace, name)],
             self._tracker("create_collection"),
@@ -825,14 +738,7 @@ class QdrantVectorStore(VectorStore):
         config: VectorStoreCollectionConfig,
     ) -> QdrantVectorStoreCollection:
         """Open the collection if it exists, or create and return it."""
-        if not validate_identifier(namespace):
-            raise ValueError(
-                f"Namespace {namespace!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
-        if not validate_identifier(name):
-            raise ValueError(
-                f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
+        require_identifiers(namespace, name)
         async with (
             self._client_name_locks[(namespace, name)],
             self._tracker("open_or_create_collection"),
@@ -856,14 +762,7 @@ class QdrantVectorStore(VectorStore):
         self, *, namespace: str, name: str
     ) -> QdrantVectorStoreCollection | None:
         """Get a collection handle from the vector store."""
-        if not validate_identifier(namespace):
-            raise ValueError(
-                f"Namespace {namespace!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
-        if not validate_identifier(name):
-            raise ValueError(
-                f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
+        require_identifiers(namespace, name)
         entry = await self._get_registry_entry(namespace, name)
         if entry is None:
             return None
@@ -872,20 +771,9 @@ class QdrantVectorStore(VectorStore):
         )
 
     @override
-    async def close_collection(self, *, collection: VectorStoreCollection) -> None:
-        """No-op; Qdrant collection handles require no explicit close."""
-
-    @override
     async def delete_collection(self, *, namespace: str, name: str) -> None:
         """Delete a logical collection from the Qdrant vector store."""
-        if not validate_identifier(namespace):
-            raise ValueError(
-                f"Namespace {namespace!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
-        if not validate_identifier(name):
-            raise ValueError(
-                f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes"
-            )
+        require_identifiers(namespace, name)
         async with (
             self._client_name_locks[(namespace, name)],
             self._tracker("delete_collection"),
@@ -916,3 +804,8 @@ class QdrantVectorStore(VectorStore):
                 ),
                 wait=True,
             )
+
+    @override
+    async def purge_deleted_collections(self) -> bool:
+        # delete_collection deletes the points itself.
+        return False
