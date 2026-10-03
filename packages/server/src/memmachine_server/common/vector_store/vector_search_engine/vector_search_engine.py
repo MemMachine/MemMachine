@@ -11,16 +11,13 @@ class SearchMatch:
     A single search match.
 
     Attributes:
-        score (float):
-            The meaning depends on the collection's `SimilarityMetric`:
-            - *cosine*: cosine similarity in [-1, 1].
-            - *dot*: raw dot product [0, inf).
-            - *euclidean*: Euclidean distance [0, inf).
-            - *manhattan*: Manhattan distance [0, inf).
+        cosine_similarity (float):
+            Cosine similarity between the query vector and the matched
+            vector, in [-1, 1]. Higher is a better match.
         key (int): Engine key for the matched vector.
     """
 
-    score: float
+    cosine_similarity: float
     key: int
 
 
@@ -90,21 +87,6 @@ class VectorSearchEngine(ABC):
             list[SearchResult]:
                 Results for each query vector,
                 ordered as in the input iterable.
-        """
-
-    @abstractmethod
-    async def get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        """
-        Retrieve vectors by key.
-
-        Args:
-            keys (Iterable[int]):
-                Keys of vectors to retrieve.
-
-        Returns:
-            dict[int, list[float]]:
-                Mapping of key to vector for keys that exist.
-                Missing keys are omitted.
         """
 
     @abstractmethod
