@@ -18,7 +18,6 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
-    demangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
@@ -157,15 +156,6 @@ class EventBackendParams(BaseModel):
             "it the tracker discards every timing it takes, silently."
         ),
     )
-    user_property_keys: frozenset[str] = Field(
-        default_factory=frozenset,
-        description=(
-            "Configured user-property names (from properties_schema). When "
-            "non-empty, filter expressions on `m.<key>` are validated against "
-            "this set; empty means no validation (any user-metadata key "
-            "accepted)."
-        ),
-    )
 
 
 LongTermMemoryParams = Annotated[
@@ -199,11 +189,6 @@ class LongTermMemory:
         # is lower-is-better). Used to apply `score_threshold` in the correct
         # direction so it doesn't invert under euclidean with no reranker.
         self._score_higher_is_better: bool = True
-        # Event backend only: configured user-property names from
-        # properties_schema. Empty means "no validation"; non-empty means the
-        # set is closed and filter expressions referencing `m.<unknown>` raise
-        # ValueError at the LongTermMemory layer.
-        self._user_property_keys: frozenset[str] = frozenset()
         self._session_id: str = params.session_id
 
         match params:
@@ -238,7 +223,6 @@ class LongTermMemory:
                     params.reranker is not None
                     or params.vector_store_collection.config.similarity_metric.higher_is_better
                 )
-                self._user_property_keys = params.user_property_keys
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
@@ -270,7 +254,14 @@ class LongTermMemory:
         the threshold; lower-is-better metrics (raw euclidean / manhattan with
         no reranker) drop scores ABOVE it. Avoids the prior `-inf` sentinel,
         which silently inverted to "drop everything" under euclidean.
+
+        A `num_episodes_limit` that is not positive asks for nothing, and is
+        refused with ValueError before the query is embedded.
         """
+        if not num_episodes_limit > 0:
+            raise ValueError(
+                f"num_episodes_limit is not positive: {num_episodes_limit}"
+            )
         if self._backend == "declarative":
             return await self._search_scored_declarative(
                 query,
@@ -333,9 +324,9 @@ class LongTermMemory:
         # splitting segmenter the same window covers fewer episodes, the ones
         # its segments belong to. The window can never exceed the remaining
         # quota in either unit (a segment belongs to one episode; declarative
-        # parity), and can never go negative: with `num_episodes_limit == 0`
-        # the quota clamp on its own would ask the segment store for a window
-        # of -1, which the SegmentStorePartition contract does not define.
+        # parity), and can never go negative: a negative `expand_context`
+        # would ask the segment store for a negative window, which the
+        # SegmentStorePartition contract does not define.
         expand_context = max(0, min(expand_context, num_episodes_limit - 1))
         # Over-fetch from EventMemory: the per-segment results can have many
         # segments per episode under non-passthrough segmenters, and we dedup
@@ -608,32 +599,17 @@ class LongTermMemory:
         self,
         property_filter: FilterExpr | None,
     ) -> None:
-        """Reject filter fields not known to the event-backend schema.
+        """Reject bare filter fields that name no system field.
 
-        Bare names are matched against system-defined fields
-        (`_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES`); `m.<key>` / `metadata.<key>`
-        names are matched against `user_property_keys`, if non-empty.
-
-        Validation lives here rather than in the segment store / vector store
-        because this is the only layer that knows both the system field set
-        and the configured user `properties_schema`. The stores themselves
-        treat unknown property keys as empty matches (correct generic JSON
-        semantics) — without this check a typo'd filter field would silently
-        return zero results.
+        A `m.<key>` / `metadata.<key>` name may be any caller key; a bare
+        name is a system field or a mistake.
         """
         if property_filter is None:
             return
 
         def _check(field: str) -> str:
-            internal_name, is_user_metadata = normalize_filter_field(field)
+            _internal_name, is_user_metadata = normalize_filter_field(field)
             if is_user_metadata:
-                key = demangle_user_metadata_key(internal_name)
-                if self._user_property_keys and key not in self._user_property_keys:
-                    raise ValueError(
-                        f"Unknown user-metadata filter field {field!r}. "
-                        "Configured user properties: "
-                        f"{sorted(self._user_property_keys)}"
-                    )
                 return field
             if field not in _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES:
                 raise ValueError(

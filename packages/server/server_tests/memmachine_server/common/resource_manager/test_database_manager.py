@@ -23,6 +23,9 @@ from memmachine_server.common.errors import (
 )
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+from memmachine_server.common.vector_store.collection_registry.sqlalchemy_collection_registry import (
+    SQLAlchemyVectorStoreCollectionRegistryParams,
+)
 
 requires_pymilvus = pytest.mark.skipif(
     importlib.util.find_spec("pymilvus") is None,
@@ -289,14 +292,21 @@ async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted():
 # --- Qdrant ---
 
 
+_REGISTRY_DB = SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path=":memory:")
+
+
 def _qdrant_only_conf() -> MagicMock:
     """Build a DatabasesConf mock with only a Qdrant entry."""
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {}
+    conf.relational_db_confs = {"registry": _REGISTRY_DB}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {
-        "qdrant1": QdrantConf(host="localhost", port=6333),
+        "qdrant1": QdrantConf(
+            collection_registry="registry",
+            host="localhost",
+            port=6333,
+        ),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -308,6 +318,7 @@ async def test_qdrant_client_kwargs_forwarded():
     """host, port, grpc_port, prefer_grpc, and https are forwarded to AsyncQdrantClient."""
     conf = _qdrant_only_conf()
     conf.qdrant_confs["qdrant1"] = QdrantConf(
+        collection_registry="registry",
         host="qdrant.example.com",
         port=7333,
         grpc_port=7334,
@@ -342,6 +353,7 @@ async def test_qdrant_client_kwargs_forwarded():
     assert call_kwargs["grpc_port"] == 7334
     assert call_kwargs["prefer_grpc"] is True
     assert call_kwargs["https"] is True
+    assert call_kwargs["timeout"] == 30
     assert call_kwargs["api_key"] == "secret-key"
 
 
@@ -377,7 +389,10 @@ async def test_qdrant_api_key_omitted_when_empty():
 async def test_qdrant_creates_vector_store():
     """async_get_qdrant_client creates a QdrantVectorStore and stores it."""
     conf = _qdrant_only_conf()
-    conf.qdrant_confs["qdrant1"] = QdrantConf(registry_replication_factor=3)
+    conf.qdrant_confs["qdrant1"] = QdrantConf(
+        collection_registry="registry",
+        tombstone_retention_seconds=3600,
+    )
 
     mock_client = AsyncMock()
     mock_client.close = AsyncMock()
@@ -390,18 +405,30 @@ async def test_qdrant_creates_vector_store():
             "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
+            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyVectorStoreCollectionRegistry",
+        ) as mock_registry_cls,
+        patch(
             "qdrant_client.AsyncQdrantClient",
             return_value=mock_client,
         ),
     ):
+        mock_registry_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_qdrant_client("qdrant1")
 
+    mock_registry_cls.assert_called_once_with(
+        SQLAlchemyVectorStoreCollectionRegistryParams(
+            engine=builder.sql_engines["registry"],
+            vector_store_name="qdrant1",
+            tombstone_retention_seconds=3600,
+        )
+    )
+    mock_registry_cls.return_value.startup.assert_awaited_once()
     mock_params_cls.assert_called_once()
     kwargs = mock_params_cls.call_args.kwargs
     assert kwargs["client"] is mock_client
-    assert kwargs["registry_replication_factor"] == 3
+    assert kwargs["collection_registry"] is mock_registry_cls.return_value
     # Asserted as "not None" rather than pinned to a value: OperationTracker
     # accepts None and then discards every timing without error, so passing the
     # keyword is not the property that matters - passing a factory is.
@@ -409,6 +436,22 @@ async def test_qdrant_creates_vector_store():
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
     assert "qdrant1" in builder.vector_stores
+
+
+@pytest.mark.asyncio
+async def test_qdrant_client_is_not_opened_when_the_registry_database_is_unknown():
+    """The registry database is resolved before the client is opened, so a
+    bad collection_registry leaves no client behind."""
+    conf = _qdrant_only_conf()
+    conf.qdrant_confs["qdrant1"] = QdrantConf(collection_registry="missing")
+
+    with patch("qdrant_client.AsyncQdrantClient") as mock_cls:
+        builder = DatabaseManager(conf)
+        with pytest.raises(ValueError, match="missing"):
+            await builder.async_get_qdrant_client("qdrant1")
+
+    mock_cls.assert_not_called()
+    assert "qdrant1" not in builder.qdrant_clients
 
 
 @pytest.mark.asyncio
@@ -504,11 +547,13 @@ def _milvus_only_conf() -> MagicMock:
     """Build a DatabasesConf mock with only a Milvus entry."""
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {}
+    conf.relational_db_confs = {"registry": _REGISTRY_DB}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {}
     conf.milvus_confs = {
-        "milvus1": MilvusConf(uri="./milvus.db"),
+        "milvus1": MilvusConf(
+            collection_registry="registry", uri="http://milvus:19530"
+        ),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -518,18 +563,18 @@ def _milvus_only_conf() -> MagicMock:
 @pytest.mark.asyncio
 @requires_pymilvus
 async def test_milvus_client_kwargs_forwarded():
-    """uri, token, and db_name are forwarded to MilvusClient."""
+    """uri, token, and db_name are forwarded to AsyncMilvusClient."""
     conf = _milvus_only_conf()
     conf.milvus_confs["milvus1"] = MilvusConf(
+        collection_registry="registry",
         uri="https://example.zillizcloud.com",
         token=SecretStr("secret-token"),
         db_name="memory",
-        consistency_level="Strong",
     )
 
-    mock_client = MagicMock()
-    mock_client.list_collections.return_value = []
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -538,7 +583,7 @@ async def test_milvus_client_kwargs_forwarded():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client) as mock_cls,
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client) as mock_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
@@ -548,6 +593,7 @@ async def test_milvus_client_kwargs_forwarded():
     assert call_kwargs["uri"] == "https://example.zillizcloud.com"
     assert call_kwargs["token"] == "secret-token"
     assert call_kwargs["db_name"] == "memory"
+    assert call_kwargs["timeout"] == 30
 
 
 @pytest.mark.asyncio
@@ -556,8 +602,8 @@ async def test_milvus_token_and_db_name_omitted_when_empty():
     """Empty auth and database values are not forwarded."""
     conf = _milvus_only_conf()
 
-    mock_client = MagicMock()
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -566,13 +612,30 @@ async def test_milvus_token_and_db_name_omitted_when_empty():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client) as mock_cls,
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client) as mock_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_milvus_client("milvus1")
 
-    assert mock_cls.call_args.kwargs == {"uri": "./milvus.db"}
+    assert mock_cls.call_args.kwargs == {"uri": "http://milvus:19530", "timeout": 30}
+
+
+@pytest.mark.asyncio
+@requires_pymilvus
+async def test_milvus_client_is_not_opened_when_the_registry_database_is_unknown():
+    """The registry database is resolved before the client is opened, so a
+    bad collection_registry leaves no client behind."""
+    conf = _milvus_only_conf()
+    conf.milvus_confs["milvus1"] = MilvusConf(collection_registry="missing")
+
+    with patch("pymilvus.AsyncMilvusClient") as mock_cls:
+        builder = DatabaseManager(conf)
+        with pytest.raises(ValueError, match="missing"):
+            await builder.async_get_milvus_client("milvus1")
+
+    mock_cls.assert_not_called()
+    assert "milvus1" not in builder.milvus_clients
 
 
 @pytest.mark.asyncio
@@ -580,10 +643,13 @@ async def test_milvus_token_and_db_name_omitted_when_empty():
 async def test_milvus_creates_vector_store():
     """async_get_milvus_client creates a MilvusVectorStore and stores it."""
     conf = _milvus_only_conf()
-    conf.milvus_confs["milvus1"] = MilvusConf(consistency_level="Strong")
+    conf.milvus_confs["milvus1"] = MilvusConf(
+        collection_registry="registry",
+        tombstone_retention_seconds=3600,
+    )
 
-    mock_client = MagicMock()
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -592,15 +658,30 @@ async def test_milvus_creates_vector_store():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyVectorStoreCollectionRegistry",
+        ) as mock_registry_cls,
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
+        mock_registry_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_milvus_client("milvus1")
 
+    mock_registry_cls.assert_called_once_with(
+        SQLAlchemyVectorStoreCollectionRegistryParams(
+            engine=builder.sql_engines["registry"],
+            vector_store_name="milvus1",
+            tombstone_retention_seconds=3600,
+        )
+    )
+    mock_registry_cls.return_value.startup.assert_awaited_once()
     mock_params_cls.assert_called_once_with(
         client=mock_client,
-        consistency_level="Strong",
+        collection_registry=mock_registry_cls.return_value,
+        request_timeout_seconds=30,
+        max_varchar_length=65535,
+        purge_batch_size=10000,
     )
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
@@ -613,9 +694,9 @@ async def test_get_vector_store_milvus():
     """get_vector_store returns the VectorStore for a Milvus config."""
     conf = _milvus_only_conf()
 
-    mock_client = MagicMock()
-    mock_client.list_collections.return_value = []
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -624,7 +705,7 @@ async def test_get_vector_store_milvus():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client),
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
@@ -646,14 +727,14 @@ async def test_milvus_config_not_found():
 @pytest.mark.asyncio
 async def test_milvus_validation_failure():
     """validate_milvus_client raises MilvusConfigurationError on failure."""
-    mock_client = MagicMock()
-    mock_client.list_collections.side_effect = ConnectionError("refused")
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(side_effect=ConnectionError("refused"))
+    mock_client.close = AsyncMock()
 
     with pytest.raises(MilvusConfigurationError, match="failed verification"):
         await DatabaseManager.validate_milvus_client("milvus1", mock_client)
 
-    mock_client.close.assert_called_once()
+    mock_client.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -662,8 +743,8 @@ async def test_milvus_close():
     """close() cleans up Milvus clients and vector stores."""
     conf = _milvus_only_conf()
 
-    mock_client = MagicMock()
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -672,7 +753,7 @@ async def test_milvus_close():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client),
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
@@ -686,7 +767,7 @@ async def test_milvus_close():
 
     assert builder.milvus_clients == {}
     assert builder.vector_stores == {}
-    mock_client.close.assert_called()
+    mock_client.close.assert_awaited()
 
 
 # --- SQLite-backed VectorStores ---

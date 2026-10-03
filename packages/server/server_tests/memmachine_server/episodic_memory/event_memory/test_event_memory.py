@@ -94,7 +94,6 @@ def _ts(minutes: int) -> datetime.datetime:
 class TestSchema:
     def test_expected_vector_store_collection_schema_only_has_base_fields(self):
         assert EventMemory.expected_vector_store_collection_schema() == {
-            "_segment_uuid": str,
             "_timestamp": datetime.datetime,
         }
 
@@ -127,8 +126,12 @@ class TestEncodeEvents:
         assert len(fake_vector_store_collection.records) == 1
         record = next(iter(fake_vector_store_collection.records.values()))
         props = _record_properties(record)
-        assert props["_segment_uuid"] == str(segment.uuid)
         assert props["_timestamp"] == event.timestamp
+        # The segment store maps the derivative to its segment.
+        assert "_segment_uuid" not in props
+        assert await fake_segment_store_partition.get_segment_uuids_by_derivative_uuids(
+            [record.uuid]
+        ) == {record.uuid: segment.uuid}
 
     async def test_producer_context(
         self,
@@ -215,10 +218,7 @@ class TestEncodeEvents:
         config = VectorStoreCollectionConfig(
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
-                "_segment_uuid": str,
-                "_timestamp": datetime.datetime,
-            },
+            indexed_properties_schema={"_timestamp": datetime.datetime},
         )
         collection = InMemoryVectorStoreCollection(config)
         partition = InMemorySegmentStorePartition()
@@ -245,9 +245,6 @@ class TestEncodeEvents:
         config = VectorStoreCollectionConfig(
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
-                "_segment_uuid": str,
-            },
         )
         collection = InMemoryVectorStoreCollection(config)
         partition = InMemorySegmentStorePartition()
