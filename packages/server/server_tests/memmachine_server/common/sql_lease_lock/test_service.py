@@ -435,13 +435,24 @@ async def test_wait_timeout_and_waiter_cancellation(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_context_renews_and_releases(tmp_path: Path) -> None:
+async def test_context_renews_and_releases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async with one_service(tmp_path / "locks.db") as (service, _engine):
         async with service.lock(
-            "resource", lease_duration=timedelta(milliseconds=120)
+            "resource", lease_duration=timedelta(seconds=1)
         ) as lease:
-            await asyncio.sleep(0.3)
-            assert lease.expires_at is not None
+            initial_expiry = lease.expires_at
+            renewed = asyncio.Event()
+            real_renew = lease.renew
+
+            async def observe_renewal() -> None:
+                await real_renew()
+                renewed.set()
+
+            monkeypatch.setattr(lease, "renew", observe_renewal)
+            await asyncio.wait_for(renewed.wait(), timeout=2)
+            assert lease.expires_at > initial_expiry
             assert (
                 await service.try_acquire(
                     "resource", lease_duration=timedelta(seconds=1)
