@@ -488,6 +488,10 @@ class ConfigService:
         config: dict[str, Any],
     ) -> ResourceStatus:
         """Add a new embedder configuration and build it."""
+        self._resource_manager.config.remember_environment_references(
+            config,
+            ("resources", "embedders", name, "config"),
+        )
         embedder_config = _create_embedder_config(provider, config)
         self._resource_manager.embedder_manager.add_embedder_config(
             name, provider, embedder_config
@@ -512,6 +516,10 @@ class ConfigService:
         config: dict[str, Any],
     ) -> ResourceStatus:
         """Add a new language model configuration and build it."""
+        self._resource_manager.config.remember_environment_references(
+            config,
+            ("resources", "language_models", name, "config"),
+        )
         lm_config = _create_language_model_config(provider, config)
         self._resource_manager.language_model_manager.add_language_model_config(
             name, provider, lm_config

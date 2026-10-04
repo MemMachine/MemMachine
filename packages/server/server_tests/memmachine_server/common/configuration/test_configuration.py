@@ -7,7 +7,9 @@ from pydantic import SecretStr
 
 from memmachine_server.common.configuration import (
     Configuration,
+    EpisodeStoreConf,
     EpisodicMemoryConfPartial,
+    SemanticMemoryConf,
 )
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
@@ -211,6 +213,34 @@ def test_save_configuration_to_original_path(tmp_path):
     # Reload and verify
     reloaded = Configuration.load_yml_file(str(temp_config_path))
     assert reloaded.server.port == 9999
+
+
+def test_cache_defaults_are_replica_safe():
+    """Per-process caches must be opt-in because replicas cannot invalidate them."""
+    assert EpisodeStoreConf().with_count_cache is False
+    assert SemanticMemoryConf().with_config_cache is False
+
+
+def test_save_preserves_environment_references(tmp_path, monkeypatch):
+    """Saving a loaded config must not replace placeholders with resolved secrets."""
+    source_path = find_config_file("episodic_memory_config.cpu.sample")
+    source = source_path.read_text(encoding="utf-8")
+    source = source.replace("<YOUR_API_KEY>", "$TEST_CONFIG_API_KEY")
+    source = source.replace("<YOUR_PASSWORD_HERE>", "${TEST_CONFIG_PASSWORD}")
+    config_path = tmp_path / "configuration.yml"
+    config_path.write_text(source, encoding="utf-8")
+    monkeypatch.setenv("TEST_CONFIG_API_KEY", "resolved-api-secret")
+    monkeypatch.setenv("TEST_CONFIG_PASSWORD", "resolved-db-secret")
+
+    conf = Configuration.load_yml_file(str(config_path))
+    conf.server.port = 9999
+    conf.save()
+
+    saved = config_path.read_text(encoding="utf-8")
+    assert "$TEST_CONFIG_API_KEY" in saved
+    assert "${TEST_CONFIG_PASSWORD}" in saved
+    assert "resolved-api-secret" not in saved
+    assert "resolved-db-secret" not in saved
 
 
 def test_save_raises_error_when_no_path():

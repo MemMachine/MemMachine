@@ -49,14 +49,14 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     ```yaml
     episode_store:
       database: profile_storage
-      with_count_cache: true
+      with_count_cache: false
     ```
   </Tab>
   <Tab title="With Comment">
     ```yaml
     episode_store:
       database: profile_storage # ID of the database from 'resources.databases'
-      with_count_cache: true # Enable in-memory episode count caching
+      with_count_cache: false # Enable only for a single server process
     ```
   </Tab>
   </Tabs>
@@ -65,7 +65,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | Parameter | Description                                                                 | Default    |
     |-----------|-----------------------------------------------------------------------------|------------|
     | `database`| The ID of a database defined in `resources.databases` for episode storage.  | *Required* |
-    | `with_count_cache` | Whether to maintain an in-memory cache for session message counts. | `true` |
+    | `with_count_cache` | Whether to maintain an in-memory cache for session message counts. The cache has no cross-process invalidation and is only safe for a single server process. | `false` |
   </Accordion>
   <Accordion title="Episodic Memory">
     Configuration for the episodic memory service, which handles event-based memories.
@@ -183,7 +183,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         embedding_model: my-openai-embedder
         database: my-postgres-db
         config_database: profile_storage
-        with_config_cache: true
+        with_config_cache: false
         ingestion_trigger_messages: 5
         ingestion_trigger_age: 00:05:00
       ```
@@ -196,7 +196,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         embedding_model: my-openai-embedder # ID of the Embedder from 'resources.embedders'
         database: my-postgres-db # ID of the database from 'resources.databases'
         config_database: profile_storage # ID of the database to store semantic configs
-        with_config_cache: true # Whether to use in-memory semantic config caching
+        with_config_cache: false # Enable only for a single server process
         ingestion_trigger_messages: 5 # Number of un-ingested messages before ingestion runs
         ingestion_trigger_age: 00:05:00 # Time (HH:MM:SS) before ingestion runs when messages are pending
       ```
@@ -211,7 +211,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `embedding_model`   | The ID of an embedder defined in `resources.embedders` for creating embeddings. Required when semantic memory is enabled. | `null` |
     | `database`          | The ID of a database defined in `resources.databases` for semantic storage. Required when semantic memory is enabled. | `null` |
     | `config_database`   | The ID of a SQL database used for semantic configuration metadata. Required when semantic memory is enabled. | `null` |
-    | `with_config_cache` | Whether to use an in-memory cache for semantic memory configurations. | `true` |
+    | `with_config_cache` | Whether to use an in-memory cache for semantic memory configurations. The cache has no cross-process invalidation and is only safe for a single server process. | `false` |
     | `ingestion_trigger_messages` | Number of pending messages before semantic ingestion triggers. | `5` |
     | `ingestion_trigger_age` | Max age of pending messages before ingestion triggers (duration in HH:MM:SS). | `00:05:00` |
   </Accordion>

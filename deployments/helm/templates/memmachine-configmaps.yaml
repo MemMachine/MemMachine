@@ -21,7 +21,9 @@ metadata:
 data:
   configuration.yml: |
     logging:
-      path: /app/data/memmachine.log
+      # Kubernetes collects stdout/stderr per pod. A shared file is unsafe
+      # when more than one replica writes through a plain FileHandler.
+      path: ""
       level: info
 
     episode_store:

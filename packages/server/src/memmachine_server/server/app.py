@@ -46,6 +46,12 @@ from memmachine_server.server.middleware import (
 logger = logging.getLogger(__name__)
 
 
+def _config_api_enabled() -> bool:
+    """Return whether the explicitly opt-in runtime configuration API is enabled."""
+    value = os.getenv("MEMMACHINE_CONFIG_API", "")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class MemMachineAPI(FastAPI):
     """MemMachine API wrapper."""
 
@@ -90,9 +96,11 @@ class MemMachineAPI(FastAPI):
         return cast(ExceptionHandler, handler)
 
 
+_CONFIG_API_LOADED_AT_IMPORT = _config_api_enabled()
+
 app = MemMachineAPI(
     lifespan=mcp_http_lifespan,
-    with_config_api=bool(os.getenv("MEMMACHINE_CONFIG_API")),
+    with_config_api=_CONFIG_API_LOADED_AT_IMPORT,
 )
 app.add_middleware(cast(type, AccessLogMiddleware))
 app.add_middleware(cast(type, RequestMetricsMiddleware))
@@ -102,7 +110,7 @@ def start_http() -> None:
     """Run the FastAPI HTTP application using the uvicorn server."""
     # For the single-worker case, the module-level `app` was created before
     # main() set the env var. Include the config router explicitly here.
-    if os.getenv("MEMMACHINE_CONFIG_API"):
+    if _config_api_enabled() and not _CONFIG_API_LOADED_AT_IMPORT:
         from memmachine_server.server.api_v2.config_router import config_router
 
         app.include_router(config_router, prefix="/api/v2")
