@@ -740,7 +740,9 @@ async def test_add_episodes_single_entry_replaces_supplied_uid(
         target_memories=[],
     )
 
-    stored_entries = episode_storage.add_episodes.await_args.args[1]
+    store_call = episode_storage.add_episodes.await_args
+    assert store_call is not None
+    stored_entries = store_call.args[1]
     assert result == [minted_uid]
     assert stored_entries[0].uid == minted_uid
 
