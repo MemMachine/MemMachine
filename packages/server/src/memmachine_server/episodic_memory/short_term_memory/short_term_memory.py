@@ -642,7 +642,7 @@ class ShortTermMemoryConsolidator:
                 await self._data_manager.save_short_term_memory(
                     self._session_key,
                     new_summary,
-                    len(episodes),
+                    0,
                     len(episodes),
                 )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:

@@ -512,6 +512,28 @@ class TestSessionMemoryPublicAPI:
 
         assert await consolidator.summary == "summary:0123456789"
 
+    @pytest.mark.asyncio
+    async def test_summary_persists_zero_last_seq(self, mock_model, mock_data_manager):
+        params = ShortTermMemoryConsolidator.Params(
+            summary_user_prompt="User prompt: {episodes} {summary} {max_length}",
+            summary_system_prompt="System Prompt",
+            max_summary_length_words=100,
+            session_key="test_session",
+            model=mock_model,
+            data_manager=mock_data_manager,
+        )
+        consolidator = ShortTermMemoryConsolidator(params)
+
+        await consolidator._create_summary(
+            "",
+            [
+                create_test_episode(content="first"),
+                create_test_episode(content="second"),
+            ],
+        )
+
+        assert mock_data_manager.data["test_session"][1:] == (0, 2)
+
     async def test_close(self, memory):
         """Test closing the memory."""
         await memory.add_episodes([create_test_episode(content="test")])

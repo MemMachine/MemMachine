@@ -8,7 +8,6 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 from pydantic import JsonValue
-from sqlalchemy import inspect, text
 
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
@@ -192,59 +191,6 @@ async def test_add_episodes_preserves_ids(
         assert retrieved.uid == stored[0].uid
     finally:
         await episode_storage.delete_episodes([entry.uid for entry in entries])
-
-
-@pytest.mark.asyncio
-async def test_startup_removes_legacy_sequence_schema(sqlalchemy_sqlite_engine):
-    async with sqlalchemy_sqlite_engine.begin() as conn:
-        await conn.execute(
-            text(
-                "CREATE TABLE episodestore (uid CHAR(32) PRIMARY KEY, "
-                "sequence_num BIGINT NOT NULL UNIQUE, content VARCHAR NOT NULL, "
-                "session_key VARCHAR NOT NULL, producer_id VARCHAR NOT NULL, "
-                "producer_role VARCHAR NOT NULL, produced_for_id VARCHAR, "
-                "episode_type VARCHAR, metadata JSON NOT NULL, "
-                "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-            )
-        )
-        await conn.execute(
-            text(
-                "CREATE TABLE episode_sequence_counter "
-                "(id INTEGER PRIMARY KEY, next_value BIGINT NOT NULL)"
-            )
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO episodestore "
-                "(uid, sequence_num, content, session_key, producer_id, producer_role, "
-                "episode_type, metadata) VALUES "
-                "('00000000000040008000000000000001', 7, 'before upgrade', "
-                "'upgraded', 'user', 'user', 'MESSAGE', '{}')"
-            )
-        )
-
-    store = SqlAlchemyEpisodeStore(sqlalchemy_sqlite_engine)
-    await store.startup()
-    async with sqlalchemy_sqlite_engine.begin() as conn:
-        columns = await conn.run_sync(
-            lambda sync_conn: {
-                column["name"]
-                for column in inspect(sync_conn).get_columns("episodestore")
-            }
-        )
-        tables = await conn.run_sync(
-            lambda sync_conn: inspect(sync_conn).get_table_names()
-        )
-    assert "sequence_num" not in columns
-    assert "episode_sequence_counter" not in tables
-    previous = await store.get_episode(UUID("00000000-0000-4000-8000-000000000001"))
-    assert previous is not None
-    assert previous.content == "before upgrade"
-
-    entry = EpisodeEntry(
-        content="after upgrade", producer_id="user", producer_role="user"
-    )
-    assert (await store.add_episodes("upgraded", [entry]))[0].uid == entry.uid
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 from asyncio import Task
-from collections.abc import Callable, Coroutine, Iterable, Mapping
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 from uuid import UUID, uuid4
@@ -75,6 +75,25 @@ logger = logging.getLogger(__name__)
 
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
 EPISODE_DELETE_BATCH_SIZE: Final[int] = 1000
+
+
+def _raise_add_episode_errors(
+    task_names: Sequence[str], results: Sequence[object], episode_ids: list[UUID]
+) -> None:
+    """Log every failed write and propagate the first failure."""
+    first_error: BaseException | None = None
+    for task_name, result in zip(task_names, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.error(
+                "Failed to add episodes %s to %s",
+                episode_ids,
+                task_name,
+                exc_info=(type(result), result, result.__traceback__),
+            )
+            if first_error is None:
+                first_error = result
+    if first_error is not None:
+        raise first_error
 
 
 class MemMachine:
@@ -705,7 +724,7 @@ class MemMachine:
             and self._conf.semantic_memory.enabled
         )
 
-    async def add_episodes(  # noqa: C901
+    async def add_episodes(
         self,
         session_data: InstanceOf[SessionData],
         episode_entries: list[EpisodeEntry],
@@ -729,16 +748,12 @@ class MemMachine:
             return []
         created_at = datetime.now(UTC)
         # UUID order preserves input order within a batch when timestamps tie.
-        batch_ids = (
-            sorted(uuid4() for _ in episode_entries)
-            if len(episode_entries) > 1
-            else None
-        )
+        batch_ids = sorted(uuid4() for _ in episode_entries)
         episode_entries = [
             entry.model_copy(
                 update={
                     "created_at": entry.created_at or created_at,
-                    "uid": batch_ids[index] if batch_ids is not None else entry.uid,
+                    "uid": batch_ids[index],
                 }
             )
             for index, entry in enumerate(episode_entries)
@@ -798,24 +813,10 @@ class MemMachine:
             )
             task_names.append("semantic memory")
 
-        # TODO: These writes run in parallel without a shared transaction. If
-        # one backend fails after another succeeds, episode storage and memory
-        # can diverge. Making the operation atomic requires coordinated commits
-        # or rollback across the backends.
+        # TODO(#1738): Track write intent so partial failures across these
+        # parallel backends can be detected and repaired.
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        first_error: BaseException | None = None
-        for task_name, result in zip(task_names, results, strict=True):
-            if isinstance(result, BaseException):
-                logger.error(
-                    "Failed to add episodes %s to %s",
-                    episode_ids,
-                    task_name,
-                    exc_info=(type(result), result, result.__traceback__),
-                )
-                if first_error is None:
-                    first_error = result
-        if first_error is not None:
-            raise first_error
+        _raise_add_episode_errors(task_names, results, episode_ids)
 
         return episode_ids
 

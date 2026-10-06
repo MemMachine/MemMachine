@@ -265,6 +265,7 @@ class SemanticService:
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
     ) -> None:
+        """Register an episode; ``registered_at`` is a test clock override."""
         assert len(set_ids) == len(set(set_ids))
         if not set_ids:
             return

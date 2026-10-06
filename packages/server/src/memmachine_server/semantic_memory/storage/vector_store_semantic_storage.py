@@ -22,9 +22,7 @@ from sqlalchemy import (
     Table,
     delete,
     insert,
-    inspect,
     select,
-    text,
     union,
     update,
 )
@@ -197,23 +195,6 @@ class VectorStoreSemanticStorage(SemanticStorage):
     async def startup(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseVectorSemanticStorage.metadata.create_all)
-            columns = await conn.run_sync(
-                lambda sync_conn: {
-                    column["name"]
-                    for column in inspect(sync_conn).get_columns(
-                        "vector_semantic_set_ingested_history"
-                    )
-                }
-            )
-            for legacy_column in ("batch_position", "sequence_num"):
-                if legacy_column not in columns:
-                    continue
-                await conn.execute(
-                    text(
-                        "ALTER TABLE vector_semantic_set_ingested_history "
-                        f"DROP COLUMN {legacy_column}"
-                    )
-                )
 
     async def cleanup(self) -> None:
         await self._engine.dispose()

@@ -7,8 +7,6 @@ from datetime import UTC
 from typing import Any, TypeVar, overload
 from uuid import UUID
 
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from pydantic import (
     AwareDatetime,
     validate_call,
@@ -23,14 +21,11 @@ from sqlalchemy import (
     delete,
     func,
     insert,
-    inspect,
     select,
-    text,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
@@ -180,33 +175,10 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
                         )
 
                 await conn.run_sync(BaseEpisodeStore.metadata.create_all)
-                columns = await conn.run_sync(
-                    lambda sync_conn: {
-                        column["name"]
-                        for column in inspect(sync_conn).get_columns("episodestore")
-                    }
-                )
-                if "sequence_num" in columns:
-                    if conn.dialect.name == "sqlite":
-                        await conn.run_sync(self._remove_sqlite_sequence_column)
-                    else:
-                        await conn.execute(
-                            text("ALTER TABLE episodestore DROP COLUMN sequence_num")
-                        )
-                await conn.execute(
-                    text("DROP TABLE IF EXISTS episode_sequence_counter")
-                )
         except (OperationalError, socket.gaierror) as err:
             raise ConfigurationError(
                 "Failed to connect to the database during startup, please check your configuration."
             ) from err
-
-    @staticmethod
-    def _remove_sqlite_sequence_column(sync_conn: Connection) -> None:
-        """Rebuild the table because SQLite cannot drop a unique column."""
-        operations = Operations(MigrationContext.configure(sync_conn))
-        with operations.batch_alter_table("episodestore", recreate="always") as batch:
-            batch.drop_column("sequence_num")
 
     async def delete_all(self) -> None:
         async with self._create_session() as session:

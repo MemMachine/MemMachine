@@ -642,9 +642,11 @@ async def test_query_search_skips_unrequested_memories(
 
 @pytest.mark.asyncio
 async def test_add_episodes_dispatches_same_id_to_all_backends(
-    minimal_conf, patched_resource_manager
+    minimal_conf, patched_resource_manager, monkeypatch
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    minted_uid = _uid("minted")
+    monkeypatch.setattr("memmachine_server.main.memmachine.uuid4", lambda: minted_uid)
     session = DummySessionData("session-42")
     created_at = datetime(2026, 1, 2, tzinfo=UTC)
 
@@ -702,12 +704,45 @@ async def test_add_episodes_dispatches_same_id_to_all_backends(
     store_call = episode_storage.add_episodes.await_args
     assert store_call is not None
     assert store_call.args[0] == session.session_key
-    assert [entry.uid for entry in store_call.args[1]] == [entries[0].uid]
-    episodic_session.add_memory_episodes.assert_awaited_once_with(episodes)
+    assert [entry.uid for entry in store_call.args[1]] == [minted_uid]
+    expected_episodes = [episodes[0].model_copy(update={"uid": minted_uid})]
+    episodic_session.add_memory_episodes.assert_awaited_once_with(expected_episodes)
     semantic_manager.add_message.assert_awaited_once_with(
-        episodes=episodes,
+        episodes=expected_episodes,
         session_data=session,
     )
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_single_entry_replaces_supplied_uid(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    supplied_uid = _uid("supplied")
+    minted_uid = _uid("minted")
+    monkeypatch.setattr("memmachine_server.main.memmachine.uuid4", lambda: minted_uid)
+
+    result = await memmachine.add_episodes(
+        DummySessionData("single"),
+        [
+            EpisodeEntry(
+                uid=supplied_uid,
+                content="hello",
+                producer_id="user",
+                producer_role="user",
+            )
+        ],
+        target_memories=[],
+    )
+
+    stored_entries = episode_storage.add_episodes.await_args.args[1]
+    assert result == [minted_uid]
+    assert stored_entries[0].uid == minted_uid
 
 
 @pytest.mark.asyncio
@@ -822,12 +857,12 @@ async def test_add_episodes_writes_to_all_backends_concurrently(
         release.set()
         episode_ids = await add_task
 
-    assert episode_ids == [entries[0].uid]
+    assert episode_ids == [stored_entries[0].uid]
     assert stored_entries[0].created_at is not None
     assert stored_entries[0].created_at == episodic_episodes[0].created_at
     assert stored_entries[0].created_at == semantic_episodes[0].created_at
-    assert episodic_episodes[0].uid == entries[0].uid
-    assert semantic_episodes[0].uid == entries[0].uid
+    assert episodic_episodes[0].uid == episode_ids[0]
+    assert semantic_episodes[0].uid == episode_ids[0]
     assert episodic_episodes[0].metadata is None
     assert semantic_episodes[0].metadata is None
 
@@ -894,9 +929,11 @@ async def test_add_episodes_waits_for_started_writes_before_raising(
 
 @pytest.mark.asyncio
 async def test_add_episodes_reports_every_failed_write(
-    minimal_conf, patched_resource_manager, caplog
+    minimal_conf, patched_resource_manager, caplog, monkeypatch
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    minted_uid = _uid("minted")
+    monkeypatch.setattr("memmachine_server.main.memmachine.uuid4", lambda: minted_uid)
     episode_storage = MagicMock()
     episode_storage.add_episodes = AsyncMock(side_effect=RuntimeError("store failed"))
     patched_resource_manager.get_episode_storage = AsyncMock(
@@ -923,7 +960,7 @@ async def test_add_episodes_reports_every_failed_write(
         )
 
     assert "episodic failed" in caplog.text
-    assert str(entry.uid) in caplog.text
+    assert str(minted_uid) in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1319,7 +1356,7 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
 
 @pytest.mark.asyncio
 async def test_add_episodes_skips_semantic_memory_when_disabled(
-    minimal_conf, patched_resource_manager
+    minimal_conf, patched_resource_manager, monkeypatch
 ):
     """A write must not reach semantic memory while it is disabled.
 
@@ -1330,6 +1367,8 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
     """
     minimal_conf.semantic_memory.enabled = False
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    minted_uid = _uid("minted")
+    monkeypatch.setattr("memmachine_server.main.memmachine.uuid4", lambda: minted_uid)
     session = DummySessionData("disabled-write")
     created_at = datetime(2026, 1, 2, tzinfo=UTC)
 
@@ -1373,8 +1412,9 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
     episode_ids = await memmachine.add_episodes(session, entries)
 
     patched_resource_manager.get_semantic_session_manager.assert_not_called()
-    episodic_session.add_memory_episodes.assert_awaited_once_with(episodes)
-    assert episode_ids == [episode.uid for episode in episodes]
+    expected_episodes = [episodes[0].model_copy(update={"uid": minted_uid})]
+    episodic_session.add_memory_episodes.assert_awaited_once_with(expected_episodes)
+    assert episode_ids == [minted_uid]
 
 
 @pytest.mark.asyncio

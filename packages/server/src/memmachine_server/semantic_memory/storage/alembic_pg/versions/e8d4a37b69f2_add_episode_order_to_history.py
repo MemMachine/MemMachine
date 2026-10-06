@@ -1,4 +1,4 @@
-"""Store episode time and batch position separately from registration time.
+"""Store episode time separately from registration time.
 
 Revision ID: e8d4a37b69f2
 Revises: c7a2f8e31b90
@@ -21,13 +21,8 @@ def upgrade() -> None:
         "set_ingested_history",
         sa.Column("episode_created_at", sa.DateTime(timezone=True), nullable=True),
     )
-    op.add_column(
-        "set_ingested_history",
-        sa.Column("batch_position", sa.Integer(), server_default="0", nullable=False),
-    )
 
 
 def downgrade() -> None:
     """Drop episode chronology fields."""
-    op.drop_column("set_ingested_history", "batch_position")
     op.drop_column("set_ingested_history", "episode_created_at")

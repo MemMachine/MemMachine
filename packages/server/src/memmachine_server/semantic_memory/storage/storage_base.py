@@ -175,7 +175,7 @@ class SemanticStorage(ABC):
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
     ) -> None:
-        """Attach an episode with event time and registration time."""
+        """Attach an episode with event time; registered_at overrides the test clock."""
         raise NotImplementedError
 
     @abstractmethod
