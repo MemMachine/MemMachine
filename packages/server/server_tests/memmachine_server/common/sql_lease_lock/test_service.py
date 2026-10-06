@@ -825,23 +825,36 @@ async def test_cleanup_wait_has_deadline(monkeypatch: pytest.MonkeyPatch) -> Non
 async def test_repeated_cancellation_does_not_extend_cleanup_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(lease_service_module, "_CLEANUP_TIMEOUT_SECONDS", 0.03)
+    monkeypatch.setattr(lease_service_module, "_CLEANUP_TIMEOUT_SECONDS", 0.5)
     finish = asyncio.Event()
     cleanup = asyncio.create_task(finish.wait())
-    cancellations: list[bool] = []
+    processed: asyncio.Queue[None] = asyncio.Queue()
+
+    class CancellationLog(list[bool]):
+        def append(self, value: bool) -> None:
+            super().append(value)
+            processed.put_nowait(None)
+
+    cancellations = CancellationLog()
     owner = asyncio.create_task(
         lease_service_module._await_cleanup(cleanup, cancellations)
     )
     try:
-        for _ in range(3):
-            await asyncio.sleep(0.005)
+        await asyncio.sleep(0)  # Let the owner start waiting for cleanup.
+        for expected in range(1, 4):
+            await asyncio.sleep(0.1)
             owner.cancel()
+            await asyncio.wait_for(processed.get(), timeout=0.15)
+            assert len(cancellations) == expected
         with pytest.raises(TimeoutError):
-            await asyncio.wait_for(owner, timeout=0.1)
+            await asyncio.wait_for(asyncio.shield(owner), timeout=0.65)
+        assert owner.done()
         assert len(cancellations) == 3
     finally:
         finish.set()
         await cleanup
+        if not owner.done():
+            await owner
 
 
 @pytest.mark.asyncio
