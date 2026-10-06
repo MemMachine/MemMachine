@@ -33,6 +33,7 @@ from memmachine_server.common.filter.filter_parser import Comparison as FilterCo
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.sql_lease_lock import LockAcquireTimeoutError
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.main.memmachine import MemMachine, MemoryType
 from memmachine_server.retrieval_agent.common.agent_api import AgentToolBase
@@ -1293,6 +1294,9 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
     # Mock SessionDataManager
     session_manager = MagicMock()
     session_manager.get_sessions_by_status = AsyncMock(return_value=[session_key])
+    session_manager.get_session_info = AsyncMock(
+        return_value=MagicMock(status=SessionDataManager.SessionStatus.Deleted)
+    )
     session_manager.delete_session = AsyncMock()
     patched_resource_manager.get_session_data_manager = AsyncMock(
         return_value=session_manager
@@ -1330,11 +1334,17 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
 
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
+    @asynccontextmanager
+    async def lock(*args, **kwargs):
+        yield
+
+    patched_resource_manager.get_sql_lock_service.return_value.lock = lock
+
     await memmachine.start(test_key_to_session)
     await asyncio.sleep(1)
     await memmachine.stop()
 
-    session_manager.get_sessions_by_status.assert_awaited_once_with(
+    session_manager.get_sessions_by_status.assert_any_await(
         SessionDataManager.SessionStatus.Deleted
     )
 
@@ -1354,6 +1364,108 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
     )
 
     session_manager.delete_session.assert_awaited_once_with(session_key=session_key)
+
+
+@pytest.mark.asyncio
+async def test_deletion_rechecks_status_under_shared_lease(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """Only a pending session is deleted, and one instance owns it at a time."""
+    lease = asyncio.Lock()
+
+    class SharedLockService:
+        @asynccontextmanager
+        async def lock(self, *args, **kwargs):
+            if lease.locked():
+                raise LockAcquireTimeoutError("held")
+            async with lease:
+                yield
+
+    lease_service = SharedLockService()
+    patched_resource_manager.get_sql_lock_service = AsyncMock(
+        return_value=lease_service
+    )
+    status = SessionDataManager.SessionStatus.Deleted
+    manager = MagicMock()
+    manager.get_session_info = AsyncMock(side_effect=lambda _: MagicMock(status=status))
+    manager.delete_session = AsyncMock()
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+
+    first = MemMachine(minimal_conf, patched_resource_manager)
+    second = MemMachine(minimal_conf, patched_resource_manager)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    deleted: list[str] = []
+
+    async def slow_delete(key: str) -> None:
+        deleted.append(key)
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(first, "_delete_session_episode_store", slow_delete)
+    monkeypatch.setattr(second, "_delete_session_episode_store", slow_delete)
+    session = DummySessionData("pending")
+    try:
+        owner = asyncio.create_task(first._delete_queued_session(session))
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(second._delete_queued_session(session), 2)
+        assert deleted == ["pending"]
+        release.set()
+        await owner
+
+        status = SessionDataManager.SessionStatus.Active
+        await second._delete_queued_session(session)
+        assert deleted == ["pending"]
+        manager.delete_session.assert_awaited_once_with(session_key="pending")
+    finally:
+        release.set()
+        if "owner" in locals():
+            await asyncio.wait_for(owner, 2)
+
+
+@pytest.mark.asyncio
+async def test_idle_worker_recovers_pending_deletion(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """An idle worker finds deletion requests left in the database."""
+    monkeypatch.setattr("memmachine_server.main.memmachine.DELETION_IDLE_SECONDS", 0.01)
+    manager = MagicMock()
+    pending = {"orphan"}
+    deleted = asyncio.Event()
+    scans = 0
+
+    def pending_after_start(_: str) -> list[str]:
+        nonlocal scans
+        scans += 1
+        return [] if scans == 1 else list(pending)
+
+    manager.get_sessions_by_status = AsyncMock(side_effect=pending_after_start)
+    manager.get_session_info = AsyncMock(
+        side_effect=lambda key: MagicMock(status="delete") if key in pending else None
+    )
+
+    async def delete(session_key: str) -> None:
+        pending.remove(session_key)
+        deleted.set()
+
+    manager.delete_session = AsyncMock(side_effect=delete)
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+    patched_resource_manager.get_episode_storage.return_value.get_episode_ids = (
+        AsyncMock(return_value=[])
+    )
+
+    @asynccontextmanager
+    async def lock(*args, **kwargs):
+        yield
+
+    patched_resource_manager.get_sql_lock_service.return_value.lock = lock
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    await machine.start(lambda key: DummySessionData(key))
+    try:
+        await asyncio.wait_for(deleted.wait(), 2)
+        assert pending == set()
+    finally:
+        await machine.stop()
 
 
 @pytest.mark.asyncio

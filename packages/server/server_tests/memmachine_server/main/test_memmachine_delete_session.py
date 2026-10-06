@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
@@ -151,13 +152,24 @@ async def test_delete_episode_store_processes_in_batches(
     resources = MagicMock()
     resources.close = AsyncMock()
     session_manager = MagicMock()
+    current_status = ["active"]
+
+    async def update_session_status(*, session_key: str, status: str) -> None:
+        current_status[0] = status
+
     session_manager.get_session_info = AsyncMock(
-        return_value=MagicMock(status="active")
+        side_effect=lambda _key: MagicMock(status=current_status[0])
     )
-    session_manager.update_session_status = AsyncMock()
+    session_manager.update_session_status = AsyncMock(side_effect=update_session_status)
     session_manager.delete_session = AsyncMock()
     resources.get_episode_storage = AsyncMock(return_value=episode_store)
     resources.get_session_data_manager = AsyncMock(return_value=session_manager)
+
+    @asynccontextmanager
+    async def lock(*args, **kwargs):
+        yield
+
+    resources.get_sql_lock_service = AsyncMock(return_value=MagicMock(lock=lock))
 
     mm = MemMachine(conf=conf, resources=resources)
     monkeypatch.setattr(mm, "_cleanup_semantic_history", cleanup_mock)
