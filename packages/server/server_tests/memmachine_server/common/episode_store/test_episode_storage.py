@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 import pytest_asyncio
 from pydantic import JsonValue
+from sqlalchemy import inspect, text
 
 from memmachine_server.common.episode_store import (
     EpisodeEntry,
@@ -173,24 +174,7 @@ async def test_add_multiple_episodes_returns_models(
 
 
 @pytest.mark.asyncio
-async def test_reserve_sequence_numbers_concurrently(
-    episode_storage: EpisodeStorage,
-):
-    first, second = await asyncio.gather(
-        episode_storage.reserve_sequence_numbers(3),
-        episode_storage.reserve_sequence_numbers(2),
-    )
-
-    assert len(first) == 3
-    assert len(second) == 2
-    assert first == list(range(first[0], first[0] + 3))
-    assert second == list(range(second[0], second[0] + 2))
-    assert first[0] > 0
-    assert set(first).isdisjoint(second)
-
-
-@pytest.mark.asyncio
-async def test_add_episodes_persists_sequence_numbers(
+async def test_add_episodes_preserves_ids(
     episode_storage: EpisodeStorage,
 ):
     entries = [
@@ -202,36 +186,69 @@ async def test_add_episodes_persists_sequence_numbers(
     stored = await episode_storage.add_episodes("sequence-session", entries)
 
     try:
-        assert stored[0].sequence_num > 0
-        assert stored[1].sequence_num == stored[0].sequence_num + 1
+        assert [episode.uid for episode in stored] == [entry.uid for entry in entries]
         retrieved = await episode_storage.get_episode(entries[0].uid)
         assert retrieved is not None
-        assert retrieved.sequence_num == stored[0].sequence_num
+        assert retrieved.uid == stored[0].uid
     finally:
         await episode_storage.delete_episodes([entry.uid for entry in entries])
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("numbers", [[], [0], [1, 1]])
-async def test_add_episodes_rejects_invalid_sequence_numbers(
-    episode_storage: EpisodeStorage,
-    numbers: list[int],
-):
-    entries = [
-        EpisodeEntry(
-            content=f"message-{index}", producer_id="user", producer_role="user"
+async def test_startup_removes_legacy_sequence_schema(sqlalchemy_sqlite_engine):
+    async with sqlalchemy_sqlite_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE episodestore (uid CHAR(32) PRIMARY KEY, "
+                "sequence_num BIGINT NOT NULL UNIQUE, content VARCHAR NOT NULL, "
+                "session_key VARCHAR NOT NULL, producer_id VARCHAR NOT NULL, "
+                "producer_role VARCHAR NOT NULL, produced_for_id VARCHAR, "
+                "episode_type VARCHAR, metadata JSON NOT NULL, "
+                "created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
         )
-        for index in range(2)
-    ]
-    with pytest.raises(InvalidArgumentError):
-        await episode_storage.add_episodes(
-            "sequence-session", entries, sequence_nums=numbers
+        await conn.execute(
+            text(
+                "CREATE TABLE episode_sequence_counter "
+                "(id INTEGER PRIMARY KEY, next_value BIGINT NOT NULL)"
+            )
         )
-    assert await episode_storage.get_episodes([entry.uid for entry in entries]) == []
+        await conn.execute(
+            text(
+                "INSERT INTO episodestore "
+                "(uid, sequence_num, content, session_key, producer_id, producer_role, "
+                "episode_type, metadata) VALUES "
+                "('00000000000040008000000000000001', 7, 'before upgrade', "
+                "'upgraded', 'user', 'user', 'MESSAGE', '{}')"
+            )
+        )
+
+    store = SqlAlchemyEpisodeStore(sqlalchemy_sqlite_engine)
+    await store.startup()
+    async with sqlalchemy_sqlite_engine.begin() as conn:
+        columns = await conn.run_sync(
+            lambda sync_conn: {
+                column["name"]
+                for column in inspect(sync_conn).get_columns("episodestore")
+            }
+        )
+        tables = await conn.run_sync(
+            lambda sync_conn: inspect(sync_conn).get_table_names()
+        )
+    assert "sequence_num" not in columns
+    assert "episode_sequence_counter" not in tables
+    previous = await store.get_episode(UUID("00000000-0000-4000-8000-000000000001"))
+    assert previous is not None
+    assert previous.content == "before upgrade"
+
+    entry = EpisodeEntry(
+        content="after upgrade", producer_id="user", producer_role="user"
+    )
+    assert (await store.add_episodes("upgraded", [entry]))[0].uid == entry.uid
 
 
 @pytest.mark.asyncio
-async def test_equal_timestamp_batches_paginate_in_sequence_order(
+async def test_equal_timestamp_batches_paginate_in_uuid_order(
     episode_storage: EpisodeStorage,
 ):
     created_at = datetime(2025, 1, 1, tzinfo=UTC)
@@ -245,34 +262,27 @@ async def test_equal_timestamp_batches_paginate_in_sequence_order(
         )
         for index, prefix in enumerate("fed")
     ]
-    sequence_nums = await episode_storage.reserve_sequence_numbers(3)
-    # The later reservation can commit first when writes run concurrently.
-    await episode_storage.add_episodes(
-        "sequence-session", entries[2:], sequence_nums=sequence_nums[2:]
-    )
-    await episode_storage.add_episodes(
-        "sequence-session", entries[:2], sequence_nums=sequence_nums[:2]
-    )
+    await episode_storage.add_episodes("sequence-session", entries[2:])
+    await episode_storage.add_episodes("sequence-session", entries[:2])
+    expected = [entry.uid for entry in reversed(entries)]
 
     try:
         assert [
             episode.uid for episode in await episode_storage.get_episode_messages()
-        ] == [entry.uid for entry in entries]
+        ] == expected
         assert [
             episode.uid
             for episode in await episode_storage.get_episode_messages(
                 page_size=2, page_num=0
             )
-        ] == [entry.uid for entry in entries[:2]]
+        ] == expected[:2]
         assert [
             episode.uid
             for episode in await episode_storage.get_episode_messages(
                 page_size=2, page_num=1
             )
-        ] == [entries[2].uid]
-        assert await episode_storage.get_episode_ids(page_size=3) == [
-            entry.uid for entry in entries
-        ]
+        ] == expected[2:]
+        assert await episode_storage.get_episode_ids(page_size=3) == expected
     finally:
         await episode_storage.delete_episodes([entry.uid for entry in entries])
 
@@ -294,11 +304,9 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
         ),
     ]
     created_at = datetime.now(tz=UTC)
-    sequence_by_uid = {entry.uid: index + 1 for index, entry in enumerate(entries)}
     returned_rows = [
         Episode(
             uid=entry.uid,
-            sequence_num=sequence_by_uid[entry.uid],
             content=entry.content,
             session_key="batch-session",
             producer_id=entry.producer_id,
@@ -332,9 +340,7 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
     store = SqlAlchemyEpisodeStore(MagicMock())
     reordered_session = ReorderedSession()
     with patch.object(store, "_create_session", return_value=reordered_session):
-        episodes = await store.add_episodes(
-            "batch-session", entries, sequence_nums=[1, 2]
-        )
+        episodes = await store.add_episodes("batch-session", entries)
 
     assert [episode.uid for episode in episodes] == [entry.uid for entry in entries]
     assert [episode.content for episode in episodes] == [
@@ -674,7 +680,7 @@ async def test_history_time_window_workflow(episode_storage: EpisodeStorage):
     )
 
     before_third = await episode_storage.get_episode_messages(end_time=cutoff)
-    assert [m.uid for m in before_third] == [first, second]
+    assert {m.uid for m in before_third} == {first, second}
 
     await episode_storage.delete_episode_messages(end_time=cutoff)
     remaining = await episode_storage.get_episode_messages()

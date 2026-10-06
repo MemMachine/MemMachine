@@ -194,7 +194,6 @@ async def test_add_episodes(long_term_memory):
             created_at=now,
             producer_id="biology textbook",
             producer_role="document",
-            sequence_num=123,
             filterable_metadata={"project": "science", "length": "short"},
             metadata={"chapter": 5, "page": 42},
         ),
@@ -205,7 +204,6 @@ async def test_add_episodes(long_term_memory):
             created_at=now,
             producer_id="Alice",
             producer_role="user",
-            sequence_num=0,
             filterable_metadata={"project": "history", "category": "question"},
         ),
         Episode(
@@ -242,7 +240,6 @@ async def test_delete_episodes(long_term_memory):
             created_at=now,
             producer_id="biology textbook",
             producer_role="document",
-            sequence_num=123,
             filterable_metadata={"project": "science", "length": "short"},
             metadata={"chapter": 5, "page": 42},
         ),
@@ -253,7 +250,6 @@ async def test_delete_episodes(long_term_memory):
             created_at=now,
             producer_id="Alice",
             producer_role="user",
-            sequence_num=0,
             filterable_metadata={"project": "history", "category": "question"},
         ),
         Episode(
@@ -295,7 +291,6 @@ async def test_drop_session_partition(long_term_memory):
             created_at=now,
             producer_id="biology textbook",
             producer_role="document",
-            sequence_num=123,
             filterable_metadata={"project": "science"},
         ),
         Episode(
@@ -305,7 +300,6 @@ async def test_drop_session_partition(long_term_memory):
             created_at=now,
             producer_id="Alice",
             producer_role="user",
-            sequence_num=0,
             filterable_metadata={"project": "history"},
         ),
     ]

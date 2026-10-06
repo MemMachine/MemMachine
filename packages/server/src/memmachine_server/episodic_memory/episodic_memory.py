@@ -516,7 +516,7 @@ class EpisodicMemory:
         episodes = sorted(
             query_result.short_term_memory.episodes
             + query_result.long_term_memory.episodes,
-            key=lambda x: cast(datetime.datetime, x.created_at),
+            key=lambda x: (cast(datetime.datetime, x.created_at), x.uid),
         )
 
         finalized_query = ""

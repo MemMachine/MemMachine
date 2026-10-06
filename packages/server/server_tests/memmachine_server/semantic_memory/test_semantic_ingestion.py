@@ -305,8 +305,11 @@ async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
     features = await _collect(
         semantic_storage.get_feature_set(filter_expr=parse_filter("set_id = 'colors'"))
     )
-    assert [feature.value for feature in features] == ["red"]
-    assert seen_messages == [f"My favorite color is {color}" for color in colors]
+    expected_colors = list(reversed(colors)) if same_timestamp else colors
+    assert [feature.value for feature in features] == [expected_colors[-1]]
+    assert seen_messages == [
+        f"My favorite color is {color}" for color in expected_colors
+    ]
     assert (
         await semantic_storage.get_history_messages_count(
             set_ids=["colors"], is_ingested=False

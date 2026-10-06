@@ -407,6 +407,25 @@ async def test_chain_of_query_agent_handles_empty_query_without_retrieval(
 
 
 @pytest.mark.asyncio
+async def test_rerank_orders_equal_timestamps_by_uuid() -> None:
+    now = datetime.now(tz=UTC)
+    episodes = [
+        _build_episode(uid=seed, content=seed, created_at=now) for seed in ("c", "b")
+    ]
+    agent = MemMachineAgent(
+        AgentToolBaseParam(model=None, children_tools=[], extra_params={})
+    )
+
+    result = await agent._do_rerank(
+        QueryParam(query="ties", limit=0, memory=FakeEpisodicMemory({})), episodes
+    )
+
+    assert [episode.uid for episode in result] == sorted(
+        episode.uid for episode in episodes
+    )
+
+
+@pytest.mark.asyncio
 async def test_rerank_logic(
     query_policy: QueryPolicy,
 ) -> None:

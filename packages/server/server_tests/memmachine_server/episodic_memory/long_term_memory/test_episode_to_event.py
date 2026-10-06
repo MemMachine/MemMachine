@@ -28,7 +28,6 @@ def _episode(
     producer_id: str = "alice",
     producer_role: str = "user",
     produced_for_id: str | None = None,
-    sequence_num: int = 0,
     episode_type: EpisodeType = EpisodeType.MESSAGE,
     filterable_metadata: dict | None = None,
     metadata: dict | None = None,
@@ -42,7 +41,6 @@ def _episode(
         producer_id=producer_id,
         producer_role=producer_role,
         produced_for_id=produced_for_id,
-        sequence_num=sequence_num,
         episode_type=episode_type,
         content_type=ContentType.STRING,
         filterable_metadata=filterable_metadata,
@@ -97,7 +95,6 @@ def test_system_fields_are_underscore_prefixed():
         producer_id="alice",
         producer_role="user",
         produced_for_id="bob",
-        sequence_num=42,
         session_key="sess-X",
     )
     event = LongTermMemory._episode_to_event(episode)
@@ -107,7 +104,6 @@ def test_system_fields_are_underscore_prefixed():
     assert p["_producer_id"] == "alice"
     assert p["_producer_role"] == "user"
     assert p["_produced_for_id"] == "bob"
-    assert p["_sequence_num"] == 42
     assert p["_episode_type"] == "message"
     assert p["_content_type"] == "string"
     assert p["_created_at"] == episode.created_at

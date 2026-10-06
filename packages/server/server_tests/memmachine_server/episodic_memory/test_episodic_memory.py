@@ -25,7 +25,6 @@ def create_test_episode(**kwargs):
     defaults: dict[str, object] = {
         "uid": str(uuid4()),
         "session_key": "test_session",
-        "sequence_num": 1,
         "content": "test content",
         "created_at": datetime.now(tz=UTC),
         "producer_id": "test_producer",

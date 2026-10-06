@@ -31,7 +31,6 @@ def create_test_episode(**kwargs):
     """Helper function to create a valid Episode for testing."""
     defaults = {
         "uid": str(uuid.uuid4()),
-        "sequence_num": 1,
         "session_key": "session1",
         "episode_type": EpisodeType.MESSAGE,
         "content_type": ContentType.STRING,

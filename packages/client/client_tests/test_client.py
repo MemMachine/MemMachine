@@ -461,7 +461,6 @@ class TestMemory:
                         "producer_id": "u1",
                         "producer_role": "user",
                         "produced_for_id": None,
-                        "sequence_num": 0,
                         "episode_type": "message",
                         "content_type": "string",
                         "filterable_metadata": None,

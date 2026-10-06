@@ -141,7 +141,7 @@ class SemanticStorage(ABC):
         limit: int | None = None,
         is_ingested: bool | None = None,
     ) -> AsyncIterator[UUID]:
-        """Order by episode time, sequence, registration time, then ID."""
+        """Order by episode time, then episode UUID."""
         raise NotImplementedError
 
     @abstractmethod
@@ -174,9 +174,8 @@ class SemanticStorage(ABC):
         *,
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
-        sequence_num: int = 0,
     ) -> None:
-        """Attach an episode with event time, registration time, and sequence."""
+        """Attach an episode with event time and registration time."""
         raise NotImplementedError
 
     @abstractmethod

@@ -233,12 +233,6 @@
             "title": "Producer Role",
             "type": "string"
           },
-          "sequence_num": {
-            "default": 0,
-            "description": "Sequence number within the session.",
-            "title": "Sequence Num",
-            "type": "integer"
-          },
           "session_key": {
             "description": "Session key associated with the episode.",
             "title": "Session Key",

@@ -133,7 +133,6 @@ class SemanticSessionManager:
             episode.uid,
             list(set_ids),
             created_at=episode.created_at,
-            sequence_num=episode.sequence_num,
         )
 
     @staticmethod

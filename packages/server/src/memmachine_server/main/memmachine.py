@@ -7,7 +7,7 @@ from asyncio import Task
 from collections.abc import Callable, Coroutine, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Final, Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from memmachine_common.api import MemoryType
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
@@ -727,24 +727,29 @@ class MemMachine:
         episode_storage = await self._resources.get_episode_storage()
         if not episode_entries:
             return []
-        sequence_nums = await episode_storage.reserve_sequence_numbers(
-            len(episode_entries)
-        )
         created_at = datetime.now(UTC)
+        # UUID order preserves input order within a batch when timestamps tie.
+        batch_ids = (
+            sorted(uuid4() for _ in episode_entries)
+            if len(episode_entries) > 1
+            else None
+        )
         episode_entries = [
-            entry
-            if entry.created_at is not None
-            else entry.model_copy(update={"created_at": created_at})
-            for entry in episode_entries
+            entry.model_copy(
+                update={
+                    "created_at": entry.created_at or created_at,
+                    "uid": batch_ids[index] if batch_ids is not None else entry.uid,
+                }
+            )
+            for index, entry in enumerate(episode_entries)
         ]
         episodes = [
             Episode(
                 session_key=session_data.session_key,
-                sequence_num=sequence_num,
                 metadata=entry.metadata or None,
                 **entry.model_dump(exclude_none=True, exclude={"metadata"}),
             )
-            for entry, sequence_num in zip(episode_entries, sequence_nums, strict=True)
+            for entry in episode_entries
         ]
         episode_ids = [e.uid for e in episodes]
 
@@ -776,7 +781,6 @@ class MemMachine:
             episode_storage.add_episodes(
                 session_data.session_key,
                 episode_entries,
-                sequence_nums=sequence_nums,
             )
         ]
         task_names = ["episode storage"]

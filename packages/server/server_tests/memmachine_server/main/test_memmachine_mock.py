@@ -641,7 +641,7 @@ async def test_query_search_skips_unrequested_memories(
 
 
 @pytest.mark.asyncio
-async def test_add_episodes_dispatches_reserved_sequences(
+async def test_add_episodes_dispatches_same_id_to_all_backends(
     minimal_conf, patched_resource_manager
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
@@ -665,12 +665,10 @@ async def test_add_episodes_dispatches_reserved_sequences(
             created_at=created_at,
             producer_id="user",
             producer_role="assistant",
-            sequence_num=73,
         )
     ]
 
     episode_storage = MagicMock()
-    episode_storage.reserve_sequence_numbers = AsyncMock(return_value=[73])
     episode_storage.add_episodes = AsyncMock(return_value=episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -701,10 +699,10 @@ async def test_add_episodes_dispatches_reserved_sequences(
 
     await memmachine.add_episodes(session, entries)
 
-    episode_storage.reserve_sequence_numbers.assert_awaited_once_with(1)
-    episode_storage.add_episodes.assert_awaited_once_with(
-        session.session_key, entries, sequence_nums=[73]
-    )
+    store_call = episode_storage.add_episodes.await_args
+    assert store_call is not None
+    assert store_call.args[0] == session.session_key
+    assert [entry.uid for entry in store_call.args[1]] == [entries[0].uid]
     episodic_session.add_memory_episodes.assert_awaited_once_with(episodes)
     semantic_manager.add_message.assert_awaited_once_with(
         episodes=episodes,
@@ -713,38 +711,36 @@ async def test_add_episodes_dispatches_reserved_sequences(
 
 
 @pytest.mark.asyncio
-async def test_add_episodes_reservation_failure_starts_no_writes(
-    minimal_conf, patched_resource_manager
+async def test_add_episodes_batch_assigns_sorted_uuids_in_input_order(
+    minimal_conf, patched_resource_manager, monkeypatch
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     episode_storage = MagicMock()
-    episode_storage.reserve_sequence_numbers = AsyncMock(
-        side_effect=RuntimeError("sequence unavailable")
-    )
     episode_storage.add_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
     )
-    episodic_manager = MagicMock()
-    episodic_manager.open_or_create_episodic_memory = MagicMock()
-    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
-        return_value=episodic_manager
+    entries = [
+        EpisodeEntry(content=str(index), producer_id="user", producer_role="user")
+        for index in range(3)
+    ]
+    generated_ids = [
+        UUID(f"{prefix}0000000-0000-4000-8000-000000000000") for prefix in "fa1"
+    ]
+    generated = iter(generated_ids)
+    monkeypatch.setattr(
+        "memmachine_server.main.memmachine.uuid4", lambda: next(generated)
     )
-    semantic_manager = MagicMock()
-    semantic_manager.add_message = AsyncMock()
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
-        return_value=semantic_manager
+    result = await memmachine.add_episodes(
+        DummySessionData("batch"), entries, target_memories=[]
     )
 
-    with pytest.raises(RuntimeError, match="sequence unavailable"):
-        await memmachine.add_episodes(
-            DummySessionData("sequence-failure"),
-            [EpisodeEntry(content="hello", producer_id="user", producer_role="user")],
-        )
-
-    episode_storage.add_episodes.assert_not_awaited()
-    episodic_manager.open_or_create_episodic_memory.assert_not_called()
-    semantic_manager.add_message.assert_not_awaited()
+    store_call = episode_storage.add_episodes.await_args
+    assert store_call is not None
+    stored = store_call.args[1]
+    assert [entry.content for entry in stored] == ["0", "1", "2"]
+    assert result == [entry.uid for entry in stored]
+    assert result == sorted(generated_ids)
 
 
 @pytest.mark.asyncio
@@ -779,10 +775,7 @@ async def test_add_episodes_writes_to_all_backends_concurrently(
     async def hold_store(
         _session_key: str,
         normalized_entries: list[EpisodeEntry],
-        *,
-        sequence_nums: list[int],
     ):
-        assert sequence_nums == [1]
         stored_entries.extend(normalized_entries)
         return await hold_write("store", stored_episodes)
 
@@ -800,7 +793,6 @@ async def test_add_episodes_writes_to_all_backends_concurrently(
         await hold_write("semantic")
 
     episode_storage = MagicMock()
-    episode_storage.reserve_sequence_numbers = AsyncMock(return_value=[1])
     episode_storage.add_episodes = AsyncMock(side_effect=hold_store)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -858,7 +850,6 @@ async def test_add_episodes_waits_for_started_writes_before_raising(
     episodic_finished = asyncio.Event()
 
     episode_storage = MagicMock()
-    episode_storage.reserve_sequence_numbers = AsyncMock(return_value=[1])
     episode_storage.add_episodes = AsyncMock(
         side_effect=RuntimeError("store write failed")
     )
@@ -907,7 +898,6 @@ async def test_add_episodes_reports_every_failed_write(
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     episode_storage = MagicMock()
-    episode_storage.reserve_sequence_numbers = AsyncMock(return_value=[1])
     episode_storage.add_episodes = AsyncMock(side_effect=RuntimeError("store failed"))
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -944,7 +934,6 @@ async def test_add_episodes_finishes_episodic_write_before_closing(
     session = DummySessionData("session-add-close")
     memory = _ClosingEpisodicSession()
     episode_storage = MagicMock()
-    episode_storage.reserve_sequence_numbers = AsyncMock(return_value=[1])
     episode_storage.add_episodes = AsyncMock(
         return_value=[_make_episode(_uid("ep1"), session.session_key)]
     )
@@ -981,7 +970,6 @@ async def test_add_episodes_skips_memories_not_requested(
     stored_episodes = [_make_episode(_uid("e1"), session.session_key)]
 
     episode_storage = MagicMock()
-    episode_storage.reserve_sequence_numbers = AsyncMock(return_value=[1])
     episode_storage.add_episodes = AsyncMock(return_value=stored_episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1362,12 +1350,10 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
             created_at=created_at,
             producer_id="user",
             producer_role="assistant",
-            sequence_num=1,
         )
     ]
 
     episode_storage = MagicMock()
-    episode_storage.reserve_sequence_numbers = AsyncMock(return_value=[1])
     episode_storage.add_episodes = AsyncMock(return_value=episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage

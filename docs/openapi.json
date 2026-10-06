@@ -3258,12 +3258,6 @@
             "title": "Produced For Id",
             "description": "Identifier of the intended recipient of the episode."
           },
-          "sequence_num": {
-            "type": "integer",
-            "title": "Sequence Num",
-            "description": "Sequence number within the session.",
-            "default": 0
-          },
           "episode_type": {
             "$ref": "#/components/schemas/EpisodeType",
             "description": "The type of episode being stored (e.g., message).",

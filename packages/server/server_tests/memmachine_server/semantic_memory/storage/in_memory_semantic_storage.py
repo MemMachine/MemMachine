@@ -82,7 +82,6 @@ class InMemorySemanticStorage(SemanticStorage):
         self._set_history_map: dict[str, dict[UUID, bool]] = {}
         self._history_created_at: dict[tuple[str, UUID], datetime] = {}
         self._history_episode_created_at: dict[tuple[str, UUID], datetime] = {}
-        self._history_sequence_num: dict[tuple[str, UUID], int] = {}
         self._history_to_sets: dict[UUID, dict[str, bool]] = {}
         self._next_feature_id = 1
         self._next_history_id = 1
@@ -101,7 +100,6 @@ class InMemorySemanticStorage(SemanticStorage):
             self._set_history_map.clear()
             self._history_created_at.clear()
             self._history_episode_created_at.clear()
-            self._history_sequence_num.clear()
             self._history_to_sets.clear()
             self._next_feature_id = 1
             self._next_history_id = 1
@@ -478,14 +476,12 @@ class InMemorySemanticStorage(SemanticStorage):
                 history_id,
                 ingested,
                 self._history_episode_created_at[(set_id, history_id)],
-                self._history_created_at[(set_id, history_id)],
-                self._history_sequence_num[(set_id, history_id)],
             )
             for set_id, history_map in self._set_history_map.items()
             if set_ids is None or set_id in set_ids
             for history_id, ingested in history_map.items()
         ]
-        rows.sort(key=lambda row: (row[2], row[4], row[3], row[0]))
+        rows.sort(key=lambda row: (row[2], row[0]))
         return [(history_id, ingested) for history_id, ingested, *_ in rows]
 
     @staticmethod
@@ -504,7 +500,6 @@ class InMemorySemanticStorage(SemanticStorage):
         *,
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
-        sequence_num: int = 0,
     ) -> None:
         async with self._lock:
             history_map = self._set_history_map.setdefault(set_id, {})
@@ -516,7 +511,6 @@ class InMemorySemanticStorage(SemanticStorage):
                 self._history_episode_created_at[(set_id, history_id)] = (
                     created_at or registration_time
                 )
-                self._history_sequence_num[(set_id, history_id)] = sequence_num
             self._history_to_sets.setdefault(history_id, {})[set_id] = history_map[
                 history_id
             ]
@@ -540,7 +534,6 @@ class InMemorySemanticStorage(SemanticStorage):
                     history_map.pop(history_id, None)
                     self._history_created_at.pop((set_id, history_id), None)
                     self._history_episode_created_at.pop((set_id, history_id), None)
-                    self._history_sequence_num.pop((set_id, history_id), None)
                     if not history_map:
                         self._set_history_map.pop(set_id, None)
 
@@ -565,7 +558,6 @@ class InMemorySemanticStorage(SemanticStorage):
                 for history_id in list(history_map.keys()):
                     self._history_created_at.pop((set_id, history_id), None)
                     self._history_episode_created_at.pop((set_id, history_id), None)
-                    self._history_sequence_num.pop((set_id, history_id), None)
                     sets_map = self._history_to_sets.get(history_id)
                     if sets_map is None:
                         continue

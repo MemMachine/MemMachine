@@ -99,8 +99,6 @@ class SpecDoc:
 
     EPISODE_SESSION_KEY = "Session key associated with the episode."
 
-    EPISODE_SEQUENCE_NUM = "Sequence number within the session."
-
     EPISODE_CONTENT_TYPE = "Content type of the episode."
 
     EPISODE_FILTERABLE_METADATA = "Metadata indexed for filtering."

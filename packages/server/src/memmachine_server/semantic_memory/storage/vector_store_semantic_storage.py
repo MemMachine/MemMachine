@@ -11,7 +11,6 @@ import numpy as np
 from pydantic import AwareDatetime, InstanceOf, TypeAdapter, ValidationError
 from sqlalchemy import (
     JSON,
-    BigInteger,
     Boolean,
     Column,
     ColumnElement,
@@ -163,7 +162,6 @@ class VectorSemanticSetIngestedHistory(BaseVectorSemanticStorage):
     history_id = mapped_column(String, primary_key=True)
     created_at = mapped_column(DateTime(timezone=True), server_default=func.now())
     episode_created_at = mapped_column(DateTime(timezone=True), nullable=True)
-    sequence_num = mapped_column(BigInteger, nullable=False, server_default="0")
     ingested = mapped_column(Boolean, default=False, nullable=False)
 
     __table_args__ = (
@@ -207,20 +205,15 @@ class VectorStoreSemanticStorage(SemanticStorage):
                     )
                 }
             )
-            if "batch_position" in columns and "sequence_num" not in columns:
+            for legacy_column in ("batch_position", "sequence_num"):
+                if legacy_column not in columns:
+                    continue
                 await conn.execute(
                     text(
                         "ALTER TABLE vector_semantic_set_ingested_history "
-                        "RENAME COLUMN batch_position TO sequence_num"
+                        f"DROP COLUMN {legacy_column}"
                     )
                 )
-                if conn.dialect.name == "postgresql":
-                    await conn.execute(
-                        text(
-                            "ALTER TABLE vector_semantic_set_ingested_history "
-                            "ALTER COLUMN sequence_num TYPE BIGINT"
-                        )
-                    )
 
     async def cleanup(self) -> None:
         await self._engine.dispose()
@@ -456,8 +449,6 @@ class VectorStoreSemanticStorage(SemanticStorage):
                 VectorSemanticSetIngestedHistory.episode_created_at,
                 VectorSemanticSetIngestedHistory.created_at,
             ).asc(),
-            VectorSemanticSetIngestedHistory.sequence_num.asc(),
-            VectorSemanticSetIngestedHistory.created_at.asc(),
             VectorSemanticSetIngestedHistory.history_id.asc(),
         )
         stmt = self._apply_history_filter(
@@ -519,7 +510,6 @@ class VectorStoreSemanticStorage(SemanticStorage):
         *,
         created_at: datetime | None = None,
         registered_at: datetime | None = None,
-        sequence_num: int = 0,
     ) -> None:
         values = {
             "set_id": set_id,
@@ -527,7 +517,6 @@ class VectorStoreSemanticStorage(SemanticStorage):
             "episode_created_at": ensure_tz_aware(created_at).astimezone(UTC)
             if created_at is not None
             else None,
-            "sequence_num": sequence_num,
         }
         if registered_at is not None:
             values["created_at"] = ensure_tz_aware(registered_at).astimezone(UTC)

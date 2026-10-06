@@ -527,7 +527,6 @@ def test_list_memories(client, mock_memmachine):
             producer_id="user",
             producer_role="user",
             produced_for_id=None,
-            sequence_num=0,
             episode_type=EpisodeType.MESSAGE,
             content_type=ContentType.STRING,
             filterable_metadata=None,

@@ -37,9 +37,11 @@ def vector_collection() -> InMemoryVectorStoreCollection:
 
 
 @pytest.mark.asyncio
-async def test_startup_migrates_existing_history_position(
+@pytest.mark.parametrize("legacy_column", ["batch_position", "sequence_num"])
+async def test_startup_removes_existing_history_position(
     sqlalchemy_sqlite_engine,
     vector_collection: InMemoryVectorStoreCollection,
+    legacy_column: str,
 ):
     history_id = UUID("550e8400-e29b-41d4-a716-446655440019")
     async with sqlalchemy_sqlite_engine.begin() as conn:
@@ -48,14 +50,15 @@ async def test_startup_migrates_existing_history_position(
                 "CREATE TABLE vector_semantic_set_ingested_history ("
                 "set_id VARCHAR NOT NULL, history_id VARCHAR NOT NULL, "
                 "created_at DATETIME, episode_created_at DATETIME, "
-                "batch_position INTEGER NOT NULL DEFAULT 0, ingested BOOLEAN NOT NULL, "
+                f"{legacy_column} INTEGER NOT NULL DEFAULT 0, "
+                "ingested BOOLEAN NOT NULL, "
                 "PRIMARY KEY (set_id, history_id))"
             )
         )
         await conn.execute(
             text(
                 "INSERT INTO vector_semantic_set_ingested_history "
-                "(set_id, history_id, batch_position, ingested) "
+                f"(set_id, history_id, {legacy_column}, ingested) "
                 "VALUES ('user', :history_id, 42, 0)"
             ),
             {"history_id": str(history_id)},
@@ -68,13 +71,9 @@ async def test_startup_migrates_existing_history_position(
     ]
     async with sqlalchemy_sqlite_engine.begin() as conn:
         result = await conn.execute(
-            text(
-                "SELECT sequence_num FROM vector_semantic_set_ingested_history "
-                "WHERE history_id = :history_id"
-            ),
-            {"history_id": str(history_id)},
+            text("PRAGMA table_info(vector_semantic_set_ingested_history)"),
         )
-        assert result.scalar_one() == 42
+        assert legacy_column not in {row[1] for row in result}
 
 
 @pytest.mark.asyncio

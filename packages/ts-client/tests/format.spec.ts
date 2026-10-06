@@ -75,7 +75,6 @@ describe('formatEpisodes', () => {
       created_at: '2024-02-14T10:30:00.000Z',
       producer_id: 'user_1',
       producer_role: 'user',
-      sequence_num: 0,
       episode_type: 'message'
     }
     const result = formatEpisodes([episode])

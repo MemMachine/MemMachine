@@ -2,34 +2,35 @@
 
 import logging
 import socket
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from datetime import UTC
 from typing import Any, TypeVar, overload
 from uuid import UUID
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from pydantic import (
     AwareDatetime,
     validate_call,
 )
 from sqlalchemy import (
     JSON,
-    BigInteger,
     DateTime,
     Delete,
     Index,
-    Integer,
     String,
     Uuid,
     delete,
     func,
     insert,
+    inspect,
     select,
     text,
-    update,
 )
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
@@ -86,7 +87,6 @@ class Episode(BaseEpisodeStore):
 
     __tablename__ = "episodestore"
     uid = mapped_column(Uuid, primary_key=True, autoincrement=False)
-    sequence_num = mapped_column(BigInteger, nullable=False, unique=True)
 
     content = mapped_column(String, nullable=False)
 
@@ -130,7 +130,6 @@ class Episode(BaseEpisodeStore):
         created_at = ensure_tz_aware(self.created_at)
         return EpisodeE(
             uid=self.uid,
-            sequence_num=self.sequence_num,
             content=self.content,
             session_key=self.session_key,
             producer_id=self.producer_id,
@@ -140,14 +139,6 @@ class Episode(BaseEpisodeStore):
             created_at=created_at,
             metadata=self.json_metadata or None,
         )
-
-
-class EpisodeSequenceCounter(BaseEpisodeStore):
-    """Allocates one global episode order across processes and sessions."""
-
-    __tablename__ = "episode_sequence_counter"
-    id = mapped_column(Integer, primary_key=True)
-    next_value = mapped_column(BigInteger, nullable=False)
 
 
 class SqlAlchemyEpisodeStore(EpisodeStorage):
@@ -189,40 +180,38 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
                         )
 
                 await conn.run_sync(BaseEpisodeStore.metadata.create_all)
+                columns = await conn.run_sync(
+                    lambda sync_conn: {
+                        column["name"]
+                        for column in inspect(sync_conn).get_columns("episodestore")
+                    }
+                )
+                if "sequence_num" in columns:
+                    if conn.dialect.name == "sqlite":
+                        await conn.run_sync(self._remove_sqlite_sequence_column)
+                    else:
+                        await conn.execute(
+                            text("ALTER TABLE episodestore DROP COLUMN sequence_num")
+                        )
                 await conn.execute(
-                    text(
-                        "INSERT INTO episode_sequence_counter (id, next_value) "
-                        "VALUES (1, 0) ON CONFLICT (id) DO NOTHING"
-                    )
+                    text("DROP TABLE IF EXISTS episode_sequence_counter")
                 )
         except (OperationalError, socket.gaierror) as err:
             raise ConfigurationError(
                 "Failed to connect to the database during startup, please check your configuration."
             ) from err
 
+    @staticmethod
+    def _remove_sqlite_sequence_column(sync_conn: Connection) -> None:
+        """Rebuild the table because SQLite cannot drop a unique column."""
+        operations = Operations(MigrationContext.configure(sync_conn))
+        with operations.batch_alter_table("episodestore", recreate="always") as batch:
+            batch.drop_column("sequence_num")
+
     async def delete_all(self) -> None:
         async with self._create_session() as session:
             await session.execute(delete(Episode))
             await session.commit()
-
-    async def reserve_sequence_numbers(self, count: int) -> list[int]:
-        if count <= 0:
-            raise InvalidArgumentError("Sequence reservation count must be positive")
-
-        stmt = (
-            update(EpisodeSequenceCounter)
-            .where(EpisodeSequenceCounter.id == 1)
-            .values(next_value=EpisodeSequenceCounter.next_value + count)
-            .returning(EpisodeSequenceCounter.next_value)
-        )
-        async with self._create_session() as session:
-            result = await session.execute(stmt)
-            end = result.scalar_one_or_none()
-            if end is None:
-                raise ConfigurationError("Episode sequence counter is not initialized")
-            await session.commit()
-
-        return list(range(end - count + 1, end + 1))
 
     @validate_call
     @timed("add_episodes")
@@ -230,28 +219,14 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         self,
         session_key: str,
         episodes: list[EpisodeEntry],
-        *,
-        sequence_nums: Sequence[int] | None = None,
     ) -> list[EpisodeE]:
         if not episodes:
             return []
 
-        if sequence_nums is None:
-            sequence_nums = await self.reserve_sequence_numbers(len(episodes))
-        if (
-            len(sequence_nums) != len(episodes)
-            or any(number <= 0 for number in sequence_nums)
-            or len(set(sequence_nums)) != len(sequence_nums)
-        ):
-            raise InvalidArgumentError(
-                "Episode sequence numbers must be positive and unique per episode"
-            )
-
         values_to_insert: list[dict[str, Any]] = []
-        for entry, sequence_num in zip(episodes, sequence_nums, strict=True):
+        for entry in episodes:
             entry_values: dict[str, Any] = {
                 "uid": entry.uid,
-                "sequence_num": sequence_num,
                 "content": entry.content,
                 "session_key": session_key,
                 "producer_id": entry.producer_id,
@@ -296,7 +271,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         stmt = (
             select(Episode)
             .where(Episode.uid == episode_id)
-            .order_by(Episode.created_at.asc(), Episode.sequence_num.asc())
+            .order_by(Episode.created_at.asc(), Episode.uid.asc())
         )
 
         async with self._create_session() as session:
@@ -428,7 +403,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             end_time=end_time,
         )
 
-        stmt = stmt.order_by(Episode.created_at.asc(), Episode.sequence_num.asc())
+        stmt = stmt.order_by(Episode.created_at.asc(), Episode.uid.asc())
 
         if page_size is not None:
             stmt = stmt.limit(page_size)
@@ -482,9 +457,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             filter_expr=filter_expr,
         )
 
-        stmt = stmt.order_by(
-            Episode.created_at.asc(), Episode.sequence_num.asc()
-        ).limit(page_size)
+        stmt = stmt.order_by(Episode.created_at.asc(), Episode.uid.asc()).limit(
+            page_size
+        )
 
         async with self._create_session() as session:
             result = await session.execute(stmt)

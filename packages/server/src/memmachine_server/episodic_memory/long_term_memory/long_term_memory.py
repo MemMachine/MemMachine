@@ -72,7 +72,6 @@ _SESSION_KEY_FIELD = "_session_key"
 _PRODUCER_ID_FIELD = "_producer_id"
 _PRODUCER_ROLE_FIELD = "_producer_role"
 _PRODUCED_FOR_ID_FIELD = "_produced_for_id"
-_SEQUENCE_NUM_FIELD = "_sequence_num"
 _EPISODE_TYPE_FIELD = "_episode_type"
 _CONTENT_TYPE_FIELD = "_content_type"
 _CREATED_AT_FIELD = "_created_at"
@@ -83,7 +82,6 @@ EVENT_BACKEND_SYSTEM_FIELDS: dict[str, type[PropertyValue]] = {
     _PRODUCER_ID_FIELD: str,
     _PRODUCER_ROLE_FIELD: str,
     _PRODUCED_FOR_ID_FIELD: str,
-    _SEQUENCE_NUM_FIELD: int,
     _EPISODE_TYPE_FIELD: str,
     _CONTENT_TYPE_FIELD: str,
     _CREATED_AT_FIELD: datetime.datetime,
@@ -500,7 +498,6 @@ class LongTermMemory:
                 "producer_id": episode.producer_id,
                 "producer_role": episode.producer_role,
                 "produced_for_id": episode.produced_for_id,
-                "sequence_num": episode.sequence_num,
                 "episode_type": episode.episode_type.value,
                 "content_type": episode.content_type.value,
             }.items()
@@ -546,7 +543,6 @@ class LongTermMemory:
     ) -> Episode:
         return Episode(
             uid=dm.uid,
-            sequence_num=cast("int", dm.filterable_properties.get("sequence_num", 0)),
             session_key=cast("str", dm.filterable_properties.get("session_key", "")),
             episode_type=EpisodeType(
                 cast("str", dm.filterable_properties.get("episode_type", "")),
@@ -813,7 +809,6 @@ class LongTermMemory:
             _SESSION_KEY_FIELD: episode.session_key,
             _PRODUCER_ID_FIELD: episode.producer_id,
             _PRODUCER_ROLE_FIELD: episode.producer_role,
-            _SEQUENCE_NUM_FIELD: episode.sequence_num,
             _EPISODE_TYPE_FIELD: episode.episode_type.value,
             _CONTENT_TYPE_FIELD: episode.content_type.value,
             _CREATED_AT_FIELD: episode.created_at,

@@ -115,7 +115,6 @@ class Episode(BaseModel):
     produced_for_id: str | None = Field(
         default=None, description=SpecDoc.EPISODE_PRODUCED_FOR_ID
     )
-    sequence_num: int = Field(default=0, description=SpecDoc.EPISODE_SEQUENCE_NUM)
     episode_type: EpisodeType = Field(
         default=EpisodeType.MESSAGE, description=SpecDoc.EPISODE_TYPE
     )
