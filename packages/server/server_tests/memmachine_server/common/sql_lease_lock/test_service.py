@@ -597,7 +597,7 @@ async def test_context_waits_for_in_flight_renewal_before_release(
 
         async def use_context() -> None:
             async with service.lock(
-                "resource", lease_duration=timedelta(milliseconds=120)
+                "resource", lease_duration=timedelta(seconds=2)
             ) as lease:
                 real_renew = lease.renew
 
@@ -611,7 +611,7 @@ async def test_context_waits_for_in_flight_renewal_before_release(
 
         task = asyncio.create_task(use_context())
         await renewing.wait()
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.2)
         assert not task.done()
         finish_renewal.set()
         await task
