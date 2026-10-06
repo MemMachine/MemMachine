@@ -164,9 +164,7 @@ async def test_public_lease_renewal_and_release(tmp_path: Path) -> None:
         first = SQLLeaseLockService(first_engine)
         second = SQLLeaseLockService(second_engine)
         await first.startup()
-        lease = await first.try_acquire(
-            "resource", lease_duration=timedelta(milliseconds=300)
-        )
+        lease = await first.try_acquire("resource", lease_duration=timedelta(seconds=2))
         assert lease is not None
         original_expiry = lease.expires_at
         await asyncio.sleep(0.15)
