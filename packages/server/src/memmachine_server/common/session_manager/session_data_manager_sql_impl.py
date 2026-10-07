@@ -22,6 +22,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -265,7 +266,21 @@ class SessionDataManagerSQL(SessionDataManager):
                 user_metadata=metadata,
             )
             dbsession.add(new_session)
-            await dbsession.commit()
+            try:
+                await dbsession.commit()
+            except IntegrityError as err:
+                # Another worker may have inserted the same key after our read.
+                await dbsession.rollback()
+                existing = await dbsession.get(self.SessionConfig, session_key)
+                if existing is None:
+                    raise
+                if (
+                    existing.configuration == configuration
+                    and existing.param_data == param_data
+                    and existing.user_metadata == metadata
+                ):
+                    return
+                raise SessionAlreadyExistsError(session_key) from err
 
     @timed("update_session_status")
     async def update_session_status(

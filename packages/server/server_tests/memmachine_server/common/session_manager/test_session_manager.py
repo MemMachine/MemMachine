@@ -1,9 +1,10 @@
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
 from pydantic import JsonValue
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
@@ -154,6 +155,52 @@ async def test_create_or_validate_existing_session_with_matching_data_succeeds(
     assert session_info.description == "original description"
     assert session_info.configuration == {"setting": "value"}
     assert session_info.user_metadata == {"owner": "tester"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conflicting", [False, True])
+async def test_concurrent_creation_validates_the_committed_session(
+    session_manager: SessionDataManager,
+    episodic_memory_conf: EpisodicMemoryConf,
+    monkeypatch: pytest.MonkeyPatch,
+    conflicting: bool,
+) -> None:
+    """Workers racing for one key get the normal validation result."""
+    commit_barrier = asyncio.Barrier(2)
+    original_commit = AsyncSession.commit
+
+    async def synchronized_commit(db_session: AsyncSession) -> None:
+        await commit_barrier.wait()
+        await original_commit(db_session)
+
+    monkeypatch.setattr(AsyncSession, "commit", synchronized_commit)
+    configurations = [
+        {"owner": "first"},
+        {"owner": "second" if conflicting else "first"},
+    ]
+
+    results = await asyncio.gather(
+        *(
+            session_manager.create_or_validate_session(
+                "shared-session", configuration, episodic_memory_conf, "", {}
+            )
+            for configuration in configurations
+        ),
+        return_exceptions=True,
+    )
+
+    if conflicting:
+        assert sum(result is None for result in results) == 1
+        assert (
+            sum(isinstance(result, SessionAlreadyExistsError) for result in results)
+            == 1
+        )
+    else:
+        assert results == [None, None]
+
+    session_info = await session_manager.get_session_info("shared-session")
+    assert session_info is not None
+    assert session_info.configuration in configurations
 
 
 @pytest.mark.asyncio
