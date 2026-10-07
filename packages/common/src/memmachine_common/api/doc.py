@@ -700,12 +700,12 @@ class RouterDoc:
     """
 
     LIST_PROJECTS = """
-    List all projects.
+    List projects in the specified organization.
 
-    Returns a list of all projects accessible within the system. Each entry
-    contains the project's organization ID and project ID. Identifiers follow
-    the standard rules: no slashes; only letters, numbers, underscores,
-    hyphens, colon, and Unicode characters.
+    Requires `org_id` in the request body. Returns only projects belonging to
+    that organization. Each entry contains the project's organization ID and
+    project ID. Identifiers follow the standard rules: no slashes; only letters,
+    numbers, underscores, hyphens, colon, and Unicode characters.
 
     Projects are isolated memory namespaces. Memories (episodes) belong
     exclusively to their project. All project operations, including queries and

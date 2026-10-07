@@ -208,13 +208,16 @@ def run_command(client: MemMachineClient, args: argparse.Namespace) -> int:
 def run_projects_command(client: MemMachineClient, args: argparse.Namespace) -> int:
     """Run project subcommands."""
     if args.projects_command == "list":
+        org_id = args.org_id or os.environ.get(ENV_ORG_ID)
+        if not org_id:
+            _die(f"--org-id or {ENV_ORG_ID} is required", prog=args.prog)
         projects = [
             {
                 "org_id": project.org_id,
                 "project_id": project.project_id,
                 "description": project.description,
             }
-            for project in client.list_projects(timeout=args.request_timeout)
+            for project in client.list_projects(org_id, timeout=args.request_timeout)
         ]
         print_json(projects)
         return 0
@@ -388,6 +391,9 @@ def build_parser(prog: str = DEFAULT_PROG) -> argparse.ArgumentParser:
     project_subparsers = projects.add_subparsers(dest="projects_command", required=True)
 
     projects_list = project_subparsers.add_parser("list", help="List projects.")
+    projects_list.add_argument(
+        "--org-id", help=f"Organization id. Defaults to ${ENV_ORG_ID}."
+    )
     add_request_timeout_arg(projects_list)
 
     projects_create = project_subparsers.add_parser("create", help="Create a project.")

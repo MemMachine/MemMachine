@@ -389,23 +389,24 @@ class TestMemMachineClient:
         mock_response.raise_for_status = Mock()
         mock_response.json.return_value = [
             {"org_id": "org1", "project_id": "proj1"},
-            {"org_id": "org2", "project_id": "proj2"},
+            {"org_id": "org1", "project_id": "proj2"},
         ]
         with patch.object(
             client, "request", return_value=mock_response
         ) as mock_request:
-            result = client.list_projects()
+            result = client.list_projects("org1")
 
             assert isinstance(result, list)
             assert len(result) == 2
             assert all(isinstance(p, Project) for p in result)
             assert result[0].org_id == "org1"
             assert result[0].project_id == "proj1"
-            assert result[1].org_id == "org2"
+            assert result[1].org_id == "org1"
             assert result[1].project_id == "proj2"
             mock_request.assert_called_once()
             assert mock_request.call_args[0][0] == "POST"
             assert "/api/v2/projects/list" in mock_request.call_args[0][1]
+            assert mock_request.call_args.kwargs["json"] == {"org_id": "org1"}
 
     def test_get_metrics_success(self):
         """Test successful metrics retrieval."""

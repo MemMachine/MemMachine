@@ -43,6 +43,7 @@ from memmachine_common.api.spec import (
     GetSemanticSetIdSpec,
     GetShortTermMemoryConfigSpec,
     ListMemoriesSpec,
+    ListProjectsSpec,
     ListResult,
     ListSemanticCategoryTemplatesResponse,
     ListSemanticCategoryTemplatesSpec,
@@ -250,9 +251,10 @@ async def get_episode_count(
 
 @router.post("/projects/list", description=RouterDoc.LIST_PROJECTS, tags=["Projects"])
 async def list_projects(
+    spec: ListProjectsSpec,
     memmachine: Annotated[MemMachine, Depends(get_memmachine)],
 ) -> list[dict[str, str]]:
-    """List all projects."""
+    """List projects in one organization."""
     sessions = await memmachine.search_sessions()
     return [
         {
@@ -262,6 +264,7 @@ async def list_projects(
         for org_id, project_id in (
             session.split("/", 1) for session in sessions if "/" in session
         )
+        if org_id == spec.org_id
     ]
 
 
