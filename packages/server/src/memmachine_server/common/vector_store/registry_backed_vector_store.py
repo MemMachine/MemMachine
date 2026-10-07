@@ -42,6 +42,7 @@ from .utils import (
     bind_filter,
     bind_record,
     validate_dimensions,
+    validate_distinct_record_uuids,
     validate_limit,
     validate_partition_key,
     validate_query_vector,
@@ -98,6 +99,7 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
             ]
             for record in records:
                 validate_dimensions(record.vector, self._store_schema.vector_dimensions)
+            validate_distinct_record_uuids(record.uuid for record in records)
             await self._registration.require_current()
             if not records:
                 return
@@ -150,9 +152,9 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
         """
         Write records to the backend under the handle's incarnation.
 
-        Called between two liveness checks, with at least one record, each
-        the one `bind_record` returns and already checked against the store's
-        schema: its keys are declared, each value is of its key's declared
+        Called between two liveness checks, with at least one record and no
+        two records of the same UUID, each the one `bind_record` returns and
+        already checked against the store's schema: its keys are declared, each value is of its key's declared
         type, and its vector has the store's dimensions.
         A record replaces the one with its UUID. The records are durable when
         it returns; a call that raises may have written some of them.

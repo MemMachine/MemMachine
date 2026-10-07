@@ -1,8 +1,9 @@
 """Shared utilities for vector store implementations."""
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
+from uuid import UUID
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
@@ -121,6 +122,15 @@ def validate_dimensions(vector: Sequence[float], dimensions: int) -> None:
         raise ValueError(
             f"Vector has {len(vector)} dimensions; the store has {dimensions}"
         )
+
+
+def validate_distinct_record_uuids(record_uuids: Iterable[UUID]) -> None:
+    """Raise ValueError if a record UUID occurs more than once."""
+    seen: set[UUID] = set()
+    for record_uuid in record_uuids:
+        if record_uuid in seen:
+            raise ValueError(f"Record UUID {record_uuid} occurs more than once")
+        seen.add(record_uuid)
 
 
 def bind_filter(

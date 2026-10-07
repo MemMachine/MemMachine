@@ -71,7 +71,8 @@ class VectorStorePartition(ABC):
                 If a record carries a key the store has not declared;
                 raised before anything is sent.
             ValueError:
-                If a record's vector does not have the store's dimensions.
+                If two records share a UUID, or a record's vector does not
+                have the store's dimensions; raised before anything is sent.
         """
         raise NotImplementedError
 
