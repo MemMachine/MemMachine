@@ -1292,7 +1292,7 @@ async def test_delete_episodes_requires_session_data(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     with pytest.raises(TypeError, match="session_data"):
-        await memmachine.delete_episodes([_uid("ep1")])
+        await memmachine.delete_episodes([_uid("ep1")])  # ty: ignore[missing-argument]
 
     patched_resource_manager.get_episode_storage.assert_not_awaited()
 
@@ -1304,7 +1304,7 @@ async def test_delete_episodes_rejects_none_session_data(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     with pytest.raises(ValueError, match="session_data is required"):
-        await memmachine.delete_episodes([_uid("ep1")], session_data=None)
+        await memmachine.delete_episodes([_uid("ep1")], session_data=None)  # ty: ignore[invalid-argument-type]
 
     patched_resource_manager.get_episode_storage.assert_not_awaited()
 
