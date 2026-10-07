@@ -200,6 +200,22 @@ class DeclaredSchemaContract:
             await partition.upsert(records=[_record([1.0, 0.0, 0.0], **{key: value})])
 
     @pytest.mark.asyncio
+    async def test_upsert_rejects_a_batch_naming_a_record_uuid_twice(self, partition):
+        first = _record([1.0, 0.0, 0.0], name="first")
+        other = _record([0.0, 1.0, 0.0], name="other")
+        again = Record(
+            uuid=first.uuid, vector=_unit([0.0, 0.0, 1.0]), properties={"name": "again"}
+        )
+        with pytest.raises(ValueError, match=f"{first.uuid} occurs more than once"):
+            await partition.upsert(records=[first, other, again])
+
+        await self.settle(partition)
+        [result] = await partition.query(
+            query_vectors=[_unit([1.0, 0.0, 0.0])], limit=_LIMIT
+        )
+        assert result.matches == []
+
+    @pytest.mark.asyncio
     async def test_an_int_written_to_a_float_key_is_stored_as_the_float_it_equals(
         self, partition
     ):

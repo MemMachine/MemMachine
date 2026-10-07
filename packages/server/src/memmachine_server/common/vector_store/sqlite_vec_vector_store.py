@@ -70,6 +70,7 @@ from .utils import (
     bind_filter,
     bind_record,
     validate_dimensions,
+    validate_distinct_record_uuids,
     validate_limit,
     validate_partition_key,
     validate_query_vector,
@@ -172,6 +173,7 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
         ]
         for record in records:
             validate_dimensions(record.vector, self._store_schema.vector_dimensions)
+        validate_distinct_record_uuids(record.uuid for record in records)
 
         column_names = property_column_names(self._store_schema.indexed_properties)
         insert_records = sqlite_insert(self._records_table)
