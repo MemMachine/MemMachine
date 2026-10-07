@@ -174,7 +174,7 @@ async def test_concurrent_creation_validates_the_committed_session(
         await original_commit(db_session)
 
     monkeypatch.setattr(AsyncSession, "commit", synchronized_commit)
-    configurations = [
+    configurations: list[dict[str, JsonValue]] = [
         {"owner": "first"},
         {"owner": "second" if conflicting else "first"},
     ]
