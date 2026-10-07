@@ -1469,6 +1469,43 @@ async def test_idle_worker_recovers_pending_deletion(
 
 
 @pytest.mark.asyncio
+async def test_stop_finishes_when_idle_scan_finds_pending_deletion(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """Stopping during a scan must not strand work behind the stop sentinel."""
+    monkeypatch.setattr("memmachine_server.main.memmachine.DELETION_IDLE_SECONDS", 0.01)
+    scan_started = asyncio.Event()
+    finish_scan = asyncio.Event()
+    scans = 0
+
+    async def pending_after_start(_: str) -> list[str]:
+        nonlocal scans
+        scans += 1
+        if scans == 1:
+            return []
+        scan_started.set()
+        await finish_scan.wait()
+        return ["pending"]
+
+    manager = MagicMock()
+    manager.get_sessions_by_status = AsyncMock(side_effect=pending_after_start)
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    await machine.start(lambda key: DummySessionData(key))
+
+    try:
+        await asyncio.wait_for(scan_started.wait(), 2)
+        stopping = asyncio.create_task(machine.stop())
+        await asyncio.sleep(0)
+        assert not machine._started
+        finish_scan.set()
+        await asyncio.wait_for(stopping, 1)
+        patched_resource_manager.close.assert_awaited_once()
+    finally:
+        finish_scan.set()
+
+
+@pytest.mark.asyncio
 async def test_add_episodes_skips_semantic_memory_when_disabled(
     minimal_conf, patched_resource_manager, monkeypatch
 ):

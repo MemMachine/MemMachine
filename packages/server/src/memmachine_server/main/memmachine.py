@@ -372,7 +372,7 @@ class MemMachine:
                 )
             except TimeoutError:
                 try:
-                    await self._queue_pending_session_deletions()
+                    await self._queue_pending_session_deletions(from_worker=True)
                 except Exception:
                     logger.exception("Failed to scan for pending session deletions")
                 continue
@@ -420,13 +420,17 @@ class MemMachine:
         await manager.delete_session(session_key=session.session_key)
         logger.info("Deleted session %s", session.session_key)
 
-    async def _queue_pending_session_deletions(self) -> None:
+    async def _queue_pending_session_deletions(
+        self, *, from_worker: bool = False
+    ) -> None:
         if self._key_to_session is None:
             return
         manager = await self._resources.get_session_data_manager()
         pending = await manager.get_sessions_by_status(
             SessionDataManager.SessionStatus.Deleted
         )
+        if from_worker and not self._started:
+            return
         for session_key in pending:
             self._deletion_queue.put_nowait(self._key_to_session(session_key))
 
