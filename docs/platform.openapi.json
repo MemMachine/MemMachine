@@ -233,6 +233,12 @@
             "title": "Producer Role",
             "type": "string"
           },
+          "sequence_num": {
+            "default": 0,
+            "description": "Sequence number within the session.",
+            "title": "Sequence Num",
+            "type": "integer"
+          },
           "session_key": {
             "description": "Session key associated with the episode.",
             "title": "Session Key",
@@ -1058,33 +1064,6 @@
         "x-mint": {
           "href": "/platform/api-reference/memories/delete-semantic-memory"
         }
-      }
-    },
-    "/v2/metrics": {
-      "get": {
-        "description": "Expose Prometheus metrics.",
-        "operationId": "Metrics",
-        "responses": {
-          "200": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Prometheus metrics"
-          },
-          "default": {
-            "$ref": "#/components/responses/UnexpectedError"
-          }
-        },
-        "security": [],
-        "summary": "Metrics",
-        "tags": [
-          "Metrics"
-        ],
-        "x-internal": true
       }
     },
     "/v2/projects": {
