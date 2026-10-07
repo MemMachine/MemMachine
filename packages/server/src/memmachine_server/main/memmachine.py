@@ -444,7 +444,8 @@ class MemMachine:
             )
             if not episode_ids:
                 break
-            await self._cleanup_semantic_history(episode_ids)
+            if self._conf.semantic_memory.enabled:
+                await self._cleanup_semantic_history(episode_ids)
             await episode_store.delete_episodes(episode_ids)
 
     async def _delete_session_episodic_memory(self, session_key: str) -> None:

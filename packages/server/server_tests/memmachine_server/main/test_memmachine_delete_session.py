@@ -115,9 +115,7 @@ async def test_delete_session_clears_semantic_history_and_citations(
 
 
 @pytest.mark.asyncio
-async def test_delete_episode_store_processes_in_batches(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_delete_episode_store_processes_in_batches() -> None:
     """_delete_episode_store fetches and deletes episodes in batches until empty."""
 
     @dataclass
@@ -139,7 +137,6 @@ async def test_delete_episode_store_processes_in_batches(
     ]
     get_episode_ids_mock = AsyncMock(side_effect=batches)
     delete_episodes_mock = AsyncMock()
-    cleanup_mock = AsyncMock()
 
     episode_store = MagicMock()
     episode_store.get_episode_ids = get_episode_ids_mock
@@ -164,6 +161,9 @@ async def test_delete_episode_store_processes_in_batches(
     session_manager.delete_session = AsyncMock()
     resources.get_episode_storage = AsyncMock(return_value=episode_store)
     resources.get_session_data_manager = AsyncMock(return_value=session_manager)
+    resources.get_semantic_service = AsyncMock(
+        side_effect=AssertionError("semantic service must stay unused")
+    )
 
     @asynccontextmanager
     async def lock(*args, **kwargs):
@@ -172,7 +172,6 @@ async def test_delete_episode_store_processes_in_batches(
     resources.get_sql_lock_service = AsyncMock(return_value=MagicMock(lock=lock))
 
     mm = MemMachine(conf=conf, resources=resources)
-    monkeypatch.setattr(mm, "_cleanup_semantic_history", cleanup_mock)
 
     await mm.start()
     await mm.delete_session(_SD())
@@ -186,6 +185,5 @@ async def test_delete_episode_store_processes_in_batches(
 
     # delete_episodes called once per non-empty batch
     assert delete_episodes_mock.call_count == 3
-    # cleanup called once per non-empty batch with the right IDs
-    assert cleanup_mock.call_count == 3
-    assert cleanup_mock.call_args_list[0].args[0] == all_ids[:batch_size]
+    session_manager.delete_session.assert_awaited_once_with(session_key="test-session")
+    resources.get_semantic_service.assert_not_awaited()
