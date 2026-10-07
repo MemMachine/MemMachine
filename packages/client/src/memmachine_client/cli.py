@@ -9,7 +9,7 @@ import sys
 from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 
 from pydantic import BaseModel, JsonValue
 
@@ -40,7 +40,7 @@ def _env_int(name: str, default: int) -> int:
         raise SystemExit(f"{name} must be an integer") from err
 
 
-def _die(message: str, *, prog: str = DEFAULT_PROG) -> None:
+def _die(message: str, *, prog: str = DEFAULT_PROG) -> NoReturn:
     sys.stderr.write(f"{prog}: error: {message}\n")
     raise SystemExit(2)
 
