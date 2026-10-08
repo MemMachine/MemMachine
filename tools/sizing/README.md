@@ -5,7 +5,7 @@ traffic.
 
 You give it a **design peak** — the worst rate the system must sustain for five
 minutes, in operations per second — and a traffic mix, and it tells you how many
-API servers, vector-store machines and PostgreSQL servers to order, how many
+API servers, vector-store machines, and PostgreSQL servers to order, how many
 embedding and agent-model GPU cards, how much RAM and disk the stored episodes
 will take, how many PostgreSQL connections the deployment will open, and how
 much network bandwidth it will use.
@@ -32,7 +32,7 @@ look similar, and a reader who mixes them up will size the deployment wrongly.
 **Agent-mode search is a property of a request.** It is the `agent_mode` flag on
 a MemMachine search. A search sent with that flag on does not do one lookup; it
 fans out into a multi-hop retrieval of about 22 embedding calls, 22 vector
-searches, 44 database reads and one or two language-model calls. It is set per
+searches, 44 database reads, and one or two language-model calls. It is set per
 request. It is the third share of the traffic mix, and the flag that sets it is
 `--agent`. It is a **cost** multiplier: it says how expensive a request is.
 
@@ -67,7 +67,7 @@ numbers come from instead.
 
 The JSON, from `--json` or from `/api/calc`, carries the numbers without
 labels; its top-level `run_name` field is the name of the run (`pilot`,
-`target`, `scale`, `custom` or `web`), not one of the four labels above.
+`target`, `scale`, `custom`, or `web`), not one of the four labels above.
 
 ## What it does not do
 
@@ -111,7 +111,7 @@ have an interpreter on your path.
 
 ### `tier` — the full report for one named tier
 
-Three tiers are built in: `pilot` (20 ops/s), `target` (100 ops/s) and `scale`
+Three tiers are built in: `pilot` (20 ops/s), `target` (100 ops/s), and `scale`
 (1,000 ops/s).
 
 ```bash
@@ -137,7 +137,7 @@ the order is never fewer than one vector-store machine.
 uv run --no-project python memmachine_sizing.py calc --ops 250 --agent 4 --plain 51
 ```
 
-The same report for any design peak, traffic mix, retention period and vector
+The same report for any design peak, traffic mix, retention period, and vector
 shape. `--ops` is required.
 
 ### `users` — a caller population to the capacity it needs
@@ -331,7 +331,7 @@ name. It was one letter from `--agent` and meant something completely different.
 uv run --no-project python memmachine_sizing.py validate --out sizing-numbers.json
 ```
 
-Prints the figures this program publishes for the `pilot`, `target` and `scale`
+Prints the figures this program publishes for the `pilot`, `target`, and `scale`
 tiers, together with every named constant listed in
 [Every input, and what it is set to](#every-input-and-what-it-is-set-to), as
 `name: value` lines — `name` here is the key, not one of the four labels above.
@@ -348,7 +348,7 @@ to the comparison.
 
 It is not a dump of everything the model computes. The raw byte counts behind
 the GB and Mbps figures stay out. The chosen vector-store machine size is
-exported in full — its usable RAM, its total RAM bought and its fill — but the
+exported in full — its usable RAM, its total RAM bought, and its fill — but the
 other sizes in the comparison are exported only as a machine count.
 
 ### `serve` — the web form and a JSON endpoint
@@ -358,24 +358,24 @@ uv run --no-project python memmachine_sizing.py serve --port 8899
 ```
 
 Serves an HTML form at `/` and the same figures as JSON at `/api/calc`. The page
-is self-contained: it loads no external stylesheets, fonts or scripts and needs
+is self-contained: it loads no external stylesheets, fonts, or scripts and needs
 no internet access. There is also a `/healthz` endpoint that answers `ok`.
 
 **This is a local development server, not a service.** It has no
-authentication, no rate limiting and no request logging you would want to keep,
+authentication, no rate limiting, and no request logging you would want to keep,
 and it answers whoever can reach the port. Run it on your own machine and do
 not put it on an address the public can reach. It drops a connection that stays
 silent for 10 seconds (`SERVER_REQUEST_TIMEOUT_S`), so a client that connects
 and then sends nothing cannot hold a thread open indefinitely.
 
 The form binds to `127.0.0.1` unless `--host` says otherwise. It carries every
-input that `tier`, `calc` and `users` accept as a flag, so nothing has to be set
+input that `tier`, `calc`, and `users` accept as a flag, so nothing has to be set
 by editing code. Leave the "RAM per vector-store machine" box empty — or type
 `automatic` — and the size is chosen for you, exactly as it is when `--node-gb`
 is not given.
 
 Below the sizing boxes are four more for a caller population: "Concurrent human
-chat sessions", "Concurrent automated client sessions" and a traffic mix for
+chat sessions", "Concurrent automated client sessions", and a traffic mix for
 each. Both counts are sessions running at the same moment, not accounts and not
 visitors in a day. "Concurrent automated client sessions" counts callers that
 are programs; the "Agent-mode searches per 100 operations" box above it is the
@@ -383,8 +383,8 @@ share of the requests themselves.
 
 Below those are six more, for a reader who knows a user count rather than a
 session count: "People in the user base", "Share of people active at the busiest
-moment, per 100 users" and "Sessions per active person", and the same three for
-automated clients. They are the boxes for `--human-users`, `--human-peak-share`
+moment, per 100 users", and "Sessions per active person", and the same three for
+automated clients. They are the boxes for `--human-users`, `--human-peak-share`,
 and `--human-sessions-per-active-user` and their automated twins, and they follow
 the same rules as the flags. The two shares and the two sessions-per-active-user
 boxes each have an example default: leave one blank beside a filled-in user count
@@ -425,11 +425,11 @@ mix boxes anyway, so the same population bought 6 API servers on the command lin
 and 3 on the page.
 
 Fill in either count and the page also adds the tables the `users` subcommand
-prints — the demand from each population, the blended mix and the machines that
+prints — the demand from each population, the blended mix, and the machines that
 mix needs — above the sizing report.
 
 The four boxes that describe the store rather than the traffic — retention,
-vector dimensions, bytes per number and the RAM of a vector-store machine — are
+vector dimensions, bytes per number, and the RAM of a vector-store machine — are
 read either way. A population says how much traffic there is; it says nothing
 about how long an episode is kept or how wide a vector is.
 
@@ -489,7 +489,7 @@ Add `&humans=5000&automated=40` to size from a caller population instead, with
 `&human_mix=48/50/2&automated_mix=20/20/60` to give each population its own
 traffic mix. The population then sizes the answer — `inputs.ops_per_s` is the
 demand it makes and `inputs.mix` is its blended mix — and a `population` block
-carries the working alongside the sizing. Any `ops`, `add`, `plain` or `agent`
+carries the working alongside the sizing. Any `ops`, `add`, `plain`, or `agent`
 in the same address is not read; `sized_from_note` says so in words:
 
 ```
@@ -497,7 +497,7 @@ http://127.0.0.1:8899/api/calc?ops=100&humans=5000&automated=40&human_mix=48/50/
 ```
 
 To start from a user count instead of a session count, use
-`human_users`, `human_peak_share` and `human_sessions_per_active_user`, and the
+`human_users`, `human_peak_share`, and `human_sessions_per_active_user`, and the
 same three with `automated_` in front. Each of those four may be left out and
 takes its example default. The population block then carries a `conversion`
 field with the user count, the two figures, a flag beside each saying whether it
@@ -510,7 +510,7 @@ http://127.0.0.1:8899/api/calc?human_users=50000&human_peak_share=2&human_sessio
 ## Every input, and what it is set to
 
 This is the whole model. Anything with a flag in the "How to set it" column is a
-knob you can turn from the command line, and every input that `tier`, `calc` and
+knob you can turn from the command line, and every input that `tier`, `calc`, and
 `users` accept as a flag is also a box on the web form. The flags under "Output
 and serving" control how a result is printed or served, not what is sized, so
 they are not boxes. Everything else is a named constant at the top of
@@ -606,7 +606,7 @@ they are not boxes. Everything else is a named constant at the top of
 | PostgreSQL bytes per statement, both directions | `POSTGRES_BYTES_PER_STATEMENT` | 1,800 bytes | estimate |
 | Language-model prompt | `LLM_CALL_REQUEST_BYTES` | 8,000 bytes | estimate |
 | Language-model answer | `LLM_CALL_RESPONSE_BYTES` | 2,000 bytes | estimate |
-| TLS, HTTP and TCP framing overhead | `NETWORK_PROTOCOL_OVERHEAD_FACTOR` | 1.2 | estimate |
+| TLS, HTTP, and TCP framing overhead | `NETWORK_PROTOCOL_OVERHEAD_FACTOR` | 1.2 | estimate |
 | **Callers** — how fast a caller sends requests, which is a different question from what kind of request it sends | | | |
 | Concurrent human chat sessions in a population — sessions at one moment, not accounts and not visitors a day | `--humans` (`users`), or the `humans` box on the web form | `users` needs this or `--human-users`; blank on the form | input |
 | Concurrent automated client sessions in a population — sessions at one moment, not programs installed | `--automated` (`users`), or the `automated` box on the web form | 0 | input |
@@ -635,7 +635,7 @@ they are not boxes. Everything else is a named constant at the top of
 | Port the web server binds to | `--port` (`serve`) | 8000 | input |
 | Seconds the web server waits on a silent connection | `SERVER_REQUEST_TIMEOUT_S` | 10 | assumption (serving only — it changes no machine count) |
 
-Units: **GB** means 10<sup>9</sup> bytes, **TB** means 10<sup>12</sup> bytes and
+Units: **GB** means 10<sup>9</sup> bytes, **TB** means 10<sup>12</sup> bytes, and
 **Mbps** means 10<sup>6</sup> bits per second, throughout.
 
 ## The measured anchor
@@ -655,13 +655,13 @@ halve it and the server count doubles.
 ## What the model assumes
 
 **The traffic mix is an assumption nobody has measured.** The default split of
-45 adds, 45 plain searches and 10 agent-mode searches per 100 operations is a
+45 adds, 45 plain searches, and 10 agent-mode searches per 100 operations is a
 guess about how the service will be used. It is the second-largest lever in the
 whole model, because one agent-mode search costs about 22 plain searches — so
 the agent-mode share moves the hardware order more than any tuning does. Every
 report prints a sensitivity table showing what happens to the API server count
 as that share changes. Measure your own mix and pass it in with `--add`,
-`--plain` and `--agent`. Remember what that share is: agent-mode search is a
+`--plain`, and `--agent`. Remember what that share is: agent-mode search is a
 request flag, not a kind of caller. If your traffic comes from two very
 different kinds of caller, give each one its own mix on the `users` subcommand
 with `--human-mix` and `--automated-mix`, and let it blend them for you.
@@ -734,8 +734,8 @@ identifier, which is what makes a per-session rate recoverable at all. Across
 55,295 conversation sessions and 176,466 gaps between one prompt and the next,
 the median gap was 131 seconds and a session held a mean of 4.19 prompts. Over
 a session's **busiest five minutes** the rate was a median of 0.0067 prompts
-per second, a 90th percentile of 0.0167 and a 99th percentile of 0.030 — at two
-operations per prompt, 0.013, 0.033 and 0.060 operations per second. So 0.011
+per second, a 90th percentile of 0.0167, and a 99th percentile of 0.030 — at two
+operations per prompt, 0.013, 0.033, and 0.060 operations per second. So 0.011
 is about the median of a session's busiest five minutes and 0.028 is about its
 90th percentile: 9 sessions in 10 are slower than that.
 

@@ -581,7 +581,7 @@ check_config_file() {
             MEMMACHINE_IMAGE="memmachine/memmachine:latest-cpu"
         fi
 
-        # Ask user for provider path (OpenAI, Bedrock, Ollama or OpenAI-compatible)
+        # Ask user for provider path (OpenAI, Bedrock, Ollama, or OpenAI-compatible)
         print_prompt
         read -p "Which provider would you like to use? (OpenAI/Bedrock/Ollama/OpenAI-compatible) [OpenAI]: " provider_input
         # Clean the input and set default
