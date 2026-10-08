@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from memmachine_server.common.configuration import Configuration
-from memmachine_server.common.configuration.retrieval_config import OptimizedCoqConf
+from memmachine_server.common.configuration.retrieval_config import (
+    OptimizedCoqConf,
+    ProgressiveRetrievalConf,
+)
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.language_model.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import PrometheusMetricsFactory
@@ -34,6 +37,7 @@ from memmachine_server.retrieval_agent.common.agent_api import (
     QueryParam,
     QueryPolicy,
 )
+from memmachine_server.retrieval_agent.service_locator import create_retrieval_agent
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +358,19 @@ async def init_agent(
     multi_hop_decomposer: bool = False,
     multi_hop_sub_limit: int = 20,
     use_optimized_coq: bool = False,
+    progressive: ProgressiveRetrievalConf | None = None,
 ) -> AgentToolBase:
+    # Explicit baseline selection must remain usable with the same benchmark config.
+    if agent_name == "ProgressiveQueryAgent" or (
+        agent_name == "ToolSelectAgent" and progressive is not None
+    ):
+        return create_retrieval_agent(
+            model=model,
+            reranker=reranker,
+            agent_name=agent_name,
+            use_optimized_coq=use_optimized_coq,
+            progressive=progressive,
+        )
     param: AgentToolBaseParam = AgentToolBaseParam(
         model=None,
         children_tools=[],
@@ -472,9 +488,7 @@ async def init_memmachine_params(
     agent_model = await resource_manager.get_language_model(agent_model_id)
 
     # Answer model: use answer_llm_model if set, otherwise fall back to llm_model
-    answer_model_id = (
-        conf.retrieval_agent.answer_llm_model or conf.retrieval_agent.llm_model
-    )
+    answer_model_id = conf.retrieval_agent.answer_llm_model or agent_model_id
     answer_model = await resource_manager.get_language_model(answer_model_id)
 
     normalized_session_id = session_id or "evaluation_session"
@@ -518,6 +532,7 @@ async def init_memmachine_params(
         multi_hop_decomposer=use_multi_hop_decomposer,
         multi_hop_sub_limit=use_multi_hop_sub_limit,
         use_optimized_coq=use_optimized_coq,
+        progressive=conf.retrieval_agent.progressive,
     )
 
     return memory, answer_model, query_agent, agent_model_id, answer_model_id

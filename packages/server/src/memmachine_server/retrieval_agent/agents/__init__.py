@@ -2,6 +2,7 @@
 
 from .coq_agent import ChainOfQueryAgent
 from .memmachine_retriever import MemMachineAgent
+from .progressive_query_agent import ProgressiveQueryAgent
 from .rarag_query_agent import RaragQueryAgent
 from .split_query_agent import SplitQueryAgent
 from .tool_select_agent import ToolSelectAgent
@@ -9,6 +10,7 @@ from .tool_select_agent import ToolSelectAgent
 __all__ = [
     "ChainOfQueryAgent",
     "MemMachineAgent",
+    "ProgressiveQueryAgent",
     "RaragQueryAgent",
     "SplitQueryAgent",
     "ToolSelectAgent",
