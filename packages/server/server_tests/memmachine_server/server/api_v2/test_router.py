@@ -1322,6 +1322,22 @@ def test_configure_semantic_set_partial(client, mock_memmachine):
 
     call_args = mock_memmachine.configure_semantic_set.call_args[1]
     assert call_args["embedder_name"] == "openai-embed"
+    assert "llm_name" not in call_args
+
+
+def test_configure_semantic_set_explicit_null(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "set_id": "mem_user_set_abc",
+        "llm_name": None,
+    }
+
+    response = client.post("/api/v2/memories/semantic/set/configure", json=payload)
+    assert response.status_code == 204
+
+    call_args = mock_memmachine.configure_semantic_set.call_args[1]
+    assert "embedder_name" not in call_args
     assert call_args["llm_name"] is None
 
 

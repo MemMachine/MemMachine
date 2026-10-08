@@ -152,8 +152,12 @@ class SemanticMemoryConf(YamlSerializableMixin):
         description="The config database to use for semantic memory",
     )
     with_config_cache: bool = Field(
-        default=True,
-        description="Whether to use a in memory cache for semantic memory config.",
+        default=False,
+        description=(
+            "Whether to use a process-local cache for semantic memory config. "
+            "It is disabled by default because cache entries are not coherent "
+            "across processes."
+        ),
     )
     llm_model: str | None = Field(
         default=None,

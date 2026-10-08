@@ -29,7 +29,9 @@ from sqlalchemy.sql.sqltypes import Boolean, String
 
 from memmachine_server.common.errors import ResourceNotFoundError
 from memmachine_server.semantic_memory.config_store.config_store import (
+    _NOT_SET,
     SemanticConfigStorage,
+    _NotSet,
 )
 from memmachine_server.semantic_memory.semantic_model import (
     CategoryIdT,
@@ -258,8 +260,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
         self,
         *,
         set_id: SetIdT,
-        embedder_name: str | None = None,
-        llm_name: str | None = None,
+        embedder_name: str | _NotSet | None = _NOT_SET,
+        llm_name: str | _NotSet | None = _NOT_SET,
     ) -> None:
         dialect_name = self._engine.dialect.name
 
@@ -272,17 +274,26 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             # other backends: no ON CONFLICT support
             raise NotImplementedError
 
+        embedder_value = None if isinstance(embedder_name, _NotSet) else embedder_name
+        llm_value = None if isinstance(llm_name, _NotSet) else llm_name
+        update_values: dict[str, str | None] = {}
+        if not isinstance(embedder_name, _NotSet):
+            update_values["embedder_name"] = embedder_name
+        if not isinstance(llm_name, _NotSet):
+            update_values["language_model_name"] = llm_name
+
         stmt = ins.values(
             set_id=set_id,
-            embedder_name=embedder_name,
-            language_model_name=llm_name,
-        ).on_conflict_do_update(
-            index_elements=["set_id"],
-            set_={
-                "embedder_name": embedder_name,
-                "language_model_name": llm_name,
-            },
+            embedder_name=embedder_value,
+            language_model_name=llm_value,
         )
+        if update_values:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["set_id"],
+                set_=update_values,
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=["set_id"])
 
         async with self._create_session() as session:
             result = await session.execute(stmt)

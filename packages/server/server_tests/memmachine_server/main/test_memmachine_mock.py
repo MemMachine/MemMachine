@@ -36,6 +36,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.main.memmachine import MemMachine, MemoryType
 from memmachine_server.retrieval_agent.common.agent_api import AgentToolBase
+from memmachine_server.semantic_memory.config_store.config_store import _NotSet
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 
 
@@ -177,6 +178,24 @@ def _async_cm(value):
         yield value
 
     return _manager()
+
+
+@pytest.mark.asyncio
+async def test_configure_semantic_set_preserves_omitted_fields(
+    minimal_conf, patched_resource_manager
+):
+    semantic_session = AsyncMock()
+    patched_resource_manager.get_semantic_session_manager.return_value = (
+        semantic_session
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    await memmachine.configure_semantic_set(set_id="test-set", llm_name="test-llm")
+
+    call_args = semantic_session.configure_set.await_args.kwargs
+    assert call_args["set_id"] == "test-set"
+    assert isinstance(call_args["embedder_name"], _NotSet)
+    assert call_args["llm_name"] == "test-llm"
 
 
 class _ClosingEpisodicSession:

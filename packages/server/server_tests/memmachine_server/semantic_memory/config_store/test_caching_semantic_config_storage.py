@@ -4,7 +4,9 @@ from memmachine_server.semantic_memory.config_store.caching_semantic_config_stor
     CachingSemanticConfigStorage,
 )
 from memmachine_server.semantic_memory.config_store.config_store import (
+    _NOT_SET,
     SemanticConfigStorage,
+    _NotSet,
 )
 
 
@@ -25,12 +27,25 @@ class DummySemanticConfigStorage:
         self,
         *,
         set_id: str,
-        embedder_name: str | None = None,
-        llm_name: str | None = None,
+        embedder_name: str | _NotSet | None = _NOT_SET,
+        llm_name: str | _NotSet | None = _NOT_SET,
     ) -> None:
+        existing = self._configs.get(set_id)
+        if isinstance(embedder_name, _NotSet):
+            resolved_embedder_name = (
+                existing.embedder_name if existing is not None else None
+            )
+        else:
+            resolved_embedder_name = embedder_name
+
+        if isinstance(llm_name, _NotSet):
+            resolved_llm_name = existing.llm_name if existing is not None else None
+        else:
+            resolved_llm_name = llm_name
+
         self._configs[set_id] = SemanticConfigStorage.Config(
-            embedder_name=embedder_name,
-            llm_name=llm_name,
+            embedder_name=resolved_embedder_name,
+            llm_name=resolved_llm_name,
             disabled_categories=None,
             categories=[],
         )
@@ -62,10 +77,11 @@ async def test_get_setid_config_cached_and_invalidated() -> None:
     assert config2.embedder_name == "e1"
     assert wrapped.get_setid_config_calls == 1
 
-    await storage.set_setid_config(set_id="set-a", embedder_name="e2", llm_name="l2")
+    await storage.set_setid_config(set_id="set-a", embedder_name="e2")
 
     config3 = await storage.get_setid_config(set_id="set-a")
     assert config3.embedder_name == "e2"
+    assert config3.llm_name == "l1"
     assert wrapped.get_setid_config_calls == 2
 
 

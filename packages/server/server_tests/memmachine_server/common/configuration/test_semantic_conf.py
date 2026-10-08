@@ -42,6 +42,11 @@ def test_semantic_config_disabled_needs_no_config_database():
     assert conf.config_database is None
 
 
+def test_semantic_config_cache_is_disabled_by_default():
+    assert SemanticMemoryConf().with_config_cache is False
+    assert SemanticMemoryConf(with_config_cache=True).with_config_cache is True
+
+
 def test_semantic_config_auto_disables_when_config_database_missing():
     conf = SemanticMemoryConf(
         database="database",

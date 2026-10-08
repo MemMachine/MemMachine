@@ -34,7 +34,7 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.utils import merge_async_iterators
 
-from .config_store.config_store import SemanticConfigStorage
+from .config_store.config_store import _NOT_SET, SemanticConfigStorage, _NotSet
 from .semantic_ingestion import IngestionService
 from .semantic_model import (
     CategoryIdT,
@@ -589,31 +589,34 @@ class SemanticService:
         self,
         *,
         set_id: SetIdT,
-        embedder_name: str | None = None,
-        llm_name: str | None = None,
+        embedder_name: str | _NotSet | None = _NOT_SET,
+        llm_name: str | _NotSet | None = _NOT_SET,
     ) -> None:
         logger.info("Setting set id config for %s", set_id)
 
-        current_set_id_embedder_name = (
-            await self._semantic_config_storage.get_setid_config(set_id=set_id)
-        ).embedder_name
+        if not isinstance(embedder_name, _NotSet):
+            current_set_id_embedder_name = (
+                await self._semantic_config_storage.get_setid_config(set_id=set_id)
+            ).embedder_name
 
-        if embedder_name != current_set_id_embedder_name:
-            has_features = False
-            async for _ in self.get_set_features(set_ids=[set_id]):
-                has_features = True
-                break
-            valid_changing_embedder = (
-                current_set_id_embedder_name is None and not has_features
-            )
-            if not valid_changing_embedder:
-                raise InvalidSetIdConfigurationError(set_id=set_id)
+            if embedder_name != current_set_id_embedder_name:
+                has_features = False
+                async for _ in self.get_set_features(set_ids=[set_id]):
+                    has_features = True
+                    break
+                valid_changing_embedder = (
+                    current_set_id_embedder_name is None and not has_features
+                )
+                if not valid_changing_embedder:
+                    raise InvalidSetIdConfigurationError(set_id=set_id)
 
-            # Reset any indexes that the set id may have referencing it.
-            await self.delete_set_id(set_ids=[set_id])
+                # Reset any indexes that the set id may have referencing it.
+                await self.delete_set_id(set_ids=[set_id])
 
         await self._semantic_config_storage.set_setid_config(
-            set_id=set_id, embedder_name=embedder_name, llm_name=llm_name
+            set_id=set_id,
+            embedder_name=embedder_name,
+            llm_name=llm_name,
         )
 
     async def get_set_id_config(

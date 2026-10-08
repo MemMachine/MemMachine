@@ -40,6 +40,25 @@ async def test_store_custom_embedder(
     assert conf.disabled_categories == []
 
 
+async def test_partial_set_config_preserves_embedder(
+    semantic_service: SemanticService,
+):
+    await semantic_service.set_set_id_config(
+        set_id="user-partial-config",
+        embedder_name="embed-a",
+        llm_name="llm-a",
+    )
+
+    await semantic_service.set_set_id_config(
+        set_id="user-partial-config",
+        llm_name="llm-b",
+    )
+
+    conf = await semantic_service.get_set_id_config(set_id="user-partial-config")
+    assert conf.embedder_name == "embed-a"
+    assert conf.llm_name == "llm-b"
+
+
 async def test_use_length_embedder(
     semantic_service: SemanticService,
 ):

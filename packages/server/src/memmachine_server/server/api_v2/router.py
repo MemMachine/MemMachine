@@ -651,10 +651,15 @@ async def configure_semantic_set(
 ) -> None:
     """Configure a semantic set."""
     try:
+        config_options: dict[str, str | None] = {}
+        if "embedder_name" in spec.model_fields_set:
+            config_options["embedder_name"] = spec.embedder_name
+        if "llm_name" in spec.model_fields_set:
+            config_options["llm_name"] = spec.llm_name
+
         await memmachine.configure_semantic_set(
             set_id=spec.set_id,
-            embedder_name=spec.embedder_name,
-            llm_name=spec.llm_name,
+            **config_options,
         )
     except ResourceNotFoundError as e:
         raise RestError(code=404, message=str(e), ex=e) from e

@@ -21,6 +21,10 @@ from pydantic import BaseModel, JsonValue
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.semantic_memory.config_store.config_store import (
+    _NOT_SET,
+    _NotSet,
+)
+from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage as ESemanticConfigStorage,
 )
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
@@ -535,8 +539,8 @@ class SemanticSessionManager:
         self,
         *,
         set_id: SetIdT,
-        embedder_name: str | None = None,
-        llm_name: str | None = None,
+        embedder_name: str | _NotSet | None = _NOT_SET,
+        llm_name: str | _NotSet | None = _NOT_SET,
     ) -> None:
         await self._semantic_service.set_set_id_config(
             set_id=set_id,

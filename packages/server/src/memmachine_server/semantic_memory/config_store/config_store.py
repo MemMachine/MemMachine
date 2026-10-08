@@ -12,6 +12,15 @@ from memmachine_server.semantic_memory.semantic_model import (
 )
 
 
+class _NotSet:
+    """Sentinel type for an optional configuration value that was omitted."""
+
+    __slots__ = ()
+
+
+_NOT_SET = _NotSet()
+
+
 @runtime_checkable
 class SemanticConfigStorage(Protocol):
     """Contract for persisting and retrieving semantic memory configuration."""
@@ -24,8 +33,8 @@ class SemanticConfigStorage(Protocol):
         self,
         *,
         set_id: SetIdT,
-        embedder_name: str | None = None,
-        llm_name: str | None = None,
+        embedder_name: str | _NotSet | None = _NOT_SET,
+        llm_name: str | _NotSet | None = _NOT_SET,
     ) -> None: ...
 
     @dataclass(frozen=True)

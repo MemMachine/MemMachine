@@ -1,3 +1,4 @@
+import asyncio
 from typing import cast
 
 import pytest
@@ -60,6 +61,68 @@ async def test_setid_config_round_trip(
     assert config.embedder_name == "embed-a"
     assert config.llm_name == "llm-a"
     assert config.categories == []
+
+
+@pytest.mark.asyncio
+async def test_setid_config_updates_only_provided_fields(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    set_id = "set-partial-config"
+    await semantic_config_storage.set_setid_config(
+        set_id=set_id,
+        embedder_name="embed-a",
+        llm_name="llm-a",
+    )
+
+    await semantic_config_storage.set_setid_config(
+        set_id=set_id,
+        embedder_name="embed-b",
+    )
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+    assert config.embedder_name == "embed-b"
+    assert config.llm_name == "llm-a"
+
+    await semantic_config_storage.set_setid_config(set_id=set_id, llm_name="llm-b")
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+    assert config.embedder_name == "embed-b"
+    assert config.llm_name == "llm-b"
+
+    await semantic_config_storage.set_setid_config(set_id=set_id)
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+    assert config.embedder_name == "embed-b"
+    assert config.llm_name == "llm-b"
+
+    await semantic_config_storage.set_setid_config(set_id=set_id, llm_name=None)
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+    assert config.embedder_name == "embed-b"
+    assert config.llm_name is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_partial_setid_config_updates_preserve_both_fields(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    set_id = "set-concurrent-partial-config"
+    await semantic_config_storage.set_setid_config(
+        set_id=set_id,
+        embedder_name="embed-a",
+        llm_name="llm-a",
+    )
+
+    await asyncio.gather(
+        semantic_config_storage.set_setid_config(
+            set_id=set_id,
+            embedder_name="embed-b",
+        ),
+        semantic_config_storage.set_setid_config(
+            set_id=set_id,
+            llm_name="llm-b",
+        ),
+    )
+
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
+    assert config.embedder_name == "embed-b"
+    assert config.llm_name == "llm-b"
 
 
 @pytest.mark.asyncio

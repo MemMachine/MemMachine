@@ -887,6 +887,16 @@ async def test_configure_set(
     assert config.llm_name == "test_llm"
     assert config.embedder_name == "test_embedder"
 
+    await session_manager.configure_set(
+        set_id=set_id,
+        llm_name="test_llm_updated",
+    )
+
+    config = await session_manager.get_set_id_config(set_id=set_id)
+    assert config is not None
+    assert config.llm_name == "test_llm_updated"
+    assert config.embedder_name == "test_embedder"
+
 
 async def test_invalid_embedder_change_with_dirty_set(
     session_manager: SemanticSessionManager,

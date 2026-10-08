@@ -6,7 +6,9 @@ from collections import defaultdict
 
 from memmachine_server.common import rw_locks
 from memmachine_server.semantic_memory.config_store.config_store import (
+    _NOT_SET,
     SemanticConfigStorage,
+    _NotSet,
 )
 from memmachine_server.semantic_memory.semantic_model import (
     CategoryIdT,
@@ -58,8 +60,8 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         self,
         *,
         set_id: SetIdT,
-        embedder_name: str | None = None,
-        llm_name: str | None = None,
+        embedder_name: str | _NotSet | None = _NOT_SET,
+        llm_name: str | _NotSet | None = _NOT_SET,
     ) -> None:
         await self._wrapped.set_setid_config(
             set_id=set_id,
