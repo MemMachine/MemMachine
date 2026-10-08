@@ -22,6 +22,10 @@ registry](vector_store_partition_registry.md),
 - **Declared properties:** a payload index per property the store declares,
   typed by the property's type. A record or a filter naming any other key is
   refused.
+- **Datetimes:** a datetime property's key holds its instant, written in UTC.
+  A filter compares only instants, and Qdrant keeps a written datetime's
+  offset only to the minute, over REST and gRPC alike, which would move a
+  datetime written at an offset with a seconds component.
 - **Strict mode:** the collection is created with filtering on unindexed
   fields off, for reads and updates alike, so the server refuses a filter on
   a field it has not indexed instead of scanning for it. Every key a filter

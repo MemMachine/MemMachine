@@ -931,6 +931,22 @@ class TestFilters:
         assert r2.uuid in lte_uuids
 
     @pytest.mark.asyncio
+    async def test_a_datetime_is_stored_as_its_instant_in_utc(self, partition):
+        written = datetime(
+            2024, 6, 15, 17, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))
+        )
+        record = _make_record(
+            vector=_normalize([1.0, 0.0, 0.0]), properties={"created_at": written}
+        )
+        await partition.upsert(records=[record])
+
+        stored = datetime.fromisoformat(
+            await TestDeclaredSchema.stored_value(partition, record.uuid, "created_at")
+        )
+        assert stored == written
+        assert stored.utcoffset() == timedelta(0)
+
+    @pytest.mark.asyncio
     async def test_eq_datetime_cross_timezone(self, partition):
         """Equality matches the same instant expressed in a different timezone."""
         v1 = _normalize([1.0, 0.0, 0.0])
