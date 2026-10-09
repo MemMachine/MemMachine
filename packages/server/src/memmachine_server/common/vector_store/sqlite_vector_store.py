@@ -46,7 +46,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.sql import validate_engine_connections, write_session
 
 from .data_types import (

@@ -4,10 +4,7 @@ import math
 from collections.abc import Mapping, Sequence
 
 from memmachine_server.common.data_types import PropertyType, PropertyValue
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-    filter_fields,
-)
+from memmachine_server.common.filter import FilterExpr, filter_fields
 
 from .data_types import PropertyTypeMismatchError, UndeclaredPropertyKeyError
 

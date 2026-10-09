@@ -12,10 +12,7 @@ from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.embedder.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-    map_filter_fields,
-)
+from memmachine_server.common.filter import FilterExpr, map_filter_fields
 from memmachine_server.common.reranker.reranker import Reranker
 from memmachine_server.common.utils import extract_sentences
 from memmachine_server.common.vector_graph_store import Edge, Node, VectorGraphStore

@@ -9,7 +9,9 @@ from pydantic import InstanceOf
 
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import (
+    FilterExpr,
+)
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
     Resources,
