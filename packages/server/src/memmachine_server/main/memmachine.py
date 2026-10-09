@@ -27,6 +27,7 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.errors import (
     ConfigurationError,
+    ResourceNotFoundError,
     ResourceNotReadyError,
     SessionNotFoundError,
 )
@@ -1268,40 +1269,48 @@ class MemMachine:
     async def delete_episodes(
         self,
         episode_ids: list[UUID],
-        session_data: InstanceOf[SessionData] | None = None,
+        session_data: InstanceOf[SessionData],
     ) -> None:
         """
         Delete episodes from storage and memory backends.
 
         Args:
             episode_ids: IDs of episodes to delete.
-            session_data: Optional session context for episodic memory deletion.
+            session_data: Session context used to verify episode ownership and
+                delete from episodic memory.
 
         Returns:
             None.
 
         """
+        if session_data is None:
+            raise ValueError("session_data is required")
+
         episode_storage = await self._resources.get_episode_storage()
         tasks: list[Coroutine[Any, Any, Any]] = []
 
-        if session_data is not None:
-            episodic_memory_manager = (
-                await self._resources.get_episodic_memory_manager()
-            )
+        episodes = await episode_storage.get_episodes(episode_ids)
+        for episode in episodes:
+            if episode.session_key != session_data.session_key:
+                raise ResourceNotFoundError(
+                    f"Episode '{episode.uid}' was not found in this session."
+                )
 
-            async def delete_from_episodic_memory() -> None:
-                try:
-                    async with episodic_memory_manager.open_episodic_memory(
-                        session_data.session_key
-                    ) as episodic_session:
-                        await episodic_session.delete_episodes(episode_ids)
-                except SessionNotFoundError:
-                    logger.debug(
-                        "No episodic session for %s during idempotent delete",
-                        session_data.session_key,
-                    )
+        episodic_memory_manager = await self._resources.get_episodic_memory_manager()
 
-            tasks.append(delete_from_episodic_memory())
+        async def delete_from_episodic_memory() -> None:
+            try:
+                async with episodic_memory_manager.open_episodic_memory(
+                    session_data.session_key
+                ) as episodic_session:
+                    await episodic_session.delete_episodes(episode_ids)
+            except SessionNotFoundError:
+                logger.debug(
+                    "No episodic session for %s during idempotent delete",
+                    session_data.session_key,
+                )
+
+        tasks.append(delete_from_episodic_memory())
 
         tasks.append(episode_storage.delete_episodes(episode_ids))
         if self._conf.semantic_memory.enabled:

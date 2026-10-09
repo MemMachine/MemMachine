@@ -299,9 +299,9 @@ class EpisodicMemoryManager:
             async with self._session_locks[session_key].write_lock():
                 # Check if the instance is in the cache and in use
                 ref_count = await self._instance_cache.get_ref_count(session_key)
-                instance = await self._instance_cache.get(session_key)
-                if instance and ref_count > 0:
+                if ref_count > 0:
                     raise SessionInUseError(session_key, ref_count)
+                instance = await self._instance_cache.get(session_key)
                 if instance:
                     await self._instance_cache.release_ref(session_key)
                 await self._instance_cache.erase(session_key)
