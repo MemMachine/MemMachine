@@ -416,6 +416,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               api_key: <YOUR_API_KEY>
               base_url: "https://api.openai.com/v1"
               dimensions: 1536
+              search_timeout_seconds: 5
+              ingest_timeout_seconds: 60
           aws_embedder_id:
             provider: 'amazon-bedrock'
             config:
@@ -444,6 +446,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
                     api_key: <YOUR_API_KEY> # API key for OpenAI
                     base_url: "https://api.openai.com/v1" # Base URL for OpenAI
                     dimensions: 1536 # Defines the length of the vector generated for the input text
+                    search_timeout_seconds: 5 # Total budget per search embedding call
+                    ingest_timeout_seconds: 60 # Total budget per ingestion embedding call
                 aws_embedder_id: # The embedder ID
                   provider: 'amazon-bedrock' # The embedder provider type
                   config: # A dictionary containing provider-specific configuration
@@ -472,11 +476,28 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `config.api_key`  | API key for OpenAI.                                                  | *Required for OpenAI*    |
     | `config.base_url` | Base URL for OpenAI.                                                 | *Required for OpenAI*    |
     | `config.dimensions`| Defines the length of the vector generated for the input text.      | *Required for OpenAI*    |
+    | `config.search_timeout_seconds` | Positive, finite total timeout for a search embedding call, in seconds. OpenAI-compatible embedders only; `null` disables the operation timeout. | `null` |
+    | `config.ingest_timeout_seconds` | Positive, finite total timeout for an ingestion embedding call, in seconds. OpenAI-compatible embedders only; `null` disables the operation timeout. | `null` |
     | `config.region`   | AWS region for Bedrock.                                              | *Required for Bedrock*   |
     | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
     | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                      | *Required for Bedrock*   |
     | `config.model_id` | Bedrock model ID.                                                    | *Required for Bedrock*   |
     | `similarity_metric` | Defines the mathematical method used to compare two vectors for relevance (e.g., cosine). | *Required for Bedrock*   |
+
+    These optional budgets cover all batches, chunk requests, SDK retries, and
+    MemMachine retry backoff within one embedding call. On expiry, pending
+    embedding work is cancelled and the call raises `ExternalServiceAPIError`
+    instead of returning partial results. Caller cancellation still propagates.
+    The SDK's own request timeout and retry policy remain unchanged.
+
+    The example opts into a 5-second search budget and a 60-second ingestion
+    budget. Omit the settings or use `null` to preserve the existing behavior,
+    and choose budgets appropriate for your provider, especially for local
+    models. These are embedding-stage budgets, not deadlines for the entire
+    memory search or ingestion pipeline. Cancellation is cooperative: event-loop
+    blocking work and cancellation cleanup can delay completion. Operation
+    latency metrics record one observation per public embedding call, including
+    all of its batches, and record budget expiry as an error.
 
   ### Language Models
     Defines various language models for tasks like summarization and generation.

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from pydantic import SecretStr
 
@@ -7,7 +9,9 @@ from memmachine_server.common.configuration.embedder_conf import (
     OpenAIEmbedderConf,
     SentenceTransformerEmbedderConf,
 )
+from memmachine_server.common.data_types import ExternalServiceAPIError
 from memmachine_server.common.embedder import Embedder
+from memmachine_server.common.embedder.openai_embedder import OpenAIEmbedder
 from memmachine_server.common.resource_manager.embedder_manager import EmbedderManager
 from server_tests.memmachine_server.conftest import requires_sentence_transformers
 
@@ -56,6 +60,39 @@ async def test_build_openai_embedders(mock_conf):
     assert "openai_embedder_id" in builder._embedders
     embedder = builder._embedders["openai_embedder_id"]
     assert isinstance(embedder, Embedder)
+
+
+@pytest.mark.parametrize("operation", ["search", "ingest"])
+@pytest.mark.asyncio
+async def test_configured_openai_operation_timeout(operation, monkeypatch):
+    conf = EmbeddersConf.parse(
+        {
+            "embedders": {
+                "local": {
+                    "provider": "openai",
+                    "config": {f"{operation}_timeout_seconds": 0.01},
+                },
+            },
+        },
+    )
+    embedder = await EmbedderManager(conf).get_embedder("local")
+    assert isinstance(embedder, OpenAIEmbedder)
+    cancelled = asyncio.Event()
+
+    async def stalled_request(**kwargs):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setattr(embedder._client.embeddings, "create", stalled_request)
+    try:
+        async with asyncio.timeout(5):
+            with pytest.raises(ExternalServiceAPIError, match="time budget"):
+                await getattr(embedder, f"{operation}_embed")(["query"])
+        assert cancelled.is_set()
+    finally:
+        await embedder._client.close()
 
 
 @requires_sentence_transformers

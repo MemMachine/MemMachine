@@ -102,6 +102,10 @@ resources:
         api_key: $OPENAI_API_KEY
         base_url: "https://api.openai.com/v1"
         dimensions: 1536
+        # Optional total embedding budgets, including batches and retries.
+        # Omit or use null to retain the provider's existing timeout behavior.
+        search_timeout_seconds: 5
+        ingest_timeout_seconds: 60
   language_models:
     openai_model:
       provider: openai-responses
