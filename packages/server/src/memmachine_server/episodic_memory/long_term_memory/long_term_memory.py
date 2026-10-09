@@ -268,7 +268,14 @@ class LongTermMemory:
         the threshold; lower-is-better metrics (raw euclidean / manhattan with
         no reranker) drop scores ABOVE it. Avoids the prior `-inf` sentinel,
         which silently inverted to "drop everything" under euclidean.
+
+        A `num_episodes_limit` that is not positive asks for nothing, and is
+        refused with ValueError before the query is embedded.
         """
+        if not num_episodes_limit > 0:
+            raise ValueError(
+                f"num_episodes_limit is not positive: {num_episodes_limit}"
+            )
         if self._backend == "declarative":
             return await self._search_scored_declarative(
                 query,
@@ -331,9 +338,9 @@ class LongTermMemory:
         # splitting segmenter the same window covers fewer episodes, the ones
         # its segments belong to. The window can never exceed the remaining
         # quota in either unit (a segment belongs to one episode; declarative
-        # parity), and can never go negative: with `num_episodes_limit == 0`
-        # the quota clamp on its own would ask the segment store for a window
-        # of -1, which the SegmentStorePartition contract does not define.
+        # parity), and can never go negative: a negative `expand_context`
+        # would ask the segment store for a negative window, which the
+        # SegmentStorePartition contract does not define.
         expand_context = max(0, min(expand_context, num_episodes_limit - 1))
         # Over-fetch from EventMemory: the per-segment results can have many
         # segments per episode under non-passthrough segmenters, and we dedup
