@@ -68,7 +68,7 @@ from .sqlite_properties import (
 from .utils import (
     _PARTITION_KEY_MAX_BYTES,
     bind_filter,
-    validate_declared_properties,
+    bind_record,
     validate_dimensions,
     validate_limit,
     validate_partition_key,
@@ -166,11 +166,11 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
 
     @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
-        records = list(records)
+        records = [
+            bind_record(record, self._store_schema.indexed_properties)
+            for record in records
+        ]
         for record in records:
-            validate_declared_properties(
-                record.properties, self._store_schema.indexed_properties
-            )
             validate_dimensions(record.vector, self._store_schema.vector_dimensions)
 
         column_names = property_column_names(self._store_schema.indexed_properties)
