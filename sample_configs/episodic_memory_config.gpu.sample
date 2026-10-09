@@ -139,6 +139,16 @@ resources:
     #     # db_name: default
     #     partition_registry: profile_storage
     #     request_timeout_seconds: 30
+    #     # Optional vector index of the collection and its searches, as Milvus
+    #     # takes them for the index type. Partition-key isolation needs the HNSW
+    #     # family; unset selects HNSW_SQ.
+    #     # vector_index:
+    #     #   index_type: HNSW
+    #     #   params:
+    #     #     M: 16
+    #     #     efConstruction: 128
+    #     #   search_params:
+    #     #     ef: 128
     # semantic_vector_store:
     #   provider: milvus
     #   config:
