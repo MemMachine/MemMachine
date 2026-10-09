@@ -39,8 +39,8 @@ class VectorStorePartition(ABC):
     rejected, so an undeclared key never exists in the store, neither
     stored write-only nor scanned for. A record's or a filter's value of
     another type than its key declares is rejected too, so a backend
-    compares a stored value only with a value of its type; a filter's int
-    for a float key is the float it equals.
+    compares a stored value only with a value of its type; a record's or a
+    filter's int for a float key is the float it equals.
     """
 
     @property
@@ -82,8 +82,10 @@ class VectorStorePartition(ABC):
                 If a record carries a key the store has not declared;
                 raised before anything is sent.
             PropertyTypeMismatchError:
-                If a record's value is not of its key's declared type;
-                raised before anything is sent.
+                If a record's value is not of its key's declared type, an
+                int counting as a float, or is a float that is not finite;
+                raised before anything is sent. An int for a float key is
+                written as the float it equals.
             ValueError:
                 If a record's vector does not have the store's dimensions.
         """

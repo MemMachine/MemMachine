@@ -520,6 +520,15 @@ class TestDeclaredSchema(DeclaredSchemaContract):
         # A Qdrant write returns once applied, so reads reflect it already.
         pass
 
+    @staticmethod
+    async def stored_value(collection, record_uuid, key):
+        [point] = await collection._client.retrieve(
+            collection_name=collection._vector_store_name,
+            ids=[str(collection._point_id(record_uuid))],
+            with_payload=[key],
+        )
+        return (point.payload or {})[key]
+
 
 class TestFilters:
     # alice=30/9.5/True, bob=25/7.0/False, carol=35/8.0/True
@@ -1099,7 +1108,7 @@ class TestFilters:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("key", "value"),
-        [("age", "old"), ("age", 30.5), ("age", True), ("score", 3), ("score", "high")],
+        [("age", "old"), ("age", 30.5), ("age", True), ("score", "high")],
     )
     async def test_a_declared_property_of_another_type_is_refused(
         self, collection, key, value

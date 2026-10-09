@@ -19,29 +19,32 @@ from memmachine_server.common.filter import (
 
 from .data_types import (
     PropertyTypeMismatchError,
+    Record,
     UndeclaredPropertyKeyError,
     UnsupportedFilterError,
 )
 
 
-def validate_declared_properties(
-    properties: Mapping[str, PropertyValue],
-    indexed_properties: Mapping[str, PropertyType],
-) -> None:
+def bind_record(
+    record: Record, indexed_properties: Mapping[str, PropertyType]
+) -> Record:
     """
-    Raise unless every property is declared and holds a value of its type.
+    Bind a record to the declared schema: the record a store writes in its place.
 
+    Raises unless every property is declared and holds a value of its type.
     Called before anything is sent, so an undeclared key never reaches a
     backend, and a declared key never holds a value its column or index
-    would have to coerce.
+    would have to coerce: an int for a float key binds to the float it
+    equals, a bool is never a number, and a float is finite.
     """
-    undeclared = properties.keys() - indexed_properties.keys()
+    undeclared = record.properties.keys() - indexed_properties.keys()
     if undeclared:
         raise UndeclaredPropertyKeyError(undeclared, indexed_properties.keys())
-    for key, value in properties.items():
-        # `bool` is an `int` at runtime and is its own property type here.
-        if type(value) is not indexed_properties[key]:
-            raise PropertyTypeMismatchError(key, indexed_properties[key], value)
+    properties = {
+        key: _bound_value(key, value, indexed_properties[key])
+        for key, value in record.properties.items()
+    }
+    return record.model_copy(update={"properties": properties})
 
 
 def bind_filter(

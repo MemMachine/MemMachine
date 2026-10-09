@@ -84,6 +84,20 @@ _MISTYPED_FILTERS = [
     Not(And((Equals(field="name", value="alice"), Equals(field="age", value="30")))),
 ]
 
+_MISTYPED_PROPERTIES = [
+    ("age", "30"),
+    # A bool is an int at runtime and is still not one here.
+    ("age", True),
+    ("age", 30.5),
+    ("score", True),
+    ("score", "1.5"),
+    ("score", math.nan),
+    ("score", -math.inf),
+    ("name", 5),
+    ("active", 1),
+    ("created_at", "2024-05-01T12:00:00+00:00"),
+]
+
 _NON_FINITE_FILTERS = [
     Equals(field="score", value=math.nan),
     Equals(field="score", value=-math.inf),
@@ -121,11 +135,16 @@ async def _admitted(collection, property_filter, *, limit=_LIMIT) -> set:
 
 
 class DeclaredSchemaContract:
-    """Mixed into a store's test class, which supplies an async `collection` fixture and the `settle` hook."""
+    """Mixed into a store's test class, which supplies an async `collection` fixture and the `settle` and `stored_value` hooks."""
 
     @staticmethod
     async def settle(collection) -> None:
         """Return once the store's reads reflect every write made so far."""
+        raise NotImplementedError
+
+    @staticmethod
+    async def stored_value(collection, record_uuid, key):
+        """The value the backend holds for a record's property, read past the store."""
         raise NotImplementedError
 
     async def _store(self, collection, records: list[Record]) -> None:
@@ -150,12 +169,33 @@ class DeclaredSchemaContract:
             await collection.upsert(records=[_record([1.0, 0.0, 0.0], color="red")])
 
     @pytest.mark.asyncio
-    async def test_upsert_rejects_a_value_of_another_type(self, collection):
-        with pytest.raises(PropertyTypeMismatchError, match="age"):
-            await collection.upsert(records=[_record([1.0, 0.0, 0.0], age="5")])
-        # A bool is an int at runtime and is still not one here.
-        with pytest.raises(PropertyTypeMismatchError, match="age"):
-            await collection.upsert(records=[_record([1.0, 0.0, 0.0], age=True)])
+    @pytest.mark.parametrize(("key", "value"), _MISTYPED_PROPERTIES)
+    async def test_upsert_rejects_a_value_of_another_type(self, collection, key, value):
+        with pytest.raises(PropertyTypeMismatchError, match=key):
+            await collection.upsert(records=[_record([1.0, 0.0, 0.0], **{key: value})])
+
+    @pytest.mark.asyncio
+    async def test_an_int_written_to_a_float_key_is_stored_as_the_float_it_equals(
+        self, collection
+    ):
+        two, three = (
+            _record([1.0, 0.0, 0.0], score=2),
+            _record([1.0, 0.1, 0.0], score=3),
+        )
+        await self._store(collection, [two, three])
+
+        stored = await self.stored_value(collection, two.uuid, "score")
+        assert type(stored) is float
+        assert stored == 2.0
+        assert await _admitted(collection, Equals(field="score", value=2.0)) == {
+            two.uuid
+        }
+        assert await _admitted(
+            collection, Ordering(field="score", op=">", value=2.5)
+        ) == {three.uuid}
+        assert await _admitted(collection, In(field="score", values=(3,))) == {
+            three.uuid
+        }
 
     @pytest.mark.asyncio
     async def test_query_rejects_an_undeclared_key(self, collection):

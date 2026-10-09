@@ -318,6 +318,10 @@ class TestDeclaredSchema(DeclaredSchemaContract):
         # A write commits before it returns, so reads reflect it already.
         pass
 
+    @staticmethod
+    async def stored_value(collection, record_uuid, key):
+        return (await _stored(collection))[record_uuid][key]
+
 
 class TestFilters:
     async def _setup(self, collection):
@@ -800,7 +804,7 @@ class TestInputValidation:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("key", "value"),
-        [("age", "old"), ("age", 30.5), ("age", True), ("score", 3), ("score", "high")],
+        [("age", "old"), ("age", 30.5), ("age", True), ("score", "high")],
     )
     async def test_a_declared_property_of_another_type_is_refused(
         self, collection, key, value

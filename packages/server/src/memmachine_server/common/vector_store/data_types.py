@@ -153,7 +153,9 @@ class PropertyTypeMismatchError(ValueError):
     """
     Raised when a record's or a filter's value is not of its key's declared type.
 
-    A float key is compared with finite values only.
+    An int is of a float key's type, as the float it equals, and a bool is
+    never a number; a float key holds and is compared with finite values
+    only.
     """
 
     def __init__(self, key: str, declared: PropertyType, value: PropertyValue) -> None:
