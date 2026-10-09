@@ -109,58 +109,39 @@ def property_column_values(
     return values
 
 
-def compile_property_filter(
-    expr: FilterExpr,
-    table: Table,
-    indexed_properties: Mapping[str, PropertyType],
-) -> ColumnElement[bool]:
+def compile_property_filter(expr: FilterExpr, table: Table) -> ColumnElement[bool]:
     """
     Compile a filter over the declared columns of a records table.
 
-    A predicate matches only a value of the compared type, so a leaf whose
-    value is not of its key's declared type matches nothing rather than
-    whatever the database's affinity would coerce. `Not` is the complement
-    of a match: a row holding no value, whose comparison is NULL, is kept.
+    The filter is bound to the declared schema (`bind_filter`), so each
+    value is of its column's type and compares with it natively. `Not` is
+    the complement of a match: a row holding no value, whose comparison is
+    NULL, is kept.
     """
     match expr:
         case Equals() | Ordering() | In() | IsNull():
-            return _compile_leaf(expr, table, indexed_properties)
+            return _compile_leaf(expr, table)
         case And(operands):
-            return and_(
-                *(
-                    compile_property_filter(o, table, indexed_properties)
-                    for o in operands
-                )
-            )
+            return and_(*(compile_property_filter(o, table) for o in operands))
         case Or(operands):
-            return or_(
-                *(
-                    compile_property_filter(o, table, indexed_properties)
-                    for o in operands
-                )
-            )
+            return or_(*(compile_property_filter(o, table) for o in operands))
         case Not(operand):
-            inner = compile_property_filter(operand, table, indexed_properties)
+            inner = compile_property_filter(operand, table)
             return ~func.coalesce(inner, false())
 
 
 def _compile_leaf(
-    expr: Equals | Ordering | In | IsNull,
-    table: Table,
-    indexed_properties: Mapping[str, PropertyType],
+    expr: Equals | Ordering | In | IsNull, table: Table
 ) -> ColumnElement[bool]:
     column = table.c[property_column_name(expr.field)]
-    declared = indexed_properties[expr.field]
     match expr:
         case IsNull():
             return column.is_(None)
         case In(values=values):
-            if not values or type(values[0]) is not declared:
+            if not values:
                 return false()
             return column.in_(values)
         case Equals(value=value) | Ordering(value=value):
-            if type(value) is not declared:
-                return false()
             bound = epoch_microseconds(value) if isinstance(value, datetime) else value
             match expr:
                 case Equals():

@@ -36,7 +36,10 @@ class VectorStorePartition(ABC):
     A partition stores the properties its store's schema declares, typed
     and indexed for filtering during a search, and no others: a record or a
     filter naming an undeclared key is rejected, so an undeclared key never
-    exists in the store, neither stored write-only nor scanned for. Every
+    exists in the store, neither stored write-only nor scanned for. A
+    record's or a filter's value of another type than its key declares is
+    rejected too, so a backend compares a stored value only with a value of
+    its type; a filter's int for a float key is the float it equals. Every
     store evaluates the whole filter language during a search.
     """
 
@@ -95,8 +98,10 @@ class VectorStorePartition(ABC):
                 similarity metric; a match scoring exactly the threshold is
                 returned (default: None).
             property_filter (FilterExpr | None):
-                Filter expression tree over declared keys, evaluated during
-                the search.
+                Filter expression tree over declared keys, each compared
+                with values of its declared type, evaluated during the
+                search; an int for a float key is the float it equals. The
+                filter is checked before anything is sent.
                 If None, no property filtering is applied
                 (default: None).
 
@@ -106,6 +111,10 @@ class VectorStorePartition(ABC):
                 ordered as in the input iterable.
 
         Raises:
+            PropertyTypeMismatchError:
+                If a filter value, or any value of a membership test, is not
+                of its key's declared type, an int counting as a float, or
+                is a float that is not finite.
             UndeclaredPropertyKeyError:
                 If the filter names a key the store has not declared.
             ValueError:

@@ -39,13 +39,13 @@ from .partition_registry import (
     VectorStorePartitionRegistry,
 )
 from .utils import (
+    bind_filter,
     validate_declared_properties,
     validate_dimensions,
     validate_limit,
     validate_partition_key,
     validate_query_vector,
     validate_score_threshold,
-    validate_supported_filter,
 )
 from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 
@@ -122,7 +122,7 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
             validate_score_threshold(score_threshold)
             validate_limit(limit)
             if property_filter is not None:
-                validate_supported_filter(
+                property_filter = bind_filter(
                     property_filter, self._store_schema.indexed_properties
                 )
             await self._registration.require_current()
@@ -179,7 +179,8 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
 
         Called after a liveness check, with at least one query vector and a
         positive limit, the vectors, threshold, and filter already checked: the
-        filter names declared keys only.
+        filter is the one `bind_filter` returns, naming declared keys only and
+        holding values of their keys' declared types only.
 
         Args:
             query_vectors (list[list[float]]): The vectors to search for.
