@@ -443,15 +443,18 @@ async def test_delete_episodic_session_not_in_use(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("instance_cache_size", [0, 100])
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_delete_episodic_session_in_use_raises_error(
     mock_episodic_memory_cls,
     manager: EpisodicMemoryManager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
+    instance_cache_size: int,
 ):
-    """Test deleting a session that is in use."""
+    """Refused deletes preserve references and can be retried after release."""
     session_key = "session_to_delete"
+    manager._instance_cache.capacity = instance_cache_size
     mock_episodic_memory_cls.return_value = mock_episodic_memory_instance
 
     # Create and release the session so it's in cache but not in use
@@ -467,6 +470,16 @@ async def test_delete_episodic_session_in_use_raises_error(
             match=f"Session '{session_key}' is in use",
         ):
             await manager.delete_episodic_session(session_key)
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
+
+    expected_ref_count = 0 if instance_cache_size else -1
+    assert (
+        await manager._instance_cache.get_ref_count(session_key) == expected_ref_count
+    )
+
+    await manager.delete_episodic_session(session_key)
+    assert await manager._instance_cache.get(session_key) is None
+    mock_episodic_memory_instance.delete_session_episodes.assert_awaited_once()
 
 
 @pytest.mark.asyncio
