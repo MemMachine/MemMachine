@@ -30,12 +30,12 @@ single-node (sqlite-vec) bounds.
 ## The store and its partitions
 
 A vector store is one collection: a body of records searched together, with
-one dimensionality, one similarity metric and one declared schema, named at
-construction by its vector store name. The composition root builds one store
-per collection it needs, and the name keeps two stores over one backend
-apart. Within a store, a partition holds one tenant's records, addressed by a
-string key. Every partition of a store shares its dimensions, metric, and
-schema.
+one dimensionality and one declared schema, named at construction by its
+vector store name, and scored by cosine similarity. The composition root
+builds one store per collection it needs, and the name keeps two stores over
+one backend apart. Within a store, a partition holds one tenant's records,
+addressed by a string key. Every partition of a store shares its dimensions
+and schema.
 
 ## Documents
 

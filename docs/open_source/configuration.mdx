@@ -446,7 +446,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               aws_access_key_id: <AWS_ACCESS_KEY_ID>
               aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
               model_id: "amazon.titan-embed-text-v2:0"
-              similarity_metric: "cosine"
           ollama_embedder: # The embedder Service ID
             provider: openai
             config:
@@ -474,7 +473,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
                     aws_access_key_id: <AWS_ACCESS_KEY_ID> # AWS access key ID for Bedrock
                     aws_secret_access_key: <AWS_SECRET_ACCESS_KEY> # AWS secret access key for Bedrock
                     model_id: "amazon.titan-embed-text-v2:0" # Bedrock model ID
-                    similarity_metric: "cosine" # Defines the mathematical method used to compare two vectors for relevance (e.g., cosine).
                 ollama_embedder: # The embedder ID
                   provider: openai # The embedder provider type
                   config: # A dictionary containing provider-specific configuration
@@ -499,7 +497,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `config.aws_access_key_id` | AWS access key ID for Bedrock.                              | *Required for Bedrock*   |
     | `config.aws_secret_access_key` | AWS secret access key for Bedrock.                      | *Required for Bedrock*   |
     | `config.model_id` | Bedrock model ID.                                                    | *Required for Bedrock*   |
-    | `similarity_metric` | Defines the mathematical method used to compare two vectors for relevance (e.g., cosine). | *Required for Bedrock*   |
 
   ### Language Models
     Defines various language models for tasks like summarization and generation.

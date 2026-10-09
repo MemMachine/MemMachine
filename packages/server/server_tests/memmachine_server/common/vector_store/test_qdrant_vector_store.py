@@ -19,11 +19,7 @@ from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedR
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from memmachine_server.common.data_types import (
-    PropertyType,
-    PropertyValue,
-    SimilarityMetric,
-)
+from memmachine_server.common.data_types import PropertyType, PropertyValue
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -143,7 +139,6 @@ async def _params(client, registry_engine, **overrides) -> QdrantVectorStorePara
         "client": client,
         "vector_store_name": VECTOR_STORE_NAME,
         "vector_dimensions": VECTOR_DIM,
-        "similarity_metric": SimilarityMetric.COSINE,
         "indexed_properties": INDEXED_PROPERTIES,
     }
     params.update(overrides)
@@ -272,7 +267,11 @@ class TestUpsertAndQuery:
         assert matches[0].record_uuid == r1.uuid
         assert matches[1].record_uuid == r3.uuid
         assert matches[2].record_uuid == r2.uuid
-        assert matches[0].score >= matches[1].score >= matches[2].score
+        assert (
+            matches[0].cosine_similarity
+            >= matches[1].cosine_similarity
+            >= matches[2].cosine_similarity
+        )
 
     @pytest.mark.asyncio
     async def test_query_with_similarity_threshold(self, collection):
@@ -285,7 +284,9 @@ class TestUpsertAndQuery:
         await collection.upsert(records=[r1, r2])
 
         query_results = list(
-            await collection.query(query_vectors=[v1], limit=10, score_threshold=0.9)
+            await collection.query(
+                query_vectors=[v1], limit=10, min_cosine_similarity=0.9
+            )
         )
         matches = query_results[0].matches
 
@@ -324,8 +325,7 @@ class TestUpsertAndQuery:
         assert len(all_results) == 0
 
 
-# A query, and vectors that each metric ranks in its own order, with no two
-# tied under any metric.
+# A query, and vectors that cosine similarity ranks with no two tied.
 _METRIC_QUERY = [1.0, 0.0, 0.0]
 _METRIC_VECTORS = [
     [3.0, 3.0, 0.0],
@@ -336,110 +336,70 @@ _METRIC_VECTORS = [
 ]
 
 
-def _metric_score(
-    metric: SimilarityMetric, query: list[float], vector: list[float]
-) -> float:
-    """The score QueryMatch defines for a vector matching a query under a metric."""
+def _cosine_similarity(query: list[float], vector: list[float]) -> float:
+    """The cosine similarity of a vector to a query."""
     dot = sum(q * v for q, v in zip(query, vector, strict=True))
-    if metric is SimilarityMetric.COSINE:
-        return dot / (math.hypot(*query) * math.hypot(*vector))
-    if metric is SimilarityMetric.DOT:
-        return dot
-    if metric is SimilarityMetric.EUCLIDEAN:
-        return math.dist(query, vector)
-    return sum(abs(q - v) for q, v in zip(query, vector, strict=True))
+    return dot / (math.hypot(*query) * math.hypot(*vector))
 
 
-class TestSimilarityMetrics:
+class TestCosineSimilarity:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("metric", list(SimilarityMetric))
-    async def test_matches_are_ranked_scored_and_thresholded_by_the_metric(
-        self, any_qdrant_client, registry_engine, metric
+    async def test_matches_are_ranked_scored_and_kept_by_cosine_similarity(
+        self, collection
     ):
-        """Matches come best first, each scored as QueryMatch defines for the
-        store's metric, and a score threshold keeps the matches on its
-        better side: above it for a similarity, below it for a distance."""
-        store = QdrantVectorStore(
-            await _params(
-                any_qdrant_client,
-                registry_engine,
-                vector_store_name=f"metric_{metric.value}",
-                similarity_metric=metric,
-            )
-        )
-        await store.startup()
-        await store.create_partition(NAME)
-        partition = await store.open_partition(NAME)
-        assert partition is not None
+        """Matches come most similar first, each with its cosine similarity,
+        and a minimum keeps the matches at or above it."""
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
-        await partition.upsert(records=records)
+        await collection.upsert(records=records)
 
         expected = sorted(
             (
-                (_metric_score(metric, _METRIC_QUERY, record.vector), record.uuid)
+                (_cosine_similarity(_METRIC_QUERY, record.vector), record.uuid)
                 for record in records
             ),
-            reverse=metric.higher_is_better,
+            reverse=True,
         )
-        [result] = await partition.query(
+        [result] = await collection.query(
             query_vectors=[_METRIC_QUERY], limit=len(records)
         )
         assert [match.record_uuid for match in result.matches] == [
             record_uuid for _, record_uuid in expected
         ]
-        assert [match.score for match in result.matches] == pytest.approx(
-            [score for score, _ in expected], abs=1e-5
+        assert [match.cosine_similarity for match in result.matches] == pytest.approx(
+            [similarity for similarity, _ in expected], abs=1e-5
         )
 
-        # Halfway between the second and third best scores.
-        threshold = (expected[1][0] + expected[2][0]) / 2
-        [kept] = await partition.query(
+        # Halfway between the second and third highest similarities.
+        minimum = (expected[1][0] + expected[2][0]) / 2
+        [kept] = await collection.query(
             query_vectors=[_METRIC_QUERY],
             limit=len(records),
-            score_threshold=threshold,
+            min_cosine_similarity=minimum,
         )
         assert [match.record_uuid for match in kept.matches] == [
             record_uuid for _, record_uuid in expected[:2]
         ]
 
-        await store.delete_partition(NAME)
-
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("metric", list(SimilarityMetric))
-    async def test_a_threshold_keeps_a_match_scoring_exactly_it(
-        self, any_qdrant_client, registry_engine, metric
-    ):
-        """A score threshold equal to a match's reported score keeps the
-        match; one a step better than that score drops it."""
-        store = QdrantVectorStore(
-            await _params(
-                any_qdrant_client,
-                registry_engine,
-                vector_store_name=f"metric_{metric.value}",
-                similarity_metric=metric,
-            )
-        )
-        await store.startup()
-        await store.create_partition(NAME)
-        partition = await store.open_partition(NAME)
-        assert partition is not None
+    async def test_a_minimum_keeps_a_match_scoring_exactly_it(self, collection):
+        """A minimum cosine similarity equal to a match's reported similarity
+        keeps the match; one a step above it drops it."""
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
-        await partition.upsert(records=records)
-        [ranked] = await partition.query(
+        await collection.upsert(records=records)
+        [ranked] = await collection.query(
             query_vectors=[_METRIC_QUERY], limit=len(records)
         )
         edge = ranked.matches[2]
-        better = math.inf if metric.higher_is_better else -math.inf
 
-        [at_edge] = await partition.query(
+        [at_edge] = await collection.query(
             query_vectors=[_METRIC_QUERY],
             limit=len(records),
-            score_threshold=edge.score,
+            min_cosine_similarity=edge.cosine_similarity,
         )
-        [past_edge] = await partition.query(
+        [past_edge] = await collection.query(
             query_vectors=[_METRIC_QUERY],
             limit=len(records),
-            score_threshold=math.nextafter(edge.score, better),
+            min_cosine_similarity=math.nextafter(edge.cosine_similarity, math.inf),
         )
 
         assert [match.record_uuid for match in at_edge.matches] == [
@@ -448,7 +408,6 @@ class TestSimilarityMetrics:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await store.delete_partition(NAME)
 
 
 @dataclass(frozen=True)
@@ -470,7 +429,6 @@ def _partition_on(client: AsyncQdrantClient) -> QdrantVectorStorePartition:
             incarnation=uuid4(),
         ),
         vector_dimensions=VECTOR_DIM,
-        similarity_metric=SimilarityMetric.COSINE,
         indexed_properties={},
         tracker=OperationTracker(None, prefix="test"),
     )
@@ -1172,14 +1130,14 @@ class TestFilters:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
-    async def test_a_score_threshold_that_is_not_finite_is_refused(
+    async def test_a_min_cosine_similarity_that_is_not_finite_is_refused(
         self, collection, threshold
     ):
         with pytest.raises(ValueError, match="not finite"):
             await collection.query(
                 query_vectors=[_normalize([1.0, 0.0, 0.0])],
                 limit=1,
-                score_threshold=threshold,
+                min_cosine_similarity=threshold,
             )
 
     @pytest.mark.asyncio
@@ -1587,14 +1545,16 @@ def _assert_matches_model(
     result: QueryResult, expected: dict[UUID, Record], query: list[float]
 ) -> None:
     """The result holds each expected record once, scored by its latest vector, best first."""
-    scores = {match.record_uuid: match.score for match in result.matches}
+    similarities = {
+        match.record_uuid: match.cosine_similarity for match in result.matches
+    }
     assert len(result.matches) == len(expected)
-    assert scores.keys() == expected.keys()
+    assert similarities.keys() == expected.keys()
     for record_uuid, record in expected.items():
-        assert scores[record_uuid] == pytest.approx(
-            _metric_score(SimilarityMetric.COSINE, query, record.vector), abs=1e-5
+        assert similarities[record_uuid] == pytest.approx(
+            _cosine_similarity(query, record.vector), abs=1e-5
         )
-    ranked = [match.score for match in result.matches]
+    ranked = [match.cosine_similarity for match in result.matches]
     assert ranked == sorted(ranked, reverse=True)
 
 

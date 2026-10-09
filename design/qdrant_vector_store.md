@@ -10,7 +10,8 @@ registry](vector_store_partition_registry.md),
 - **One native collection per store**, named by the vector store name. It
   holds every partition of the store, one incarnation each. Creating a
   partition creates nothing in Qdrant.
-- **Vectors:** one unnamed dense vector, the store's dimensions and metric.
+- **Vectors:** one unnamed dense vector of the store's dimensions, compared by
+  cosine distance.
 - **Graphs per tenant, not per store:** HNSW `m=0`, `payload_m=16`. No
   collection-wide graph is built; each value of an indexed payload field gets
   its own graph once it has enough points in a segment, so a search filtered

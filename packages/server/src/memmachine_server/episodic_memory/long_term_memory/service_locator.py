@@ -153,7 +153,6 @@ async def event_backend_vector_store(
             config.embedder,
         ).hex,
         vector_dimensions=embedder.dimensions,
-        similarity_metric=embedder.similarity_metric,
         indexed_properties=event_backend_indexed_properties(),
     )
 

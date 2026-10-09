@@ -12,7 +12,6 @@ from sentence_transformers import SentenceTransformer
 
 from memmachine_server.common.data_types import (
     ExternalServiceAPIError,
-    SimilarityMetric,
 )
 from memmachine_server.common.utils import chunk_text, unflatten_like
 
@@ -56,21 +55,13 @@ class SentenceTransformerEmbedder(Embedder):
         self._dimensions = self._sentence_transformer.get_embedding_dimension() or len(
             self._sentence_transformer.encode("")
         )
-        match self._sentence_transformer.similarity_fn_name:
-            case "cosine":
-                self._similarity_metric = SimilarityMetric.COSINE
-            case "dot":
-                self._similarity_metric = SimilarityMetric.DOT
-            case "euclidean":
-                self._similarity_metric = SimilarityMetric.EUCLIDEAN
-            case "manhattan":
-                self._similarity_metric = SimilarityMetric.MANHATTAN
-            case _:
-                logger.warning(
-                    "Unknown similarity function name '%s', defaulting to cosine",
-                    self._sentence_transformer.similarity_fn_name,
-                )
-                self._similarity_metric = SimilarityMetric.COSINE
+        if self._sentence_transformer.similarity_fn_name != "cosine":
+            logger.warning(
+                "Sentence transformer '%s' declares similarity function '%s', "
+                "but embeddings are always compared by cosine similarity",
+                self._model_name,
+                self._sentence_transformer.similarity_fn_name,
+            )
 
         self._max_input_length = params.max_input_length
 
@@ -183,8 +174,3 @@ class SentenceTransformerEmbedder(Embedder):
     def dimensions(self) -> int:
         """Return the embedding dimensionality."""
         return self._dimensions
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        """Return the similarity metric used."""
-        return self._similarity_metric

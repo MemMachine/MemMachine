@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     And,
@@ -250,7 +250,6 @@ class TestEncodeEvents:
     ):
         # Collection without context fields.
         collection = InMemoryVectorStorePartition(
-            similarity_metric=SimilarityMetric.COSINE,
             indexed_properties={"_timestamp": datetime.datetime},
         )
         partition = InMemorySegmentStorePartition()
@@ -274,9 +273,7 @@ class TestEncodeEvents:
 
     async def test_init_raises_on_missing_base_field(self, fake_embedder):
         # Collection without _timestamp — base field required at init.
-        collection = InMemoryVectorStorePartition(
-            similarity_metric=SimilarityMetric.COSINE,
-        )
+        collection = InMemoryVectorStorePartition()
         partition = InMemorySegmentStorePartition()
         with pytest.raises(
             ValueError,
@@ -876,7 +873,6 @@ class TestQueryWithFilter:
     ):
         """A user key the partition declares is on the record, and its condition reaches the search under its bare name."""
         collection = InMemoryVectorStorePartition(
-            similarity_metric=fake_embedder.similarity_metric,
             indexed_properties={
                 **EventMemory.expected_vector_store_collection_schema(),
                 "color": str,
@@ -1120,7 +1116,6 @@ _FIELDS_ON_THE_SEGMENT_ONLY = ("m.u1", "m.u2")
 def declaring_event_memory(fake_embedder, fake_segment_store_partition) -> EventMemory:
     """Event memory whose vector store declares `_d1`, `_d2`, and `_d3` but not `u1` or `u2`."""
     collection = InMemoryVectorStorePartition(
-        similarity_metric=fake_embedder.similarity_metric,
         indexed_properties={
             **EventMemory.expected_vector_store_collection_schema(),
             "_d1": int,
@@ -1254,10 +1249,6 @@ class _ColorEmbedder(Embedder):
     @property
     def dimensions(self) -> int:
         return 2
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        return SimilarityMetric.COSINE
 
 
 @_async
@@ -1405,7 +1396,6 @@ class TestIngestFormatOptions:
     @staticmethod
     def _build(embedder: FakeEmbedder) -> EventMemory:
         vector_store_partition = InMemoryVectorStorePartition(
-            similarity_metric=embedder.similarity_metric,
             indexed_properties=(EventMemory.expected_vector_store_collection_schema()),
         )
         return EventMemory(
@@ -1444,7 +1434,6 @@ class TestIngestFormatOptions:
         embedder = _RecordingEmbedder()
         partition = InMemorySegmentStorePartition()
         vector_store_partition = InMemoryVectorStorePartition(
-            similarity_metric=embedder.similarity_metric,
             indexed_properties=(EventMemory.expected_vector_store_collection_schema()),
         )
         event_memory = EventMemory(

@@ -448,19 +448,18 @@ class EventMemory:
             )
         )
 
-        # Extract seed segment UUIDs and their best embedding scores.
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
         # First occurrence has the best score since matches are ordered best-to-worst.
-        seed_embedding_scores: dict[UUID, float] = {}
+        seed_cosine_similarities: dict[UUID, float] = {}
         for match in query_result.matches:
             segment_uuid = segments_by_derivatives.get(match.record_uuid)
             if segment_uuid is None:
                 # The derivative's segment is gone; its vector outlived it.
                 continue
-            if segment_uuid not in seed_embedding_scores:
-                seed_embedding_scores[segment_uuid] = match.score
+            if segment_uuid not in seed_cosine_similarities:
+                seed_cosine_similarities[segment_uuid] = match.cosine_similarity
 
-        seed_segment_uuids = list(seed_embedding_scores)
+        seed_segment_uuids = list(seed_cosine_similarities)
 
         max_backward_segments = expand_context // 3
         max_forward_segments = expand_context - max_backward_segments
@@ -489,7 +488,7 @@ class EventMemory:
         # Use embedding scores if reranker is not available.
         if self._reranker is None:
             scores = [
-                seed_embedding_scores[seed_uuid]
+                seed_cosine_similarities[seed_uuid]
                 for seed_uuid in kept_seed_segment_uuids
             ]
         else:
@@ -500,13 +499,6 @@ class EventMemory:
                 query, segment_contexts, reranker_format_options
             )
         t_scoring = time.monotonic()
-
-        # Reranker scores are always higher-is-better.
-        # Embedding scores depend on the similarity metric.
-        higher_is_better = (
-            self._reranker is not None
-            or self._vector_store_partition.similarity_metric.higher_is_better
-        )
 
         # Return scored contexts ordered by score.
         scored_segment_contexts = [
@@ -521,7 +513,7 @@ class EventMemory:
                     strict=True,
                 ),
                 key=lambda triple: triple[0],
-                reverse=higher_is_better,
+                reverse=True,
             )
         ]
 

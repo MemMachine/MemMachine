@@ -40,8 +40,8 @@ registry](vector_store_partition_registry.md),
   its key declares matches nothing. Negation is the complement, as on Qdrant:
   a negated condition holds where the property has no value, which Milvus's
   SQL-style null evaluation does not give on its own.
-- **Scores** are the server's (cosine similarity, inner product, and the
-  square root of Milvus's squared Euclidean distance).
+- **Scores** are the server's: a COSINE index answers the cosine similarity
+  as a hit's distance.
 - **Server-configured limits stay the server's.** A search `limit` reaches the
   server, which refuses one above `quotaAndLimits.limits.topK`. A declared
   string's VARCHAR length is `max_varchar_length` (65,535 unless configured,

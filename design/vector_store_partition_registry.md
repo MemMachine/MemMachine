@@ -312,8 +312,8 @@ the backend is remote:
 ## Decisions
 
 - **A store is one collection.** The composition root builds one store per
-  collection it needs, with its dimensions, metric, and declared schema fixed
-  at construction, and partitions it by tenant. A partition key is all a
+  collection it needs, with its dimensions and declared schema fixed at
+  construction, and partitions it by tenant. A partition key is all a
   caller names; the store, not each call, carries what the records share.
 - **`unregister` is keyed by partition key.** Callers delete partitions by
   key, and the key is resolved to its incarnation inside the deleting

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.mixin_confs import MetricsFactoryIdMixin
-from memmachine_server.common.data_types import PropertyType, SimilarityMetric
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import (
     CountCachingEpisodeStorage,
@@ -215,7 +215,6 @@ class ResourceManagerImpl:
         *,
         vector_store_name: str,
         vector_dimensions: int,
-        similarity_metric: SimilarityMetric,
         indexed_properties: Mapping[str, PropertyType],
     ) -> VectorStore:
         """Return the store of one name on a configured backend.
@@ -226,7 +225,6 @@ class ResourceManagerImpl:
             backend,
             vector_store_name=vector_store_name,
             vector_dimensions=vector_dimensions,
-            similarity_metric=similarity_metric,
             indexed_properties=indexed_properties,
         )
         key = (backend, vector_store_name)

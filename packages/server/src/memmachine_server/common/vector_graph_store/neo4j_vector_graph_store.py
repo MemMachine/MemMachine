@@ -20,7 +20,6 @@ from pydantic import BaseModel, Field, InstanceOf
 from memmachine_server.common.data_types import (
     FilterValue,
     OrderedValue,
-    SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
@@ -234,7 +233,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
             sanitized_embedding_names = set()
             embedding_dimensions_by_name: dict[str, int] = {}
-            embedding_similarity_by_name: dict[str, SimilarityMetric] = {}
 
             query_nodes = []
             for node in nodes:
@@ -245,33 +243,15 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     },
                 )
 
-                for embedding_name, (
-                    embedding,
-                    similarity_metric,
-                ) in node.embeddings.items():
+                for embedding_name, embedding in node.embeddings.items():
                     sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
                         mangle_embedding_name(embedding_name),
                     )
-                    sanitized_similarity_metric_name = (
-                        Neo4jVectorGraphStore._sanitize_name(
-                            Neo4jVectorGraphStore._similarity_metric_property_name(
-                                embedding_name,
-                            ),
-                        )
-                    )
-
                     sanitized_embedding_names.add(sanitized_embedding_name)
                     embedding_dimensions_by_name[sanitized_embedding_name] = len(
                         embedding,
                     )
-                    embedding_similarity_by_name[sanitized_embedding_name] = (
-                        similarity_metric
-                    )
-
                     query_node_properties[sanitized_embedding_name] = embedding
-                    query_node_properties[sanitized_similarity_metric_name] = (
-                        similarity_metric.value
-                    )
 
                 query_node: dict[str, PropertyValue | dict[str, PropertyValue]] = {
                     "uid": str(node.uid),
@@ -325,9 +305,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                                     dimensions=embedding_dimensions_by_name[
                                         sanitized_embedding_name
                                     ],
-                                    similarity_metric=embedding_similarity_by_name[
-                                        sanitized_embedding_name
-                                    ],
                                 ),
                             )
                         )
@@ -349,7 +326,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             sanitized_relation = Neo4jVectorGraphStore._sanitize_name(relation)
             sanitized_embedding_names = set()
             embedding_dimensions_by_name: dict[str, int] = {}
-            embedding_similarity_by_name: dict[str, SimilarityMetric] = {}
 
             query_edges = []
             for edge in edges:
@@ -360,33 +336,15 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     },
                 )
 
-                for embedding_name, (
-                    embedding,
-                    similarity_metric,
-                ) in edge.embeddings.items():
+                for embedding_name, embedding in edge.embeddings.items():
                     sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
                         mangle_embedding_name(embedding_name),
                     )
-                    sanitized_similarity_metric_name = (
-                        Neo4jVectorGraphStore._sanitize_name(
-                            Neo4jVectorGraphStore._similarity_metric_property_name(
-                                embedding_name,
-                            ),
-                        )
-                    )
-
                     sanitized_embedding_names.add(sanitized_embedding_name)
                     embedding_dimensions_by_name[sanitized_embedding_name] = len(
                         embedding,
                     )
-                    embedding_similarity_by_name[sanitized_embedding_name] = (
-                        similarity_metric
-                    )
-
                     query_edge_properties[sanitized_embedding_name] = embedding
-                    query_edge_properties[sanitized_similarity_metric_name] = (
-                        similarity_metric.value
-                    )
 
                 query_edge = {
                     "uid": str(edge.uid),
@@ -453,9 +411,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                                     dimensions=embedding_dimensions_by_name[
                                         sanitized_embedding_name
                                     ],
-                                    similarity_metric=embedding_similarity_by_name[
-                                        sanitized_embedding_name
-                                    ],
                                 ),
                             )
                         )
@@ -466,7 +421,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         collection: str,
         embedding_name: str,
         query_embedding: list[float],
-        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         limit: int | None = 100,
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
@@ -511,10 +465,10 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     "CALL db.index.vector.queryNodes(\n"
                     "    $vector_index_name, $query_limit, $query_embedding\n"
                     ")\n"
-                    "YIELD node AS n, score AS similarity\n"
+                    "YIELD node AS n, score AS cosine_similarity\n"
                     f"WHERE {query_filter_string}\n"
                     "RETURN n\n"
-                    "ORDER BY similarity DESC\n"
+                    "ORDER BY cosine_similarity DESC\n"
                     "LIMIT $limit"
                 )
 
@@ -539,13 +493,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     do_exact_similarity_search = True
 
             if do_exact_similarity_search:
-                match similarity_metric:
-                    case SimilarityMetric.COSINE:
-                        vector_similarity_function = "vector.similarity.cosine"
-                    case SimilarityMetric.EUCLIDEAN:
-                        vector_similarity_function = "vector.similarity.euclidean"
-                    case _:
-                        vector_similarity_function = "vector.similarity.cosine"
+                vector_similarity_function = "vector.similarity.cosine"
 
                 query = (
                     f"MATCH (n:{sanitized_collection})\n"
@@ -554,9 +502,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     "WITH n,"
                     f"    {vector_similarity_function}("
                     f"        n.{sanitized_embedding_name}, $query_embedding"
-                    "    ) AS similarity\n"
+                    "    ) AS cosine_similarity\n"
                     "RETURN n\n"
-                    "ORDER BY similarity DESC\n"
+                    "ORDER BY cosine_similarity DESC\n"
                     f"{'LIMIT $limit' if limit is not None else ''}"
                 )
 
@@ -1067,7 +1015,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         sanitized_collection_or_relation: str,
         sanitized_embedding_name: str,
         dimensions: int,
-        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
     ) -> None:
         """Create a vector index if missing and wait for it to be online."""
         if not (1 <= dimensions <= 4096):
@@ -1100,14 +1047,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 Neo4jVectorGraphStore.CacheIndexState.CREATING
             )
 
-            match similarity_metric:
-                case SimilarityMetric.COSINE:
-                    similarity_function = "cosine"
-                case SimilarityMetric.EUCLIDEAN:
-                    similarity_function = "euclidean"
-                case _:
-                    similarity_function = "cosine"
-
             match entity_type:
                 case EntityType.NODE:
                     query_index_for_expression = (
@@ -1134,7 +1073,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     "}"
                 ),
                 dimensions=dimensions,
-                similarity_function=similarity_function,
+                similarity_function="cosine",
             )
 
             await self._await_create_index_if_not_exists(
@@ -1219,20 +1158,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         )
 
     @staticmethod
-    def _similarity_metric_property_name(embedding_name: str) -> str:
-        """
-        Get the similarity metric property name for an embedding.
-
-        Args:
-            embedding_name (str): The name of the embedding.
-
-        Returns:
-            str: The similarity metric property name.
-
-        """
-        return f"similarity_metric_for_{embedding_name}"
-
-    @staticmethod
     def _nodes_from_neo4j_nodes(
         neo4j_nodes: Iterable[Neo4jNode],
     ) -> list[Node]:
@@ -1267,21 +1192,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                         list[float],
                         value_from_neo4j(neo4j_property_value),
                     )
-                    similarity_metric = SimilarityMetric(
-                        value_from_neo4j(
-                            neo4j_node[
-                                Neo4jVectorGraphStore._sanitize_name(
-                                    Neo4jVectorGraphStore._similarity_metric_property_name(
-                                        embedding_name,
-                                    ),
-                                )
-                            ],
-                        ),
-                    )
-                    node_embeddings[embedding_name] = (
-                        embedding_value,
-                        similarity_metric,
-                    )
+                    node_embeddings[embedding_name] = embedding_value
 
             nodes.append(
                 Node(

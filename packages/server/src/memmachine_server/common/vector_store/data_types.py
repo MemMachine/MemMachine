@@ -218,20 +218,14 @@ class QueryMatch(BaseModel):
     A single vector store query match.
 
     Attributes:
-        score (float):
-            The meaning depends on the store's `SimilarityMetric`:
-            - *cosine*: cosine similarity in [-1, 1].
-            - *dot*: raw dot product [0, inf).
-            - *euclidean*: Euclidean distance [0, inf).
-            - *manhattan*: Manhattan distance [0, inf).
-
-            Use `SimilarityMetric.higher_is_better` to determine which
-            direction indicates a better match.
+        cosine_similarity (float):
+            Cosine similarity between the query vector and the matched
+            record's vector, in [-1, 1]. Higher is a better match.
         record_uuid (UUID):
             UUID of the matched record.
     """
 
-    score: float
+    cosine_similarity: float
     record_uuid: UUID
 
 

@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 from sqlalchemy import insert
 
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.filter.filter_parser import parse_filter
 from memmachine_server.common.vector_store import Record
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
@@ -23,7 +22,6 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_p
 @pytest.fixture
 def vector_collection() -> InMemoryVectorStorePartition:
     return InMemoryVectorStorePartition(
-        similarity_metric=SimilarityMetric.COSINE,
         indexed_properties={
             "set_id": str,
             "category": str,

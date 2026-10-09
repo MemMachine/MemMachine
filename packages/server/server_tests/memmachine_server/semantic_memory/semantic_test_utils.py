@@ -1,6 +1,5 @@
 import random
 
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeEntry, EpisodeStorage
 
@@ -37,10 +36,6 @@ class SpyEmbedder(Embedder):
     def dimensions(self) -> int:
         return 2
 
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        return SimilarityMetric.COSINE
-
     @staticmethod
     def _vector(text: str) -> list[float]:
         lowered = text.lower()
@@ -76,10 +71,6 @@ class LengthEmbedder(Embedder):
     @property
     def dimensions(self) -> int:
         return self.n
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        return SimilarityMetric.COSINE
 
 
 async def add_history(history_storage: EpisodeStorage, content: str):

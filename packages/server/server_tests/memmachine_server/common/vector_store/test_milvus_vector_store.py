@@ -30,11 +30,7 @@ import grpc
 import grpc.aio
 from pymilvus.client.types import ConsistencyLevel
 
-from memmachine_server.common.data_types import (
-    PropertyType,
-    PropertyValue,
-    SimilarityMetric,
-)
+from memmachine_server.common.data_types import PropertyType, PropertyValue
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -110,7 +106,6 @@ async def _params(client, registry_engine, **overrides) -> MilvusVectorStorePara
         "client": client,
         "vector_store_name": VECTOR_STORE_NAME,
         "vector_dimensions": VECTOR_DIM,
-        "similarity_metric": SimilarityMetric.COSINE,
         "indexed_properties": INDEXED_PROPERTIES,
         "request_timeout_seconds": REQUEST_TIMEOUT_SECONDS,
         "max_varchar_length": MAX_VARCHAR_LENGTH,
@@ -203,7 +198,6 @@ def _with_purge_batch_size(
             partition_registry=store._partition_registry,
             vector_store_name=store._vector_store_name,
             vector_dimensions=store._vector_dimensions,
-            similarity_metric=store._similarity_metric,
             indexed_properties=dict(store._indexed_properties),
             request_timeout_seconds=REQUEST_TIMEOUT_SECONDS,
             max_varchar_length=MAX_VARCHAR_LENGTH,
@@ -624,18 +618,6 @@ class TestPartitionLifecycle:
 
         await longest.delete_partition("longest_key")
 
-    @pytest.mark.asyncio
-    async def test_unsupported_metric_raises(self, store):
-        with pytest.raises(ValueError, match="Milvus only supports"):
-            MilvusVectorStore(
-                await _params(
-                    store._client,
-                    store._partition_registry._engine,
-                    vector_store_name="bad_metric",
-                    similarity_metric=SimilarityMetric.MANHATTAN,
-                )
-            )
-
 
 async def _require_usable(partition: MilvusVectorStorePartition) -> None:
     """Write a record to the partition, and find it by a filtered query."""
@@ -784,9 +766,13 @@ class TestUpsertAndQuery:
         assert matches[0].record_uuid == r1.uuid
         assert matches[1].record_uuid == r3.uuid
         assert matches[2].record_uuid == r2.uuid
-        assert matches[0].score >= matches[1].score >= matches[2].score
-        assert matches[0].score == pytest.approx(1.0)
-        assert matches[2].score == pytest.approx(0.0)
+        assert (
+            matches[0].cosine_similarity
+            >= matches[1].cosine_similarity
+            >= matches[2].cosine_similarity
+        )
+        assert matches[0].cosine_similarity == pytest.approx(1.0)
+        assert matches[2].cosine_similarity == pytest.approx(0.0)
 
     @pytest.mark.asyncio
     async def test_query_with_similarity_threshold(self, collection):
@@ -799,7 +785,7 @@ class TestUpsertAndQuery:
         await _settle(collection)
 
         query_results = await collection.query(
-            query_vectors=[v1], limit=10, score_threshold=0.9
+            query_vectors=[v1], limit=10, min_cosine_similarity=0.9
         )
         matches = query_results[0].matches
         assert len(matches) == 1
@@ -1208,14 +1194,14 @@ class TestFilters:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("threshold", [math.nan, math.inf, -math.inf])
-    async def test_a_score_threshold_that_is_not_finite_is_refused(
+    async def test_a_min_cosine_similarity_that_is_not_finite_is_refused(
         self, collection, threshold
     ):
         with pytest.raises(ValueError, match="not finite"):
             await collection.query(
                 query_vectors=[_normalize([1.0, 0.0, 0.0])],
                 limit=1,
-                score_threshold=threshold,
+                min_cosine_similarity=threshold,
             )
 
     @pytest.mark.asyncio
@@ -1410,115 +1396,45 @@ class TestOperationModel:
 
 class TestScores:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("metric", "expected"),
-        [
-            (SimilarityMetric.COSINE, 0.6),
-            (SimilarityMetric.DOT, 1.2),
-            (SimilarityMetric.EUCLIDEAN, math.sqrt(2.0 * 2.0 + 1.0 - 2.0 * 1.2)),
-        ],
-    )
-    async def test_scores_are_the_metric_values(self, store, metric, expected):
-        """Scores come from the server: cosine similarity, inner product, and
-        Euclidean distance (Milvus returns it squared)."""
-        # A store's metric is its collection's, so each metric is its own store.
-        scored = MilvusVectorStore(
-            await _params(
-                store._client,
-                store._partition_registry._engine,
-                vector_store_name=f"scores_{metric.value}",
-                similarity_metric=metric,
-            )
-        )
-        await scored.startup()
-        await scored.delete_partition("scores")
-        await scored.create_partition("scores")
-        partition = await scored.open_partition("scores")
-        assert partition is not None
-        record = _make_record(vector=[1.2, 1.6, 0.0])
-        await partition.upsert(records=[record])
-        await _settle(partition)
+    async def test_scores_are_cosine_similarities(self, collection):
+        """Scores come from the server, whatever the vectors' norms."""
+        await collection.upsert(records=[_make_record(vector=[1.2, 1.6, 0.0])])
+        await _settle(collection)
 
-        [result] = await partition.query(query_vectors=[[1.0, 0.0, 0.0]], limit=1)
-        assert result.matches[0].score == pytest.approx(expected, abs=1e-3)
-        await scored.delete_partition("scores")
+        [result] = await collection.query(query_vectors=[[1.0, 0.0, 0.0]], limit=1)
+        assert result.matches[0].cosine_similarity == pytest.approx(0.6, abs=1e-3)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("metric", "vectors", "threshold", "expected_scores"),
-        [
-            # Distances 1, 2 and 5; the threshold lies between 2 and its square.
-            (
-                SimilarityMetric.EUCLIDEAN,
-                [[2.0, 0.0, 0.0], [1.0, 2.0, 0.0], [1.0, 0.0, 5.0]],
-                3.0,
-                [1.0, 2.0],
-            ),
-            (
-                SimilarityMetric.DOT,
-                [[3.0, 0.0, 0.0], [2.0, 1.0, 0.0], [-1.0, 0.0, 0.0]],
-                1.5,
-                [3.0, 2.0],
-            ),
-            (
-                SimilarityMetric.COSINE,
-                [[1.0, 0.0, 0.0], [0.6, 0.8, 0.0], [0.0, 1.0, 0.0]],
-                0.5,
-                [1.0, 0.6],
-            ),
-        ],
-        ids=["euclidean", "dot", "cosine"],
-    )
-    async def test_a_threshold_keeps_the_matches_within_it_best_first(
-        self, store, metric, vectors, threshold, expected_scores
+    async def test_a_minimum_keeps_the_matches_at_or_above_it_most_similar_first(
+        self, collection
     ):
-        """Of three records at increasing distance from the query, the two
-        within the threshold match, best first, scored by the metric."""
-        # A store's metric is its collection's, so each metric is its own store.
-        scored = await _started_store(
-            store._client,
-            store._partition_registry._engine,
-            vector_store_name=f"threshold_{metric.value}",
-            similarity_metric=metric,
+        """Of three records ever less similar to the query, the two at or
+        above the minimum match, most similar first, each with its cosine
+        similarity."""
+        nearest, middle, farthest = (
+            _make_record(vector=vector)
+            for vector in ([1.0, 0.0, 0.0], [0.6, 0.8, 0.0], [0.0, 1.0, 0.0])
         )
-        await scored.create_partition("threshold")
-        partition = await scored.open_partition("threshold")
-        assert partition is not None
-        nearest, middle, farthest = (_make_record(vector=vector) for vector in vectors)
-        await partition.upsert(records=[farthest, nearest, middle])
-        await _settle(partition)
+        await collection.upsert(records=[farthest, nearest, middle])
+        await _settle(collection)
 
-        [result] = await partition.query(
-            query_vectors=[[1.0, 0.0, 0.0]], limit=10, score_threshold=threshold
+        [result] = await collection.query(
+            query_vectors=[[1.0, 0.0, 0.0]], limit=10, min_cosine_similarity=0.5
         )
 
         assert [match.record_uuid for match in result.matches] == [
             nearest.uuid,
             middle.uuid,
         ]
-        assert [match.score for match in result.matches] == pytest.approx(
-            expected_scores, abs=1e-3
+        assert [match.cosine_similarity for match in result.matches] == pytest.approx(
+            [1.0, 0.6], abs=1e-3
         )
-        await scored.delete_partition("threshold")
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "metric",
-        [SimilarityMetric.COSINE, SimilarityMetric.DOT, SimilarityMetric.EUCLIDEAN],
-    )
-    async def test_a_threshold_keeps_a_match_scoring_exactly_it(self, store, metric):
-        """A score threshold equal to a match's reported score keeps the
-        match; one a step better than that score drops it."""
-        scored = await _started_store(
-            store._client,
-            store._partition_registry._engine,
-            vector_store_name=f"edge_{metric.value}",
-            similarity_metric=metric,
-        )
-        await scored.create_partition("edge")
-        partition = await scored.open_partition("edge")
-        assert partition is not None
-        # Vectors that each metric ranks in its own order, none tied.
+    async def test_a_minimum_keeps_a_match_scoring_exactly_it(self, collection):
+        """A minimum cosine similarity equal to a match's reported similarity
+        keeps the match; one a step above it drops it."""
+        # Vectors whose cosine similarities to the query are all distinct.
         records = [
             _make_record(vector=vector)
             for vector in (
@@ -1529,20 +1445,21 @@ class TestScores:
                 [0.5, 0.05, 0.0],
             )
         ]
-        await partition.upsert(records=records)
-        await _settle(partition)
+        await collection.upsert(records=records)
+        await _settle(collection)
         query = [1.0, 0.0, 0.0]
-        [ranked] = await partition.query(query_vectors=[query], limit=len(records))
+        [ranked] = await collection.query(query_vectors=[query], limit=len(records))
         edge = ranked.matches[2]
-        better = math.inf if metric.higher_is_better else -math.inf
 
-        [at_edge] = await partition.query(
-            query_vectors=[query], limit=len(records), score_threshold=edge.score
-        )
-        [past_edge] = await partition.query(
+        [at_edge] = await collection.query(
             query_vectors=[query],
             limit=len(records),
-            score_threshold=math.nextafter(edge.score, better),
+            min_cosine_similarity=edge.cosine_similarity,
+        )
+        [past_edge] = await collection.query(
+            query_vectors=[query],
+            limit=len(records),
+            min_cosine_similarity=math.nextafter(edge.cosine_similarity, math.inf),
         )
 
         assert [match.record_uuid for match in at_edge.matches] == [
@@ -1551,7 +1468,6 @@ class TestScores:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await scored.delete_partition("edge")
 
 
 # The client's reads; each takes an optional consistency level.
@@ -1654,7 +1570,6 @@ def _partition_on(client: AsyncMilvusClient) -> MilvusVectorStorePartition:
             incarnation=uuid4(),
         ),
         vector_dimensions=VECTOR_DIM,
-        similarity_metric=SimilarityMetric.COSINE,
         indexed_properties={},
         tracker=OperationTracker(None, prefix="test"),
         request_timeout_seconds=REQUEST_TIMEOUT_SECONDS,

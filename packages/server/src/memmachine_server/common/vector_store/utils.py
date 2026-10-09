@@ -47,10 +47,12 @@ def validate_query_vector(query_vector: Sequence[float], dimensions: int) -> Non
         )
 
 
-def validate_score_threshold(score_threshold: float | None) -> None:
-    """Raise ValueError if a score threshold is not finite; None means no threshold."""
-    if score_threshold is not None and not math.isfinite(score_threshold):
-        raise ValueError(f"Score threshold is not finite: {score_threshold}")
+def validate_min_cosine_similarity(min_cosine_similarity: float | None) -> None:
+    """Raise ValueError if a minimum cosine similarity is not finite; None means no minimum."""
+    if min_cosine_similarity is not None and not math.isfinite(min_cosine_similarity):
+        raise ValueError(
+            f"Minimum cosine similarity is not finite: {min_cosine_similarity}"
+        )
 
 
 def validate_limit(limit: int) -> None:
