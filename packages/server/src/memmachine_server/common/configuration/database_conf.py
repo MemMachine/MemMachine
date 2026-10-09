@@ -399,6 +399,22 @@ class MilvusConf(MetricsFactoryIdMixin, YamlSerializableMixin, WithValueFromEnv)
             "sets it otherwise."
         ),
     )
+    # A plain mapping, so pymilvus stays optional for configuration parsing.
+    vector_index: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The vector index of the store's collection: a mapping with "
+            "index_type, params (build parameters) and search_params (parameters "
+            "every search passes), as Milvus takes them for that index type; "
+            "unset selects the store's own index. The collection isolates "
+            "partitions by key, which Milvus supports for the HNSW family only, "
+            "and the metric is cosine. Milvus checks the parameters the index "
+            "type takes when it creates the index and when a search reaches an "
+            "indexed segment. Startup creates the index unless the collection "
+            "has one, in which case the collection keeps its index; the search "
+            "parameters apply to every query from startup on."
+        ),
+    )
 
     @field_validator("uri", mode="before")
     @classmethod
