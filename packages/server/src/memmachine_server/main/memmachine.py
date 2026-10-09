@@ -390,6 +390,9 @@ class MemMachine:
     async def _delete_queued_session(self, session: SessionData) -> None:
         lock_service = await self._resources.get_sql_lock_service()
         try:
+            # The lease prevents concurrent workers during normal operation.
+            # Store deletes still use the session key, so an expired lease
+            # cannot fence a stalled worker from a later session incarnation.
             async with lock_service.lock(
                 f"session-deletion:{session.session_key}",
                 lease_duration=SESSION_DELETE_LEASE_DURATION,
@@ -410,13 +413,14 @@ class MemMachine:
     async def _delete_queued_session_data(
         self, session: SessionData, manager: SessionDataManager
     ) -> None:
-        tasks = [self._delete_session_episode_store(session.session_key)]
-        if self._conf.episodic_memory.enabled:
-            tasks.append(self._delete_session_episodic_memory(session.session_key))
-        if self._conf.semantic_memory.enabled:
-            tasks.append(self._delete_session_semantic_memory(session))
-
-        await asyncio.gather(*tasks)
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(self._delete_session_episode_store(session.session_key))
+            if self._conf.episodic_memory.enabled:
+                tasks.create_task(
+                    self._delete_session_episodic_memory(session.session_key)
+                )
+            if self._conf.semantic_memory.enabled:
+                tasks.create_task(self._delete_session_semantic_memory(session))
         await manager.delete_session(session_key=session.session_key)
         logger.info("Deleted session %s", session.session_key)
 
