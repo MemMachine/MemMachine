@@ -7,7 +7,14 @@ from enum import Enum
 from typing import ClassVar, Self, cast
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretStr,
+    ValidatorFunctionWrapHandler,
+    field_validator,
+    model_validator,
+)
 
 from memmachine_server.common.errors import InvalidPasswordError
 from memmachine_server.common.metrics_factory import MetricsFactory
@@ -53,6 +60,38 @@ class MetricsFactoryIdMixin(WithMetricsFactory, BaseModel):
     )
 
 
+class _EnvironmentValue(str):
+    """Resolved text retaining its original environment expression for YAML."""
+
+    reference: str
+
+    def __new__(cls, value: str, reference: str | None = None) -> Self:
+        instance = super().__new__(cls, value)
+        instance.reference = value if reference is None else reference
+        return instance
+
+
+class _EnvironmentSecret(SecretStr):
+    """A runtime secret whose YAML representation remains an env reference."""
+
+    reference: str
+
+    def __init__(self, value: str, reference: str) -> None:
+        super().__init__(value)
+        self.reference = reference
+
+    def __eq__(self, other: object) -> bool:
+        """Preserve SecretStr value equality, including ordinary SecretStrs."""
+        return (
+            isinstance(other, SecretStr)
+            and self.get_secret_value() == other.get_secret_value()
+        )
+
+    def __hash__(self) -> int:
+        """Keep hashing consistent with SecretStr value equality."""
+        return hash(self.get_secret_value())
+
+
 class WithValueFromEnv:
     """Mixin that adds support for resolving environment variable references."""
 
@@ -60,8 +99,12 @@ class WithValueFromEnv:
     _ENV_RE: ClassVar[re.Pattern] = re.compile(r"\$(\w+)|\$\{(\w+)}")
 
     @classmethod
-    def _resolve_env(cls, value: SecretStr | str) -> str:
+    def _resolve_env(cls, value: object) -> object:
         """Resolve environment variable references in the form $ENV or ${ENV}."""
+        if isinstance(value, _EnvironmentValue):
+            return value
+        if isinstance(value, _EnvironmentSecret):
+            return _EnvironmentValue(value.get_secret_value(), value.reference)
         if isinstance(value, SecretStr):
             value = value.get_secret_value()
 
@@ -73,7 +116,31 @@ class WithValueFromEnv:
             name = match.group(1) or match.group(2)
             return os.environ.get(name, match.group(0))
 
-        return cls._ENV_RE.sub(_repl, value)
+        if cls._ENV_RE.search(value):
+            return _EnvironmentValue(cls._ENV_RE.sub(_repl, value), value)
+        return value
+
+    @classmethod
+    def _resolve_secret(cls, value: object) -> object:
+        """Resolve secrets without losing the source expression during validation."""
+        resolved = cls._resolve_env(value)
+        if isinstance(resolved, _EnvironmentValue):
+            return _EnvironmentSecret(str(resolved), resolved.reference)
+        return SecretStr(resolved) if isinstance(resolved, str) else resolved
+
+    @classmethod
+    def _validate_env_string(
+        cls, value: object, handler: ValidatorFunctionWrapHandler
+    ) -> str:
+        """Validate text while retaining provenance stripped by string validation."""
+        parsed = handler(value)
+        if not isinstance(parsed, str):
+            raise TypeError("Environment-backed configuration text must be a string")
+        source = value if isinstance(value, _EnvironmentValue) else parsed
+        resolved = cls._resolve_env(source)
+        if not isinstance(resolved, str):
+            raise TypeError("Environment-backed configuration text must be a string")
+        return resolved
 
 
 class PasswordMixin(BaseModel, WithValueFromEnv):
@@ -91,12 +158,12 @@ class PasswordMixin(BaseModel, WithValueFromEnv):
 
     @field_validator("password", mode="before")
     @classmethod
-    def resolve_password(cls, v: str | SecretStr) -> SecretStr | str | None:
+    def resolve_password(cls, v: object) -> SecretStr:
         """Resolve environment variable references in the password."""
-        v = cls._resolve_env(v)
-        if not isinstance(v, str):
+        v = cls._resolve_secret(v)
+        if not isinstance(v, SecretStr):
             raise InvalidPasswordError("password must be a string or SecretStr")
-        return SecretStr(v) if isinstance(v, str) else v
+        return v
 
 
 class AWSCredentialsMixin(BaseModel, WithValueFromEnv):
@@ -128,26 +195,21 @@ class AWSCredentialsMixin(BaseModel, WithValueFromEnv):
 
     @field_validator("aws_access_key_id", mode="before")
     @classmethod
-    def resolve_aws_access_key_id(cls, v: SecretStr | str) -> SecretStr | str | None:
+    def resolve_aws_access_key_id(cls, v: object) -> object:
         """Resolve environment variable references in the AWS Access Key ID."""
-        v = cls._resolve_env(v)
-        return SecretStr(v) if isinstance(v, str) else v
+        return cls._resolve_secret(v)
 
     @field_validator("aws_secret_access_key", mode="before")
     @classmethod
-    def resolve_aws_secret_access_key(
-        cls, v: SecretStr | str
-    ) -> SecretStr | str | None:
+    def resolve_aws_secret_access_key(cls, v: object) -> object:
         """Resolve environment variable references in the AWS Secret Access Key."""
-        v = cls._resolve_env(v)
-        return SecretStr(v) if isinstance(v, str) else v
+        return cls._resolve_secret(v)
 
     @field_validator("aws_session_token", mode="before")
     @classmethod
-    def resolve_aws_session_token(cls, v: SecretStr | str) -> SecretStr | str | None:
+    def resolve_aws_session_token(cls, v: object) -> object:
         """Resolve environment variable references in the AWS Session Token."""
-        v = cls._resolve_env(v)
-        return SecretStr(v) if isinstance(v, str) else v
+        return cls._resolve_secret(v)
 
     @model_validator(mode="after")
     def resolve_aws_env_defaults(self) -> Self:
@@ -155,17 +217,19 @@ class AWSCredentialsMixin(BaseModel, WithValueFromEnv):
         if not self.aws_access_key_id:
             v = os.getenv("AWS_ACCESS_KEY_ID", None)
             if v:
-                self.aws_access_key_id = SecretStr(v)
+                self.aws_access_key_id = _EnvironmentSecret(v, "$AWS_ACCESS_KEY_ID")
 
         if not self.aws_secret_access_key:
             v = os.getenv("AWS_SECRET_ACCESS_KEY", None)
             if v:
-                self.aws_secret_access_key = SecretStr(v)
+                self.aws_secret_access_key = _EnvironmentSecret(
+                    v, "$AWS_SECRET_ACCESS_KEY"
+                )
 
         if not self.aws_session_token:
             v = os.getenv("AWS_SESSION_TOKEN", None)
             if v:
-                self.aws_session_token = SecretStr(v)
+                self.aws_session_token = _EnvironmentSecret(v, "$AWS_SESSION_TOKEN")
 
         return self
 
@@ -185,10 +249,9 @@ class ApiKeyMixin(BaseModel, WithValueFromEnv):
 
     @field_validator("api_key", mode="before")
     @classmethod
-    def resolve_api_key(cls, v: SecretStr | str) -> SecretStr | str | None:
+    def resolve_api_key(cls, v: object) -> object:
         """Resolve environment variable references in the API key."""
-        v = cls._resolve_env(v)
-        return SecretStr(v) if isinstance(v, str) else v
+        return cls._resolve_secret(v)
 
 
 class YamlSerializableMixin(BaseModel):
@@ -202,8 +265,9 @@ class YamlSerializableMixin(BaseModel):
             if isinstance(obj, YamlSerializableMixin):
                 obj = obj.to_yaml_dict()
 
-            # Unwrap SecretStr
-            if isinstance(obj, SecretStr):
+            if isinstance(obj, (_EnvironmentSecret, _EnvironmentValue)):
+                obj = obj.reference
+            elif isinstance(obj, SecretStr):
                 obj = obj.get_secret_value()
 
             # Unwrap enums like SimilarityMetric

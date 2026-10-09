@@ -29,6 +29,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ExceptionHandler, Lifespan
 
 from memmachine_server.common.api.version import get_version
+from memmachine_server.common.errors import ConfigurationError
 from memmachine_server.server.api_v2.mcp import (
     initialize_resource,
     load_configuration,
@@ -46,6 +47,36 @@ from memmachine_server.server.middleware import (
 logger = logging.getLogger(__name__)
 
 
+def _worker_count() -> int:
+    """Resolve MEMMACHINE_WORKERS, defaulting to 1.
+
+    Note: We do not use (os.cpu_count() - 1) as this is often inaccurate in
+    container environments (reporting host CPUs vs container limits). We leave
+    it to the user to configure MEMMACHINE_WORKERS based on their allocated
+    vCPUs to avoid creating excessive worker processes at startup.
+    """
+    workers_env = os.getenv("MEMMACHINE_WORKERS")
+    if not workers_env:
+        return 1
+    try:
+        return int(workers_env)
+    except ValueError:
+        logger.warning(
+            "Invalid MEMMACHINE_WORKERS value '%s'. Defaulting to 1.", workers_env
+        )
+        return 1
+
+
+def _validate_config_api_workers(enabled: bool) -> None:
+    """Runtime configuration edits are supported only in one server process."""
+    if enabled and _worker_count() > 1:
+        raise ConfigurationError(
+            "The configuration API requires a single server process; "
+            "disable MEMMACHINE_CONFIG_API/--with-config-api or set "
+            "MEMMACHINE_WORKERS=1. Replicated deployments must keep the API disabled."
+        )
+
+
 class MemMachineAPI(FastAPI):
     """MemMachine API wrapper."""
 
@@ -53,6 +84,7 @@ class MemMachineAPI(FastAPI):
         self, lifespan: Lifespan[Any] | None = None, with_config_api: bool = False
     ) -> None:
         """Init the MemMachine API wrapper."""
+        _validate_config_api_workers(with_config_api)
         title = "MemMachine Server"
         description = "REST API server for MemMachine memory system"
         super().__init__(
@@ -100,6 +132,7 @@ app.add_middleware(cast(type, RequestMetricsMiddleware))
 
 def start_http() -> None:
     """Run the FastAPI HTTP application using the uvicorn server."""
+    _validate_config_api_workers(bool(os.getenv("MEMMACHINE_CONFIG_API")))
     # For the single-worker case, the module-level `app` was created before
     # main() set the env var. Include the config router explicitly here.
     if os.getenv("MEMMACHINE_CONFIG_API"):
@@ -126,26 +159,6 @@ def start_http() -> None:
         log_level=str(config.logging.level).lower(),
         ws="websockets-sansio",
     )
-
-
-def _worker_count() -> int:
-    """Resolve MEMMACHINE_WORKERS, defaulting to 1.
-
-    Note: We do not use (os.cpu_count() - 1) as this is often inaccurate in
-    container environments (reporting host CPUs vs container limits). We leave
-    it to the user to configure MEMMACHINE_WORKERS based on their allocated
-    vCPUs to avoid creating excessive worker processes at startup.
-    """
-    workers_env = os.getenv("MEMMACHINE_WORKERS")
-    if not workers_env:
-        return 1
-    try:
-        return int(workers_env)
-    except ValueError:
-        logger.warning(
-            "Invalid MEMMACHINE_WORKERS value '%s'. Defaulting to 1.", workers_env
-        )
-        return 1
 
 
 def _prepare_multiproc_dir() -> None:

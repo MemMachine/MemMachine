@@ -6,6 +6,19 @@ icon: "gear"
 
 The `client.config` namespace provides programmatic access to the system's underlying resources and memory behavior. Use this to manage model providers, vector stores, and the specific toggles for Episodic and Semantic subsystems.
 
+The configuration API is disabled by default. Enable it with
+`MEMMACHINE_CONFIG_API=1` or `--with-config-api` only for a single server process.
+Enabling it with `MEMMACHINE_WORKERS` greater than one is rejected at startup.
+Keep it disabled in replicated deployments and when using multiple ASGI workers;
+runtime edits apply to the serving process, and other replicas do not reload them.
+
+When the server was loaded from a configuration file, updates attempt to save
+back to that file. Persistence requires a writable file; a failed write is logged
+and the in-memory change does not survive a restart. Configuration saves retain
+environment expressions such as `api_key: $OPENAI_API_KEY` instead of writing the
+resolved credential. Literal credentials explicitly supplied to the API are
+persisted as literals. Prefer environment references for credentials.
+
 ## System Configuration
 
 ### `get_full_config`

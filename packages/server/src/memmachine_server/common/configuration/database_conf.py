@@ -5,7 +5,14 @@ from enum import StrEnum
 from typing import Any, ClassVar, Self
 
 import yaml
-from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretStr,
+    ValidatorFunctionWrapHandler,
+    field_validator,
+    model_validator,
+)
 
 from memmachine_server.common.configuration.mixin_confs import (
     ApiKeyMixin,
@@ -290,30 +297,23 @@ class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
         ),
     )
 
-    @field_validator("uri", mode="before")
+    @field_validator("uri", mode="wrap")
     @classmethod
-    def resolve_uri(cls, v: str) -> str:
+    def resolve_uri(cls, v: object, handler: ValidatorFunctionWrapHandler) -> str:
         """Resolve environment variable references in the URI."""
-        resolved = cls._resolve_env(v)
-        if not isinstance(resolved, str):
-            raise TypeError("Milvus URI must be a string")
-        return resolved
+        return cls._validate_env_string(v, handler)
 
     @field_validator("token", mode="before")
     @classmethod
-    def resolve_token(cls, v: SecretStr | str) -> SecretStr | str | None:
+    def resolve_token(cls, v: object) -> object:
         """Resolve environment variable references in the token."""
-        resolved = cls._resolve_env(v)
-        return SecretStr(resolved) if isinstance(resolved, str) else resolved
+        return cls._resolve_secret(v)
 
-    @field_validator("db_name", mode="before")
+    @field_validator("db_name", mode="wrap")
     @classmethod
-    def resolve_db_name(cls, v: str) -> str:
+    def resolve_db_name(cls, v: object, handler: ValidatorFunctionWrapHandler) -> str:
         """Resolve environment variable references in the database name."""
-        resolved = cls._resolve_env(v)
-        if not isinstance(resolved, str):
-            raise TypeError("Milvus database name must be a string")
-        return resolved
+        return cls._validate_env_string(v, handler)
 
     @model_validator(mode="after")
     def validate_milvus_conf(self) -> Self:
