@@ -30,8 +30,9 @@ from memmachine_server.common.episode_store import (
     EpisodeEntry,
     EpisodeStorage,
 )
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
+from memmachine_server.common.filter import (
+    Equals,
+    Ordering,
 )
 from memmachine_server.common.property_keys import reserved_property_key
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
@@ -370,7 +371,7 @@ async def test_user_metadata_filter_round_trips(
     scored = await long_term_memory.query(
         "fruit",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="m.color", op="=", value="red"),
+        property_filter=Equals(field="m.color", value="red"),
     )
     uids = {ep.uid for _, ep in scored}
     assert uids == {_uid("m-1")}
@@ -419,14 +420,12 @@ async def test_system_field_filter_round_trips(
     scored = await long_term_memory.query(
         "msg",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="producer_role", op="=", value="user"),
+        property_filter=Equals(field="producer_role", value="user"),
     )
 
     assert {ep.uid for _, ep in scored} == {_uid("s-1")}
     assert seen == [
-        FilterComparison(
-            field=reserved_property_key("ltm", "producer_role"), op="=", value="user"
-        )
+        Equals(field=reserved_property_key("ltm", "producer_role"), value="user")
     ]
 
 
@@ -436,9 +435,8 @@ async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
         await long_term_memory.query(
             "msg",
             num_episodes_limit=10,
-            property_filter=FilterComparison(
+            property_filter=Equals(
                 field=f"m.{reserved_property_key('ltm', 'producer_id')}",
-                op="=",
                 value="alice",
             ),
         )
@@ -454,9 +452,7 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
         await long_term_memory.query(
             "msg",
             num_episodes_limit=10,
-            property_filter=FilterComparison(
-                field="producre_id", op="=", value="alice"
-            ),
+            property_filter=Equals(field="producre_id", value="alice"),
         )
 
 
@@ -466,7 +462,7 @@ async def test_any_user_metadata_field_is_accepted(long_term_memory):
     scored = await long_term_memory.query(
         "msg",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="m.anything", op="=", value="x"),
+        property_filter=Equals(field="m.anything", value="x"),
     )
     assert scored == []
 
@@ -478,10 +474,8 @@ async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
     await long_term_memory.query(
         "anything",
         num_episodes_limit=10,
-        property_filter=FilterComparison(
-            field="timestamp",
-            op=">=",
-            value=datetime(2000, 1, 1, tzinfo=UTC),
+        property_filter=Ordering(
+            field="timestamp", op=">=", value=datetime(2000, 1, 1, tzinfo=UTC)
         ),
     )
 

@@ -10,10 +10,12 @@ import pytest
 import pytest_asyncio
 
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     FilterExpr,
-    demangle_user_metadata_key,
     map_filter_fields,
+)
+from memmachine_server.common.filter.filter_parser import (
+    demangle_user_metadata_key,
     normalize_filter_field,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory

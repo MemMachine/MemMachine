@@ -44,8 +44,8 @@ from memmachine_server.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
 )
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
     demangle_user_metadata_key,
     normalize_filter_field,
 )
