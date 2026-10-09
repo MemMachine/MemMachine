@@ -83,9 +83,10 @@ class VectorStorePartition(ABC):
                 raised before anything is sent.
             PropertyTypeMismatchError:
                 If a record's value is not of its key's declared type, an
-                int counting as a float, or is a float that is not finite;
-                raised before anything is sent. An int for a float key is
-                written as the float it equals.
+                int counting as a float, or is a float that is not finite
+                or an int outside 64 signed bits; raised before anything is
+                sent. An int for a float key is written as the float it
+                equals.
             ValueError:
                 If a record's vector does not have the store's dimensions.
         """
@@ -141,7 +142,8 @@ class VectorStorePartition(ABC):
             PropertyTypeMismatchError:
                 If a filter value, or any value of a membership test, is not
                 of its key's declared type, an int counting as a float, or
-                is a float that is not finite.
+                is a float that is not finite or an int outside 64 signed
+                bits.
         """
         raise NotImplementedError
 

@@ -23,6 +23,10 @@ from memmachine_server.common.data_types import (
 
 from .utils import is_valid_identifier
 
+MIN_INT_VALUE = -(2**63)
+MAX_INT_VALUE = 2**63 - 1
+"""The range of an int a record or a filter holds: every backend holds an int in 64 signed bits."""
+
 
 def _coerce_property_types(value: object) -> object:
     # Deployment configuration names a type ("str", "datetime"); code passes
@@ -155,7 +159,7 @@ class PropertyTypeMismatchError(ValueError):
 
     An int is of a float key's type, as the float it equals, and a bool is
     never a number; a float key holds and is compared with finite values
-    only.
+    only, and any key with ints in 64 signed bits only.
     """
 
     def __init__(self, key: str, declared: PropertyType, value: PropertyValue) -> None:

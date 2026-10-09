@@ -82,6 +82,10 @@ _MISTYPED_FILTERS = [
     In(field="active", values=(1,)),
     In(field="score", values=("1",)),
     Not(And((Equals(field="name", value="alice"), Equals(field="age", value="30")))),
+    Equals(field="age", value=2**63),
+    Ordering(field="age", op="<", value=-(2**63) - 1),
+    In(field="age", values=(1, 2**63)),
+    Ordering(field="score", op=">", value=2**63),
 ]
 
 _MISTYPED_PROPERTIES = [
@@ -93,6 +97,9 @@ _MISTYPED_PROPERTIES = [
     ("score", "1.5"),
     ("score", math.nan),
     ("score", -math.inf),
+    ("age", 2**63),
+    ("age", -(2**63) - 1),
+    ("score", 2**63),
     ("name", 5),
     ("active", 1),
     ("created_at", "2024-05-01T12:00:00+00:00"),
@@ -335,6 +342,28 @@ class DeclaredSchemaContract:
                 await _admitted(collection, Not(property_filter))
                 == everything - admitted
             ), property_filter
+
+    @pytest.mark.asyncio
+    async def test_an_int_compares_across_64_signed_bits(self, collection):
+        lowest = _record([1.0, 0.0, 0.0], age=-(2**63))
+        highest = _record([1.0, 0.1, 0.0], age=2**63 - 1)
+        await self._store(collection, [lowest, highest])
+
+        expected = [
+            (Equals(field="age", value=2**63 - 1), {highest.uuid}),
+            (Equals(field="age", value=-(2**63)), {lowest.uuid}),
+            (Ordering(field="age", op=">=", value=2**63 - 1), {highest.uuid}),
+            (Ordering(field="age", op="<=", value=-(2**63)), {lowest.uuid}),
+            (Ordering(field="age", op=">", value=-(2**63)), {highest.uuid}),
+            (
+                In(field="age", values=(-(2**63), 2**63 - 1)),
+                {lowest.uuid, highest.uuid},
+            ),
+        ]
+        for property_filter, admitted in expected:
+            assert await _admitted(collection, property_filter) == admitted, (
+                property_filter
+            )
 
     @pytest.mark.asyncio
     async def test_datetime_bounds_hold_at_microsecond_precision(self, collection):

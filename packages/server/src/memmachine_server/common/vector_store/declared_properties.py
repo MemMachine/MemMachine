@@ -18,6 +18,8 @@ from memmachine_server.common.filter import (
 )
 
 from .data_types import (
+    MAX_INT_VALUE,
+    MIN_INT_VALUE,
     PropertyTypeMismatchError,
     Record,
     UndeclaredPropertyKeyError,
@@ -35,7 +37,8 @@ def bind_record(
     Called before anything is sent, so an undeclared key never reaches a
     backend, and a declared key never holds a value its column or index
     would have to coerce: an int for a float key binds to the float it
-    equals, a bool is never a number, and a float is finite.
+    equals, a bool is never a number, a float is finite, and an int fits in
+    64 signed bits.
     """
     undeclared = record.properties.keys() - indexed_properties.keys()
     if undeclared:
@@ -65,8 +68,9 @@ def bind_filter(
     backend compares a stored value only with a value of the same type. An
     int for a float key binds to the float it equals, and a membership test
     of ints on a float key to the disjunction of those floats' equalities,
-    since a membership test holds ints or strs. A bool is never a number,
-    and a float key is compared with finite floats only.
+    since a membership test holds ints or strs. A bool is never a number, a
+    float key is compared with finite floats only, and any key with ints in
+    64 signed bits only.
     """
     undeclared = filter_fields(property_filter) - indexed_properties.keys()
     if undeclared:
@@ -119,6 +123,8 @@ def _bound_value[V: PropertyValue](
 def _validate_value(key: str, value: PropertyValue, declared: PropertyType) -> None:
     """Raise unless the value is of its key's declared type, an int counting as a float."""
     # `bool` is an `int` at runtime and is its own property type here.
+    if type(value) is int and not MIN_INT_VALUE <= value <= MAX_INT_VALUE:
+        raise PropertyTypeMismatchError(key, declared, value)
     if declared is float and type(value) is int:
         return
     if type(value) is not declared or (
