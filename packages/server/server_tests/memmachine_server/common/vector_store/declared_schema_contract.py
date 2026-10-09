@@ -366,6 +366,23 @@ class DeclaredSchemaContract:
             )
 
     @pytest.mark.asyncio
+    async def test_a_string_matches_whatever_its_characters(self, collection):
+        names = ["café", "smile 😀", 'say "hi" \\ back', "line\nbreak\ttab", ""]
+        records = [
+            _record([1.0, 0.1 * index, 0.0], name=name)
+            for index, name in enumerate(names)
+        ]
+        await self._store(collection, records)
+
+        for record in records:
+            assert await _admitted(
+                collection, Equals(field="name", value=record.properties["name"])
+            ) == {record.uuid}, record.properties["name"]
+        assert await _admitted(
+            collection, In(field="name", values=("smile 😀", 'say "hi" \\ back'))
+        ) == {records[1].uuid, records[2].uuid}
+
+    @pytest.mark.asyncio
     async def test_datetime_bounds_hold_at_microsecond_precision(self, collection):
         base = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
         instants = [base + timedelta(microseconds=offset) for offset in range(3)]
