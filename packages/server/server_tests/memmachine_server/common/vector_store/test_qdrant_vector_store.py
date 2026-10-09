@@ -63,6 +63,9 @@ NAMESPACE = "test_namespace"
 NAME = "test_name"
 VECTOR_DIM = 3
 VECTOR_STORE_NAME = "qdrant_test"
+# Liberia's offset until 1972, the last in the time zone database with a
+# seconds component.
+_OFFSET_WITH_SECONDS = timezone(-timedelta(minutes=44, seconds=30))
 
 
 async def _stored_uuids(collection) -> set[UUID]:
@@ -82,6 +85,17 @@ async def _stored_uuids(collection) -> set[UUID]:
         with_vectors=False,
     )
     return {UUID(str((point.payload or {})[_PAYLOAD_RECORD_UUID])) for point in points}
+
+
+async def _stored_payload(collection, record_uuid: UUID) -> dict:
+    """The payload Qdrant holds for a record, read past the store."""
+    [point] = await collection._client.retrieve(
+        collection_name=collection._native_collection_name,
+        ids=[str(collection._point_id(record_uuid))],
+        with_payload=True,
+        with_vectors=False,
+    )
+    return point.payload or {}
 
 
 async def _count_stored(
@@ -970,6 +984,75 @@ class TestFilters:
         assert r3.uuid in uuids
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "key", ["created_at", "seen"], ids=["declared", "undeclared"]
+    )
+    async def test_a_datetime_is_stored_as_its_instant_in_utc(self, collection, key):
+        written = datetime(
+            2024, 6, 15, 17, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))
+        )
+        record = _make_record(
+            vector=_normalize([1.0, 0.0, 0.0]), properties={key: written}
+        )
+        await collection.upsert(records=[record])
+
+        stored = datetime.fromisoformat(
+            (await _stored_payload(collection, record.uuid))[key]
+        )
+        assert stored == written
+        assert stored.utcoffset() == timedelta(0)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "key", ["created_at", "seen"], ids=["declared", "undeclared"]
+    )
+    async def test_a_datetime_matches_a_filter_at_another_offset_by_its_instant(
+        self, collection, key
+    ):
+        """Equality and ordering compare instants, whatever either offset."""
+        written = datetime(
+            2024, 6, 15, 17, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))
+        )
+        record = _make_record(
+            vector=_normalize([1.0, 0.0, 0.0]), properties={key: written}
+        )
+        await collection.upsert(records=[record])
+
+        minus8 = timezone(timedelta(hours=-8))
+        same_instant = written.astimezone(minus8)
+        # A later instant whose wall-clock time is earlier, and an earlier
+        # instant whose wall-clock time is later.
+        later = datetime(2024, 6, 15, 9, 0, tzinfo=minus8)
+        earlier = datetime(2024, 6, 15, 20, 0, tzinfo=timezone(timedelta(hours=14)))
+        for op, value in [
+            ("=", same_instant),
+            ("<=", same_instant),
+            (">=", same_instant),
+            ("<", later),
+            (">", earlier),
+        ]:
+            assert await self._query(collection, record.vector, key, op, value) == {
+                record.uuid
+            }, op
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "key", ["created_at", "seen"], ids=["declared", "undeclared"]
+    )
+    async def test_a_datetime_at_an_offset_with_seconds_compares_by_its_instant(
+        self, collection, key
+    ):
+        """A datetime written to Qdrant keeps its offset only to the minute."""
+        v1 = _normalize([1.0, 0.0, 0.0])
+        written = datetime(2024, 6, 15, 12, 0, 0, tzinfo=_OFFSET_WITH_SECONDS)
+        record = _make_record(vector=v1, properties={key: written})
+        await collection.upsert(records=[record])
+
+        assert await self._query(collection, v1, key, "=", written) == {record.uuid}
+        assert await self._query(collection, v1, key, "<", written) == set()
+        assert await self._query(collection, v1, key, ">", written) == set()
+
+    @pytest.mark.asyncio
     async def test_eq_naive_datetime(self, collection):
         """Equality filter works for naive datetimes."""
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -1183,6 +1266,31 @@ class TestFilters:
             await collection.upsert(records=[_make_record(vector=vector)])
         with pytest.raises(ValueError, match="dimensions"):
             await collection.query(query_vectors=[vector], limit=1)
+
+    @pytest.mark.asyncio
+    async def test_a_batch_repeating_a_record_uuid_is_refused(self, collection):
+        other = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        first = _make_record(vector=_normalize([1.0, 0.1, 0.0]), properties={"age": 1})
+        repeated = _make_record(
+            uuid=first.uuid, vector=_normalize([1.0, 0.2, 0.0]), properties={"age": 2}
+        )
+        with pytest.raises(ValueError, match=str(first.uuid)):
+            await collection.upsert(records=[other, first, repeated])
+        assert await _stored_uuids(collection) == set()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", ["score", "rating"], ids=["declared", "undeclared"])
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    async def test_a_property_value_that_is_not_finite_is_refused(
+        self, collection, key, value
+    ):
+        finite = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={key: 1.0})
+        not_finite = _make_record(
+            vector=_normalize([1.0, 0.1, 0.0]), properties={key: value}
+        )
+        with pytest.raises(ValueError, match=f"{key!r} is not finite"):
+            await collection.upsert(records=[finite, not_finite])
+        assert await _stored_uuids(collection) == set()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("coordinate", [math.nan, math.inf], ids=["nan", "inf"])

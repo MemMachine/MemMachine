@@ -42,6 +42,10 @@ class VectorStoreCollection(ABC):
 
     The schema exists to support indexing on fixed-type record properties.
     Record properties not declared in the schema may have mixed-type values.
+
+    A store keeps a datetime property's instant, taking a naive datetime as
+    UTC, and may drop its UTC offset. A filter compares datetime values by
+    their instant, for equality and ordering alike.
     """
 
     @property
@@ -71,9 +75,10 @@ class VectorStoreCollection(ABC):
 
         Raises:
             ValueError:
-                If a record's declared property holds a value of another
-                type, or its vector does not have the collection's
-                dimensions.
+                If two records share a UUID, a record's declared property
+                holds a value of another type, a record's float property
+                value is not finite, or a record's vector does not have
+                the collection's dimensions; no record is written.
         """
         raise NotImplementedError
 
