@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -376,6 +377,44 @@ def test_add_memories(client, mock_memmachine):
         assert response.json() == {"results": [{"uid": EPISODE_UID_1}]}
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == [MemoryType.Semantic]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        pytest.param({"metadata": {"key": "a\x00b"}}, id="metadata-value-nul"),
+        pytest.param(
+            {"metadata": {"key": "a\ud800b"}}, id="metadata-value-lone-surrogate"
+        ),
+        pytest.param({"metadata": {"a\x00b": "value"}}, id="metadata-key-nul"),
+        pytest.param({"producer": "a\x00b"}, id="producer-nul"),
+        pytest.param(
+            {"timestamp": "0001-01-01T00:00:00+05:00"},
+            id="timestamp-before-year-1-in-utc",
+        ),
+        pytest.param(
+            {"timestamp": "2026-01-01T12:00:00+05:30:45"},
+            id="timestamp-offset-seconds",
+        ),
+    ],
+)
+def test_add_memories_refuses_property_values_outside_the_domain_before_writing(
+    client, mock_memmachine, message
+):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "messages": [{"content": "hello", **message}],
+    }
+
+    response = client.post(
+        "/api/v2/memories",
+        content=json.dumps(payload),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 422
+    mock_memmachine.add_episodes.assert_not_awaited()
 
 
 def test_add_memories_episode_type_forwarded(client, mock_memmachine):

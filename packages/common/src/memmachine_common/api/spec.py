@@ -1,7 +1,9 @@
 """API v2 specification models for request and response structures."""
 
 import logging
-from datetime import datetime, timezone
+import math
+import re
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -26,6 +28,68 @@ UTC = timezone.utc
 
 PropertyValue = bool | int | float | str | datetime
 """Type for stored property values (duplicated here to avoid server dependency)."""
+
+_UNSTORABLE_CHARACTERS = re.compile(r"[\x00\ud800-\udfff]")
+
+
+def validate_property_value(
+    value: bool | float | str | datetime,
+) -> bool | float | str | datetime:
+    """Return `value` if it is in the property value domain; else raise ValueError.
+
+    The domain holds booleans, signed 64-bit integers, finite floats,
+    strings free of U+0000 and surrogate code points, and datetimes whose
+    UTC offset is a whole number of minutes and whose UTC instant falls in
+    years 1 through 9999.
+    """
+    match value:
+        case bool():
+            pass
+        case int():
+            if not -(2**63) <= value < 2**63:
+                raise ValueError(
+                    "A property integer must fit in a signed 64-bit integer"
+                )
+        case float():
+            if not math.isfinite(value):
+                raise ValueError("A property float must be finite")
+        case str():
+            _validate_property_str(value)
+        case datetime():
+            _validate_property_datetime(value)
+    return value
+
+
+def _validate_property_str(value: str) -> str:
+    if _UNSTORABLE_CHARACTERS.search(value) is not None:
+        raise ValueError(
+            "A property string must not contain U+0000 or a surrogate code point"
+        )
+    return value
+
+
+def _validate_property_datetime(value: datetime) -> datetime:
+    offset = value.utcoffset()
+    if offset is None:
+        return value
+    if offset % timedelta(minutes=1):
+        raise ValueError(
+            "A property datetime's UTC offset must be a whole number of minutes"
+        )
+    try:
+        value.astimezone(UTC)
+    except OverflowError as e:
+        raise ValueError(
+            "A property datetime's UTC instant must fall in years 1 through 9999"
+        ) from e
+    return value
+
+
+PropertyStr = Annotated[str, AfterValidator(_validate_property_str)]
+"""Type for strings stored as property values or property keys."""
+
+PropertyDatetime = Annotated[datetime, AfterValidator(_validate_property_datetime)]
+"""Type for datetimes stored as property values."""
 
 # Canonical type-name set accepted in `properties_schema`. Mirrors
 # `memmachine_server.common.data_types.PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE` but
@@ -455,23 +519,23 @@ class MemoryMessage(BaseModel):
         str,
         Field(..., description=SpecDoc.MEMORY_CONTENT),
     ]
-    producer: str = Field(
+    producer: PropertyStr = Field(
         default="user",
         description=SpecDoc.MEMORY_PRODUCER,
     )
-    produced_for: str = Field(
+    produced_for: PropertyStr = Field(
         default="",
         description=SpecDoc.MEMORY_PRODUCE_FOR,
     )
-    timestamp: datetime = Field(
+    timestamp: PropertyDatetime = Field(
         default_factory=lambda: datetime.now(UTC),
         description=SpecDoc.MEMORY_TIMESTAMP,
     )
-    role: str = Field(
+    role: PropertyStr = Field(
         default="",
         description=SpecDoc.MEMORY_ROLE,
     )
-    metadata: dict[str, str] = Field(
+    metadata: dict[PropertyStr, PropertyStr] = Field(
         default_factory=dict,
         description=SpecDoc.MEMORY_METADATA,
     )
