@@ -12,6 +12,10 @@ from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import ConnectionPoolEntry
 
+from memmachine_server.common.concurrency_scope import (
+    ConcurrencyScope,
+    validate_component_scope,
+)
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
     Neo4jConf,
@@ -307,8 +311,36 @@ class DatabaseManager:
         """Sync wrapper to get Neo4j driver lazily."""
         return asyncio.run(self.async_get_neo4j_driver(name, validate=True))
 
-    async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
+    @staticmethod
+    def vector_graph_store_class(
+        conf: DatabasesConf, name: str
+    ) -> type[VectorGraphStore]:
+        """Resolve the configured graph implementation without connecting."""
+        if name in conf.neo4j_confs:
+            return Neo4jVectorGraphStore
+        if name in conf.nebula_graph_confs:
+            from memmachine_server.common.vector_graph_store.nebula_graph_vector_graph_store import (
+                NebulaGraphVectorGraphStore,
+            )
+
+            return NebulaGraphVectorGraphStore
+        raise ValueError(
+            f"VectorGraphStore '{name}' not found in neo4j_confs or nebula_graph_confs"
+        )
+
+    async def get_vector_graph_store(
+        self,
+        name: str,
+        *,
+        deployment_scope: ConcurrencyScope = ConcurrencyScope.PROCESS,
+    ) -> VectorGraphStore:
         """Return a vector graph store, auto-detecting Neo4j or NebulaGraph backend."""
+        store_class = self.vector_graph_store_class(self.conf, name)
+        validate_component_scope(
+            f"{store_class.__name__} '{name}'",
+            store_class.CONCURRENCY_SCOPE,
+            deployment_scope,
+        )
         # Check if it's a Neo4j configuration
         if name in self.conf.neo4j_confs:
             await self.async_get_neo4j_driver(name, validate=True)

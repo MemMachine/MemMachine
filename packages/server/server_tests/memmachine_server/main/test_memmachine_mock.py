@@ -12,8 +12,17 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
+from memmachine_server.common.concurrency_scope import ConcurrencyScope
 from memmachine_server.common.configuration import (
     Configuration,
+    SemanticMemoryConf,
+    SemanticMemoryStorageBackend,
+    ServerConf,
+)
+from memmachine_server.common.configuration.database_conf import (
+    DatabasesConf,
+    NebulaGraphConf,
+    Neo4jConf,
 )
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
@@ -28,6 +37,7 @@ from memmachine_server.common.episode_store import (
     EpisodeResponse,
 )
 from memmachine_server.common.errors import (
+    ConfigurationError,
     ResourceNotFoundError,
     SessionNotFoundError,
 )
@@ -107,6 +117,7 @@ def _minimal_conf(
 
     ret = MagicMock()
     ret.resources = resource_conf
+    ret.server = ServerConf()
     ret.episodic_memory = EpisodicMemoryConfPartial(
         short_term_memory=ShortTermMemoryConfPartial(
             summary_prompt_system=None,
@@ -157,6 +168,194 @@ def patched_resource_manager(monkeypatch):
         MagicMock(return_value=fake_manager),
     )
     return fake_manager
+
+
+def _configure_graph_deployment(
+    conf: Configuration, scope: ConcurrencyScope, backend: str = "neo4j"
+) -> None:
+    conf.server = ServerConf(concurrency_scope=scope)
+    databases = DatabasesConf()
+    if backend == "neo4j":
+        databases.neo4j_confs["default_store"] = Neo4jConf()
+    else:
+        databases.nebula_graph_confs["default_store"] = NebulaGraphConf()
+    conf.resources.databases = databases
+    conf.semantic_memory = SemanticMemoryConf(enabled=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["neo4j", "nebula"])
+@pytest.mark.parametrize("scope", [ConcurrencyScope.HOST, ConcurrencyScope.CLUSTER])
+async def test_start_rejects_process_scoped_graph_before_recovery(
+    minimal_conf: Configuration,
+    patched_resource_manager: AsyncMock,
+    backend: str,
+    scope: ConcurrencyScope,
+):
+    _configure_graph_deployment(minimal_conf, scope, backend)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    with pytest.raises(ConfigurationError, match="VectorGraphStore"):
+        await memmachine.start(key_to_session=DummySessionData)
+    assert memmachine._delete_worker is None
+    assert not memmachine._started
+    patched_resource_manager.get_session_data_manager.assert_not_awaited()
+    patched_resource_manager.get_semantic_service.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["neo4j", "nebula"])
+async def test_single_process_graph_start_remains_available(
+    minimal_conf: Configuration, patched_resource_manager: AsyncMock, backend: str
+):
+    _configure_graph_deployment(minimal_conf, ConcurrencyScope.PROCESS, backend)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    await memmachine.start()
+    try:
+        worker = memmachine._delete_worker
+        await memmachine.start()
+        assert memmachine._started
+        assert memmachine._delete_worker is worker
+    finally:
+        await memmachine.stop()
+
+
+@pytest.mark.asyncio
+async def test_graph_start_can_recover_after_scope_correction(
+    minimal_conf: Configuration, patched_resource_manager: AsyncMock
+):
+    _configure_graph_deployment(minimal_conf, ConcurrencyScope.CLUSTER)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    with pytest.raises(ConfigurationError, match="Neo4jVectorGraphStore"):
+        await memmachine.start()
+    minimal_conf.server.concurrency_scope = ConcurrencyScope.PROCESS
+    await memmachine.start()
+    await memmachine.stop()
+    assert memmachine._delete_worker is None
+
+
+@pytest.mark.asyncio
+async def test_multiple_workers_reject_process_scoped_graph(
+    minimal_conf: Configuration,
+    patched_resource_manager: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _configure_graph_deployment(minimal_conf, ConcurrencyScope.PROCESS)
+    monkeypatch.setenv("MEMMACHINE_WORKERS", "2")
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    with pytest.raises(ConfigurationError, match="deployment requires host"):
+        await memmachine.start()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disable", ["enabled", "long_term_memory_enabled"])
+async def test_disabled_graph_does_not_restrict_deployment(
+    minimal_conf: Configuration,
+    patched_resource_manager: AsyncMock,
+    disable: str,
+):
+    _configure_graph_deployment(minimal_conf, ConcurrencyScope.CLUSTER)
+    setattr(minimal_conf.episodic_memory, disable, False)
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    await memmachine.start()
+    await memmachine.stop()
+
+
+@pytest.mark.asyncio
+async def test_session_override_cannot_reenable_process_scoped_graph(
+    minimal_conf: Configuration, patched_resource_manager: AsyncMock
+):
+    _configure_graph_deployment(minimal_conf, ConcurrencyScope.CLUSTER)
+    minimal_conf.episodic_memory.long_term_memory_enabled = False
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    with pytest.raises(ConfigurationError, match="Neo4jVectorGraphStore"):
+        await memmachine.create_session(
+            "overridden-session",
+            user_conf=EpisodicMemoryConfPartial(long_term_memory_enabled=True),
+        )
+    patched_resource_manager.get_session_data_manager.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_event_default_cannot_be_overridden_with_process_scoped_graph(
+    minimal_conf: Configuration, patched_resource_manager: AsyncMock
+):
+    _configure_graph_deployment(minimal_conf, ConcurrencyScope.CLUSTER)
+    ltm = minimal_conf.episodic_memory.long_term_memory
+    assert ltm is not None
+    ltm.backend = "event"
+    ltm.vector_store = "vectors"
+    ltm.segment_store = "segments"
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    await memmachine.start()
+    try:
+        with pytest.raises(ConfigurationError, match="Neo4jVectorGraphStore"):
+            await memmachine.create_session(
+                "overridden-session",
+                user_conf=EpisodicMemoryConfPartial(
+                    long_term_memory=LongTermMemoryConfPartial(
+                        backend="declarative", vector_graph_store="default_store"
+                    )
+                ),
+            )
+        patched_resource_manager.get_session_data_manager.assert_not_awaited()
+    finally:
+        await memmachine.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend",
+    [SemanticMemoryStorageBackend.PGVECTOR, SemanticMemoryStorageBackend.VECTOR_STORE],
+)
+async def test_other_semantic_backends_ignore_unused_graph_configuration(
+    minimal_conf: Configuration,
+    patched_resource_manager: AsyncMock,
+    backend: SemanticMemoryStorageBackend,
+):
+    _configure_graph_deployment(minimal_conf, ConcurrencyScope.CLUSTER)
+    minimal_conf.episodic_memory.enabled = False
+    minimal_conf.semantic_memory = SemanticMemoryConf(
+        enabled=True,
+        storage_backend=backend,
+        database="default_store",
+        feature_store="features",
+        vector_collection="vectors",
+        config_database="config",
+        embedding_model="embedder",
+        llm_model="llm",
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    await memmachine.start()
+    try:
+        patched_resource_manager.get_semantic_service.assert_awaited_once()
+    finally:
+        await memmachine.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend", [SemanticMemoryStorageBackend.NEO4J, SemanticMemoryStorageBackend.AUTO]
+)
+async def test_start_rejects_neo4j_semantic_backend(
+    minimal_conf: Configuration,
+    patched_resource_manager: AsyncMock,
+    backend: SemanticMemoryStorageBackend,
+):
+    _configure_graph_deployment(minimal_conf, ConcurrencyScope.CLUSTER)
+    minimal_conf.episodic_memory.enabled = False
+    minimal_conf.semantic_memory = SemanticMemoryConf(
+        enabled=True,
+        storage_backend=backend,
+        database="default_store",
+        config_database="config",
+        embedding_model="embedder",
+        llm_model="llm",
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    with pytest.raises(ConfigurationError, match="Neo4jSemanticStorage"):
+        await memmachine.start()
+    assert memmachine._delete_worker is None
+    patched_resource_manager.get_semantic_service.assert_not_awaited()
 
 
 def _uid(value: str | UUID) -> UUID:

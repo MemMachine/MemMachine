@@ -18,10 +18,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nebulagraph_python.py_data_types import NVector
 
+from memmachine_server.common.concurrency_scope import ConcurrencyScope
 from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
     And,
@@ -118,6 +119,9 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
     - Vector indexes with IVF/HNSW algorithms
     - SESSION SET SCHEMA and SESSION SET GRAPH for context
     """
+
+    # Schema and index caches are not refreshed from other processes' writes.
+    CONCURRENCY_SCOPE: ClassVar[ConcurrencyScope] = ConcurrencyScope.PROCESS
 
     class CacheIndexState(Enum):
         """Index state tracking for local cache."""
