@@ -40,7 +40,7 @@ from .partition_registry import (
 )
 from .utils import (
     bind_filter,
-    validate_declared_properties,
+    bind_record,
     validate_dimensions,
     validate_limit,
     validate_partition_key,
@@ -92,11 +92,11 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
     @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
         async with self._tracker("upsert"):
-            records = list(records)
+            records = [
+                bind_record(record, self._store_schema.indexed_properties)
+                for record in records
+            ]
             for record in records:
-                validate_declared_properties(
-                    record.properties, self._store_schema.indexed_properties
-                )
                 validate_dimensions(record.vector, self._store_schema.vector_dimensions)
             await self._registration.require_current()
             if not records:
@@ -151,9 +151,9 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
         Write records to the backend under the handle's incarnation.
 
         Called between two liveness checks, with at least one record, each
-        already checked against the store's schema: its keys are declared,
-        each value is of its key's declared type, and its vector has the
-        store's dimensions.
+        the one `bind_record` returns and already checked against the store's
+        schema: its keys are declared, each value is of its key's declared
+        type, and its vector has the store's dimensions.
         A record replaces the one with its UUID. The records are durable when
         it returns; a call that raises may have written some of them.
 
