@@ -2213,38 +2213,6 @@ class TestStrictMode:
                 limit=1,
             )
 
-    @pytest.mark.asyncio
-    async def test_a_predicate_of_another_type_matches_nothing(
-        self, qdrant_client, registry_engine
-    ):
-        """The store answers a mistyped leaf itself; the server would refuse it."""
-        store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
-        await store.startup()
-        await store.delete_partition("mistyped")
-        await store.create_partition("mistyped")
-        partition = await store.open_partition("mistyped")
-        assert partition is not None
-        held = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"age": 5})
-        await partition.upsert(records=[held])
-
-        for property_filter in (
-            Equals(field="age", value="5"),
-            Ordering(field="age", op=">", value=1.5),
-            In(field="age", values=("5",)),
-            Equals(field="name", value=5),
-        ):
-            [result] = await partition.query(
-                query_vectors=[held.vector], limit=5, property_filter=property_filter
-            )
-            assert result.matches == [], property_filter
-        [result] = await partition.query(
-            query_vectors=[held.vector],
-            limit=5,
-            property_filter=Equals(field="age", value=5),
-        )
-        assert [match.record_uuid for match in result.matches] == [held.uuid]
-        await store.delete_partition("mistyped")
-
 
 class TestStrictModeIsRequested:
     """Local mode does not record strict mode, so the request itself is checked."""

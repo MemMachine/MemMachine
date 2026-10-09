@@ -67,6 +67,31 @@ _COMPLEMENT_FILTERS = [
 ]
 
 
+_MISTYPED_FILTERS = [
+    Equals(field="age", value="30"),
+    Equals(field="name", value=30),
+    Equals(field="active", value=1),
+    Equals(field="score", value=True),
+    Equals(field="created_at", value="2024-05-01T12:00:00+00:00"),
+    Equals(field="age", value=30.0),
+    Ordering(field="age", op="<", value=30.5),
+    Ordering(field="created_at", op="<", value=1),
+    Ordering(field="name", op="<", value=1),
+    In(field="age", values=("30",)),
+    In(field="name", values=(30,)),
+    In(field="active", values=(1,)),
+    In(field="score", values=("1",)),
+    Not(And((Equals(field="name", value="alice"), Equals(field="age", value="30")))),
+]
+
+_NON_FINITE_FILTERS = [
+    Equals(field="score", value=math.nan),
+    Equals(field="score", value=-math.inf),
+    Ordering(field="score", op="<", value=math.inf),
+    Or((IsNull(field="name"), Ordering(field="score", op=">", value=math.nan))),
+]
+
+
 def _unit(vector: list[float]) -> list[float]:
     magnitude = math.sqrt(sum(x * x for x in vector))
     return [x / magnitude for x in vector]
@@ -222,13 +247,54 @@ class DeclaredSchemaContract:
         ) == {differing.uuid, lacking.uuid}
 
     @pytest.mark.asyncio
-    async def test_a_predicate_of_another_type_matches_nothing(self, collection):
-        held = _record([1.0, 0.0, 0.0], name="5", age=5)
-        await self._store(collection, [held])
+    @pytest.mark.parametrize("property_filter", _MISTYPED_FILTERS)
+    async def test_query_rejects_a_value_of_another_type(
+        self, collection, property_filter
+    ):
+        await self._store(collection, [_record([1.0, 0.0, 0.0], **_DECLARED)])
 
-        assert await _admitted(collection, Equals(field="age", value="5")) == set()
-        assert await _admitted(collection, Equals(field="name", value=5)) == set()
-        assert await _admitted(collection, Equals(field="age", value=5)) == {held.uuid}
+        with pytest.raises(PropertyTypeMismatchError):
+            await _admitted(collection, property_filter)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("property_filter", _NON_FINITE_FILTERS)
+    async def test_query_rejects_a_float_that_is_not_finite(
+        self, collection, property_filter
+    ):
+        await self._store(collection, [_record([1.0, 0.0, 0.0], **_DECLARED)])
+
+        with pytest.raises(PropertyTypeMismatchError, match="score"):
+            await _admitted(collection, property_filter)
+
+    @pytest.mark.asyncio
+    async def test_an_int_compares_with_a_float_key_as_the_float_it_equals(
+        self, collection
+    ):
+        above, equal, below = (
+            _record([1.0, 0.0, 0.0], score=3.5),
+            _record([1.0, 0.1, 0.0], score=3.0),
+            _record([1.0, 0.2, 0.0], score=2.5),
+        )
+        bare = _record([0.0, 1.0, 0.0])
+        await self._store(collection, [above, equal, below, bare])
+        everything = {above.uuid, equal.uuid, below.uuid, bare.uuid}
+
+        expected = [
+            (Ordering(field="score", op=">", value=3), {above.uuid}),
+            (Ordering(field="score", op=">=", value=3), {above.uuid, equal.uuid}),
+            (Ordering(field="score", op="<", value=3), {below.uuid}),
+            (Equals(field="score", value=3), {equal.uuid}),
+            (In(field="score", values=(2, 3)), {equal.uuid}),
+            (In(field="score", values=(4,)), set()),
+        ]
+        for property_filter, admitted in expected:
+            assert await _admitted(collection, property_filter) == admitted, (
+                property_filter
+            )
+            assert (
+                await _admitted(collection, Not(property_filter))
+                == everything - admitted
+            ), property_filter
 
     @pytest.mark.asyncio
     async def test_datetime_bounds_hold_at_microsecond_precision(self, collection):

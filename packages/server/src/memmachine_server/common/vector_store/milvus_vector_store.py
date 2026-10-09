@@ -118,14 +118,9 @@ def _property_absent_expression(key: str) -> str:
     return f"{_DECLARED_FIELD_PREFIX}{key} is null"
 
 
-def _condition_expression(
-    expr: Equals | Ordering | In,
-    declared: Mapping[str, type[PropertyValue]],
-) -> str:
+def _condition_expression(expr: Equals | Ordering | In) -> str:
     """A Milvus expression for one condition; false or null where the property has no value."""
     values = list(expr.values) if isinstance(expr, In) else [expr.value]
-    # A value of another type never equals or orders against the property.
-    values = [value for value in values if type(value) is declared[expr.field]]
     if not values:
         return _FALSE_EXPR
     target = f"{_DECLARED_FIELD_PREFIX}{expr.field}"
@@ -138,12 +133,7 @@ def _condition_expression(
             return f"{target} {op} {_declared_property_value_literal(values[0])}"
 
 
-def _filter_expression(
-    expr: FilterExpr,
-    declared: Mapping[str, type[PropertyValue]],
-    *,
-    negate: bool = False,
-) -> str:
+def _filter_expression(expr: FilterExpr, *, negate: bool = False) -> str:
     """Compile a filter, or with `negate` its complement, into a Milvus expression.
 
     A condition on a property with no value is false, and a negation is the
@@ -154,18 +144,18 @@ def _filter_expression(
     """
     match expr:
         case Not(operand):
-            return _filter_expression(operand, declared, negate=not negate)
+            return _filter_expression(operand, negate=not negate)
         case And(operands) | Or(operands):
             operator = "&&" if isinstance(expr, And) != negate else "||"
             return f" {operator} ".join(
-                f"({_filter_expression(operand, declared, negate=negate)})"
+                f"({_filter_expression(operand, negate=negate)})"
                 for operand in operands
             )
         case IsNull(field):
             absent = _property_absent_expression(field)
             return f"not ({absent})" if negate else absent
         case Equals() | Ordering() | In():
-            condition = _condition_expression(expr, declared)
+            condition = _condition_expression(expr)
             if negate:
                 return f"(not ({condition})) || ({_property_absent_expression(expr.field)})"
             return condition
@@ -291,7 +281,7 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
     ) -> list[QueryResult]:
         filter_expr = _incarnation_filter(self._incarnation)
         if property_filter is not None:
-            property_expr = _filter_expression(property_filter, self.indexed_properties)
+            property_expr = _filter_expression(property_filter)
             filter_expr = f"({filter_expr}) && ({property_expr})"
 
         raw_results = await self._client.search(

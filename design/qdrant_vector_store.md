@@ -26,10 +26,11 @@ registry](vector_store_partition_registry.md),
 - **Strict mode:** the collection is created with filtering on unindexed
   fields off, for reads and updates alike, so the server refuses a filter on
   a field it has not indexed instead of scanning for it. Every key a filter
-  may name is indexed: the declared keys and the incarnation. A condition
-  whose value is of another type than its key declares matches nothing; the
-  store answers it with a filter no point satisfies, since the server would
-  refuse it for the field's index.
+  may name is indexed: the declared keys and the incarnation. A filter is
+  bound to the declared schema before anything is sent, as on every store: a
+  value of another type than its key declares is refused, and an int for a
+  float key becomes the float it equals, so each condition is one its field's
+  index serves.
 - **Startup converges:** the collection and each payload index are created at
   startup under separate already-exists guards, so a startup that failed
   between them is completed by the next.

@@ -1121,27 +1121,6 @@ class TestFilters:
         ) == {records[2].uuid}
 
     @pytest.mark.asyncio
-    async def test_a_value_of_another_type_matches_nothing(self, collection):
-        r1, r2, r3, v1 = await self._setup(collection)
-
-        [matched] = await collection.query(
-            query_vectors=[v1],
-            limit=10,
-            property_filter=Equals(field="age", value="thirty"),
-        )
-        assert matched.matches == []
-        [complement] = await collection.query(
-            query_vectors=[v1],
-            limit=10,
-            property_filter=Not(Equals(field="age", value="thirty")),
-        )
-        assert {m.record_uuid for m in complement.matches} == {
-            r1.uuid,
-            r2.uuid,
-            r3.uuid,
-        }
-
-    @pytest.mark.asyncio
     async def test_a_character_outside_the_basic_multilingual_plane_matches(
         self, collection
     ):

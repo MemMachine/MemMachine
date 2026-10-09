@@ -36,10 +36,13 @@ registry](vector_store_partition_registry.md),
   only instants, a search answers with record UUIDs and scores, and Milvus
   refuses an offset with a seconds component. Milvus caps a collection at
   `proxy.maxFieldNum` fields (64 on 2.6, 256 on 3.0), so a store declares at
-  most 60 properties on 2.6. A condition whose value is of another type than
-  its key declares matches nothing. Negation is the complement, as on Qdrant:
-  a negated condition holds where the property has no value, which Milvus's
-  SQL-style null evaluation does not give on its own.
+  most 60 properties on 2.6. A filter is bound to the declared schema before
+  anything is sent, as on every store: a value of another type than its key
+  declares is refused, and an int for a float key becomes the float it equals,
+  so a condition compares a field only with a literal of its type. Negation
+  is the complement, as on Qdrant: a negated condition holds where the
+  property has no value, which Milvus's SQL-style null evaluation does not
+  give on its own.
 - **Scores** are the server's: a COSINE index answers the cosine similarity
   as a hit's distance.
 - **Server-configured limits stay the server's.** A search `limit` reaches the

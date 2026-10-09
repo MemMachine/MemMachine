@@ -35,7 +35,7 @@ from .data_types import (
     VectorStorePartitionPendingError,
     validate_vector_store_name,
 )
-from .declared_properties import validate_declared_properties, validate_supported_filter
+from .declared_properties import bind_filter, validate_declared_properties
 from .partition_registry import (
     Registration,
     Reservation,
@@ -130,7 +130,7 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
             validate_min_cosine_similarity(min_cosine_similarity)
             validate_limit(limit)
             if property_filter is not None:
-                validate_supported_filter(
+                property_filter = bind_filter(
                     property_filter,
                     self._indexed_properties,
                     self.supported_filter_nodes,
@@ -188,8 +188,9 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
 
         Called after a liveness check, with at least one query vector and a
         positive limit, the vectors, minimum, and filter already checked: the
-        filter names declared keys only and is built from
-        `supported_filter_nodes` only.
+        filter is the one `bind_filter` returns, naming declared keys only,
+        built from `supported_filter_nodes` only, and holding values of their
+        keys' declared types only.
 
         Args:
             query_vectors (list[list[float]]): The vectors to search for.

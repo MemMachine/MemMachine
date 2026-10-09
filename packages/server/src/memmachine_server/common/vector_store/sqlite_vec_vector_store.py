@@ -63,7 +63,7 @@ from .data_types import (
     VectorStorePartitionAlreadyExistsError,
     validate_vector_store_name,
 )
-from .declared_properties import validate_declared_properties, validate_supported_filter
+from .declared_properties import bind_filter, validate_declared_properties
 from .sql_columns import (
     compile_property_filter,
     property_column_names,
@@ -223,13 +223,13 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
 
         filter_expression: ColumnElement[bool] | None = None
         if property_filter is not None:
-            validate_supported_filter(
+            property_filter = bind_filter(
                 property_filter,
                 self._indexed_properties,
                 SQLiteVecVectorStorePartition._SUPPORTED_FILTER_NODES,
             )
             filter_expression = compile_property_filter(
-                property_filter, self._records_table, self._indexed_properties
+                property_filter, self._records_table
             )
 
         k = min(limit, self._MAX_K)

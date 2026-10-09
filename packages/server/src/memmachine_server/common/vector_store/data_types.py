@@ -150,7 +150,11 @@ class UndeclaredPropertyKeyError(ValueError):
 
 
 class PropertyTypeMismatchError(ValueError):
-    """Raised when a record's value is not of its key's declared type."""
+    """
+    Raised when a record's or a filter's value is not of its key's declared type.
+
+    A float key is compared with finite values only.
+    """
 
     def __init__(self, key: str, declared: PropertyType, value: PropertyValue) -> None:
         """Initialize with the key, its declared type and the offending value."""
