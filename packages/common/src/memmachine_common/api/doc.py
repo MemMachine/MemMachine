@@ -807,10 +807,10 @@ class RouterDoc:
     # --- Configuration API Router Docs ---
 
     CONFIG_SECURITY_WARNING = """
-    **Security Warning**: Configuration changes made via the API are persisted
-    to the configuration file in plain text, including API keys and credentials.
-    Only use the configuration API in protected environments where the
-    configuration file is secured.
+    **Security Warning**: The configuration API is disabled by default and is
+    intended only for protected, single-process environments. Runtime changes
+    are not broadcast to other replicas or workers. Literal API keys and
+    credentials are persisted to the configuration file in plain text.
 
     To avoid storing secrets in plain text, you can use environment variable
     references in your API requests (e.g., `"api_key": "$OPENAI_API_KEY"`).
@@ -861,10 +861,10 @@ class RouterDoc:
     initialize it immediately. This allows adding embedders without restarting
     the server. The configuration is persisted to the configuration file.
 
-    **Security Warning**: API keys and credentials are stored in plain text in
-    the configuration file. Only use this API in protected environments. To
-    avoid storing secrets in plain text, use environment variable references
-    (e.g., `"api_key": "$OPENAI_API_KEY"`) which will be resolved at runtime.
+    **Security Warning**: Literal API keys and credentials are stored in plain
+    text in the configuration file. Only use this API in a protected,
+    single-process environment. Use environment variable references (e.g.,
+    `"api_key": "$OPENAI_API_KEY"`) to preserve references on save.
 
     Supported providers:
     - `openai`: OpenAI embedding models (requires api_key, model)
@@ -889,10 +889,10 @@ class RouterDoc:
     to initialize it immediately. This allows adding models without restarting
     the server. The configuration is persisted to the configuration file.
 
-    **Security Warning**: API keys and credentials are stored in plain text in
-    the configuration file. Only use this API in protected environments. To
-    avoid storing secrets in plain text, use environment variable references
-    (e.g., `"api_key": "$OPENAI_API_KEY"`) which will be resolved at runtime.
+    **Security Warning**: Literal API keys and credentials are stored in plain
+    text in the configuration file. Only use this API in a protected,
+    single-process environment. Use environment variable references (e.g.,
+    `"api_key": "$OPENAI_API_KEY"`) to preserve references on save.
 
     Supported providers:
     - `openai-responses`: OpenAI models using the Responses API (requires api_key, model)

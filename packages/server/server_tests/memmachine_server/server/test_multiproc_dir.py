@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from memmachine_server.server.app import _prepare_multiproc_dir, _worker_count
+from memmachine_server.server.app import (
+    _config_api_enabled,
+    _prepare_multiproc_dir,
+    _worker_count,
+)
 
 ENV_VAR = "PROMETHEUS_MULTIPROC_DIR"
 
@@ -31,6 +35,25 @@ def test_worker_count(monkeypatch, value, expected):
     if value is not None:
         monkeypatch.setenv("MEMMACHINE_WORKERS", value)
     assert _worker_count() == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, False),
+        ("", False),
+        ("0", False),
+        ("false", False),
+        ("1", True),
+        ("yes", True),
+    ],
+)
+def test_config_api_requires_explicit_truthy_value(monkeypatch, value, expected):
+    if value is None:
+        monkeypatch.delenv("MEMMACHINE_CONFIG_API", raising=False)
+    else:
+        monkeypatch.setenv("MEMMACHINE_CONFIG_API", value)
+    assert _config_api_enabled() is expected
 
 
 def test_single_worker_leaves_the_variable_unset(monkeypatch):

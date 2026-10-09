@@ -6,8 +6,8 @@ Deploys MemMachine with optional in-cluster PostgreSQL (pgvector), Neo4j and Qdr
 
 | Field         | Value              |
 |---------------|--------------------|
-| Chart version | 0.1.0              |
-| App version   | v0.3.0             |
+| Chart version | 0.2.1              |
+| App version   | v0.2.6             |
 | API version   | v2 (Helm 3)        |
 
 ---
@@ -31,7 +31,7 @@ Deploys MemMachine with optional in-cluster PostgreSQL (pgvector), Neo4j and Qdr
              │ reads configuration.yml + .env from ConfigMaps
              │ reads OPENAI_API_KEY, POSTGRES_PASSWORD,
              │   NEO4J_USER, NEO4J_PASSWORD from Secrets
-             │ writes logs to memmachine-pvc (/app/data)
+             │ writes logs to stdout/stderr
              │
      ┌───────┴────────┐
      │                │
@@ -70,7 +70,6 @@ Up to three PVCs are created, all using the same `storageClass` and `pvcSize`:
 | `neo4j-pvc`      | Neo4j pod      | `/data`                       | Graph data, indexes, plugins    | `neo4j.enabled=true`   |
 | `qdrant-pvc`     | Qdrant pod     | `/qdrant/storage`             | Vector collections and payloads | `qdrant.enabled=true`  |
 | `postgres-pvc`   | PostgreSQL pod | `/var/lib/postgresql`    | Relational/vector data          | `postgres.enabled=true`|
-| `memmachine-pvc` | MemMachine pod | `/app/data`                   | Application logs and data files | Always                 |
 
 All PVCs request `ReadWriteMany` (RWX) access mode. This requires a StorageClass that supports RWX (e.g., NFS-backed provisioners like `nfs-client`).
 
@@ -107,7 +106,7 @@ The first three secrets are always created regardless of `postgres.enabled` / `n
 | `templates/qdrant-service.yaml`        | Service (ClusterIP)      | Internal Qdrant access (REST `qdrant.port`, gRPC `qdrant.grpcPort`) |
 | `templates/postgres-deployment.yaml`   | Deployment (memmachine-postgres) | PostgreSQL with pgvector, credentials from Secret           |
 | `templates/postgres-service.yaml`      | Service (ClusterIP)      | Internal PostgreSQL access on port 5432                         |
-| `templates/pvc.yaml`                   | PersistentVolumeClaim × 1–4 | `memmachine-pvc` always; `neo4j-pvc` if `neo4j.enabled`; `postgres-pvc` if `postgres.enabled`; `qdrant-pvc` if `qdrant.enabled` |
+| `templates/pvc.yaml`                   | PersistentVolumeClaim × 0–3 | Backend PVCs when their in-cluster services are enabled |
 | `templates/secrets.yaml`               | Secret × 3–4             | `postgres-secret`, `memmachine-secrets`, `neo4j-secret` always; `qdrant-secret` when `qdrant.apiKey` is set without `qdrant.existingSecret` |
 
 ---
@@ -118,7 +117,7 @@ The `memmachine-config` ConfigMap generates `/app/configuration.yml`. Its struct
 
 ```yaml
 logging:
-  path: /app/data/memmachine.log
+  path: ""                         # stdout/stderr; safe across replicas
   level: info                      # hardcoded; use FAST_MCP_LOG_LEVEL env var to
                                    # control FastAPI/MCP server log level separately
 
@@ -167,6 +166,21 @@ Resource IDs used in top-level sections (`default_model`, `default_embedder`, `d
 ---
 
 ## Values Reference
+
+### Server scaling
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `replicaCount` | `1` | Number of MemMachine API pods |
+| `workerCount` | `1` | Uvicorn workers in each API pod (`MEMMACHINE_WORKERS`) |
+| `affinity` | `{}` | Kubernetes pod affinity/anti-affinity rules |
+| `service.type` | `NodePort` | Kubernetes Service type |
+| `service.sessionAffinity` | `None` | Kubernetes Service session affinity |
+
+HTTP MCP is stateless, so it does not require sticky sessions. Before increasing
+`replicaCount` or `workerCount`, review the component limitations in the
+[scaling guide](../../docs/open_source/scaling.mdx). The chart logs to
+stdout/stderr by default so each pod has an independent log stream.
 
 ### Storage
 
@@ -597,7 +611,8 @@ helm upgrade --install memmachine . \
   --set qdrant.enabled=false --set qdrant.host=qdrant.example.com
 ```
 
-Only the MemMachine Deployment, Service, memmachine-pvc, two ConfigMaps, and three Secrets (`postgres-secret`, `memmachine-secrets`, `neo4j-secret`) are created.
+Only the MemMachine Deployment, Service, two ConfigMaps, and three Secrets
+(`postgres-secret`, `memmachine-secrets`, `neo4j-secret`) are created.
 
 ---
 
@@ -640,5 +655,5 @@ helm uninstall memmachine -n memmachine
 
 > **Note:** Helm does not delete PVCs by default. To also remove persistent data:
 > ```bash
-> kubectl delete pvc -n memmachine qdrant-pvc neo4j-pvc postgres-pvc memmachine-pvc --ignore-not-found
+> kubectl delete pvc -n memmachine qdrant-pvc neo4j-pvc postgres-pvc --ignore-not-found
 > ```

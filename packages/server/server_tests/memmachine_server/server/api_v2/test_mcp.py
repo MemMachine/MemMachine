@@ -1,5 +1,4 @@
 import os
-import re
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -9,7 +8,11 @@ from fastmcp import Client
 from memmachine_common.api.spec import SearchResult
 
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
-from memmachine_server.server.api_v2.mcp import MCP_SUCCESS, Params
+from memmachine_server.server.api_v2.mcp import (
+    MCP_SUCCESS,
+    MemMachineFastMCP,
+    Params,
+)
 from memmachine_server.server.mcp_stdio import mcp
 
 
@@ -19,6 +22,9 @@ def clear_env():
     old_org_id = os.getenv("MM_ORG_ID")
     old_proj_id = os.getenv("MM_PROJ_ID")
     old_user_id = os.getenv("MM_USER_ID")
+    old_default_id = os.getenv("MM_DEFAULT_ID")
+    for name in ("MM_ORG_ID", "MM_PROJ_ID", "MM_USER_ID", "MM_DEFAULT_ID"):
+        os.environ.pop(name, None)
     yield
     if old_user_id:
         os.environ["MM_USER_ID"] = old_user_id
@@ -32,6 +38,10 @@ def clear_env():
         os.environ["MM_PROJ_ID"] = old_proj_id
     else:
         os.environ.pop("MM_PROJ_ID", None)
+    if old_default_id:
+        os.environ["MM_DEFAULT_ID"] = old_default_id
+    else:
+        os.environ.pop("MM_DEFAULT_ID", None)
 
 
 def test_user_id_without_env():
@@ -68,23 +78,35 @@ def test_user_id_with_empty_env(monkeypatch):
     assert model.user_id == "local_user"
 
 
-def assert_proj_id(proj_id: str) -> None:
-    pattern = r"^mcp-user-0x\w+$"
-    if not re.match(pattern, proj_id):
-        raise ValueError(f"Invalid proj_id: {proj_id}")
-
-
-def assert_user_id(user_id: str) -> None:
-    pattern = r"^user-0x\w+$"
-    if not re.match(pattern, user_id):
-        raise ValueError(f"Invalid user_id: {user_id}")
-
-
 def test_default_param_values():
     params = Params()
     assert params.org_id == "mcp-universal"
-    assert_proj_id(params.proj_id)
-    assert_user_id(params.user_id)
+    assert params.proj_id == "mcp-user-default"
+    assert params.user_id == "user-default"
+
+
+def test_default_param_values_use_configured_identity(monkeypatch):
+    monkeypatch.setenv("MM_DEFAULT_ID", "shared-cluster")
+    params = Params()
+    assert params.proj_id == "mcp-user-shared-cluster"
+    assert params.user_id == "user-shared-cluster"
+
+
+def test_empty_default_identity_uses_stable_fallback(monkeypatch):
+    monkeypatch.setenv("MM_DEFAULT_ID", "")
+    params = Params()
+    assert params.proj_id == "mcp-user-default"
+    assert params.user_id == "user-default"
+
+
+def test_http_mcp_is_stateless():
+    fake_app = Mock()
+    with patch("fastmcp.FastMCP.http_app", return_value=fake_app) as http_app:
+        server = MemMachineFastMCP("test")
+        middleware = server.get_app("/")
+
+    http_app.assert_called_once_with(path="/", stateless_http=True)
+    assert middleware.app is fake_app
 
 
 def test_user_id_field_filled_by_env(monkeypatch):
