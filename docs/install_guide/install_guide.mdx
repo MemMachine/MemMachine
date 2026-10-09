@@ -81,6 +81,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Now, install the project dependencies:
 uv pip install .
 ```
+The repository pins the uv release it uses in `pyproject.toml`. If your uv differs, it refuses to run and prints the `uv self update` command for the pinned release.
 <Note> If you wish to run with an NVIDIA GPU, you will need to install dependencies for GPU by using the `uv pip install ".[gpu]"` command.</Note>
 </Accordion>
 </AccordionGroup>

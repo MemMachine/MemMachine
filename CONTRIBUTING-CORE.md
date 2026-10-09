@@ -40,6 +40,8 @@ Follow these steps to set up your local development environment:
 2. **Install the Package:**
 
     We recommend using [uv](https://docs.astral.sh/uv/) to manage Python environments, versions, and dependencies.
+    `pyproject.toml` pins the uv release the project uses; a different uv refuses to run
+    in this repository and prints the `uv self update` command for the pinned release.
 
     Alternatively, you may wish to create your own Python virtual environment:
     ```bash
