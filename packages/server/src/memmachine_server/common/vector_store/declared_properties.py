@@ -3,11 +3,7 @@
 from collections.abc import Iterable, Mapping
 
 from memmachine_server.common.data_types import PropertyType, PropertyValue
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-    filter_fields,
-    filter_nodes,
-)
+from memmachine_server.common.filter import FilterExpr, filter_fields, filter_nodes
 
 from .data_types import (
     PropertyTypeMismatchError,

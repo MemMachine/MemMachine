@@ -23,13 +23,14 @@ from uuid import uuid4
 
 import pytest
 
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     In,
     IsNull,
     Not,
     Or,
+    Ordering,
 )
 from memmachine_server.common.vector_store import (
     PropertyTypeMismatchError,
@@ -48,6 +49,22 @@ _DECLARED = {
     "active": True,
     "created_at": _INSTANT,
 }
+
+_COMPLEMENT_FILTERS = [
+    Equals(field="name", value="alice"),
+    Equals(field="active", value=True),
+    Equals(field="created_at", value=_INSTANT),
+    Ordering(field="age", op=">", value=20),
+    Ordering(field="score", op="<=", value=1.5),
+    Ordering(field="created_at", op=">=", value=_INSTANT),
+    In(field="name", values=("alice", "carol")),
+    In(field="name", values=()),
+    IsNull(field="name"),
+    IsNull(field="score"),
+    And((Equals(field="name", value="alice"), Ordering(field="age", op=">", value=20))),
+    Or((Equals(field="name", value="alice"), IsNull(field="name"))),
+    Not(Equals(field="name", value="alice")),
+]
 
 
 def _unit(vector: list[float]) -> list[float]:
@@ -118,52 +135,71 @@ class DeclaredSchemaContract:
     @pytest.mark.asyncio
     async def test_query_rejects_an_undeclared_key(self, collection):
         with pytest.raises(UndeclaredPropertyKeyError, match="color"):
-            await _admitted(collection, Comparison(field="color", op="=", value="red"))
+            await _admitted(collection, Equals(field="color", value="red"))
         with pytest.raises(UndeclaredPropertyKeyError, match="color"):
             await _admitted(
                 collection,
-                And(
-                    left=Comparison(field="name", op="=", value="a"),
-                    right=IsNull(field="color"),
-                ),
+                And((Equals(field="name", value="a"), IsNull(field="color"))),
             )
 
     @pytest.mark.asyncio
     async def test_every_supported_node_evaluates_during_a_search(self, collection):
         held = _record([1.0, 0.0, 0.0], name="alice", age=30, score=1.5, active=True)
-        other = _record([0.0, 1.0, 0.0], name="bob", age=40, active=False)
-        lacking = _record([0.0, 0.0, 1.0], active=False)
+        other = _record([0.0, 1.0, 0.0], name="bob", age=40)
+        lacking = _record([0.0, 0.0, 1.0])
         await self._store(collection, [held, other, lacking])
 
         expected = {
-            Comparison: (Comparison(field="age", op=">", value=35), {other.uuid}),
-            In: (In(field="name", values=["alice", "carol"]), {held.uuid}),
+            Equals: (Equals(field="name", value="alice"), {held.uuid}),
+            Ordering: (Ordering(field="age", op=">", value=35), {other.uuid}),
+            In: (In(field="name", values=("alice", "carol")), {held.uuid}),
             IsNull: (IsNull(field="name"), {lacking.uuid}),
             And: (
                 And(
-                    left=Comparison(field="name", op="=", value="alice"),
-                    right=Comparison(field="age", op="=", value=30),
+                    (Equals(field="name", value="alice"), Equals(field="age", value=30))
                 ),
                 {held.uuid},
             ),
             Or: (
                 Or(
-                    left=Comparison(field="name", op="=", value="alice"),
-                    right=Comparison(field="name", op="=", value="bob"),
+                    (
+                        Equals(field="name", value="alice"),
+                        Equals(field="name", value="bob"),
+                    )
                 ),
                 {held.uuid, other.uuid},
             ),
-            # Every record holds `active`, so the negation's answer does not
-            # depend on how a backend treats a record lacking the field.
-            Not: (
-                Not(Comparison(field="active", op="=", value=True)),
-                {other.uuid, lacking.uuid},
-            ),
+            Not: (Not(Equals(field="name", value="bob")), {held.uuid, lacking.uuid}),
         }
         assert set(expected) >= collection.supported_filter_nodes
         for node, (property_filter, admitted) in expected.items():
             assert node in collection.supported_filter_nodes
             assert await _admitted(collection, property_filter) == admitted, node
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("property_filter", _COMPLEMENT_FILTERS)
+    async def test_negation_is_the_complement(self, collection, property_filter):
+        """`Not` admits every record the operand does not, absence included."""
+        records = _presence_records()
+        await self._store(collection, records)
+        everything = {record.uuid for record in records}
+
+        admitted = await _admitted(collection, property_filter)
+        assert (
+            await _admitted(collection, Not(property_filter)) == everything - admitted
+        )
+        assert await _admitted(collection, Not(Not(property_filter))) == admitted
+
+    @pytest.mark.asyncio
+    async def test_in_over_no_values_admits_nothing(self, collection):
+        """An empty `In` is false, so its complement is every record."""
+        records = _presence_records()
+        await self._store(collection, records)
+
+        assert await _admitted(collection, In(field="name", values=())) == set()
+        assert await _admitted(collection, Not(In(field="name", values=()))) == {
+            record.uuid for record in records
+        }
 
     @pytest.mark.asyncio
     async def test_is_null_matches_the_records_without_the_key(self, collection):
@@ -173,6 +209,26 @@ class DeclaredSchemaContract:
 
         assert await _admitted(collection, IsNull(field="name")) == {lacking.uuid}
         assert await _admitted(collection, Not(IsNull(field="name"))) == {holding.uuid}
+
+    @pytest.mark.asyncio
+    async def test_negated_equality_keeps_a_record_without_the_key(self, collection):
+        holding = _record([1.0, 0.0, 0.0], name="alice")
+        differing = _record([0.0, 1.0, 0.0], name="bob")
+        lacking = _record([0.0, 0.0, 1.0])
+        await self._store(collection, [holding, differing, lacking])
+
+        assert await _admitted(
+            collection, Not(Equals(field="name", value="alice"))
+        ) == {differing.uuid, lacking.uuid}
+
+    @pytest.mark.asyncio
+    async def test_a_predicate_of_another_type_matches_nothing(self, collection):
+        held = _record([1.0, 0.0, 0.0], name="5", age=5)
+        await self._store(collection, [held])
+
+        assert await _admitted(collection, Equals(field="age", value="5")) == set()
+        assert await _admitted(collection, Equals(field="name", value=5)) == set()
+        assert await _admitted(collection, Equals(field="age", value=5)) == {held.uuid}
 
     @pytest.mark.asyncio
     async def test_datetime_bounds_hold_at_microsecond_precision(self, collection):
@@ -186,13 +242,13 @@ class DeclaredSchemaContract:
         await self._store(collection, records)
 
         assert await _admitted(
-            collection, Comparison(field="created_at", op=">=", value=instants[1])
+            collection, Ordering(field="created_at", op=">=", value=instants[1])
         ) == {records[1].uuid, records[2].uuid}
         assert await _admitted(
-            collection, Comparison(field="created_at", op="<", value=instants[1])
+            collection, Ordering(field="created_at", op="<", value=instants[1])
         ) == {records[0].uuid}
         assert await _admitted(
-            collection, Comparison(field="created_at", op="=", value=instants[1])
+            collection, Equals(field="created_at", value=instants[1])
         ) == {records[1].uuid}
 
     @pytest.mark.asyncio
@@ -205,7 +261,7 @@ class DeclaredSchemaContract:
 
         same_instant = instant.astimezone(timezone(timedelta(hours=-8)))
         assert await _admitted(
-            collection, Comparison(field="created_at", op="=", value=same_instant)
+            collection, Equals(field="created_at", value=same_instant)
         ) == {record.uuid}
 
     @pytest.mark.asyncio
@@ -216,5 +272,5 @@ class DeclaredSchemaContract:
         await self._store(collection, [*near, far])
 
         assert await _admitted(
-            collection, Comparison(field="name", op="=", value="far"), limit=1
+            collection, Equals(field="name", value="far"), limit=1
         ) == {far.uuid}

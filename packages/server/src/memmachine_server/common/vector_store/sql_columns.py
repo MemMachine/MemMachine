@@ -24,20 +24,23 @@ from sqlalchemy import (
     Text,
     and_,
     false,
+    func,
     or_,
 )
 from sqlalchemy.sql.elements import ColumnElement
 
 from memmachine_server.common.data_types import PropertyType, PropertyValue
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
     IsNull,
     Not,
     Or,
+    Ordering,
 )
+from memmachine_server.common.filter.sql_filter_util import ORDERING_OPS
 from memmachine_server.common.utils import ensure_tz_aware
 
 PROPERTY_COLUMN_PREFIX = "p_"
@@ -116,59 +119,51 @@ def compile_property_filter(
 
     A predicate matches only a value of the compared type, so a leaf whose
     value is not of its key's declared type matches nothing rather than
-    whatever the database's affinity would coerce.
+    whatever the database's affinity would coerce. `Not` is the complement
+    of a match: a row holding no value, whose comparison is NULL, is kept.
     """
-    if isinstance(expr, (Comparison, In, IsNull)):
-        return _compile_leaf(expr, table, indexed_properties)
-    if isinstance(expr, And):
-        return and_(
-            compile_property_filter(expr.left, table, indexed_properties),
-            compile_property_filter(expr.right, table, indexed_properties),
-        )
-    if isinstance(expr, Or):
-        return or_(
-            compile_property_filter(expr.left, table, indexed_properties),
-            compile_property_filter(expr.right, table, indexed_properties),
-        )
-    if isinstance(expr, Not):
-        return ~compile_property_filter(expr.expr, table, indexed_properties)
-    raise TypeError(f"Unsupported filter expression type: {type(expr)}")
-
-
-def _compare(column: ColumnElement, op: str, bound: object) -> ColumnElement[bool]:
-    """The SQL comparison of a column against a bound, by the filter's operator."""
-    match op:
-        case "=":
-            return column == bound
-        case "!=":
-            return column != bound
-        case ">":
-            return column > bound
-        case "<":
-            return column < bound
-        case ">=":
-            return column >= bound
-        case "<=":
-            return column <= bound
-    raise ValueError(f"Unsupported comparison operator {op!r}")
+    match expr:
+        case Equals() | Ordering() | In() | IsNull():
+            return _compile_leaf(expr, table, indexed_properties)
+        case And(operands):
+            return and_(
+                *(
+                    compile_property_filter(o, table, indexed_properties)
+                    for o in operands
+                )
+            )
+        case Or(operands):
+            return or_(
+                *(
+                    compile_property_filter(o, table, indexed_properties)
+                    for o in operands
+                )
+            )
+        case Not(operand):
+            inner = compile_property_filter(operand, table, indexed_properties)
+            return ~func.coalesce(inner, false())
 
 
 def _compile_leaf(
-    expr: Comparison | In | IsNull,
+    expr: Equals | Ordering | In | IsNull,
     table: Table,
     indexed_properties: Mapping[str, PropertyType],
 ) -> ColumnElement[bool]:
     column = table.c[property_column_name(expr.field)]
     declared = indexed_properties[expr.field]
-    if isinstance(expr, IsNull):
-        return column.is_(None)
-    if isinstance(expr, In):
-        return column.in_(expr.values) if type(expr.values[0]) is declared else false()
-    if type(expr.value) is not declared:
-        return false()
-    bound = (
-        epoch_microseconds(expr.value)
-        if isinstance(expr.value, datetime)
-        else expr.value
-    )
-    return _compare(column, expr.op, bound)
+    match expr:
+        case IsNull():
+            return column.is_(None)
+        case In(values=values):
+            if not values or type(values[0]) is not declared:
+                return false()
+            return column.in_(values)
+        case Equals(value=value) | Ordering(value=value):
+            if type(value) is not declared:
+                return false()
+            bound = epoch_microseconds(value) if isinstance(value, datetime) else value
+            match expr:
+                case Equals():
+                    return column == bound
+                case Ordering(op=op):
+                    return ORDERING_OPS[op](column, bound)

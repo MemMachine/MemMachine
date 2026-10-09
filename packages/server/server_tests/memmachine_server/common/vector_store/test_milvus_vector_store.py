@@ -31,14 +31,15 @@ import grpc.aio
 from pymilvus.client.types import ConsistencyLevel
 
 from memmachine_server.common.data_types import PropertyType, PropertyValue
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
     IsNull,
     Not,
     Or,
+    Ordering,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.vector_store.data_types import (
@@ -62,6 +63,7 @@ from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partiti
     SQLAlchemyVectorStorePartitionRegistry,
     SQLAlchemyVectorStorePartitionRegistryParams,
 )
+from server_tests.memmachine_server.common.filter.nodes import comparison
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
 )
@@ -266,25 +268,18 @@ def _model_properties(rng: random.Random) -> dict[str, PropertyValue]:
 
 
 def _model_filter(rng: random.Random, depth: int = 3) -> FilterExpr:
-    """A random filter tree whose values have their properties' types.
-
-    It compares with `!=` only through Not(=): on a property with no value,
-    the store's `!=` holds, as the complement of `=`, where the model's does
-    not.
-    """
+    """A random filter tree whose values have their properties' types, ordering only numbers and datetimes."""
     if depth > 0 and rng.random() < 0.6:
         match rng.choice(("and", "or", "not")):
             case "not":
-                return Not(expr=_model_filter(rng, depth - 1))
+                return Not(_model_filter(rng, depth - 1))
             case "and":
                 return And(
-                    left=_model_filter(rng, depth - 1),
-                    right=_model_filter(rng, depth - 1),
+                    (_model_filter(rng, depth - 1), _model_filter(rng, depth - 1))
                 )
             case _:
                 return Or(
-                    left=_model_filter(rng, depth - 1),
-                    right=_model_filter(rng, depth - 1),
+                    (_model_filter(rng, depth - 1), _model_filter(rng, depth - 1))
                 )
     key = rng.choice(list(_MODEL_DECLARED))
     value_type = _MODEL_DECLARED[key]
@@ -292,12 +287,18 @@ def _model_filter(rng: random.Random, depth: int = 3) -> FilterExpr:
         case "is_null":
             return IsNull(field=key)
         case "in" if value_type is int:
-            return In(field=key, values=rng.sample(_MODEL_INTS, k=rng.randint(1, 3)))
+            return In(
+                field=key, values=tuple(rng.sample(_MODEL_INTS, k=rng.randint(1, 3)))
+            )
         case "in" if value_type is str:
-            return In(field=key, values=rng.sample(_MODEL_STRINGS, k=rng.randint(1, 3)))
+            return In(
+                field=key,
+                values=tuple(rng.sample(_MODEL_STRINGS, k=rng.randint(1, 3))),
+            )
         case _:
-            op = "=" if value_type is bool else rng.choice(("=", "<", "<=", ">", ">="))
-            return Comparison(field=key, op=op, value=_model_value(rng, value_type))
+            ordered = value_type not in (bool, str)
+            op = rng.choice(("=", "<", "<=", ">", ">=")) if ordered else "="
+            return comparison(key, op, _model_value(rng, value_type))
 
 
 async def _model_matches(
@@ -477,7 +478,7 @@ class TestPartitionLifecycle:
         [result] = await coll.query(
             query_vectors=[vector],
             limit=1,
-            property_filter=Comparison(field="name", op="=", value="alice"),
+            property_filter=Equals(field="name", value="alice"),
         )
         assert [match.record_uuid for match in result.matches] == [record.uuid]
         assert set(await store._client.list_indexes(partial._collection_name)) == {
@@ -612,7 +613,7 @@ class TestPartitionLifecycle:
         [result] = await partition.query(
             query_vectors=[record.vector],
             limit=10,
-            property_filter=Comparison(field=key, op="=", value=written),
+            property_filter=Equals(field=key, value=written),
         )
         assert [match.record_uuid for match in result.matches] == [record.uuid]
 
@@ -629,7 +630,7 @@ async def _require_usable(partition: MilvusVectorStorePartition) -> None:
     [result] = await partition.query(
         query_vectors=[record.vector],
         limit=10,
-        property_filter=Comparison(field="name", op="=", value="usable"),
+        property_filter=Equals(field="name", value="usable"),
     )
     assert [match.record_uuid for match in result.matches] == [record.uuid]
 
@@ -828,7 +829,7 @@ class TestUpsertAndQuery:
         [old] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="name", op="=", value="old"),
+            property_filter=Equals(field="name", value="old"),
         )
         assert old.matches == []
 
@@ -894,7 +895,7 @@ class TestFilters:
         all_results = await collection.query(
             query_vectors=[query_vec],
             limit=10,
-            property_filter=Comparison(field=field, op=op, value=value),
+            property_filter=comparison(field, op, value),
         )
         return {match.record_uuid for match in all_results[0].matches}
 
@@ -956,7 +957,7 @@ class TestFilters:
         not_null_results = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Not(expr=IsNull(field="name")),
+            property_filter=Not(IsNull(field="name")),
         )
         assert {m.record_uuid for m in not_null_results[0].matches} == {
             r_has_value.uuid
@@ -969,7 +970,7 @@ class TestFilters:
         in_results = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=In(field="name", values=["alice", "carol"]),
+            property_filter=In(field="name", values=("alice", "carol")),
         )
         assert {m.record_uuid for m in in_results[0].matches} == {r1.uuid, r3.uuid}
 
@@ -977,8 +978,10 @@ class TestFilters:
             query_vectors=[v1],
             limit=10,
             property_filter=And(
-                left=Comparison(field="active", op="=", value=True),
-                right=Comparison(field="age", op=">", value=30),
+                (
+                    Equals(field="active", value=True),
+                    Ordering(field="age", op=">", value=30),
+                )
             ),
         )
         assert {m.record_uuid for m in and_results[0].matches} == {r3.uuid}
@@ -987,8 +990,7 @@ class TestFilters:
             query_vectors=[v1],
             limit=10,
             property_filter=Or(
-                left=Comparison(field="name", op="=", value="alice"),
-                right=Comparison(field="name", op="=", value="bob"),
+                (Equals(field="name", value="alice"), Equals(field="name", value="bob"))
             ),
         )
         assert {m.record_uuid for m in or_results[0].matches} == {r1.uuid, r2.uuid}
@@ -1008,32 +1010,36 @@ class TestFilters:
             )
             return {match.record_uuid for match in result.matches}
 
-        assert await uuids(Comparison(field="name", op="!=", value="alice")) == {
+        assert await uuids(comparison("name", "!=", "alice")) == {
             r2.uuid,
             r3.uuid,
             bare.uuid,
         }
-        assert await uuids(
-            Not(expr=Comparison(field="name", op="=", value="alice"))
-        ) == {r2.uuid, r3.uuid, bare.uuid}
-        assert await uuids(Not(expr=Comparison(field="age", op=">", value=30))) == {
+        assert await uuids(Not(Equals(field="name", value="alice"))) == {
+            r2.uuid,
+            r3.uuid,
+            bare.uuid,
+        }
+        assert await uuids(Not(Ordering(field="age", op=">", value=30))) == {
             r1.uuid,
             r2.uuid,
             bare.uuid,
         }
-        assert await uuids(Not(expr=In(field="name", values=["alice", "bob"]))) == {
+        assert await uuids(Not(In(field="name", values=("alice", "bob")))) == {
             r3.uuid,
             bare.uuid,
         }
         assert await uuids(
             Not(
-                expr=And(
-                    left=Comparison(field="active", op="=", value=True),
-                    right=Comparison(field="age", op=">", value=30),
+                And(
+                    (
+                        Equals(field="active", value=True),
+                        Ordering(field="age", op=">", value=30),
+                    )
                 )
             )
         ) == {r1.uuid, r2.uuid, bare.uuid}
-        assert await uuids(Not(expr=Not(expr=IsNull(field="name")))) == {bare.uuid}
+        assert await uuids(Not(Not(IsNull(field="name")))) == {bare.uuid}
 
     @pytest.mark.asyncio
     async def test_a_declared_datetime_is_stored_as_its_instant_in_utc(
@@ -1072,9 +1078,7 @@ class TestFilters:
         [result] = await collection.query(
             query_vectors=[record.vector],
             limit=10,
-            property_filter=Comparison(
-                field="created_at", op="=", value=written.astimezone(UTC)
-            ),
+            property_filter=Equals(field="created_at", value=written.astimezone(UTC)),
         )
         assert [match.record_uuid for match in result.matches] == [record.uuid]
 
@@ -1106,14 +1110,14 @@ class TestFilters:
             return {match.record_uuid for match in result.matches}
 
         same_instant = base.astimezone(plus5)
-        assert await uuids(
-            Comparison(field="created_at", op="=", value=same_instant)
-        ) == {records[0].uuid}
-        assert await uuids(Comparison(field="created_at", op=">", value=base)) == {
+        assert await uuids(Equals(field="created_at", value=same_instant)) == {
+            records[0].uuid
+        }
+        assert await uuids(Ordering(field="created_at", op=">", value=base)) == {
             records[1].uuid
         }
         assert await uuids(
-            Comparison(field="created_at", op="<", value=same_instant)
+            Ordering(field="created_at", op="<", value=same_instant)
         ) == {records[2].uuid}
 
     @pytest.mark.asyncio
@@ -1123,13 +1127,13 @@ class TestFilters:
         [matched] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="age", op="=", value="thirty"),
+            property_filter=Equals(field="age", value="thirty"),
         )
         assert matched.matches == []
         [complement] = await collection.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Comparison(field="age", op="!=", value="thirty"),
+            property_filter=Not(Equals(field="age", value="thirty")),
         )
         assert {m.record_uuid for m in complement.matches} == {
             r1.uuid,
@@ -1317,7 +1321,7 @@ class _ModelPartitions:
         for old in replaced:
             current = self.records[partition_key][old.uuid]
             for key, value in old.properties.items():
-                old_value = Comparison(field=key, op="=", value=value)
+                old_value = Equals(field=key, value=value)
                 if not evaluate_filter(old_value, current.properties):
                     assert old.uuid not in await _model_matches(
                         self.handles[partition_key], old_value
@@ -1764,9 +1768,9 @@ class TestPartitionIsolation:
             await _settle(partition)
             for property_filter in (
                 None,
-                Comparison(field="name", op="=", value="shared"),
-                Comparison(field="color", op="=", value="red"),
-                Not(expr=IsNull(field="name")),
+                Equals(field="name", value="shared"),
+                Equals(field="color", value="red"),
+                Not(IsNull(field="name")),
             ):
                 [result] = await partition.query(
                     query_vectors=[vector], limit=10, property_filter=property_filter
@@ -1994,9 +1998,7 @@ async def _churn_on(
             for record_uuid in record_uuids:
                 ledger.held.get(incarnation, {}).pop(record_uuid, None)
         case _:
-            matched = await _model_matches(
-                handle, Comparison(field="owner", op="=", value=owner)
-            )
+            matched = await _model_matches(handle, Equals(field="owner", value=owner))
             # Only records this owner sent to this incarnation.
             assert matched <= ledger.sent.get(incarnation, set()) & own
 
@@ -2086,9 +2088,7 @@ async def _check_live_partition(
     for key, value in [("owner", owner) for owner in owners] + [
         ("tag", tag) for tag in _CHURN_TAGS
     ]:
-        assert await _model_matches(
-            handle, Comparison(field=key, op="=", value=value)
-        ) == {
+        assert await _model_matches(handle, Equals(field=key, value=value)) == {
             record_uuid
             for record_uuid, record in held.items()
             if record.properties[key] == value

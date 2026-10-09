@@ -7,10 +7,12 @@ from uuid import UUID
 
 import pytest
 
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     FilterExpr,
-    demangle_user_metadata_key,
     map_filter_fields,
+)
+from memmachine_server.common.filter.filter_parser import (
+    demangle_user_metadata_key,
     normalize_filter_field,
 )
 from memmachine_server.common.reranker import Reranker

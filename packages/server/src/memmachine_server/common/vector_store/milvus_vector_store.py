@@ -12,30 +12,16 @@ from pydantic import Field, InstanceOf
 from pymilvus import AsyncMilvusClient, DataType
 from pymilvus.exceptions import MilvusException
 
-from memmachine_server.common.data_types import (
-    PropertyType,
-    PropertyValue,
-)
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.data_types import PropertyType, PropertyValue
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.utils import ensure_tz_aware
@@ -133,22 +119,22 @@ def _property_absent_expression(key: str) -> str:
 
 
 def _condition_expression(
-    expr: FilterComparison | FilterIn,
+    expr: Equals | Ordering | In,
     declared: Mapping[str, type[PropertyValue]],
 ) -> str:
     """A Milvus expression for one condition; false or null where the property has no value."""
-    values = list(expr.values) if isinstance(expr, FilterIn) else [expr.value]
+    values = list(expr.values) if isinstance(expr, In) else [expr.value]
     # A value of another type never equals or orders against the property.
     values = [value for value in values if type(value) is declared[expr.field]]
     if not values:
         return _FALSE_EXPR
     target = f"{_DECLARED_FIELD_PREFIX}{expr.field}"
     match expr:
-        case FilterIn():
+        case In():
             return f"{target} in [{', '.join(_declared_property_value_literal(value) for value in values)}]"
-        case FilterComparison(op="="):
+        case Equals():
             return f"{target} == {_declared_property_value_literal(values[0])}"
-        case FilterComparison(op=op):
+        case Ordering(op=op):
             return f"{target} {op} {_declared_property_value_literal(values[0])}"
 
 
@@ -160,32 +146,29 @@ def _filter_expression(
 ) -> str:
     """Compile a filter, or with `negate` its complement, into a Milvus expression.
 
-    A negated comparison or membership test holds where the property has no
-    value. Milvus evaluates a condition on a null the SQL way, so negation is
-    pushed down to the conditions.
+    A condition on a property with no value is false, and a negation is the
+    complement, true wherever the negated expression is not, missing values
+    included. Milvus evaluates a condition on a null the SQL way, so negation
+    is pushed down to the conditions, each of which, negated, also holds
+    where its property has no value.
     """
     match expr:
-        case FilterNot(operand):
+        case Not(operand):
             return _filter_expression(operand, declared, negate=not negate)
-        case FilterAnd(left, right) | FilterOr(left, right):
-            operator = "&&" if isinstance(expr, FilterAnd) != negate else "||"
+        case And(operands) | Or(operands):
+            operator = "&&" if isinstance(expr, And) != negate else "||"
             return f" {operator} ".join(
                 f"({_filter_expression(operand, declared, negate=negate)})"
-                for operand in (left, right)
+                for operand in operands
             )
-        case FilterIsNull(field):
+        case IsNull(field):
             absent = _property_absent_expression(field)
             return f"not ({absent})" if negate else absent
-        case FilterComparison(field, "!=", value):
-            equal = FilterComparison(field=field, op="=", value=value)
-            return _filter_expression(equal, declared, negate=not negate)
-        case FilterComparison() | FilterIn():
+        case Equals() | Ordering() | In():
             condition = _condition_expression(expr, declared)
             if negate:
                 return f"(not ({condition})) || ({_property_absent_expression(expr.field)})"
             return condition
-        case _:
-            raise TypeError(f"Unsupported filter expression type: {type(expr)}")
 
 
 def _validate_every_key_accepted(result: Mapping[str, int], sent: int) -> None:
@@ -211,7 +194,7 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
     """A partition backed by Milvus: one partition-key value inside the store's collection."""
 
     _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
-        {FilterComparison, FilterIn, FilterIsNull, FilterAnd, FilterOr, FilterNot}
+        {Equals, Ordering, In, IsNull, And, Or, Not}
     )
 
     def __init__(

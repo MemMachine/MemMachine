@@ -44,26 +44,15 @@ from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 from sqlalchemy.sql.elements import ColumnElement
 
 from memmachine_server.common.data_types import PropertyType
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
 )
 
 from .data_types import (
@@ -115,7 +104,7 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
     """A partition backed by SQLite + sqlite-vec."""
 
     _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
-        {FilterComparison, FilterIn, FilterIsNull, FilterAnd, FilterOr, FilterNot}
+        {Equals, Ordering, In, IsNull, And, Or, Not}
     )
 
     def __init__(

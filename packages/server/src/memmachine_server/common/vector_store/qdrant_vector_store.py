@@ -18,26 +18,16 @@ from memmachine_server.common.data_types import (
     PropertyType,
     PropertyValue,
 )
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
+    OrderingOp,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.utils import ensure_tz_aware
@@ -87,16 +77,16 @@ def _incarnation_filter(incarnation: UUID) -> models.Filter:
 class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
     """A partition backed by Qdrant: one payload value inside the store's collection."""
 
-    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
-        {FilterComparison, FilterIn, FilterIsNull, FilterAnd, FilterOr, FilterNot}
-    )
-
-    _RANGE_OPERATORS: ClassVar[dict[str, str]] = {
+    _RANGE_OPERATORS: ClassVar[dict[OrderingOp, str]] = {
         ">": "gt",
         ">=": "gte",
         "<": "lt",
         "<=": "lte",
     }
+
+    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
+        {Equals, Ordering, In, IsNull, And, Or, Not}
+    )
 
     # A filter no point satisfies. A leaf whose value is of another type
     # than its key declares matches nothing, as on every backend; sent as
@@ -112,155 +102,83 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
     ) -> models.Filter:
         """Convert a FilterExpr tree into a Qdrant Filter over the declared keys."""
         build = QdrantVectorStorePartition._build_qdrant_filter
-        if isinstance(expr, FilterComparison):
-            if type(expr.value) is not indexed_properties[expr.field]:
-                return QdrantVectorStorePartition._NO_MATCH
-            return QdrantVectorStorePartition._build_qdrant_comparison(expr)
-        if isinstance(expr, FilterIn):
-            if (
-                expr.values
-                and type(expr.values[0]) is not indexed_properties[expr.field]
-            ):
-                return QdrantVectorStorePartition._NO_MATCH
-            return QdrantVectorStorePartition._in_filter(expr.field, expr.values)
-        if isinstance(expr, FilterIsNull):
-            return QdrantVectorStorePartition._null_filter(expr.field, negate=False)
-        if isinstance(expr, FilterNot):
-            return models.Filter(must_not=[build(expr.expr, indexed_properties)])
-        if isinstance(expr, FilterAnd):
-            return models.Filter(
-                must=[
-                    build(expr.left, indexed_properties),
-                    build(expr.right, indexed_properties),
-                ]
-            )
-        if isinstance(expr, FilterOr):
-            return models.Filter(
-                should=[
-                    build(expr.left, indexed_properties),
-                    build(expr.right, indexed_properties),
-                ]
-            )
-        message = f"Unsupported filter expression type: {type(expr)}"
-        raise TypeError(message)
+        match expr:
+            case Equals() | Ordering() | In():
+                return QdrantVectorStorePartition._leaf_filter(expr, indexed_properties)
+            case IsNull(field):
+                return models.Filter(
+                    must=[QdrantVectorStorePartition._missing_condition(field)]
+                )
+            case Not(operand):
+                return models.Filter(must_not=[build(operand, indexed_properties)])
+            case And(operands):
+                return models.Filter(
+                    must=[build(o, indexed_properties) for o in operands]
+                )
+            case Or(operands):
+                return models.Filter(
+                    should=[build(o, indexed_properties) for o in operands]
+                )
 
     @staticmethod
-    def _build_qdrant_comparison(comparison: FilterComparison) -> models.Filter:
-        """Convert a Comparison into a Qdrant Filter."""
-        field = comparison.field
-        operator = comparison.op
-        value = comparison.value
-
-        if operator in ("=", "!="):
-            negate = operator == "!="
-            if isinstance(value, float):
-                return QdrantVectorStorePartition._float_eq_filter(
-                    field, value, negate=negate
-                )
-            if isinstance(value, datetime):
-                return QdrantVectorStorePartition._datetime_eq_filter(
-                    field, value, negate=negate
-                )
-            return QdrantVectorStorePartition._match_filter(field, value, negate=negate)
-        if operator in QdrantVectorStorePartition._RANGE_OPERATORS:
-            if not isinstance(value, OrderedValue):
-                message = (
-                    f"Range filter on '{field}' requires a numeric or datetime value, "
-                    f"got {type(value).__name__}"
-                )
-                raise TypeError(message)
-            return QdrantVectorStorePartition._range_filter(
-                field, value, QdrantVectorStorePartition._RANGE_OPERATORS[operator]
-            )
-
-        message = f"Unsupported filter operator: {operator}"
-        raise ValueError(message)
-
-    @staticmethod
-    def _match_filter(
-        field: str,
-        value: bool | int | str,
-        *,
-        negate: bool,
+    def _leaf_filter(
+        expr: Equals | Ordering | In, indexed_properties: Mapping[str, PropertyType]
     ) -> models.Filter:
-        condition = models.FieldCondition(
-            key=field,
-            match=models.MatchValue(value=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
+        """The leaf as a Qdrant Filter; no match when its value is of another type than the key declares."""
+        declared = indexed_properties[expr.field]
+        match expr:
+            case Equals(field, value):
+                if type(value) is not declared:
+                    return QdrantVectorStorePartition._NO_MATCH
+                condition = QdrantVectorStorePartition._eq_condition(field, value)
+            case Ordering(field, op, value):
+                if type(value) is not declared:
+                    return QdrantVectorStorePartition._NO_MATCH
+                condition = QdrantVectorStorePartition._range_condition(
+                    field, value, QdrantVectorStorePartition._RANGE_OPERATORS[op]
+                )
+            case In(field, values):
+                if values and type(values[0]) is not declared:
+                    return QdrantVectorStorePartition._NO_MATCH
+                condition = models.FieldCondition(
+                    key=field, match=models.MatchAny(any=list(values))
+                )
         return models.Filter(must=[condition])
 
     @staticmethod
-    def _float_eq_filter(field: str, value: float, *, negate: bool) -> models.Filter:
-        """Use a range filter for float equality since MatchValue doesn't accept floats."""
-        condition = models.FieldCondition(
-            key=field,
-            range=models.Range(gte=value, lte=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
+    def _eq_condition(field: str, value: PropertyValue) -> models.FieldCondition:
+        """Match a field against a value, by the only condition Qdrant offers for its type."""
+        if isinstance(value, float):
+            # MatchValue does not accept floats.
+            return models.FieldCondition(
+                key=field, range=models.Range(gte=value, lte=value)
+            )
+        if isinstance(value, datetime):
+            instant = ensure_tz_aware(value)
+            return models.FieldCondition(
+                key=field, range=models.DatetimeRange(gte=instant, lte=instant)
+            )
+        return models.FieldCondition(key=field, match=models.MatchValue(value=value))
 
     @staticmethod
-    def _datetime_eq_filter(
-        field: str, value: datetime, *, negate: bool
-    ) -> models.Filter:
-        """Use a DatetimeRange filter for datetime equality since MatchValue doesn't accept datetimes."""
-        value = ensure_tz_aware(value)
-        condition = models.FieldCondition(
-            key=field,
-            range=models.DatetimeRange(gte=value, lte=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
-
-    @staticmethod
-    def _in_filter(field: str, value: list[int] | list[str]) -> models.Filter:
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=field,
-                    match=models.MatchAny(any=value),
-                ),
-            ],
-        )
-
-    @staticmethod
-    def _range_filter(
+    def _range_condition(
         field: str,
         value: OrderedValue,
         range_parameter: str,
-    ) -> models.Filter:
+    ) -> models.FieldCondition:
         if isinstance(value, datetime):
-            value = ensure_tz_aware(value)
-            return models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key=field,
-                        range=models.DatetimeRange(**{range_parameter: value}),
-                    ),
-                ],
+            return models.FieldCondition(
+                key=field,
+                range=models.DatetimeRange(**{range_parameter: ensure_tz_aware(value)}),
             )
-
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=field,
-                    range=models.Range(**{range_parameter: value}),
-                ),
-            ],
+        return models.FieldCondition(
+            key=field, range=models.Range(**{range_parameter: value})
         )
 
     @staticmethod
-    def _null_filter(field: str, *, negate: bool) -> models.Filter:
-        condition = models.IsEmptyCondition(
-            is_empty=models.PayloadField(key=field),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
+    def _missing_condition(field: str) -> models.IsEmptyCondition:
+        """Points that do not carry the field."""
+        return models.IsEmptyCondition(is_empty=models.PayloadField(key=field))
 
     def __init__(
         self,

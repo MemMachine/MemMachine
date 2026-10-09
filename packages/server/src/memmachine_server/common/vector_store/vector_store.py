@@ -11,9 +11,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from uuid import UUID
 
 from memmachine_server.common.data_types import PropertyType
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-)
+from memmachine_server.common.filter import FilterExpr
 
 from .data_types import QueryResult, Record
 

@@ -9,9 +9,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 
 from memmachine_server.common.data_types import OrderedValue
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-)
+from memmachine_server.common.filter import FilterExpr
 
 from .data_types import Edge, Node
 
