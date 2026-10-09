@@ -1,7 +1,6 @@
 """Qdrant-based vector store implementation."""
 
 import math
-from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, ClassVar, override
 from uuid import UUID, uuid5
@@ -15,7 +14,6 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 
 from memmachine_server.common.data_types import (
     OrderedValue,
-    PropertyType,
     PropertyValue,
     SimilarityMetric,
 )
@@ -86,58 +84,35 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
         "<=": "lte",
     }
 
-    # A filter no point satisfies. A leaf whose value is of another type
-    # than its key declares matches nothing, as on every backend; sent as
-    # is, the server would refuse it for the field's index (strict mode)
-    # rather than scan for it.
-    _NO_MATCH: ClassVar[models.Filter] = models.Filter(
-        must=[models.HasIdCondition(has_id=[])]
-    )
-
     @staticmethod
-    def _build_qdrant_filter(
-        expr: FilterExpr, indexed_properties: Mapping[str, PropertyType]
-    ) -> models.Filter:
+    def _build_qdrant_filter(expr: FilterExpr) -> models.Filter:
         """Convert a FilterExpr tree into a Qdrant Filter over the declared keys."""
         build = QdrantVectorStorePartition._build_qdrant_filter
         match expr:
             case Equals() | Ordering() | In():
-                return QdrantVectorStorePartition._leaf_filter(expr, indexed_properties)
+                return QdrantVectorStorePartition._leaf_filter(expr)
             case IsNull(field):
                 return models.Filter(
                     must=[QdrantVectorStorePartition._missing_condition(field)]
                 )
             case Not(operand):
-                return models.Filter(must_not=[build(operand, indexed_properties)])
+                return models.Filter(must_not=[build(operand)])
             case And(operands):
-                return models.Filter(
-                    must=[build(o, indexed_properties) for o in operands]
-                )
+                return models.Filter(must=[build(o) for o in operands])
             case Or(operands):
-                return models.Filter(
-                    should=[build(o, indexed_properties) for o in operands]
-                )
+                return models.Filter(should=[build(o) for o in operands])
 
     @staticmethod
-    def _leaf_filter(
-        expr: Equals | Ordering | In, indexed_properties: Mapping[str, PropertyType]
-    ) -> models.Filter:
-        """The leaf as a Qdrant Filter; no match when its value is of another type than the key declares."""
-        declared = indexed_properties[expr.field]
+    def _leaf_filter(expr: Equals | Ordering | In) -> models.Filter:
+        """The leaf as a Qdrant Filter."""
         match expr:
             case Equals(field, value):
-                if type(value) is not declared:
-                    return QdrantVectorStorePartition._NO_MATCH
                 condition = QdrantVectorStorePartition._eq_condition(field, value)
             case Ordering(field, op, value):
-                if type(value) is not declared:
-                    return QdrantVectorStorePartition._NO_MATCH
                 condition = QdrantVectorStorePartition._range_condition(
                     field, value, QdrantVectorStorePartition._RANGE_OPERATORS[op]
                 )
             case In(field, values):
-                if values and type(values[0]) is not declared:
-                    return QdrantVectorStorePartition._NO_MATCH
                 condition = models.FieldCondition(
                     key=field, match=models.MatchAny(any=list(values))
                 )
@@ -262,9 +237,7 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
             qdrant_filter = models.Filter(
                 must=[
                     qdrant_filter,
-                    QdrantVectorStorePartition._build_qdrant_filter(
-                        property_filter, self._store_schema.indexed_properties
-                    ),
+                    QdrantVectorStorePartition._build_qdrant_filter(property_filter),
                 ]
             )
 

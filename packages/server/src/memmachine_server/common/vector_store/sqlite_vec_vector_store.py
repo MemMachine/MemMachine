@@ -67,13 +67,13 @@ from .sqlite_properties import (
 )
 from .utils import (
     _PARTITION_KEY_MAX_BYTES,
+    bind_filter,
     validate_declared_properties,
     validate_dimensions,
     validate_limit,
     validate_partition_key,
     validate_query_vector,
     validate_score_threshold,
-    validate_supported_filter,
 )
 from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 
@@ -246,13 +246,11 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
 
         filter_expression: ColumnElement[bool] | None = None
         if property_filter is not None:
-            validate_supported_filter(
+            property_filter = bind_filter(
                 property_filter, self._store_schema.indexed_properties
             )
             filter_expression = compile_property_filter(
-                property_filter,
-                self._records_table,
-                self._store_schema.indexed_properties,
+                property_filter, self._records_table
             )
 
         k = min(limit, self._MAX_K)
