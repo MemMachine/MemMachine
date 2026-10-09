@@ -500,13 +500,14 @@ class MemMachine:
         if not self._started:
             return
         self._started = False
-        self._deletion_queue.put_nowait(None)
-        await self._deletion_queue.join()
         if self._delete_worker is not None:
+            self._delete_worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                self._delete_worker.cancel()
                 await self._delete_worker
         self._delete_worker = None
+        while not self._deletion_queue.empty():
+            self._deletion_queue.get_nowait()
+            self._deletion_queue.task_done()
         if self._conf.semantic_memory.enabled:
             semantic_service = await self._resources.get_semantic_service()
             await semantic_service.stop()
@@ -673,7 +674,8 @@ class MemMachine:
             session_key=session_data.session_key,
             status=SessionDataManager.SessionStatus.Deleted,
         )
-        self._deletion_queue.put_nowait(session_data)
+        if self._started:
+            self._deletion_queue.put_nowait(session_data)
 
     async def search_sessions(
         self,

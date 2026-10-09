@@ -1631,6 +1631,43 @@ async def test_idle_worker_recovers_pending_deletion(
 
 
 @pytest.mark.asyncio
+async def test_stop_cancels_active_deletion_without_processing_queued_deletion(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """Shutdown leaves active and queued deletions for later recovery."""
+    manager = MagicMock()
+    manager.get_sessions_by_status = AsyncMock(return_value=[])
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    await machine.start(lambda key: DummySessionData(key))
+
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+    processed: list[str] = []
+
+    async def slow_delete(session: MemMachine.SessionData) -> None:
+        processed.append(session.session_key)
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(machine, "_delete_queued_session", slow_delete)
+    machine._deletion_queue.put_nowait(DummySessionData("active"))
+    await asyncio.wait_for(entered.wait(), 2)
+    machine._deletion_queue.put_nowait(DummySessionData("pending"))
+
+    await asyncio.wait_for(machine.stop(), 1)
+
+    assert cancelled.is_set()
+    assert processed == ["active"]
+    await asyncio.wait_for(machine._deletion_queue.join(), 1)
+    patched_resource_manager.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_stop_finishes_when_idle_scan_finds_pending_deletion(
     minimal_conf, patched_resource_manager, monkeypatch
 ):
@@ -1665,6 +1702,44 @@ async def test_stop_finishes_when_idle_scan_finds_pending_deletion(
         patched_resource_manager.close.assert_awaited_once()
     finally:
         finish_scan.set()
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_enqueue_delete_that_finishes_after_shutdown(
+    minimal_conf, patched_resource_manager
+):
+    """A deletion marked during shutdown stays pending for a later worker."""
+    update_started = asyncio.Event()
+    finish_update = asyncio.Event()
+    status_value = SessionDataManager.SessionStatus.Active
+
+    async def update_status(*, session_key: str, status: str) -> None:
+        nonlocal status_value
+        update_started.set()
+        await finish_update.wait()
+        status_value = status
+
+    manager = MagicMock()
+    manager.get_sessions_by_status = AsyncMock(return_value=[])
+    manager.get_session_info = AsyncMock(
+        side_effect=lambda _: MagicMock(status=status_value)
+    )
+    manager.update_session_status = AsyncMock(side_effect=update_status)
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    await machine.start(lambda key: DummySessionData(key))
+
+    deleting = asyncio.create_task(machine.delete_session(DummySessionData("pending")))
+    try:
+        await asyncio.wait_for(update_started.wait(), 2)
+        await asyncio.wait_for(machine.stop(), 1)
+        finish_update.set()
+        await asyncio.wait_for(deleting, 2)
+        await asyncio.wait_for(machine._deletion_queue.join(), 1)
+        assert status_value == SessionDataManager.SessionStatus.Deleted
+        patched_resource_manager.close.assert_awaited_once()
+    finally:
+        finish_update.set()
 
 
 @pytest.mark.asyncio
