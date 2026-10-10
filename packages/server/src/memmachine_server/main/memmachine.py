@@ -12,7 +12,14 @@ from uuid import UUID, uuid4
 from memmachine_common.api import MemoryType
 from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
 
-from memmachine_server.common.configuration import Configuration
+from memmachine_server.common.concurrency_scope import (
+    ConcurrencyScope,
+    validate_component_scope,
+)
+from memmachine_server.common.configuration import (
+    Configuration,
+    SemanticMemoryStorageBackend,
+)
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
     EpisodicMemoryConfPartial,
@@ -42,6 +49,7 @@ from memmachine_server.common.filter.filter_parser import (
     parse_filter,
     to_property_filter,
 )
+from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
@@ -69,6 +77,9 @@ from memmachine_server.semantic_memory.semantic_model import (
 )
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
+)
+from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
+    Neo4jSemanticStorage,
 )
 
 logger = logging.getLogger(__name__)
@@ -424,6 +435,7 @@ class MemMachine:
         """
         if self._started:
             return
+        self._validate_default_component_scopes()
         self._delete_worker = asyncio.create_task(self._delete_session_worker())
         if key_to_session is not None:
             session_data_manager = await self._resources.get_session_data_manager()
@@ -511,7 +523,54 @@ class MemMachine:
                 str(self._conf.episodic_memory),
             )
             raise ConfigurationError("Failed to merge configuration") from e
+        self._validate_episodic_component_scopes(episodic_conf)
         return episodic_conf
+
+    def _validate_default_component_scopes(self) -> None:
+        """Reject incompatible defaults before starting background services."""
+        scope = self._conf.server.effective_concurrency_scope
+        if scope == ConcurrencyScope.PROCESS:
+            return
+        self._validate_episodic_component_scopes(self._conf.episodic_memory)
+        semantic_conf = self._conf.semantic_memory
+        databases = self._conf.resources.databases
+        if semantic_conf.enabled and (
+            semantic_conf.storage_backend == SemanticMemoryStorageBackend.NEO4J
+            or (
+                semantic_conf.storage_backend == SemanticMemoryStorageBackend.AUTO
+                and semantic_conf.database in databases.neo4j_confs
+                and semantic_conf.database not in databases.relational_db_confs
+            )
+        ):
+            validate_component_scope(
+                "semantic_memory (Neo4jSemanticStorage)",
+                Neo4jSemanticStorage.CONCURRENCY_SCOPE,
+                scope,
+            )
+
+    def _validate_episodic_component_scopes(
+        self, episodic_conf: EpisodicMemoryConf | EpisodicMemoryConfPartial
+    ) -> None:
+        """Check defaults and resolved session overrides against the deployment."""
+        scope = self._conf.server.effective_concurrency_scope
+        ltm = episodic_conf.long_term_memory
+        if (
+            scope == ConcurrencyScope.PROCESS
+            or episodic_conf.enabled is False
+            or episodic_conf.long_term_memory_enabled is False
+            or ltm is None
+            or ltm.backend == "event"
+        ):
+            return
+        name = ltm.vector_graph_store or "default_store"
+        store_class = DatabaseManager.vector_graph_store_class(
+            self._conf.resources.databases, name
+        )
+        validate_component_scope(
+            f"episodic_memory.long_term_memory ({store_class.__name__} '{name}')",
+            store_class.CONCURRENCY_SCOPE,
+            scope,
+        )
 
     @staticmethod
     def _disabled_episodic_conf(session_key: str) -> EpisodicMemoryConf:

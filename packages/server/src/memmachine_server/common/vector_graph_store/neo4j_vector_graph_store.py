@@ -10,13 +10,14 @@ import logging
 import re
 from collections.abc import Awaitable, Iterable, Mapping
 from enum import Enum
-from typing import Any, LiteralString, cast
+from typing import Any, ClassVar, LiteralString, cast
 from uuid import uuid4
 
 from neo4j import AsyncDriver, Query
 from neo4j.graph import Node as Neo4jNode
 from pydantic import BaseModel, Field, InstanceOf
 
+from memmachine_server.common.concurrency_scope import ConcurrencyScope
 from memmachine_server.common.data_types import (
     FilterValue,
     OrderedValue,
@@ -174,6 +175,9 @@ class Neo4jVectorGraphStoreParams(BaseModel):
 # cannot be parameterized.
 class Neo4jVectorGraphStore(VectorGraphStore):
     """Asynchronous Neo4j-based implementation of VectorGraphStore."""
+
+    # Index discovery and approximate entity counts are cached in this process.
+    CONCURRENCY_SCOPE: ClassVar[ConcurrencyScope] = ConcurrencyScope.PROCESS
 
     class CacheIndexState(Enum):
         """Index state cached locally (not Neo4j authoritative)."""
