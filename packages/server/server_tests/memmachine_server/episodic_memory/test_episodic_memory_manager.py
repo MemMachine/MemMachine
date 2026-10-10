@@ -282,6 +282,61 @@ async def test_create_or_open_episodic_memory_success(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [False, True])
+async def test_open_or_create_handles_session_created_during_insert(
+    manager: EpisodicMemoryManager,
+    mock_session_storage: SessionDataManagerSQL,
+    monkeypatch: pytest.MonkeyPatch,
+    deleted: bool,
+) -> None:
+    """A concurrent creator's stored configuration and status win."""
+    session_key = "racing-session"
+    requested_conf = EpisodicMemoryConf(session_key=session_key, enabled=False)
+    stored_conf = EpisodicMemoryConf(session_key=session_key, enabled=True)
+    original_create = mock_session_storage.create_or_validate_session
+
+    async def create_after_other_worker(
+        key: str,
+        configuration: dict[str, JsonValue],
+        param: EpisodicMemoryConf,
+        description: str,
+        metadata: dict[str, JsonValue],
+    ) -> None:
+        await original_create(key, {"source": "other"}, stored_conf, "", {})
+        if deleted:
+            await mock_session_storage.update_session_status(key, "delete")
+        await original_create(key, configuration, param, description, metadata)
+
+    monkeypatch.setattr(
+        mock_session_storage, "create_or_validate_session", create_after_other_worker
+    )
+    with (
+        patch(
+            "memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory"
+        ) as memory_class,
+        patch(
+            "memmachine_server.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
+            new_callable=AsyncMock,
+        ) as params_from_config,
+    ):
+        if deleted:
+            with pytest.raises(SessionDeletedError):
+                async with manager.open_or_create_episodic_memory(
+                    session_key, requested_conf, "", {}
+                ):
+                    pass
+            memory_class.assert_not_called()
+        else:
+            async with manager.open_or_create_episodic_memory(
+                session_key, requested_conf, "", {}
+            ) as memory:
+                assert memory is memory_class.return_value
+            params_from_config.assert_awaited_once_with(
+                stored_conf, manager._resource_manager
+            )
+
+
+@pytest.mark.asyncio
 @patch(
     "memmachine_server.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
     new_callable=AsyncMock,

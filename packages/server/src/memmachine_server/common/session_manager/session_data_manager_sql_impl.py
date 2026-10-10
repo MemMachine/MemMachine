@@ -22,6 +22,8 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -239,15 +241,40 @@ class SessionDataManagerSQL(SessionDataManager):
         """Create a session, or accept an existing one with matching data."""
         param_data = param.model_dump(mode="json")
 
-        async with self._async_session() as dbsession:
-            # Query for an existing session with the same ID
-            sessions = await dbsession.execute(
-                select(self.SessionConfig).where(
+        for _ in range(3):
+            async with self._async_session() as dbsession:
+                query = select(self.SessionConfig).where(
                     self.SessionConfig.session_key == session_key,
-                ),
-            )
-            session = sessions.scalars().first()
-            if session is not None:
+                )
+                session = (await dbsession.execute(query)).scalars().first()
+                if session is None:
+                    values = {
+                        "session_key": session_key,
+                        "timestamp": int(os.times()[4]),
+                        "configuration": configuration,
+                        "param_data": param_data,
+                        "description": description,
+                        "user_metadata": metadata,
+                    }
+                    if self._engine.dialect.name == "sqlite":
+                        statement = sqlite_insert(self.SessionConfig).values(**values)
+                    else:
+                        statement = pg_insert(self.SessionConfig).values(**values)
+                    inserted_key = (
+                        await dbsession.execute(
+                            statement.on_conflict_do_nothing(
+                                index_elements=["session_key"]
+                            ).returning(self.SessionConfig.session_key)
+                        )
+                    ).scalar_one_or_none()
+                    if inserted_key is not None:
+                        await dbsession.commit()
+                        return
+                    session = (await dbsession.execute(query)).scalars().first()
+                    if session is None:
+                        # The conflicting row was deleted before our re-read.
+                        continue
+
                 if (
                     session.configuration == configuration
                     and session.param_data == param_data
@@ -255,17 +282,7 @@ class SessionDataManagerSQL(SessionDataManager):
                 ):
                     return
                 raise SessionAlreadyExistsError(session_key)
-            # create a new entry
-            new_session = self.SessionConfig(
-                session_key=session_key,
-                timestamp=int(os.times()[4]),
-                configuration=configuration,
-                param_data=param_data,
-                description=description,
-                user_metadata=metadata,
-            )
-            dbsession.add(new_session)
-            await dbsession.commit()
+        raise RuntimeError(f"Session '{session_key}' changed during creation")
 
     @timed("update_session_status")
     async def update_session_status(
