@@ -3,13 +3,13 @@
 import math
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, ClassVar, override
+from typing import Any, ClassVar, Self, override
 from uuid import UUID, uuid5
 
 import grpc
 import grpc.aio
 import numpy as np
-from pydantic import Field, InstanceOf
+from pydantic import Field, InstanceOf, model_validator
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import UnexpectedResponse
 
@@ -424,12 +424,51 @@ class QdrantVectorStoreParams(RegistryBackedVectorStoreParams):
     Attributes:
         client (AsyncQdrantClient):
             Async Qdrant client instance.
+        hnsw_config (HnswConfigDiff | None):
+            Optional HNSW index tuning applied to the store's collection.
+            `m` must be 0 or unset: the collection holds every partition
+            and disables the global graph in favor of per-partition payload
+            indexing, so tune `payload_m` rather than `m`
+            (default: None).
+        optimizers_config (OptimizersConfigDiff | None):
+            Optional optimizer tuning applied to the store's collection
+            (default: None).
+        quantization_config (QuantizationConfig | None):
+            Optional quantization applied to the store's collection
+            (default: None).
     """
 
     client: InstanceOf[AsyncQdrantClient] = Field(
         ...,
         description="Async Qdrant client instance",
     )
+    hnsw_config: models.HnswConfigDiff | None = Field(
+        None,
+        description=(
+            "Optional HNSW index tuning applied to the store's collection. "
+            "`m` must be 0 or unset: the collection holds every partition and "
+            "disables the global graph in favor of per-partition payload "
+            "indexing, so tune `payload_m` rather than `m`"
+        ),
+    )
+    optimizers_config: models.OptimizersConfigDiff | None = Field(
+        None,
+        description="Optional optimizer tuning applied to the store's collection",
+    )
+    quantization_config: models.QuantizationConfig | None = Field(
+        None,
+        description="Optional quantization applied to the store's collection",
+    )
+
+    @model_validator(mode="after")
+    def _validate_hnsw_m(self) -> Self:
+        if self.hnsw_config is not None and self.hnsw_config.m not in (None, 0):
+            raise ValueError(
+                "hnsw_config.m must be 0 or unset: the collection holds every "
+                "partition and disables the global graph in favor of "
+                "per-partition payload indexing, so tune payload_m rather than m"
+            )
+        return self
 
 
 class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
@@ -461,6 +500,9 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
         datetime: models.PayloadSchemaType.DATETIME,
     }
 
+    # The per-partition graph size when no override is configured.
+    _DEFAULT_NATIVE_PAYLOAD_M: ClassVar[int] = 16
+
     @staticmethod
     def _is_already_exists_error(error: Exception) -> bool:
         """Check if an exception indicates a resource already exists."""
@@ -483,8 +525,25 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
         """Initialize the vector store with the provided parameters."""
         super().__init__(params, metrics_prefix="vector_store_qdrant")
         self._client: AsyncQdrantClient = params.client
+        self._hnsw_config = params.hnsw_config
+        self._optimizers_config = params.optimizers_config
+        self._quantization_config = params.quantization_config
 
-        self._hnsw_m = 16
+    def _native_hnsw_config(self) -> models.HnswConfigDiff:
+        """The HNSW config of the native collection: the overrides, with `m` pinned at 0.
+
+        The collection is multi-tenant, so the global graph is disabled and
+        each partition gets its own graph of `payload_m` links.
+        """
+        overrides = self._hnsw_config or models.HnswConfigDiff()
+        return overrides.model_copy(
+            update={
+                "m": 0,
+                "payload_m": overrides.payload_m
+                if overrides.payload_m is not None
+                else QdrantVectorStore._DEFAULT_NATIVE_PAYLOAD_M,
+            }
+        )
 
     @override
     async def _prepare_storage(self) -> None:
@@ -498,10 +557,9 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
                 vectors_config=models.VectorParams(
                     size=self._vector_dimensions, distance=distance
                 ),
-                hnsw_config=models.HnswConfigDiff(
-                    m=0,
-                    payload_m=self._hnsw_m,
-                ),
+                hnsw_config=self._native_hnsw_config(),
+                optimizers_config=self._optimizers_config,
+                quantization_config=self._quantization_config,
                 strict_mode_config=QdrantVectorStore._STRICT_MODE,
             )
         except (UnexpectedResponse, grpc.aio.AioRpcError) as e:

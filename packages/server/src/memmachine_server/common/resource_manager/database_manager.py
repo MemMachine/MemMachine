@@ -662,6 +662,9 @@ class DatabaseManager:
             QdrantVectorStoreParams,
         )
 
+        # QdrantConf carries the index and quantization settings as plain
+        # mappings, so qdrant-client stays optional for config parsing; the
+        # params model validates them against qdrant's own models.
         return QdrantVectorStore(
             QdrantVectorStoreParams(
                 client=client,
@@ -669,6 +672,9 @@ class DatabaseManager:
                 vector_store_name=vector_store_name,
                 vector_dimensions=vector_dimensions,
                 indexed_properties=indexed_properties,
+                hnsw_config=conf.hnsw_config,
+                optimizers_config=conf.optimizers_config,
+                quantization_config=conf.quantization_config,
                 metrics_factory=conf.get_metrics_factory(),
             )
         )
