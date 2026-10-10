@@ -184,7 +184,6 @@ class EmbedderManager(BaseResourceManager[Embedder]):
         params = AmazonBedrockEmbedderParams(
             client=client,
             model_id=conf.model_id,
-            similarity_metric=conf.similarity_metric,
             max_input_length=conf.max_input_length,
             max_retry_interval_seconds=conf.max_retry_interval_seconds,
             batch_size=conf.batch_size,
