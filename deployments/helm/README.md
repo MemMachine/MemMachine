@@ -151,7 +151,7 @@ resources:
   databases:
     db_postgres: { provider: postgres, config: { host, port, user, password: $POSTGRES_PASSWORD, ... } }
     db_neo4j:    { provider: neo4j,    config: { uri, username: $NEO4J_USER, password: $NEO4J_PASSWORD, pool, ... } }
-    event_vector_store: { provider: qdrant, config: { host, port, grpc_port, prefer_grpc, https, collection_registry, api_key: $QDRANT_API_KEY (only when a key is configured) } }
+    event_vector_store: { provider: qdrant, config: { host, port, grpc_port, prefer_grpc, https, partition_registry, api_key: $QDRANT_API_KEY (only when a key is configured) } }
   embedders:
     default_embedder: { provider, config: { model, api_key: $OPENAI_API_KEY, base_url, dimensions } }
   language_models:
@@ -229,7 +229,7 @@ picks which, and the chart deploys only the store that choice needs:
 
 | `backend`     | Store deployed | `long_term_memory` wiring                            |
 |---------------|----------------|------------------------------------------------------|
-| `event` (default) | Qdrant     | `vector_store: event_vector_store`, `segment_store: db_postgres` |
+| `event` (default) | Qdrant     | `vector_store: event_vector_store`, `event_memory_store: db_postgres` |
 | `declarative` | Neo4j          | `vector_graph_store: db_neo4j`                        |
 
 ```bash

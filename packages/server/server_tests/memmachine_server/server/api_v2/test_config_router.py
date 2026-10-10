@@ -678,13 +678,12 @@ def test_update_long_term_memory_config_all_fields(client, mock_resource_manager
 def test_update_long_term_memory_config_event_backend_fields(
     client, mock_resource_manager
 ):
-    """PUT can switch backend to event and set vector_store / segment_store / properties_schema."""
+    """PUT can switch backend to event and set vector_store / event_memory_store."""
     payload = {
         "backend": "event",
         "embedder": "new-embedder",
         "vector_store": "vstore",
-        "segment_store": "pgengine",
-        "properties_schema": {"my_field": "str"},
+        "event_memory_store": "pgengine",
     }
 
     response = client.put("/api/v2/config/memory/episodic/long_term", json=payload)
@@ -694,8 +693,7 @@ def test_update_long_term_memory_config_event_backend_fields(
     assert data["success"] is True
     assert "backend=event" in data["message"]
     assert "vector_store=vstore" in data["message"]
-    assert "segment_store=pgengine" in data["message"]
-    assert "properties_schema=" in data["message"]
+    assert "event_memory_store=pgengine" in data["message"]
 
 
 # --- Short-Term Memory Configuration Tests ---

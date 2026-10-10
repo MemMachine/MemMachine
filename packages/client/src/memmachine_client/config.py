@@ -316,8 +316,7 @@ class Config:
         vector_graph_store: str | None = None,
         backend: Literal["declarative", "event"] | None = None,
         vector_store: str | None = None,
-        segment_store: str | None = None,
-        properties_schema: dict[str, str] | None = None,
+        event_memory_store: str | None = None,
         enabled: bool | None = None,
         timeout: int | None = None,
     ) -> UpdateMemoryConfigResponse:
@@ -336,11 +335,8 @@ class Config:
             backend: Switch the long-term-memory backend. ``None`` keeps the
                 existing backend; ``"declarative"`` or ``"event"`` switches.
             vector_store: VectorStore resource id (event backend only)
-            segment_store: SQL engine resource id backing the segment store
+            event_memory_store: SQL engine resource id backing the event memory store
                 (event backend only)
-            properties_schema: User-defined filterable property names mapped
-                to type strings ("bool", "int", "float", "str", "datetime").
-                Event backend only.
             enabled: Whether long-term memory is enabled
             timeout: Request timeout in seconds (uses client default if not provided)
 
@@ -359,8 +355,7 @@ class Config:
             reranker=reranker,
             vector_graph_store=vector_graph_store,
             vector_store=vector_store,
-            segment_store=segment_store,
-            properties_schema=properties_schema,
+            event_memory_store=event_memory_store,
         )
         payload = spec.model_dump(exclude_none=True)
         if enabled is not None:

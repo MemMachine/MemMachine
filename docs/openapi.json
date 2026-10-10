@@ -4310,7 +4310,7 @@
             "title": "Vector Store",
             "description": "VectorStore resource id (event backend only)"
           },
-          "segment_store": {
+          "event_memory_store": {
             "anyOf": [
               {
                 "type": "string"
@@ -4319,23 +4319,8 @@
                 "type": "null"
               }
             ],
-            "title": "Segment Store",
-            "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
+            "title": "Event Memory Store",
+            "description": "SQL engine resource id backing the event memory store (event backend only)"
           },
           "enabled": {
             "type": "boolean",
@@ -4513,24 +4498,16 @@
             "description": "VectorStore resource id (event backend only)",
             "default": ""
           },
-          "segment_store": {
+          "event_memory_store": {
             "type": "string",
-            "title": "Segment Store",
-            "description": "SQL engine resource id backing the segment store (event backend only)",
+            "title": "Event Memory Store",
+            "description": "SQL engine resource id backing the event memory store (event backend only)",
             "default": ""
-          },
-          "properties_schema": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
           }
         },
         "type": "object",
         "title": "ProjectConfig",
-        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses VectorStore +\n  SegmentStore. Requires `vector_store` and `segment_store`.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: server falls back to its parse-time default\n  (declarative, for backwards compatibility with pre-discriminator clients)."
+        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses VectorStore +\n  EventMemoryStore. Requires `vector_store` and `event_memory_store`.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: server falls back to its parse-time default\n  (declarative, for backwards compatibility with pre-discriminator clients)."
       },
       "ProjectResponse": {
         "properties": {
@@ -5466,7 +5443,7 @@
             "title": "Vector Store",
             "description": "VectorStore resource id (event backend only)"
           },
-          "segment_store": {
+          "event_memory_store": {
             "anyOf": [
               {
                 "type": "string"
@@ -5475,23 +5452,8 @@
                 "type": "null"
               }
             ],
-            "title": "Segment Store",
-            "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only)"
+            "title": "Event Memory Store",
+            "description": "SQL engine resource id backing the event memory store (event backend only)"
           },
           "enabled": {
             "anyOf": [
@@ -5575,7 +5537,7 @@
             "title": "Vector Store",
             "description": "VectorStore resource id (event backend only)"
           },
-          "segment_store": {
+          "event_memory_store": {
             "anyOf": [
               {
                 "type": "string"
@@ -5584,23 +5546,8 @@
                 "type": "null"
               }
             ],
-            "title": "Segment Store",
-            "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only)"
+            "title": "Event Memory Store",
+            "description": "SQL engine resource id backing the event memory store (event backend only)"
           }
         },
         "type": "object",
