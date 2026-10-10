@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MemMachine API",
-    "version": "0.3.10",
+    "version": "0.4.1",
     "description": "Architectural Memory Systems for AI Agents. Specialized in episodic and semantic memory management with strict namespace isolation."
   },
   "servers": [
@@ -4714,6 +4714,7 @@
           },
           "top_k": {
             "type": "integer",
+            "minimum": 1.0,
             "title": "Top K",
             "description": "\n    The maximum number of memories to return in the search results.\n    ",
             "default": 10,
