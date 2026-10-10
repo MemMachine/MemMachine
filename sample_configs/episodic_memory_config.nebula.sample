@@ -13,15 +13,12 @@ episodic_memory:
     reranker: my_reranker_id
     vector_graph_store: nebula_storage  # Using NebulaGraph
     #
-    # Alternative backend: event memory (VectorStore + SegmentStore).
+    # Alternative backend: event memory (VectorStore + EventMemoryStore).
     # backend: event
     # embedder: openai_embedder
     # reranker: my_reranker_id              # optional; omit to use embedding scores
     # vector_store: event_vector_store      # references resources.databases
-    # segment_store: profile_storage        # references a relational DB; segment store is created from it
-    # properties_schema:                    # optional — user-defined filterable properties
-    #   source_role: str
-    #   target_id: str
+    # event_memory_store: profile_storage        # references a relational DB; event memory store is created from it
     # segmenter:                            # optional — defaults to passthrough
     #   type: passthrough                   # or: text (with max_chunk_length)
     # deriver:                              # optional — defaults to whole-text deriver
@@ -123,7 +120,7 @@ resources:
         https: false
         request_timeout_seconds: 30
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
-        collection_registry: profile_storage    # relational database holding the collection registry
+        partition_registry: profile_storage    # relational database holding the partition registry
     #
     # Alternative: Milvus. Point uri at a Milvus server, or at Zilliz Cloud
     # with token/db_name.
@@ -133,7 +130,7 @@ resources:
     #     uri: http://localhost:19530
     #     # token: $MILVUS_TOKEN
     #     # db_name: default
-    #     collection_registry: profile_storage
+    #     partition_registry: profile_storage
     #     request_timeout_seconds: 30
     #
     # Alternative: a local file-backed SQLite vector store. Single-writer; OK
@@ -164,7 +161,6 @@ resources:
         aws_access_key_id: <AWS_ACCESS_KEY_ID>
         aws_secret_access_key: <AWS_SECRET_ACCESS_KEY>
         model_id: "amazon.titan-embed-text-v2:0"
-        similarity_metric: "cosine"
     ollama_embedder:
       provider: openai
       config:

@@ -3,10 +3,9 @@
 from enum import Enum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from memmachine_common.api.doc import SpecDoc
-from memmachine_common.api.spec import validate_properties_schema_types
 
 
 class ResourceStatus(str, Enum):
@@ -93,22 +92,12 @@ class LongTermMemoryConfigResponse(BaseModel):
             description="VectorStore resource id (event backend only)",
         ),
     ]
-    segment_store: Annotated[
+    event_memory_store: Annotated[
         str | None,
         Field(
             default=None,
             description=(
-                "SQL engine resource id backing the segment store (event backend only)"
-            ),
-        ),
-    ]
-    properties_schema: Annotated[
-        dict[str, str] | None,
-        Field(
-            default=None,
-            description=(
-                "User-defined filterable properties (event backend only). Maps "
-                'name to type ("bool", "int", "float", "str", "datetime").'
+                "SQL engine resource id backing the event memory store (event backend only)"
             ),
         ),
     ]
@@ -116,15 +105,6 @@ class LongTermMemoryConfigResponse(BaseModel):
         bool,
         Field(default=True, description=SpecDoc.LTM_CONFIG_ENABLED),
     ]
-
-    @field_validator("properties_schema")
-    @classmethod
-    def _validate_properties_schema_types(
-        cls, value: dict[str, str] | None
-    ) -> dict[str, str] | None:
-        if value is None:
-            return value
-        return validate_properties_schema_types(value)
 
 
 class ShortTermMemoryConfigResponse(BaseModel):
@@ -459,31 +439,15 @@ class UpdateLongTermMemorySpec(BaseModel):
             description="VectorStore resource id (event backend only)",
         ),
     ]
-    segment_store: Annotated[
+    event_memory_store: Annotated[
         str | None,
         Field(
             default=None,
             description=(
-                "SQL engine resource id backing the segment store (event backend only)"
+                "SQL engine resource id backing the event memory store (event backend only)"
             ),
         ),
     ]
-    properties_schema: Annotated[
-        dict[str, str] | None,
-        Field(
-            default=None,
-            description="User-defined filterable properties (event backend only)",
-        ),
-    ]
-
-    @field_validator("properties_schema")
-    @classmethod
-    def _validate_properties_schema_types(
-        cls, value: dict[str, str] | None
-    ) -> dict[str, str] | None:
-        if value is None:
-            return value
-        return validate_properties_schema_types(value)
 
 
 class UpdateShortTermMemorySpec(BaseModel):
