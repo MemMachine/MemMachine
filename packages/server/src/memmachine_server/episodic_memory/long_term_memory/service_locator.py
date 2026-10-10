@@ -1,8 +1,8 @@
 """Helpers for building long-term memory from configuration."""
 
-import asyncio
 import hashlib
 import logging
+from uuid import UUID, uuid5
 
 from pydantic import InstanceOf
 
@@ -17,17 +17,9 @@ from memmachine_server.common.configuration.episodic_config import (
     TextSegmenterConf,
     WholeTextDeriverConf,
 )
-from memmachine_server.common.data_types import (
-    PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
-    PropertyValue,
-)
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import (
-    VectorStoreCollectionAlreadyExistsError,
-    VectorStoreCollectionConfig,
-    VectorStoreCollectionDeletedError,
-    VectorStoreCollectionPendingError,
-)
+from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
@@ -58,11 +50,16 @@ from .long_term_memory import (
 
 logger = logging.getLogger(__name__)
 
-_EVENT_BACKEND_NAMESPACE = "long_term_memory"
-# Attempts, _OPEN_RETRY_DELAY_SECONDS apart, to open or create a partition's
-# collection before the locator gives up waiting for it to become live.
-_MAX_OPEN_ATTEMPTS = 10
-_OPEN_RETRY_DELAY_SECONDS = 1
+_EVENT_BACKEND_VECTOR_STORE_NAMESPACE = UUID("d545833c-59ce-46ee-a325-c1a6222159a8")
+"""The UUIDv5 namespace of the event backend's vector store names.
+
+The event backend keeps one store per vector store backend and embedder. Its
+name is the UUIDv5 of the embedder id in the UUIDv5 of the backend's key in
+this namespace, in hex: a vector store name whatever the key and the id are,
+never another backend's store name, so stores whose registries share a
+database stay apart, and never the name of another memory's store. Fixed,
+because the name locates the store's data.
+"""
 
 
 async def long_term_memory_params_from_config(
@@ -103,9 +100,9 @@ async def _event_params(
     config: EventLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
 ) -> EventBackendParams:
-    vector_store = await resource_manager.get_vector_store(config.vector_store)
     segment_store = await resource_manager.get_segment_store(config.segment_store)
     embedder = await resource_manager.get_embedder(config.embedder, validate=True)
+    vector_store = await event_backend_vector_store(config, resource_manager)
     reranker = (
         await resource_manager.get_reranker(config.reranker, validate=True)
         if config.reranker is not None
@@ -115,53 +112,9 @@ async def _event_params(
 
     partition_key = partition_key_for_session(config.session_id)
 
-    # Open the existing collection if any (preserves the original schema). Only
-    # create with our merged schema if the partition does not yet exist. A
-    # create that loses a race to another caller or to a deletion, or an open
-    # of a collection another caller is still creating, is retried until the
-    # collection opens.
-    last_error: Exception | None = None
-    for attempt in range(_MAX_OPEN_ATTEMPTS):
-        if attempt:
-            await asyncio.sleep(_OPEN_RETRY_DELAY_SECONDS)
-        try:
-            collection = await vector_store.open_collection(
-                namespace=_EVENT_BACKEND_NAMESPACE,
-                name=partition_key,
-            )
-            if collection is None:
-                user_schema = _resolve_user_properties_schema(config.properties_schema)
-                await vector_store.create_collection(
-                    namespace=_EVENT_BACKEND_NAMESPACE,
-                    name=partition_key,
-                    config=VectorStoreCollectionConfig(
-                        vector_dimensions=embedder.dimensions,
-                        similarity_metric=embedder.similarity_metric,
-                        indexed_properties_schema={
-                            **EventMemory.expected_vector_store_collection_schema(),
-                            **EVENT_BACKEND_SYSTEM_FIELDS,
-                            **user_schema,
-                        },
-                    ),
-                )
-                collection = await vector_store.open_collection(
-                    namespace=_EVENT_BACKEND_NAMESPACE,
-                    name=partition_key,
-                )
-        except (
-            VectorStoreCollectionAlreadyExistsError,
-            VectorStoreCollectionDeletedError,
-            VectorStoreCollectionPendingError,
-        ) as error:
-            last_error = error
-            continue
-        if collection is not None:
-            break
-    else:
-        raise RuntimeError(
-            f"The vector store collection of partition {partition_key!r} was "
-            f"not live after {_MAX_OPEN_ATTEMPTS} attempts to open or create it"
-        ) from last_error
+    # A creation that loses a race to another caller, or finds another
+    # caller's still pending, opens that caller's partition once it is live.
+    vector_store_partition = await vector_store.open_or_create_partition(partition_key)
 
     partition = await segment_store.open_or_create_partition(
         partition_key,
@@ -174,8 +127,7 @@ async def _event_params(
     return EventBackendParams(
         session_id=config.session_id,
         vector_store=vector_store,
-        vector_store_collection=collection,
-        vector_store_collection_namespace=_EVENT_BACKEND_NAMESPACE,
+        vector_store_partition=vector_store_partition,
         segment_store=segment_store,
         segment_store_partition=partition,
         partition_key=partition_key,
@@ -184,9 +136,37 @@ async def _event_params(
         reranker=reranker,
         segmenter=segmenter,
         deriver=deriver,
-        user_property_keys=frozenset(config.properties_schema),
         metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
     )
+
+
+async def event_backend_vector_store(
+    config: EventLongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> VectorStore:
+    """The event backend's vector store: the store of its backend and embedder, built for it."""
+    embedder = await resource_manager.get_embedder(config.embedder, validate=True)
+    return await resource_manager.get_vector_store(
+        config.vector_store,
+        vector_store_name=uuid5(
+            uuid5(_EVENT_BACKEND_VECTOR_STORE_NAMESPACE, config.vector_store),
+            config.embedder,
+        ).hex,
+        vector_dimensions=embedder.dimensions,
+        indexed_properties=event_backend_indexed_properties(),
+    )
+
+
+def event_backend_indexed_properties() -> dict[str, PropertyType]:
+    """The system keys the event backend writes into every vector record.
+
+    EventMemory's reserved keys and the adapter's own event fields; the
+    vector store is built with these.
+    """
+    return {
+        **EventMemory.expected_vector_store_collection_schema(),
+        **EVENT_BACKEND_SYSTEM_FIELDS,
+    }
 
 
 def partition_key_for_session(session_id: str) -> str:
@@ -214,29 +194,6 @@ def partition_key_for_session(session_id: str) -> str:
         partition_key,
     )
     return partition_key
-
-
-def _resolve_user_properties_schema(
-    raw: dict[str, str],
-) -> dict[str, type[PropertyValue]]:
-    resolved: dict[str, type[PropertyValue]] = {}
-    for key, type_name in raw.items():
-        if key.startswith("_"):
-            # `_`-prefixed keys are reserved for system-defined event fields
-            # (`_episode_uid`, `_session_key`, `_producer_id`, ...). Allowing a
-            # user property to share that namespace would let it overwrite the
-            # system slot in the merged collection schema (dict-spread is last-
-            # wins) and silently change its declared type.
-            raise ValueError(
-                f"Property {key!r}: keys starting with '_' are reserved for "
-                "system-defined event fields and cannot be used as user "
-                "property names."
-            )
-        prop_type = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE.get(type_name)
-        if prop_type is None:
-            raise ValueError(f"Property {key!r}: unknown type name {type_name!r}")
-        resolved[key] = prop_type
-    return resolved
 
 
 def _build_segmenter(conf: SegmenterConf) -> Segmenter:
