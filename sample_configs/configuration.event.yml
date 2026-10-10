@@ -32,8 +32,6 @@ episodic_memory:
     reranker: my_reranker_id          # optional; omit to order by embedding score
     vector_store: event_vector_store  # Qdrant, below
     segment_store: profile_storage    # a relational DB; the segment store is built from it
-    # properties_schema:              # optional — user-defined filterable properties
-    #   source_role: str
     # segmenter:                      # optional — defaults to passthrough
     #   type: passthrough             # or: text (with max_chunk_length)
     # deriver:                        # optional — defaults to whole_text

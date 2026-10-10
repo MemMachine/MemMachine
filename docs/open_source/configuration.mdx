@@ -82,8 +82,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           segment_store: profile_storage
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
-          properties_schema:
-            source_role: str
         short_term_memory:
           session_key: user-session-id
           llm_model: my-summarization-llm
@@ -107,8 +105,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           segment_store: profile_storage # ID of the SQL database used by SegmentStore
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
-          properties_schema: # Optional filterable event-memory properties
-            source_role: str
         short_term_memory: # Configuration for short-term memory
           session_key: user-session-id # Reuses parent session_key
           llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
@@ -137,7 +133,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. Event backend can omit it to use embedding scores directly. | Depends on backend |
     | `long_term_memory.session_id`   | The same `session_key` used for long-term memory operations.               | *Inherited from `session_key`* |
-    | `long_term_memory.properties_schema` | Event backend only: user-defined filterable properties and their type names. | `{}` |
     | `short_term_memory.session_key` | Session key for short-term memory summarization.                           | *Inherited from `session_key`* |
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
     | `short_term_memory.summary_prompt_system` | System prompt ID for short-term summarization. | *Required* |

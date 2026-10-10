@@ -20,9 +20,6 @@ episodic_memory:
     # reranker: my_reranker_id              # optional; omit to use embedding scores
     # vector_store: event_vector_store      # references resources.databases (a sqlite_vector_store, qdrant, etc.)
     # segment_store: profile_storage        # references a relational DB; segment store is created from it
-    # properties_schema:                    # optional — user-defined filterable properties
-    #   source_role: str
-    #   target_id: str
     # segmenter:                            # optional — defaults to passthrough
     #   type: passthrough                   # or: text (with max_chunk_length)
     # deriver:                              # optional — defaults to whole-text deriver
