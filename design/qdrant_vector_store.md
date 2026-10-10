@@ -1,20 +1,18 @@
 # Qdrant vector store
 
-How the Qdrant store meets the shared contracts: [collection
-registry](vector_store_collection_registry.md),
+How the Qdrant store meets the shared contracts: [partition
+registry](vector_store_partition_registry.md),
 [purge](vector_store_purge.md), [consistency](vector_store_consistency.md),
 [isolation](vector_store_isolation.md).
 
 ## Layout
 
-- **One native collection per namespace and configuration**, named
-  `{namespace}__{sha256(config)}`, the digest over the configuration's JSON.
-  It holds every logical collection of that namespace and configuration, one
-  incarnation each. Admitting a collection creates nothing in Qdrant unless
-  its configuration is new.
-- **Vectors:** one unnamed dense vector, the configuration's dimensions and
-  metric.
-- **Graphs per tenant, not per collection:** HNSW `m=0`, `payload_m=16`. No
+- **One native collection per store**, named by the vector store name. It
+  holds every partition of the store, one incarnation each. Creating a
+  partition creates nothing in Qdrant.
+- **Vectors:** one unnamed dense vector of the store's dimensions, compared by
+  cosine distance.
+- **Graphs per tenant, not per store:** HNSW `m=0`, `payload_m=16`. No
   collection-wide graph is built; each value of an indexed payload field gets
   its own graph once it has enough points in a segment, so a search filtered
   on one tenant walks that tenant's graph.
@@ -22,11 +20,20 @@ registry](vector_store_collection_registry.md),
   `is_tenant=true`, which also has Qdrant keep a tenant's points together.
   A handle's searches filter on it, as do the purge's scrolls and deletes. A
   handle's deletes name its points' ids instead (see [Point ids](#point-ids)).
-- **Declared properties:** a payload index per property of the collection's
-  schema, typed by the property's type.
-- **Creation converges:** the collection and each payload index are created
-  under separate already-exists guards, so a creation that failed between them
-  is completed by the next.
+- **Declared properties:** a payload index per property of the store's
+  declared schema, typed by the property's type. A record or a filter naming
+  any other key is refused.
+- **Strict mode:** the collection is created with filtering on unindexed
+  fields off, for reads and updates alike, so the server refuses a filter on
+  a field it has not indexed instead of scanning for it. Every key a filter
+  may name is indexed: the declared keys and the incarnation. A filter is
+  bound to the declared schema before anything is sent, as on every store: a
+  value of another type than its key declares is refused, and an int for a
+  float key becomes the float it equals, so each condition is one its field's
+  index serves.
+- **Startup converges:** the collection and each payload index are created at
+  startup under separate already-exists guards, so a startup that failed
+  between them is completed by the next.
 - **Client:** `AsyncQdrantClient`, with `request_timeout_seconds` as its
   timeout.
 - **Oversized upserts are halved.** Qdrant's REST API refuses a request over
@@ -48,14 +55,14 @@ in the payload, `sys-record_uuid`. A search returns that one payload field to
 answer each match's record UUID; a delete names the derived ids directly;
 someone inspecting a collection finds a record by filtering on the field.
 
-The id space is the native collection's, shared by its logical collections,
+The id space is the native collection's, shared by the store's partitions,
 and Qdrant's upsert replaces a whole point, vectors and payload alike
 (`lib/shard/src/update/points/upsert.rs` at v1.19.1). With the record UUID as
-the point id, an upsert of a UUID another collection's point held replaced
+the point id, an upsert of a UUID another partition's point held replaced
 that point and moved it to the writer's incarnation. Derived ids differ
-between collections whatever record UUIDs they carry, so the store keeps the
+between partitions whatever record UUIDs they carry, so the store keeps the
 [isolation](vector_store_isolation.md) guarantee without a rule on callers,
-and a collection created again under a name writes ids its dead predecessor's
+and a partition created again under a key writes ids its dead predecessor's
 points, awaiting purge, cannot collide with.
 
 Measured on Qdrant 1.19.1 (4 CPUs / 4 GB, gRPC; 300 tenants x 1,000 points of
@@ -85,8 +92,8 @@ of every property's payload; it is not measured.
 
 **Why one-way ids.** The record UUID has to come back from the payload because
 a UUIDv5 cannot be inverted, and that is also what makes it safe. An attacker
-who writes through the API into one collection, and wants to hide a record of
-another collection sharing the native collection, needs a record UUID whose
+who writes through the API into one partition, and wants to hide a record of
+another partition sharing the native collection, needs a record UUID whose
 point id equals the target's. With UUIDv5 that is a second preimage of SHA-1
 on 122 bits, about 2^122 work, even for someone who knows both incarnations
 and the target's record UUID; known SHA-1 attacks need control of both inputs.
@@ -100,7 +107,7 @@ the mapping lets anyone holding the incarnations aim it: with the target's
 incarnation, their own, and the target's record UUID, an attacker computes the
 colliding UUID directly (`record ^ incarnation_A ^ incarnation_B`), and a
 write of it through an ingestion path that passes a caller's UUID through
-replaces the target's point, which then disappears from its collection.
+replaces the target's point, which then disappears from its partition.
 Incarnations are not guarded as secrets: the registry logs them in its
 warnings and dead-letter errors, and they are in its tables and any backup, as
 record UUIDs are in any Qdrant snapshot. So a read-level leak plus an ordinary
@@ -195,8 +202,8 @@ apply reaches the caller.
 replica by default and can miss a write another replica has; and with the
 default `weak` write ordering "write operations can be freely reordered",
 while `medium` and `strong` serialize them through a leader. The store sets
-none of these, and creates collections with the server's default replication
-factor. It states no replicated read delay, which is unbounded.
+none of these, and creates its native collection with the server's default
+replication factor. It states no replicated read delay, which is unbounded.
 
 Measured on a three-node Qdrant 1.19.1 cluster in Docker (1.5 CPUs / 1.5 GB
 per node; one shard replicated on all three nodes; write consistency factor 1;

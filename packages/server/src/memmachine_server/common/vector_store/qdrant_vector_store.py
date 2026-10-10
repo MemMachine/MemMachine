@@ -1,7 +1,7 @@
 """Qdrant-based vector store implementation."""
 
-import hashlib
 import math
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, ClassVar, override
 from uuid import UUID, uuid5
@@ -15,44 +15,33 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 
 from memmachine_server.common.data_types import (
     OrderedValue,
+    PropertyType,
     PropertyValue,
-    SimilarityMetric,
 )
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
+    OrderingOp,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.utils import ensure_tz_aware
 
-from .collection_registry import Registration
 from .data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionConfig,
 )
+from .partition_registry import Registration
 from .registry_backed_vector_store import (
     RegistryBackedVectorStore,
-    RegistryBackedVectorStoreCollection,
     RegistryBackedVectorStoreParams,
+    RegistryBackedVectorStorePartition,
 )
 
 # Point payload keys (stored on every Qdrant point).
@@ -60,9 +49,9 @@ from .registry_backed_vector_store import (
 # contain (Record requires identifiers), so the two never collide.
 _SYSTEM_KEY_PREFIX = "sys-"
 _PAYLOAD_INCARNATION = f"{_SYSTEM_KEY_PREFIX}incarnation"
-"""The payload key holding the incarnation of the collection a point belongs to.
+"""The payload key holding the incarnation of the partition a point belongs to.
 
-A collection created again under a deleted one's name gets a fresh
+A partition created again under a deleted one's key gets a fresh
 incarnation, so it holds only the points written under that incarnation.
 """
 _PAYLOAD_RECORD_UUID = f"{_SYSTEM_KEY_PREFIX}record_uuid"
@@ -74,7 +63,7 @@ so a query reads the record UUID from here.
 
 
 def _incarnation_filter(incarnation: UUID) -> models.Filter:
-    """Build a Qdrant filter that matches the points of one collection incarnation."""
+    """Build a Qdrant filter that matches the points of one partition incarnation."""
     return models.Filter(
         must=[
             models.FieldCondition(
@@ -85,178 +74,119 @@ def _incarnation_filter(incarnation: UUID) -> models.Filter:
     )
 
 
-class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
-    """A collection backed by Qdrant."""
+class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
+    """A partition backed by Qdrant: one payload value inside the store's collection."""
 
-    _RANGE_OPERATORS: ClassVar[dict[str, str]] = {
+    _RANGE_OPERATORS: ClassVar[dict[OrderingOp, str]] = {
         ">": "gt",
         ">=": "gte",
         "<": "lt",
         "<=": "lte",
     }
 
+    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
+        {Equals, Ordering, In, IsNull, And, Or, Not}
+    )
+
     @staticmethod
     def _build_qdrant_filter(expr: FilterExpr) -> models.Filter:
-        """Convert a FilterExpr tree into a Qdrant Filter."""
-        if isinstance(expr, FilterComparison):
-            return QdrantVectorStoreCollection._build_qdrant_comparison(expr)
-        if isinstance(expr, FilterIn):
-            return QdrantVectorStoreCollection._in_filter(expr.field, expr.values)
-        if isinstance(expr, FilterIsNull):
-            return QdrantVectorStoreCollection._null_filter(expr.field, negate=False)
-        if isinstance(expr, FilterNot):
-            return models.Filter(
-                must_not=[QdrantVectorStoreCollection._build_qdrant_filter(expr.expr)]
-            )
-        if isinstance(expr, FilterAnd):
-            left = QdrantVectorStoreCollection._build_qdrant_filter(expr.left)
-            right = QdrantVectorStoreCollection._build_qdrant_filter(expr.right)
-            return models.Filter(must=[left, right])
-        if isinstance(expr, FilterOr):
-            left = QdrantVectorStoreCollection._build_qdrant_filter(expr.left)
-            right = QdrantVectorStoreCollection._build_qdrant_filter(expr.right)
-            return models.Filter(should=[left, right])
-        message = f"Unsupported filter expression type: {type(expr)}"
-        raise TypeError(message)
+        """Convert a FilterExpr tree into a Qdrant Filter over the declared keys."""
+        build = QdrantVectorStorePartition._build_qdrant_filter
+        match expr:
+            case Equals() | Ordering() | In():
+                return QdrantVectorStorePartition._leaf_filter(expr)
+            case IsNull(field):
+                return models.Filter(
+                    must=[QdrantVectorStorePartition._missing_condition(field)]
+                )
+            case Not(operand):
+                return models.Filter(must_not=[build(operand)])
+            case And(operands):
+                return models.Filter(must=[build(o) for o in operands])
+            case Or(operands):
+                return models.Filter(should=[build(o) for o in operands])
 
     @staticmethod
-    def _build_qdrant_comparison(comparison: FilterComparison) -> models.Filter:
-        """Convert a Comparison into a Qdrant Filter."""
-        field = comparison.field
-        operator = comparison.op
-        value = comparison.value
-
-        if operator in ("=", "!="):
-            negate = operator == "!="
-            if isinstance(value, float):
-                return QdrantVectorStoreCollection._float_eq_filter(
-                    field, value, negate=negate
+    def _leaf_filter(expr: Equals | Ordering | In) -> models.Filter:
+        """The leaf as a Qdrant Filter."""
+        match expr:
+            case Equals(field, value):
+                condition = QdrantVectorStorePartition._eq_condition(field, value)
+            case Ordering(field, op, value):
+                condition = QdrantVectorStorePartition._range_condition(
+                    field, value, QdrantVectorStorePartition._RANGE_OPERATORS[op]
                 )
-            if isinstance(value, datetime):
-                return QdrantVectorStoreCollection._datetime_eq_filter(
-                    field, value, negate=negate
+            case In(field, values):
+                condition = models.FieldCondition(
+                    key=field, match=models.MatchAny(any=list(values))
                 )
-            return QdrantVectorStoreCollection._match_filter(
-                field, value, negate=negate
-            )
-        if operator in QdrantVectorStoreCollection._RANGE_OPERATORS:
-            if not isinstance(value, OrderedValue):
-                message = (
-                    f"Range filter on '{field}' requires a numeric or datetime value, "
-                    f"got {type(value).__name__}"
-                )
-                raise TypeError(message)
-            return QdrantVectorStoreCollection._range_filter(
-                field, value, QdrantVectorStoreCollection._RANGE_OPERATORS[operator]
-            )
-
-        message = f"Unsupported filter operator: {operator}"
-        raise ValueError(message)
-
-    @staticmethod
-    def _match_filter(
-        field: str,
-        value: bool | int | str,
-        *,
-        negate: bool,
-    ) -> models.Filter:
-        condition = models.FieldCondition(
-            key=field,
-            match=models.MatchValue(value=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
         return models.Filter(must=[condition])
 
     @staticmethod
-    def _float_eq_filter(field: str, value: float, *, negate: bool) -> models.Filter:
-        """Use a range filter for float equality since MatchValue doesn't accept floats."""
-        condition = models.FieldCondition(
-            key=field,
-            range=models.Range(gte=value, lte=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
+    def _eq_condition(field: str, value: PropertyValue) -> models.FieldCondition:
+        """Match a field against a value, by the only condition Qdrant offers for its type."""
+        if isinstance(value, float):
+            # MatchValue does not accept floats.
+            return models.FieldCondition(
+                key=field, range=models.Range(gte=value, lte=value)
+            )
+        if isinstance(value, datetime):
+            instant = ensure_tz_aware(value)
+            return models.FieldCondition(
+                key=field, range=models.DatetimeRange(gte=instant, lte=instant)
+            )
+        return models.FieldCondition(key=field, match=models.MatchValue(value=value))
 
     @staticmethod
-    def _datetime_eq_filter(
-        field: str, value: datetime, *, negate: bool
-    ) -> models.Filter:
-        """Use a DatetimeRange filter for datetime equality since MatchValue doesn't accept datetimes."""
-        value = ensure_tz_aware(value)
-        condition = models.FieldCondition(
-            key=field,
-            range=models.DatetimeRange(gte=value, lte=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
-
-    @staticmethod
-    def _in_filter(field: str, value: list[int] | list[str]) -> models.Filter:
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=field,
-                    match=models.MatchAny(any=value),
-                ),
-            ],
-        )
-
-    @staticmethod
-    def _range_filter(
+    def _range_condition(
         field: str,
         value: OrderedValue,
         range_parameter: str,
-    ) -> models.Filter:
+    ) -> models.FieldCondition:
         if isinstance(value, datetime):
-            value = ensure_tz_aware(value)
-            return models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key=field,
-                        range=models.DatetimeRange(**{range_parameter: value}),
-                    ),
-                ],
+            return models.FieldCondition(
+                key=field,
+                range=models.DatetimeRange(**{range_parameter: ensure_tz_aware(value)}),
             )
-
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=field,
-                    range=models.Range(**{range_parameter: value}),
-                ),
-            ],
+        return models.FieldCondition(
+            key=field, range=models.Range(**{range_parameter: value})
         )
 
     @staticmethod
-    def _null_filter(field: str, *, negate: bool) -> models.Filter:
-        condition = models.IsEmptyCondition(
-            is_empty=models.PayloadField(key=field),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
+    def _missing_condition(field: str) -> models.IsEmptyCondition:
+        """Points that do not carry the field."""
+        return models.IsEmptyCondition(is_empty=models.PayloadField(key=field))
 
     def __init__(
         self,
         *,
         client: AsyncQdrantClient,
-        native_collection_name: str,
+        vector_store_name: str,
         registration: Registration,
+        vector_dimensions: int,
+        indexed_properties: Mapping[str, PropertyType],
         tracker: OperationTracker,
     ) -> None:
         """Initialize with a Qdrant client and the registration the handle is bound to."""
-        super().__init__(registration=registration, tracker=tracker)
+        super().__init__(
+            vector_store_name=vector_store_name,
+            registration=registration,
+            vector_dimensions=vector_dimensions,
+            indexed_properties=indexed_properties,
+            tracker=tracker,
+        )
         self._client = client
-        self._native_collection_name = native_collection_name
+
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return QdrantVectorStorePartition._SUPPORTED_FILTER_NODES
 
     def _point_id(self, record_uuid: UUID) -> UUID:
         """The point id of a record: a UUIDv5 of the record UUID under the incarnation.
 
-        Point ids are distinct across the collections sharing a native
-        collection and across a name's incarnations.
+        Point ids are distinct across the partitions of the store's collection
+        and across a key's incarnations.
         """
         return uuid5(self._incarnation, str(record_uuid))
 
@@ -293,7 +223,7 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
             # accepted but not applied to those in flight, whose callers see
             # the wait as latency, and reports a failure to apply.
             await self._client.upsert(
-                collection_name=self._native_collection_name,
+                collection_name=self._vector_store_name,
                 points=points,
                 wait=True,
             )
@@ -310,7 +240,7 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
         query_vectors: list[list[float]],
         *,
         limit: int,
-        score_threshold: float | None,
+        min_cosine_similarity: float | None,
         property_filter: FilterExpr | None,
     ) -> list[QueryResult]:
         qdrant_filter = _incarnation_filter(self._incarnation)
@@ -318,18 +248,18 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
             qdrant_filter = models.Filter(
                 must=[
                     qdrant_filter,
-                    QdrantVectorStoreCollection._build_qdrant_filter(property_filter),
+                    QdrantVectorStorePartition._build_qdrant_filter(property_filter),
                 ]
             )
 
-        # Qdrant keeps only scores strictly better than its threshold, compared
-        # in single precision, so send the next single-precision value on the
-        # worse side; the check below applies the caller's threshold exactly.
-        higher_is_better = self.config.similarity_metric.higher_is_better
+        # Qdrant keeps only scores strictly above its threshold, compared in
+        # single precision, so send the next single-precision value below the
+        # minimum; the check below applies the caller's minimum exactly.
         qdrant_score_threshold = None
-        if score_threshold is not None:
-            worse = np.float32(-np.inf if higher_is_better else np.inf)
-            adjacent = float(np.nextafter(np.float32(score_threshold), worse))
+        if min_cosine_similarity is not None:
+            adjacent = float(
+                np.nextafter(np.float32(min_cosine_similarity), np.float32(-np.inf))
+            )
             if math.isfinite(adjacent):
                 qdrant_score_threshold = adjacent
         requests = [
@@ -347,7 +277,7 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
         ]
 
         batch_results = await self._client.query_batch_points(
-            collection_name=self._native_collection_name,
+            collection_name=self._vector_store_name,
             requests=requests,
         )
 
@@ -355,16 +285,12 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
             QueryResult(
                 matches=[
                     QueryMatch(
-                        score=point.score,
+                        cosine_similarity=point.score,
                         record_uuid=UUID((point.payload or {})[_PAYLOAD_RECORD_UUID]),
                     )
                     for point in batch.points
-                    if score_threshold is None
-                    or (
-                        point.score >= score_threshold
-                        if higher_is_better
-                        else point.score <= score_threshold
-                    )
+                    if min_cosine_similarity is None
+                    or point.score >= min_cosine_similarity
                 ]
             )
             for batch in batch_results
@@ -373,7 +299,7 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
     @override
     async def _delete(self, record_uuids: list[UUID]) -> None:
         await self._client.delete(
-            collection_name=self._native_collection_name,
+            collection_name=self._vector_store_name,
             points_selector=models.PointIdsList(
                 points=[str(self._point_id(uuid)) for uuid in record_uuids]
             ),
@@ -384,6 +310,9 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
 class QdrantVectorStoreParams(RegistryBackedVectorStoreParams):
     """
     Parameters for QdrantVectorStore.
+
+    The native Qdrant collection is named `vector_store_name`, and each
+    declared property gets a payload index of its declared type.
 
     Attributes:
         client (AsyncQdrantClient):
@@ -396,21 +325,24 @@ class QdrantVectorStoreParams(RegistryBackedVectorStoreParams):
     )
 
 
-class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
+class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
     """Asynchronous Qdrant-based implementation of VectorStore.
 
-    A logical collection is the points carrying its incarnation in their
+    The store is one native Qdrant collection, named at construction, in
+    which a partition is the points carrying its incarnation in their
     payload.
     """
 
-    _SIMILARITY_METRIC_TO_QDRANT_DISTANCE: ClassVar[
-        dict[SimilarityMetric, models.Distance]
-    ] = {
-        SimilarityMetric.COSINE: models.Distance.COSINE,
-        SimilarityMetric.DOT: models.Distance.DOT,
-        SimilarityMetric.EUCLIDEAN: models.Distance.EUCLID,
-        SimilarityMetric.MANHATTAN: models.Distance.MANHATTAN,
-    }
+    _QDRANT_DISTANCE: ClassVar[models.Distance] = models.Distance.COSINE
+
+    # Every key a filter may name is indexed (the declared keys and the
+    # incarnation), so the server may refuse a filter on an unindexed one
+    # instead of scanning the collection for it.
+    _STRICT_MODE: ClassVar[models.StrictModeConfig] = models.StrictModeConfig(
+        enabled=True,
+        unindexed_filtering_retrieve=False,
+        unindexed_filtering_update=False,
+    )
 
     _PROPERTY_TYPE_TO_INDEX_TYPE: ClassVar[
         dict[type[PropertyValue], models.PayloadSchemaType]
@@ -440,14 +372,6 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
             return error.code() == grpc.StatusCode.NOT_FOUND
         return False
 
-    @staticmethod
-    def _build_native_collection_name(
-        namespace: str, config: VectorStoreCollectionConfig
-    ) -> str:
-        """Build a deterministic native collection name from namespace and config."""
-        digest = hashlib.sha256(config.model_dump_json().encode()).hexdigest()
-        return f"{namespace}__{digest}"
-
     def __init__(self, params: QdrantVectorStoreParams) -> None:
         """Initialize the vector store with the provided parameters."""
         super().__init__(params, metrics_prefix="vector_store_qdrant")
@@ -456,49 +380,22 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
         self._hnsw_m = 16
 
     @override
-    def _build_collection_handle(
-        self, registration: Registration
-    ) -> QdrantVectorStoreCollection:
-        return QdrantVectorStoreCollection(
-            client=self._client,
-            native_collection_name=QdrantVectorStore._build_native_collection_name(
-                registration.namespace, registration.config
-            ),
-            registration=registration,
-            tracker=self._tracker,
-        )
-
-    @override
-    async def _prepare_storage(
-        self,
-        namespace: str,
-        config: VectorStoreCollectionConfig,
-        incarnation: UUID,
-    ) -> None:
-        native_collection_name = QdrantVectorStore._build_native_collection_name(
-            namespace, config
-        )
-        distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
-            config.similarity_metric
-        ]
+    async def _prepare_storage(self) -> None:
+        distance = QdrantVectorStore._QDRANT_DISTANCE
         # The collection and each payload index are created under their own
         # already-exists guard, so a creation that finds the collection there
         # still creates the indexes it lacks.
         try:
             await self._client.create_collection(
-                collection_name=native_collection_name,
+                collection_name=self.vector_store_name,
                 vectors_config=models.VectorParams(
-                    size=config.vector_dimensions, distance=distance
+                    size=self.vector_dimensions, distance=distance
                 ),
                 hnsw_config=models.HnswConfigDiff(
                     m=0,
                     payload_m=self._hnsw_m,
                 ),
-                # A filter may name a property without a payload index, which
-                # the server scans for. Strict mode refuses such a filter
-                # instead, and a server may turn it on for new collections by
-                # default, so it is turned off here.
-                strict_mode_config=models.StrictModeConfig(enabled=False),
+                strict_mode_config=QdrantVectorStore._STRICT_MODE,
             )
         except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
             if not QdrantVectorStore._is_already_exists_error(e):
@@ -513,7 +410,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
                 ),
             )
         ]
-        for prop_name, prop_type in config.indexed_properties_schema.items():
+        for prop_name, prop_type in self.indexed_properties.items():
             index_type = QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE.get(prop_type)
             if index_type is not None:
                 indexes.append((prop_name, index_type))
@@ -521,7 +418,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
         for field_name, field_schema in indexes:
             try:
                 await self._client.create_payload_index(
-                    collection_name=native_collection_name,
+                    collection_name=self.vector_store_name,
                     field_name=field_name,
                     field_schema=field_schema,
                 )
@@ -530,17 +427,34 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
                     raise
 
     @override
-    async def _purge_round(
-        self, namespace: str, config: VectorStoreCollectionConfig, incarnation: UUID
-    ) -> bool:
+    async def _prepare_partition_storage(
+        self, partition_key: str, incarnation: UUID
+    ) -> None:
+        # A partition is the points carrying its incarnation in the
+        # store's one native collection, which startup prepared; it has no
+        # storage of its own.
+        pass
+
+    @override
+    def _partition_handle(
+        self, registration: Registration
+    ) -> QdrantVectorStorePartition:
+        return QdrantVectorStorePartition(
+            client=self._client,
+            vector_store_name=self.vector_store_name,
+            registration=registration,
+            vector_dimensions=self.vector_dimensions,
+            indexed_properties=self.indexed_properties,
+            tracker=self._tracker,
+        )
+
+    @override
+    async def _purge_round(self, incarnation: UUID) -> bool:
         # If a point remains under the incarnation, one filter-delete removes
         # them all.
-        native_collection_name = QdrantVectorStore._build_native_collection_name(
-            namespace, config
-        )
         try:
             points, _ = await self._client.scroll(
-                collection_name=native_collection_name,
+                collection_name=self.vector_store_name,
                 scroll_filter=_incarnation_filter(incarnation),
                 limit=1,
                 with_payload=False,
@@ -553,7 +467,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
             points = []
         if points:
             await self._client.delete(
-                collection_name=native_collection_name,
+                collection_name=self.vector_store_name,
                 points_selector=models.FilterSelector(
                     filter=_incarnation_filter(incarnation),
                 ),

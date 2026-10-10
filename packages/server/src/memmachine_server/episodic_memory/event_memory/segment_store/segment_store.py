@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from uuid import UUID
 
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
 )
@@ -198,7 +198,7 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(self, partition_key: str) -> SegmentStorePartition | None:
+    async def get_partition(self, partition_key: str) -> SegmentStorePartition | None:
         """
         Open a partition-scoped handle for an existing partition.
 

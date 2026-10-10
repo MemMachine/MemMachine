@@ -1,9 +1,16 @@
 """
 Vector store backed by SQLite + sqlite-vec.
 
-Each logical collection gets its own records table and vec0 virtual table.
-Partition keys are avoided in favor of per-collection tables,
-since sqlite-vec ANN indexes may not support them.
+The store is one collection. Each partition gets its own records table and
+vec0 virtual table, named by the collection and the partition key, so stores
+of different collections may share one engine; sqlite-vec's own partition
+keys are not used, since its ANN indexes may not support them.
+
+A partition's records table carries one typed, indexed column per declared
+property, and a filtered query hands the KNN an allowlist of the rows the
+filter admits, so the filter is evaluated during the search: vec0 ranks only
+the allowed rows, and a filtered search returns fewer only when the filter
+admits fewer.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -18,149 +25,164 @@ from sqlalchemy import (
     Column,
     Integer,
     MetaData,
+    Select,
     String,
     Table,
     Uuid,
+    column,
     delete,
     event,
     select,
     text,
 )
+from sqlalchemy import table as sql_table
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, MappedColumn, mapped_column
 from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
+from sqlalchemy.sql.elements import ColumnElement
 
-from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.filter.sql_filter_util import compile_sql_filter
-from memmachine_server.common.properties_json import (
-    encode_properties,
+from memmachine_server.common.data_types import PropertyType
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    FilterExpr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
 )
 
 from .data_types import (
+    IndexedProperties,
+    PartitionSchema,
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionAlreadyExistsError,
-    VectorStoreCollectionConfig,
-    VectorStoreCollectionConfigMismatchError,
+    VectorStorePartitionAlreadyExistsError,
+    VectorStorePartitionSchemaMismatchError,
+    indexed_property_names,
+    validate_vector_store_name,
+)
+from .declared_properties import bind_filter, bind_record
+from .sql_columns import (
+    compile_property_filter,
+    property_column_names,
+    property_column_values,
+    property_columns,
+    property_indexes,
 )
 from .utils import (
-    require_declared_types,
+    _IDENTIFIER_MAX_BYTES,
     require_dimensions,
-    require_identifiers,
+    require_partition_key,
     require_valid_limit,
+    require_valid_min_cosine_similarity,
     require_valid_query_vector,
-    require_valid_score_threshold,
-    validate_filter,
 )
-from .vector_store import VectorStore, VectorStoreCollection
+from .vector_store import VectorStore, VectorStorePartition
 
 
 class BaseSQLiteVecVectorStore(DeclarativeBase):
     """Base class for SQLiteVecVectorStore ORM models."""
 
 
-class _CollectionRow(BaseSQLiteVecVectorStore):
-    __tablename__ = "vector_store_sqlite_vec_cl"
+class _PartitionRow(BaseSQLiteVecVectorStore):
+    """The registry: one row per partition, keyed by its vector store name and key."""
 
-    namespace: MappedColumn[str] = mapped_column(String(255), primary_key=True)
-    name: MappedColumn[str] = mapped_column(String(255), primary_key=True)
-    config_json: MappedColumn[dict[str, JsonValue]] = mapped_column(
-        JSON, nullable=False
+    __tablename__ = "vector_store_sqlite_vec_pt"
+
+    vector_store_name: MappedColumn[str] = mapped_column(
+        String(_IDENTIFIER_MAX_BYTES), primary_key=True
     )
+    partition_key: MappedColumn[str] = mapped_column(String(255), primary_key=True)
+    # The dimensions and declared schema the partition was created under, so
+    # a store built with others fails loudly instead of reading columns and
+    # vectors that are not there.
+    schema: MappedColumn[dict[str, JsonValue]] = mapped_column(JSON, nullable=False)
 
 
-class SQLiteVecVectorStoreCollection(VectorStoreCollection):
-    """A logical collection backed by SQLite + sqlite-vec."""
+class SQLiteVecVectorStorePartition(VectorStorePartition):
+    """A partition backed by SQLite + sqlite-vec."""
 
-    _DISTANCE_FUNCTIONS: ClassVar[dict[SimilarityMetric, str]] = {
-        SimilarityMetric.COSINE: "vec_distance_cosine",
-        SimilarityMetric.EUCLIDEAN: "vec_distance_L2",
-    }
+    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
+        {Equals, Ordering, In, IsNull, And, Or, Not}
+    )
 
     def __init__(
         self,
         *,
         create_session: async_sessionmaker[AsyncSession],
-        config: VectorStoreCollectionConfig,
+        partition_key: str,
+        vector_dimensions: int,
+        indexed_properties: Mapping[str, PropertyType],
         records_table: Table,
         vector_table_name: str,
     ) -> None:
         """Initialize with session factory and table references."""
         self._create_session = create_session
-        self._config = config
+        self._partition_key = partition_key
+        self._vector_dimensions = vector_dimensions
+        self._indexed_properties = dict(indexed_properties)
         self._records_table = records_table
         self._vector_table_name = vector_table_name
 
-        self._similarity_metric = config.similarity_metric
+    @property
+    @override
+    def partition_key(self) -> str:
+        return self._partition_key
 
     @property
     @override
-    def config(self) -> VectorStoreCollectionConfig:
-        return self._config
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
+
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return SQLiteVecVectorStorePartition._SUPPORTED_FILTER_NODES
 
     @staticmethod
     def _serialize_vector(vector: Sequence[float]) -> bytes:
         return sqlite_vec.serialize_float32(list(vector))
 
     @staticmethod
-    def _distance_to_score(
-        distance: float, similarity_metric: SimilarityMetric
-    ) -> float:
-        match similarity_metric:
-            case SimilarityMetric.COSINE:
-                return 1.0 - distance
-            case SimilarityMetric.EUCLIDEAN:
-                return distance
-            case _:
-                raise NotImplementedError(similarity_metric)
-
-    @staticmethod
-    def _threshold_to_max_distance(
-        threshold: float, similarity_metric: SimilarityMetric
-    ) -> float:
-        match similarity_metric:
-            case SimilarityMetric.COSINE:
-                return 1.0 - threshold
-            case SimilarityMetric.EUCLIDEAN:
-                return threshold
-            case _:
-                raise NotImplementedError(similarity_metric)
+    def _distance_to_cosine_similarity(distance: float) -> float:
+        """Convert a sqlite-vec cosine distance to a cosine similarity."""
+        return 1.0 - distance
 
     @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
-        records = list(records)
+        records = [bind_record(record, self._indexed_properties) for record in records]
         if not records:
             return
         for record in records:
-            require_declared_types(
-                record.properties, self._config.indexed_properties_schema
-            )
-            require_dimensions(record.vector, self._config.vector_dimensions)
+            require_dimensions(record.vector, self._vector_dimensions)
+
+        column_names = property_column_names(self._indexed_properties)
+        insert_records = sqlite_insert(self._records_table)
+        upsert_records = insert_records.on_conflict_do_update(
+            index_elements=[self._records_table.c.uuid],
+            # With no declared column the update is a no-op that still
+            # returns the existing row, which `RETURNING` needs.
+            set_={
+                name: insert_records.excluded[name]
+                for name in (column_names or ["uuid"])
+            },
+        ).returning(self._records_table.c.uuid, self._records_table.c.rowid)
 
         async with self._create_session() as session, session.begin():
-            upsert_records = (
-                sqlite_insert(self._records_table)
-                .on_conflict_do_update(
-                    index_elements=[self._records_table.c.uuid],
-                    set_={
-                        "properties": sqlite_insert(
-                            self._records_table
-                        ).excluded.properties,
-                    },
-                )
-                .returning(self._records_table.c.uuid, self._records_table.c.rowid)
-            )
             rows = (
                 await session.execute(
                     upsert_records,
                     [
                         {
                             "uuid": record.uuid,
-                            "properties": encode_properties(record.properties),
+                            **property_column_values(
+                                record.properties, self._indexed_properties
+                            ),
                         }
                         for record in records
                     ],
@@ -198,7 +220,7 @@ class SQLiteVecVectorStoreCollection(VectorStoreCollection):
         *,
         query_vectors: Iterable[Sequence[float]],
         limit: int,
-        score_threshold: float | None = None,
+        min_cosine_similarity: float | None = None,
         property_filter: FilterExpr | None = None,
     ) -> list[QueryResult]:
         require_valid_limit(limit)
@@ -206,27 +228,30 @@ class SQLiteVecVectorStoreCollection(VectorStoreCollection):
         if not query_vectors:
             return []
         for query_vector in query_vectors:
-            require_valid_query_vector(query_vector, self._config.vector_dimensions)
-        require_valid_score_threshold(score_threshold)
+            require_valid_query_vector(query_vector, self._vector_dimensions)
+        require_valid_min_cosine_similarity(min_cosine_similarity)
 
-        if property_filter is not None and not validate_filter(property_filter):
-            raise ValueError("Filter contains invalid field names")
+        filter_expression: ColumnElement[bool] | None = None
+        if property_filter is not None:
+            property_filter = bind_filter(
+                property_filter,
+                self._indexed_properties,
+                SQLiteVecVectorStorePartition._SUPPORTED_FILTER_NODES,
+            )
+            filter_expression = compile_property_filter(
+                property_filter, self._records_table
+            )
 
         k = min(limit, self._MAX_K)
 
         results: list[QueryResult] = []
         async with self._create_session() as session:
             for query_vector in query_vectors:
-                query_blob = self._serialize_vector(query_vector)
-
                 knn_rows = (
                     await session.execute(
-                        text(
-                            f"SELECT rowid, distance FROM [{self._vector_table_name}] "
-                            f"WHERE vector MATCH :query AND k = :k "
-                            f"ORDER BY distance"
-                        ),
-                        {"query": query_blob, "k": k},
+                        self._knn_statement(
+                            self._serialize_vector(query_vector), k, filter_expression
+                        )
                     )
                 ).all()
 
@@ -236,58 +261,72 @@ class SQLiteVecVectorStoreCollection(VectorStoreCollection):
                 matches = await self._build_matches(
                     session=session,
                     rowid_to_distance=rowid_to_distance,
-                    score_threshold=score_threshold,
-                    property_filter=property_filter,
+                    min_cosine_similarity=min_cosine_similarity,
                 )
                 results.append(QueryResult(matches=matches))
 
         return results
 
+    def _knn_statement(
+        self,
+        query_blob: bytes,
+        k: int,
+        filter_expression: ColumnElement[bool] | None,
+    ) -> Select:
+        """The KNN over the partition's vectors, restricted to the rows a filter admits.
+
+        vec0 takes a `rowid IN (...)` constraint into the search itself, so
+        the `k` nearest are the nearest among the admitted rows.
+        """
+        statement = (
+            select(column("rowid"), column("distance"))
+            .select_from(sql_table(self._vector_table_name))
+            .where(
+                text("vector MATCH :query AND k = :k").bindparams(query=query_blob, k=k)
+            )
+        )
+        if filter_expression is not None:
+            statement = statement.where(
+                column("rowid").in_(
+                    select(self._records_table.c.rowid).where(filter_expression)
+                )
+            )
+        return statement.order_by(column("distance"))
+
     async def _build_matches(
         self,
         session: AsyncSession,
         rowid_to_distance: Mapping[int, float],
-        score_threshold: float | None,
-        property_filter: FilterExpr | None,
+        min_cosine_similarity: float | None,
     ) -> list[QueryMatch]:
-        fetch_records = select(
-            self._records_table.c.uuid, self._records_table.c.rowid
-        ).where(
-            self._records_table.c.rowid.in_(list(rowid_to_distance)),
-        )
-        if property_filter is not None:
-            fetch_records = fetch_records.where(
-                compile_sql_filter(
-                    property_filter,
-                    lambda field: (
-                        self._records_table.c.properties[field],
-                        "properties_json",
-                    ),
+        matched_rowids = list(rowid_to_distance.keys())
+
+        matched_rows = (
+            await session.execute(
+                select(self._records_table.c.uuid, self._records_table.c.rowid).where(
+                    self._records_table.c.rowid.in_(matched_rowids),
                 )
             )
-
-        matched_rows = (await session.execute(fetch_records)).all()
+        ).all()
 
         matches: list[QueryMatch] = []
         for row in matched_rows:
-            distance = rowid_to_distance.get(row.rowid)
-            if distance is None:
-                continue
-
-            score = self._distance_to_score(distance, self._similarity_metric)
-            if score_threshold is not None and (
-                score < score_threshold
-                if self._similarity_metric.higher_is_better
-                else score > score_threshold
+            cosine_similarity = (
+                SQLiteVecVectorStorePartition._distance_to_cosine_similarity(
+                    rowid_to_distance[row.rowid]
+                )
+            )
+            if (
+                min_cosine_similarity is not None
+                and cosine_similarity < min_cosine_similarity
             ):
                 continue
 
-            matches.append(QueryMatch(score=score, record_uuid=row.uuid))
+            matches.append(
+                QueryMatch(cosine_similarity=cosine_similarity, record_uuid=row.uuid)
+            )
 
-        matches.sort(
-            key=lambda match: match.score,
-            reverse=self._similarity_metric.higher_is_better,
-        )
+        matches.sort(key=lambda match: match.cosine_similarity, reverse=True)
         return matches
 
     @override
@@ -326,18 +365,55 @@ class SQLiteVecVectorStoreCollection(VectorStoreCollection):
             )
 
 
+def _load_sqlite_vec(
+    dbapi_connection: DBAPIConnection,
+    _connection_record: ConnectionPoolEntry,
+) -> None:
+    async def _load_extension(
+        aio_connection: aiosqlite.Connection,
+    ) -> None:
+        await aio_connection.enable_load_extension(True)
+        await aio_connection.load_extension(sqlite_vec.loadable_path())
+        await aio_connection.enable_load_extension(False)
+
+    dbapi_connection.run_async(_load_extension)
+
+
 class SQLiteVecVectorStoreParams(BaseModel):
     """
     Parameters for constructing a SQLiteVecVectorStore.
 
     Attributes:
         engine (AsyncEngine): Async SQLAlchemy engine (sqlite+aiosqlite).
+        vector_store_name (str):
+            The name of this store; names its tables, so stores of
+            different names may share the engine.
+        vector_dimensions (int):
+            Dimensionality of every vector in the store.
+        indexed_properties (IndexedProperties):
+            The declared schema every partition of this store carries: each
+            key is a typed, indexed column of the partition's records table,
+            and a record or a filter naming any other key is rejected.
     """
 
     engine: InstanceOf[AsyncEngine] = Field(
         ...,
         description="Async SQLAlchemy engine (sqlite+aiosqlite)",
     )
+    vector_store_name: str = Field(..., description="The name of this store")
+    vector_dimensions: int = Field(
+        ..., gt=0, description="Dimensionality of every vector in the store"
+    )
+    indexed_properties: IndexedProperties = Field(
+        ...,
+        description="The declared schema every partition of this store carries",
+    )
+
+    @field_validator("vector_store_name")
+    @classmethod
+    def _validate_vector_store_name(cls, vector_store_name: str) -> str:
+        validate_vector_store_name(vector_store_name)
+        return vector_store_name
 
     @field_validator("engine")
     @classmethod
@@ -359,36 +435,42 @@ class SQLiteVecVectorStore(VectorStore):
     """
     Vector store backed by SQLite + sqlite-vec.
 
-    Each logical collection gets its own records table and vec0 virtual table.
-    The database is a local file, so the processes sharing a collection
-    must run on one host. A handle used after its collection is deleted acts
-    on a collection created again under its (namespace, name).
+    The store is one collection; each partition gets its own records table
+    and vec0 virtual table. The database is a local file, so the processes
+    sharing a partition must run on one host. A handle used after its
+    partition is deleted acts on a partition created again under its key.
     """
 
-    _SIMILARITY_METRIC_TO_SQLITE_VEC_DISTANCE: ClassVar[dict[SimilarityMetric, str]] = {
-        SimilarityMetric.COSINE: "cosine",
-        SimilarityMetric.EUCLIDEAN: "L2",
-    }
+    _SQLITE_VEC_DISTANCE_METRIC: ClassVar[str] = "cosine"
 
     def __init__(self, params: SQLiteVecVectorStoreParams) -> None:
         """Initialize the vector store with the provided parameters."""
         self._engine = params.engine
+        self._vector_store_name = params.vector_store_name
+        self._vector_dimensions = params.vector_dimensions
+        self._indexed_properties = params.indexed_properties
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
         self._sa_metadata = MetaData()
 
-        @event.listens_for(self._engine.sync_engine, "connect")
-        def _load_sqlite_vec(
-            dbapi_connection: DBAPIConnection,
-            _connection_record: ConnectionPoolEntry,
-        ) -> None:
-            async def _load_extension(
-                aio_connection: aiosqlite.Connection,
-            ) -> None:
-                await aio_connection.enable_load_extension(True)
-                await aio_connection.load_extension(sqlite_vec.loadable_path())
-                await aio_connection.enable_load_extension(False)
+        # Stores of different collections may share the engine; the
+        # extension is loaded once per connection.
+        if not event.contains(self._engine.sync_engine, "connect", _load_sqlite_vec):
+            event.listen(self._engine.sync_engine, "connect", _load_sqlite_vec)
 
-            dbapi_connection.run_async(_load_extension)
+    @property
+    @override
+    def vector_store_name(self) -> str:
+        return self._vector_store_name
+
+    @property
+    @override
+    def vector_dimensions(self) -> int:
+        return self._vector_dimensions
+
+    @property
+    @override
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
 
     @override
     async def startup(self) -> None:
@@ -400,194 +482,174 @@ class SQLiteVecVectorStore(VectorStore):
         pass
 
     @override
-    async def create_collection(
-        self,
-        *,
-        namespace: str,
-        name: str,
-        config: VectorStoreCollectionConfig,
-    ) -> None:
-        require_identifiers(namespace, name)
-        self._validate_metric(config.similarity_metric)
+    async def create_partition(self, partition_key: str) -> None:
+        require_partition_key(partition_key)
 
         async with self._create_session() as session, session.begin():
-            existing_config = await self._get_stored_config(session, namespace, name)
-            if existing_config is not None:
-                raise VectorStoreCollectionAlreadyExistsError(namespace, name)
+            if await self._stored_schema(session, partition_key) is not None:
+                raise VectorStorePartitionAlreadyExistsError(
+                    self._vector_store_name, partition_key
+                )
 
-            await self._ensure_collection_tables(session, namespace, name, config)
+            await self._ensure_partition_tables(session, partition_key)
             session.add(
-                _CollectionRow(
-                    namespace=namespace,
-                    name=name,
-                    config_json=config.model_dump(mode="json"),
+                _PartitionRow(
+                    vector_store_name=self._vector_store_name,
+                    partition_key=partition_key,
+                    schema=self._declared_schema().model_dump(mode="json"),
                 )
             )
 
     @override
-    async def open_or_create_collection(
-        self,
-        *,
-        namespace: str,
-        name: str,
-        config: VectorStoreCollectionConfig,
-    ) -> VectorStoreCollection:
-        require_identifiers(namespace, name)
-        self._validate_metric(config.similarity_metric)
+    async def open_or_create_partition(
+        self, partition_key: str
+    ) -> VectorStorePartition:
+        require_partition_key(partition_key)
 
         async with self._create_session() as session, session.begin():
-            existing_config = await self._get_stored_config(session, namespace, name)
-            if existing_config is not None:
-                if existing_config != config:
-                    raise VectorStoreCollectionConfigMismatchError(
-                        namespace, name, existing_config, config
+            if await self._stored_schema(session, partition_key) is None:
+                session.add(
+                    _PartitionRow(
+                        vector_store_name=self._vector_store_name,
+                        partition_key=partition_key,
+                        schema=self._declared_schema().model_dump(mode="json"),
                     )
-
-                records_table, vector_table_name = await self._ensure_collection_tables(
-                    session, namespace, name, existing_config
                 )
-                return SQLiteVecVectorStoreCollection(
-                    create_session=self._create_session,
-                    config=existing_config,
-                    records_table=records_table,
-                    vector_table_name=vector_table_name,
-                )
-
-            records_table, vector_table_name = await self._ensure_collection_tables(
-                session, namespace, name, config
-            )
-            session.add(
-                _CollectionRow(
-                    namespace=namespace,
-                    name=name,
-                    config_json=config.model_dump(mode="json"),
-                )
+            records_table, vector_table_name = await self._ensure_partition_tables(
+                session, partition_key
             )
 
-        return SQLiteVecVectorStoreCollection(
-            create_session=self._create_session,
-            config=config,
-            records_table=records_table,
-            vector_table_name=vector_table_name,
-        )
+        return self._partition_handle(partition_key, records_table, vector_table_name)
 
     @override
-    async def open_collection(
-        self, *, namespace: str, name: str
-    ) -> VectorStoreCollection | None:
-        require_identifiers(namespace, name)
+    async def get_partition(self, partition_key: str) -> VectorStorePartition | None:
+        require_partition_key(partition_key)
 
         async with self._create_session() as session:
-            existing = await self._get_stored_config(session, namespace, name)
-        if existing is None:
+            schema = await self._stored_schema(session, partition_key)
+        if schema is None:
             return None
 
-        records_table = self._records_table(namespace, name)
-        vector_table_name = self._vector_table_name(namespace, name)
-        return SQLiteVecVectorStoreCollection(
+        return self._partition_handle(
+            partition_key,
+            self._records_table(partition_key),
+            self._vector_table_name(partition_key),
+        )
+
+    def _partition_handle(
+        self, partition_key: str, records_table: Table, vector_table_name: str
+    ) -> SQLiteVecVectorStorePartition:
+        return SQLiteVecVectorStorePartition(
             create_session=self._create_session,
-            config=existing,
+            partition_key=partition_key,
+            vector_dimensions=self._vector_dimensions,
+            indexed_properties=self._indexed_properties,
             records_table=records_table,
             vector_table_name=vector_table_name,
         )
 
     @override
-    async def delete_collection(self, *, namespace: str, name: str) -> None:
-        require_identifiers(namespace, name)
+    async def delete_partition(self, partition_key: str) -> None:
+        require_partition_key(partition_key)
 
         async with self._create_session() as session, session.begin():
-            existing = await self._get_stored_config(session, namespace, name)
-            if existing is None:
+            exists = (
+                await session.execute(
+                    select(_PartitionRow.partition_key).where(
+                        _PartitionRow.vector_store_name == self._vector_store_name,
+                        _PartitionRow.partition_key == partition_key,
+                    )
+                )
+            ).scalar_one_or_none()
+            if exists is None:
                 return
 
-            records_table = self._records_table(namespace, name)
-            vector_table_name = self._vector_table_name(namespace, name)
+            records_table = self._records_table(partition_key)
+            vector_table_name = self._vector_table_name(partition_key)
 
             await session.execute(text(f"DROP TABLE IF EXISTS [{vector_table_name}]"))
             await session.execute(text(f"DROP TABLE IF EXISTS [{records_table.name}]"))
 
             await session.execute(
-                delete(_CollectionRow).where(
-                    _CollectionRow.namespace == namespace,
-                    _CollectionRow.name == name,
+                delete(_PartitionRow).where(
+                    _PartitionRow.vector_store_name == self._vector_store_name,
+                    _PartitionRow.partition_key == partition_key,
                 )
             )
 
             self._sa_metadata.remove(records_table)
 
     @override
-    async def purge_deleted_collections(self) -> bool:
-        # delete_collection drops the tables itself.
+    async def purge_deleted_partitions(self) -> bool:
+        # delete_partition drops the tables itself.
         return False
 
     # Helpers.
 
-    @staticmethod
-    def _collection_prefix(namespace: str, name: str) -> str:
+    def _partition_prefix(self, partition_key: str) -> str:
+        vector_store_name = self._vector_store_name
         return (
-            f"vector_store_sqlite_vec_{len(namespace)}_{namespace}_{len(name)}_{name}"
+            f"vector_store_sqlite_vec_{len(vector_store_name)}_{vector_store_name}"
+            f"_{len(partition_key)}_{partition_key}"
         )
 
-    @staticmethod
-    def _records_table_name(namespace: str, name: str) -> str:
-        return f"{SQLiteVecVectorStore._collection_prefix(namespace, name)}_rc"
+    def _records_table_name(self, partition_key: str) -> str:
+        return f"{self._partition_prefix(partition_key)}_rc"
 
-    @staticmethod
-    def _vector_table_name(namespace: str, name: str) -> str:
-        return f"{SQLiteVecVectorStore._collection_prefix(namespace, name)}_vc"
+    def _vector_table_name(self, partition_key: str) -> str:
+        return f"{self._partition_prefix(partition_key)}_vc"
 
-    @staticmethod
-    def _validate_metric(similarity_metric: SimilarityMetric) -> None:
-        if (
-            similarity_metric
-            not in SQLiteVecVectorStore._SIMILARITY_METRIC_TO_SQLITE_VEC_DISTANCE
-        ):
-            supported = ", ".join(
-                similarity_metric.value
-                for similarity_metric in SQLiteVecVectorStore._SIMILARITY_METRIC_TO_SQLITE_VEC_DISTANCE
-            )
-            raise ValueError(
-                f"sqlite-vec only supports {supported} similarity metrics, "
-                f"got {similarity_metric.value!r}"
-            )
+    def _declared_schema(self) -> PartitionSchema:
+        return PartitionSchema(
+            vector_dimensions=self._vector_dimensions,
+            indexed_properties=indexed_property_names(self._indexed_properties),
+        )
 
-    async def _get_stored_config(
-        self, session: AsyncSession, namespace: str, name: str
-    ) -> VectorStoreCollectionConfig | None:
-        stored_config = (
+    async def _stored_schema(
+        self, session: AsyncSession, partition_key: str
+    ) -> PartitionSchema | None:
+        """The schema the partition was created under; raises if it is not this store's."""
+        stored = (
             await session.execute(
-                select(_CollectionRow.config_json).where(
-                    _CollectionRow.namespace == namespace,
-                    _CollectionRow.name == name,
+                select(_PartitionRow.schema).where(
+                    _PartitionRow.vector_store_name == self._vector_store_name,
+                    _PartitionRow.partition_key == partition_key,
                 )
             )
         ).scalar_one_or_none()
-        if stored_config is None:
+        if stored is None:
             return None
-        return VectorStoreCollectionConfig.model_validate(stored_config)
+        stored_schema = PartitionSchema.model_validate(stored)
+        declared_schema = self._declared_schema()
+        if stored_schema != declared_schema:
+            raise VectorStorePartitionSchemaMismatchError(
+                self._vector_store_name, partition_key, stored_schema, declared_schema
+            )
+        return stored_schema
 
-    def _records_table(self, namespace: str, name: str) -> Table:
-        return Table(
-            self._records_table_name(namespace, name),
+    def _records_table(self, partition_key: str) -> Table:
+        """The partition's records table, built once per partition key."""
+        name = self._records_table_name(partition_key)
+        records_table = self._sa_metadata.tables.get(name)
+        if records_table is not None:
+            return records_table
+        records_table = Table(
+            name,
             self._sa_metadata,
             Column("rowid", Integer, primary_key=True, autoincrement=True),
             Column("uuid", Uuid, nullable=False, unique=True),
-            Column("properties", JSON, nullable=False, default=dict),
-            extend_existing=True,
+            *property_columns(self._indexed_properties),
         )
+        property_indexes(records_table, self._indexed_properties)
+        return records_table
 
-    async def _ensure_collection_tables(
+    async def _ensure_partition_tables(
         self,
         session: AsyncSession,
-        namespace: str,
-        name: str,
-        config: VectorStoreCollectionConfig,
+        partition_key: str,
     ) -> tuple[Table, str]:
-        records_table = self._records_table(namespace, name)
-        vector_table_name = self._vector_table_name(namespace, name)
-        distance_metric_value = self._SIMILARITY_METRIC_TO_SQLITE_VEC_DISTANCE[
-            config.similarity_metric
-        ]
+        records_table = self._records_table(partition_key)
+        vector_table_name = self._vector_table_name(partition_key)
 
         connection = await session.connection()
         await connection.run_sync(
@@ -598,25 +660,10 @@ class SQLiteVecVectorStore(VectorStore):
         await session.execute(
             text(
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS [{vector_table_name}] USING vec0("
-                f"vector float[{config.vector_dimensions}] distance_metric={distance_metric_value}"
+                f"vector float[{self._vector_dimensions}] "
+                f"distance_metric={SQLiteVecVectorStore._SQLITE_VEC_DISTANCE_METRIC}"
                 f")"
             )
         )
-
-        properties_column = Column("properties", JSON)
-        for field_name in config.indexed_properties_schema:
-            value_expr = properties_column[field_name]["v"].as_string()
-            compiled_expr = value_expr.compile(
-                dialect=session.bind.dialect,
-                compile_kwargs={"literal_binds": True},
-            )
-            index_name = f"{records_table.name}__{field_name}_v"
-            await session.execute(
-                text(
-                    f"CREATE INDEX IF NOT EXISTS [{index_name}] "
-                    f"ON [{records_table.name}]"
-                    f"({compiled_expr})"
-                )
-            )
 
         return records_table, vector_table_name

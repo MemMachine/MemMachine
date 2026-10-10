@@ -20,28 +20,16 @@ from pydantic import BaseModel, Field, InstanceOf
 from memmachine_server.common.data_types import (
     FilterValue,
     OrderedValue,
-    SimilarityMetric,
 )
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
+    And,
+    Equals,
     FilterExpr,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.neo4j_utils import (
@@ -234,7 +222,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             sanitized_collection = Neo4jVectorGraphStore._sanitize_name(collection)
             sanitized_embedding_names = set()
             embedding_dimensions_by_name: dict[str, int] = {}
-            embedding_similarity_by_name: dict[str, SimilarityMetric] = {}
 
             query_nodes = []
             for node in nodes:
@@ -245,33 +232,15 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     },
                 )
 
-                for embedding_name, (
-                    embedding,
-                    similarity_metric,
-                ) in node.embeddings.items():
+                for embedding_name, embedding in node.embeddings.items():
                     sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
                         mangle_embedding_name(embedding_name),
                     )
-                    sanitized_similarity_metric_name = (
-                        Neo4jVectorGraphStore._sanitize_name(
-                            Neo4jVectorGraphStore._similarity_metric_property_name(
-                                embedding_name,
-                            ),
-                        )
-                    )
-
                     sanitized_embedding_names.add(sanitized_embedding_name)
                     embedding_dimensions_by_name[sanitized_embedding_name] = len(
                         embedding,
                     )
-                    embedding_similarity_by_name[sanitized_embedding_name] = (
-                        similarity_metric
-                    )
-
                     query_node_properties[sanitized_embedding_name] = embedding
-                    query_node_properties[sanitized_similarity_metric_name] = (
-                        similarity_metric.value
-                    )
 
                 query_node: dict[str, PropertyValue | dict[str, PropertyValue]] = {
                     "uid": str(node.uid),
@@ -325,9 +294,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                                     dimensions=embedding_dimensions_by_name[
                                         sanitized_embedding_name
                                     ],
-                                    similarity_metric=embedding_similarity_by_name[
-                                        sanitized_embedding_name
-                                    ],
                                 ),
                             )
                         )
@@ -349,7 +315,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
             sanitized_relation = Neo4jVectorGraphStore._sanitize_name(relation)
             sanitized_embedding_names = set()
             embedding_dimensions_by_name: dict[str, int] = {}
-            embedding_similarity_by_name: dict[str, SimilarityMetric] = {}
 
             query_edges = []
             for edge in edges:
@@ -360,33 +325,15 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     },
                 )
 
-                for embedding_name, (
-                    embedding,
-                    similarity_metric,
-                ) in edge.embeddings.items():
+                for embedding_name, embedding in edge.embeddings.items():
                     sanitized_embedding_name = Neo4jVectorGraphStore._sanitize_name(
                         mangle_embedding_name(embedding_name),
                     )
-                    sanitized_similarity_metric_name = (
-                        Neo4jVectorGraphStore._sanitize_name(
-                            Neo4jVectorGraphStore._similarity_metric_property_name(
-                                embedding_name,
-                            ),
-                        )
-                    )
-
                     sanitized_embedding_names.add(sanitized_embedding_name)
                     embedding_dimensions_by_name[sanitized_embedding_name] = len(
                         embedding,
                     )
-                    embedding_similarity_by_name[sanitized_embedding_name] = (
-                        similarity_metric
-                    )
-
                     query_edge_properties[sanitized_embedding_name] = embedding
-                    query_edge_properties[sanitized_similarity_metric_name] = (
-                        similarity_metric.value
-                    )
 
                 query_edge = {
                     "uid": str(edge.uid),
@@ -453,9 +400,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                                     dimensions=embedding_dimensions_by_name[
                                         sanitized_embedding_name
                                     ],
-                                    similarity_metric=embedding_similarity_by_name[
-                                        sanitized_embedding_name
-                                    ],
                                 ),
                             )
                         )
@@ -466,7 +410,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         collection: str,
         embedding_name: str,
         query_embedding: list[float],
-        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         limit: int | None = 100,
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
@@ -511,10 +454,10 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     "CALL db.index.vector.queryNodes(\n"
                     "    $vector_index_name, $query_limit, $query_embedding\n"
                     ")\n"
-                    "YIELD node AS n, score AS similarity\n"
+                    "YIELD node AS n, score AS cosine_similarity\n"
                     f"WHERE {query_filter_string}\n"
                     "RETURN n\n"
-                    "ORDER BY similarity DESC\n"
+                    "ORDER BY cosine_similarity DESC\n"
                     "LIMIT $limit"
                 )
 
@@ -539,13 +482,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     do_exact_similarity_search = True
 
             if do_exact_similarity_search:
-                match similarity_metric:
-                    case SimilarityMetric.COSINE:
-                        vector_similarity_function = "vector.similarity.cosine"
-                    case SimilarityMetric.EUCLIDEAN:
-                        vector_similarity_function = "vector.similarity.euclidean"
-                    case _:
-                        vector_similarity_function = "vector.similarity.cosine"
+                vector_similarity_function = "vector.similarity.cosine"
 
                 query = (
                     f"MATCH (n:{sanitized_collection})\n"
@@ -554,9 +491,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     "WITH n,"
                     f"    {vector_similarity_function}("
                     f"        n.{sanitized_embedding_name}, $query_embedding"
-                    "    ) AS similarity\n"
+                    "    ) AS cosine_similarity\n"
                     "RETURN n\n"
-                    "ORDER BY similarity DESC\n"
+                    "ORDER BY cosine_similarity DESC\n"
                     f"{'LIMIT $limit' if limit is not None else ''}"
                 )
 
@@ -1067,7 +1004,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         sanitized_collection_or_relation: str,
         sanitized_embedding_name: str,
         dimensions: int,
-        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
     ) -> None:
         """Create a vector index if missing and wait for it to be online."""
         if not (1 <= dimensions <= 4096):
@@ -1100,14 +1036,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                 Neo4jVectorGraphStore.CacheIndexState.CREATING
             )
 
-            match similarity_metric:
-                case SimilarityMetric.COSINE:
-                    similarity_function = "cosine"
-                case SimilarityMetric.EUCLIDEAN:
-                    similarity_function = "euclidean"
-                case _:
-                    similarity_function = "cosine"
-
             match entity_type:
                 case EntityType.NODE:
                     query_index_for_expression = (
@@ -1134,7 +1062,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                     "}"
                 ),
                 dimensions=dimensions,
-                similarity_function=similarity_function,
+                similarity_function="cosine",
             )
 
             await self._await_create_index_if_not_exists(
@@ -1219,20 +1147,6 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         )
 
     @staticmethod
-    def _similarity_metric_property_name(embedding_name: str) -> str:
-        """
-        Get the similarity metric property name for an embedding.
-
-        Args:
-            embedding_name (str): The name of the embedding.
-
-        Returns:
-            str: The similarity metric property name.
-
-        """
-        return f"similarity_metric_for_{embedding_name}"
-
-    @staticmethod
     def _nodes_from_neo4j_nodes(
         neo4j_nodes: Iterable[Neo4jNode],
     ) -> list[Node]:
@@ -1267,21 +1181,7 @@ class Neo4jVectorGraphStore(VectorGraphStore):
                         list[float],
                         value_from_neo4j(neo4j_property_value),
                     )
-                    similarity_metric = SimilarityMetric(
-                        value_from_neo4j(
-                            neo4j_node[
-                                Neo4jVectorGraphStore._sanitize_name(
-                                    Neo4jVectorGraphStore._similarity_metric_property_name(
-                                        embedding_name,
-                                    ),
-                                )
-                            ],
-                        ),
-                    )
-                    node_embeddings[embedding_name] = (
-                        embedding_value,
-                        similarity_metric,
-                    )
+                    node_embeddings[embedding_name] = embedding_value
 
             nodes.append(
                 Node(
@@ -1314,6 +1214,14 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         return query_filter_string, query_filter_params
 
     @staticmethod
+    def _comparison_operator(expr: Equals | Ordering) -> str:
+        match expr:
+            case Equals():
+                return "="
+            case Ordering(op=op):
+                return op
+
+    @staticmethod
     def _render_filter_expr(
         entity_query_alias: str,
         query_value_parameter: str,
@@ -1322,56 +1230,43 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         _render = Neo4jVectorGraphStore._render_filter_expr
         _sanitize = Neo4jVectorGraphStore._sanitize_name
 
-        if isinstance(expr, FilterIsNull):
-            field_ref = (
-                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
-            )
-            return f"{field_ref} IS NULL", {}
+        def field_ref(field: str) -> str:
+            return f"{entity_query_alias}.{_sanitize(mangle_property_name(field))}"
 
-        if isinstance(expr, FilterIn):
-            field_ref = (
-                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
-            )
-            param_name = _sanitize(f"filter_expr_param_{uuid4()}")
-            condition = f"{field_ref} IN ${query_value_parameter}.{param_name}"
-            params: dict[str, FilterValue] = {param_name: expr.values}
-            return condition, params
-
-        if isinstance(expr, FilterComparison):
-            field_ref = (
-                f"{entity_query_alias}.{_sanitize(mangle_property_name(expr.field))}"
-            )
-            param_name = _sanitize(f"filter_expr_param_{uuid4()}")
-            condition = render_comparison(
-                left=field_ref,
-                op=expr.op,
-                right=f"${query_value_parameter}.{param_name}",
-                value=expr.value,
-            )
-            params = {
-                param_name: cast(FilterValue, sanitize_value_for_neo4j(expr.value))
-            }
-            return condition, params
-
-        if isinstance(expr, FilterAnd):
-            left_cond, left_params = _render(
-                entity_query_alias, query_value_parameter, expr.left
-            )
-            right_cond, right_params = _render(
-                entity_query_alias, query_value_parameter, expr.right
-            )
-            return f"({left_cond}) AND ({right_cond})", left_params | right_params
-        if isinstance(expr, FilterOr):
-            left_cond, left_params = _render(
-                entity_query_alias, query_value_parameter, expr.left
-            )
-            right_cond, right_params = _render(
-                entity_query_alias, query_value_parameter, expr.right
-            )
-            return f"({left_cond}) OR ({right_cond})", left_params | right_params
-        if isinstance(expr, FilterNot):
-            inner_cond, inner_params = _render(
-                entity_query_alias, query_value_parameter, expr.expr
-            )
-            return f"NOT ({inner_cond})", inner_params
-        raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+        match expr:
+            case IsNull(field):
+                return f"{field_ref(field)} IS NULL", {}
+            case In(field, values):
+                param_name = _sanitize(f"filter_expr_param_{uuid4()}")
+                condition = (
+                    f"{field_ref(field)} IN ${query_value_parameter}.{param_name}"
+                )
+                return condition, {param_name: cast(FilterValue, list(values))}
+            case Equals(field, value) | Ordering(field, _, value):
+                param_name = _sanitize(f"filter_expr_param_{uuid4()}")
+                condition = render_comparison(
+                    left=field_ref(field),
+                    op=Neo4jVectorGraphStore._comparison_operator(expr),
+                    right=f"${query_value_parameter}.{param_name}",
+                    value=value,
+                )
+                return condition, {
+                    param_name: cast(FilterValue, sanitize_value_for_neo4j(value))
+                }
+            case And(operands) | Or(operands):
+                joiner = " AND " if isinstance(expr, And) else " OR "
+                rendered = [
+                    _render(entity_query_alias, query_value_parameter, operand)
+                    for operand in operands
+                ]
+                params: dict[str, FilterValue] = {}
+                for _, operand_params in rendered:
+                    params |= operand_params
+                return joiner.join(
+                    f"({condition})" for condition, _ in rendered
+                ), params
+            case Not(operand):
+                inner_cond, inner_params = _render(
+                    entity_query_alias, query_value_parameter, operand
+                )
+                return f"NOT ({inner_cond})", inner_params

@@ -53,8 +53,8 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import StaticPool
 
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
     demangle_user_metadata_key,
     normalize_filter_field,
 )
@@ -1131,11 +1131,11 @@ class SQLAlchemySegmentStore(SegmentStore):
             ) from err
 
     @override
-    async def open_partition(
+    async def get_partition(
         self, partition_key: str
     ) -> SQLAlchemySegmentStorePartition | None:
         validate_partition_key(partition_key)
-        async with self._tracker("open_partition"):
+        async with self._tracker("get_partition"):
             async with self._create_session() as session:
                 partition_row = await SQLAlchemySegmentStore._get_partition_row(
                     session, partition_key
