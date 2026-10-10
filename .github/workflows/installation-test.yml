@@ -256,7 +256,9 @@ jobs:
 
           # Stage 2: Verify application readiness
           echo "Verifying application readiness at $READY_URL..."
-          if ! curl -sSf -X POST "$READY_URL" > /dev/null; then
+          if ! curl -sSf -X POST "$READY_URL" \
+            -H "Content-Type: application/json" \
+            -d '{"org_id":"readiness-check"}' > /dev/null; then
             echo "Server is alive but application readiness check failed!"
             echo "===== Server Logs ====="
             cat server-out.log || echo "Could not read server-out.log"

@@ -22,18 +22,19 @@ describe('MemMachine Client', () => {
       { org_id: 'org-1', project_id: 'project-1' },
       { org_id: 'org-1', project_id: 'project-2' }
     ]
-    jest.spyOn(client.client, 'post').mockResolvedValue({
+    const post = jest.spyOn(client.client, 'post').mockResolvedValue({
       data: mockProjects
     })
-    const projects = await client.getProjects()
+    const projects = await client.getProjects('org-1')
     expect(projects).toEqual(mockProjects)
+    expect(post).toHaveBeenCalledWith('/projects/list', { org_id: 'org-1' })
   })
 
   it('should handle error when getting projects', async () => {
     const client = new MemMachineClient({ api_key: 'test-api-key' })
     jest.spyOn(client.client, 'post').mockRejectedValue(new Error('Network Error'))
 
-    await expect(client.getProjects()).rejects.toThrow('Failed to get projects')
+    await expect(client.getProjects('org-1')).rejects.toThrow('Failed to get projects')
   })
 
   it('should get metrics successfully', async () => {

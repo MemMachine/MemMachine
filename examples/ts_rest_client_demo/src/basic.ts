@@ -57,9 +57,9 @@ export async function basic() {
   const episodicCount = await project.getEpisodicCount()
   console.log(`Episodic memory count: ${episodicCount}`)
 
-  // List all projects
-  const projects = await client.getProjects()
-  console.log('All projects:')
+  // List projects in this organization
+  const projects = await client.getProjects('my_org')
+  console.log('Projects in my_org:')
   console.dir(projects, { depth: null })
 
   // Health check
