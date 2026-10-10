@@ -367,6 +367,15 @@ class ProjectResponse(BaseModel):
     ]
 
 
+class ListProjectsSpec(BaseModel):
+    """Organization whose projects should be listed."""
+
+    org_id: Annotated[
+        SafeId,
+        Field(description=SpecDoc.ORG_ID, examples=Examples.ORG_ID),
+    ]
+
+
 class GetProjectSpec(BaseModel):
     """
     Specification model for retrieving a project.

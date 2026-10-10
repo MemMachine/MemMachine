@@ -27,7 +27,7 @@ Check for existing projects. This `POST` request returns a list of all projects 
 ```bash
 curl -X POST "http://127.0.0.1:8080/api/v2/projects/list" \
 -H "Content-Type: application/json" \
--d '{}'
+-d '{"org_id": "your-organization-id"}'
 ```
 </Step>
 <Step title="Create a Project">
