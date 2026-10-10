@@ -20,15 +20,21 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
-from memmachine_server.common.properties_json import decode_properties
 from memmachine_server.common.vector_store.data_types import (
     Record,
     VectorStorePartitionAlreadyExistsError,
+)
+from memmachine_server.common.vector_store.sql_columns import (
+    offset_column_name,
+    property_column_name,
 )
 from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
     SQLiteVecVectorStore,
     SQLiteVecVectorStoreParams,
     SQLiteVecVectorStorePartition,
+)
+from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
+    DeclaredSchemaContract,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -41,6 +47,8 @@ NAME = "test_name"
 VECTOR_DIM = 3
 # A partition key of the longest length, with characters no identifier allows.
 ANY_CHARACTERS_KEY = "Session/ID-1 ü".ljust(254, "x")
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
 INDEXED_PROPERTIES: dict[str, PropertyType] = {
     "name": str,
     "age": int,
@@ -75,8 +83,25 @@ async def _stored(collection) -> dict[UUID, dict]:
     """
     table = collection._records_table
     async with collection._create_session() as session:
-        rows = (await session.execute(select(table.c.uuid, table.c.properties))).all()
-    return {row.uuid: decode_properties(row.properties) for row in rows}
+        rows = (await session.execute(select(table))).all()
+    return {
+        row.uuid: _declared_values(row._mapping, collection.indexed_properties)
+        for row in rows
+    }
+
+
+def _declared_values(row, indexed_properties) -> dict:
+    """A row's declared properties that hold a value, each as written."""
+    values = {}
+    for key, property_type in indexed_properties.items():
+        value = row[property_column_name(key)]
+        if value is None:
+            continue
+        if property_type is datetime:
+            offset = timezone(timedelta(seconds=row[offset_column_name(key)]))
+            value = (_EPOCH + timedelta(microseconds=value)).astimezone(offset)
+        values[key] = value
+    return values
 
 
 @pytest_asyncio.fixture
@@ -291,6 +316,15 @@ class TestUpsertAndQuery:
 
 
 # ── Filters ──
+
+
+class TestDeclaredSchema(DeclaredSchemaContract):
+    """The declared-schema contract, against this store."""
+
+    @staticmethod
+    async def settle(collection) -> None:
+        # A write commits before it returns, so reads reflect it already.
+        pass
 
 
 class TestFilters:

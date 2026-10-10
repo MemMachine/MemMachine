@@ -12,9 +12,10 @@ registry](vector_store_partition_registry.md),
   Creating a partition creates nothing in Milvus.
 - **Fields:** `id` (VARCHAR primary key, `"{incarnation}:{record_uuid}"`),
   `record_uuid` (VARCHAR), `partition_key` (VARCHAR, the incarnation,
-  `is_partition_key`), `vector` (FLOAT_VECTOR), `properties` (JSON), and one
-  nullable typed field per declared property, `_p_<name>`. Dynamic fields
-  are off, so each property is stored once.
+  `is_partition_key`), `vector` (FLOAT_VECTOR), and one nullable typed field
+  per declared property, `_p_<name>`. Dynamic fields are off, and a record or
+  a filter naming an undeclared key is refused, so every property is a typed
+  field.
 - **Tenancy:** partition-key multi-tenancy with `partitionkey.isolation`: each
   segment builds its vector index per group of tenants, so a search filtered
   on one incarnation searches only its group. Milvus documents isolation for
@@ -35,11 +36,10 @@ registry](vector_store_partition_registry.md),
   only instants, a search answers with record UUIDs and scores, and Milvus
   refuses an offset with a seconds component. Milvus caps a collection at
   `proxy.maxFieldNum` fields (64 on 2.6, 256 on 3.0), so a store declares at
-  most 59 properties on 2.6.
-  Undeclared properties go in the JSON field, still filterable by path.
-  Negation is the complement, as on Qdrant: a negated condition holds where
-  the property has no value, which Milvus's SQL-style null evaluation does not
-  give on its own.
+  most 60 properties on 2.6. A condition whose value is of another type than
+  its key declares matches nothing. Negation is the complement, as on Qdrant:
+  a negated condition holds where the property has no value, which Milvus's
+  SQL-style null evaluation does not give on its own.
 - **Scores** are the server's (cosine similarity, inner product, and the
   square root of Milvus's squared Euclidean distance).
 - **Server-configured limits stay the server's.** A search `limit` reaches the
@@ -50,9 +50,7 @@ registry](vector_store_partition_registry.md),
   `quotaAndLimits.limits.maxQueryResultWindow`); both are settings, not
   constants. A native collection keeps the VARCHAR length it was created
   with, so a changed `max_varchar_length` applies to native collections
-  created afterward. A record's undeclared properties share one JSON field,
-  which the server refuses above `common.JSONMaxLength` bytes (65,536 unless
-  configured). A declared property's field name is its key, at most 32
+  created afterward. A declared property's field name is its key, at most 32
   bytes, under `_p_`, within `proxy.maxNameLength` (255 unless configured).
 - **Startup converges:** the collection and its indexes (named by their
   fields) are created at startup only when missing, and the collection is

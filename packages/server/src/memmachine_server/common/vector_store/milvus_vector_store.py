@@ -14,7 +14,6 @@ from pymilvus import AsyncMilvusClient, DataType
 from pymilvus.exceptions import MilvusException
 
 from memmachine_server.common.data_types import (
-    PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
     PropertyType,
     PropertyValue,
     SimilarityMetric,
@@ -41,11 +40,6 @@ from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
-from memmachine_server.common.properties_json import (
-    PROPERTY_TYPE_KEY,
-    PROPERTY_VALUE_KEY,
-    encode_properties,
-)
 from memmachine_server.common.utils import ensure_tz_aware
 
 from .data_types import (
@@ -77,8 +71,6 @@ A partition created again under a deleted one's key gets a fresh
 incarnation, so it holds only the entities written under that incarnation.
 """
 _VECTOR_FIELD = "vector"
-_PROPERTIES_FIELD = "properties"
-"""A JSON field holding the properties the collection's schema does not declare."""
 _DECLARED_FIELD_PREFIX = "_p_"
 """The prefix of the typed field holding a declared property."""
 
@@ -122,54 +114,24 @@ def _expression_string_literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _property_value_literal(value: PropertyValue) -> str:
-    """Return a Milvus expression literal for a property value."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        return repr(value)
-    if isinstance(value, datetime):
-        return _expression_string_literal(
-            ensure_tz_aware(value).astimezone(UTC).isoformat()
-        )
-    return _expression_string_literal(value)
-
-
 def _declared_property_value_literal(value: PropertyValue) -> str:
     """Return a Milvus expression literal for a declared property's value.
 
     A datetime is a TIMESTAMPTZ instant literal, which compares instants
     whatever the offsets.
     """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return repr(value)
     if isinstance(value, datetime):
         return f"ISO '{ensure_tz_aware(value).astimezone(UTC).isoformat()}'"
-    return _property_value_literal(value)
+    return _expression_string_literal(value)
 
 
-def _is_comparable_with_type(
-    value: PropertyValue, property_type: type[PropertyValue]
-) -> bool:
-    """Whether a filter value can be compared with a property of the type.
-
-    An int compares with an int or a float, and a float only with a float:
-    Milvus refuses a float literal against an INT64 field.
-    """
-    if isinstance(value, bool):
-        return property_type is bool
-    if isinstance(value, int):
-        return property_type in (int, float)
-    if isinstance(value, float):
-        return property_type is float
-    return isinstance(value, property_type)
-
-
-def _property_absent_expression(
-    key: str, declared: Mapping[str, type[PropertyValue]]
-) -> str:
+def _property_absent_expression(key: str) -> str:
     """A Milvus expression true exactly where the property has no value."""
-    if key in declared:
-        return f"{_DECLARED_FIELD_PREFIX}{key} is null"
-    return f"not exists {_PROPERTIES_FIELD}[{_expression_string_literal(key)}]"
+    return f"{_DECLARED_FIELD_PREFIX}{key} is null"
 
 
 def _condition_expression(
@@ -178,38 +140,18 @@ def _condition_expression(
 ) -> str:
     """A Milvus expression for one condition; false or null where the property has no value."""
     values = list(expr.values) if isinstance(expr, FilterIn) else [expr.value]
-    declared_type = declared.get(expr.field)
     # A value of another type never equals or orders against the property.
-    if declared_type is None:
-        entry = f"{_PROPERTIES_FIELD}[{_expression_string_literal(expr.field)}]"
-        target = f"{entry}[{_expression_string_literal(PROPERTY_VALUE_KEY)}]"
-        type_names = ", ".join(
-            _expression_string_literal(type_name)
-            for property_type, type_name in PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME.items()
-            if any(_is_comparable_with_type(value, property_type) for value in values)
-        )
-        type_check = (
-            f"{entry}[{_expression_string_literal(PROPERTY_TYPE_KEY)}] "
-            f"in [{type_names}] && "
-        )
-        render = _property_value_literal
-    else:
-        values = [
-            value for value in values if _is_comparable_with_type(value, declared_type)
-        ]
-        target = f"{_DECLARED_FIELD_PREFIX}{expr.field}"
-        type_check = ""
-        render = _declared_property_value_literal
+    values = [value for value in values if type(value) is declared[expr.field]]
     if not values:
         return _FALSE_EXPR
+    target = f"{_DECLARED_FIELD_PREFIX}{expr.field}"
     match expr:
         case FilterIn():
-            literals = ", ".join(render(value) for value in values)
-            return f"{type_check}{target} in [{literals}]"
+            return f"{target} in [{', '.join(_declared_property_value_literal(value) for value in values)}]"
         case FilterComparison(op="="):
-            return f"{type_check}{target} == {render(values[0])}"
+            return f"{target} == {_declared_property_value_literal(values[0])}"
         case FilterComparison(op=op):
-            return f"{type_check}{target} {op} {render(values[0])}"
+            return f"{target} {op} {_declared_property_value_literal(values[0])}"
 
 
 def _filter_expression(
@@ -234,7 +176,7 @@ def _filter_expression(
                 for operand in (left, right)
             )
         case FilterIsNull(field):
-            absent = _property_absent_expression(field, declared)
+            absent = _property_absent_expression(field)
             return f"not ({absent})" if negate else absent
         case FilterComparison(field, "!=", value):
             equal = FilterComparison(field=field, op="=", value=value)
@@ -242,7 +184,7 @@ def _filter_expression(
         case FilterComparison() | FilterIn():
             condition = _condition_expression(expr, declared)
             if negate:
-                return f"(not ({condition})) || ({_property_absent_expression(expr.field, declared)})"
+                return f"(not ({condition})) || ({_property_absent_expression(expr.field)})"
             return condition
         case _:
             raise TypeError(f"Unsupported filter expression type: {type(expr)}")
@@ -269,6 +211,10 @@ def _incarnation_filter(incarnation: UUID) -> str:
 
 class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
     """A partition backed by Milvus: one partition-key value inside the store's collection."""
+
+    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
+        {FilterComparison, FilterIn, FilterIsNull, FilterAnd, FilterOr, FilterNot}
+    )
 
     @staticmethod
     def _passes_threshold(
@@ -308,6 +254,11 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
         self._collection_name = collection_name
         self._request_timeout_seconds = request_timeout_seconds
 
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return MilvusVectorStorePartition._SUPPORTED_FILTER_NODES
+
     def _primary_id(self, record_uuid: UUID) -> str:
         """The primary key of a record: the incarnation and the record UUID.
 
@@ -324,13 +275,6 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
             _RECORD_UUID_FIELD: str(record.uuid),
             _PARTITION_KEY_FIELD: str(self._incarnation),
             _VECTOR_FIELD: record.vector,
-            _PROPERTIES_FIELD: encode_properties(
-                {
-                    key: value
-                    for key, value in record.properties.items()
-                    if key not in declared
-                }
-            ),
         }
         for key in declared:
             value = record.properties.get(key)
@@ -578,10 +522,6 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
                 field_name=_VECTOR_FIELD,
                 datatype=DataType.FLOAT_VECTOR,
                 dim=self._vector_dimensions,
-            )
-            schema.add_field(
-                field_name=_PROPERTIES_FIELD,
-                datatype=DataType.JSON,
             )
             for key, declared_type in self._indexed_properties.items():
                 if declared_type is str:

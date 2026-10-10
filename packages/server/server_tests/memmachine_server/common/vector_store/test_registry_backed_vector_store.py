@@ -41,6 +41,11 @@ type Preparation = Callable[[str, UUID], Awaitable[None]]
 
 
 class _Partition(RegistryBackedVectorStorePartition):
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return frozenset()
+
     @override
     async def _upsert(self, records: list[Record]) -> None:
         raise NotImplementedError

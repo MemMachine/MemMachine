@@ -57,6 +57,9 @@ from memmachine_server.common.vector_store.qdrant_vector_store import (
     QdrantVectorStoreParams,
     QdrantVectorStorePartition,
 )
+from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
+    DeclaredSchemaContract,
+)
 from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
     PartitionLifecycleContract,
 )
@@ -244,49 +247,6 @@ class TestPartitionLifecycle:
 
         await store.delete_partition("coll_a")
         await store.delete_partition("coll_b")
-
-
-# ── Strict mode ──
-
-
-class TestStrictMode:
-    @pytest.mark.asyncio
-    async def test_the_collection_overrides_the_server_strict_mode_default(
-        self, any_qdrant_client, store, collection
-    ):
-        # The server defaults new collections to strict mode, so the store's
-        # collection serves a filter on an unindexed property only by turning
-        # strict mode off.
-        default_collection = f"strict_mode_default_{uuid4().hex}"
-        await any_qdrant_client.create_collection(
-            default_collection,
-            vectors_config=models.VectorParams(
-                size=VECTOR_DIM, distance=models.Distance.COSINE
-            ),
-        )
-        try:
-            default_info = await any_qdrant_client.get_collection(default_collection)
-        finally:
-            await any_qdrant_client.delete_collection(default_collection)
-        assert default_info.config.strict_mode_config is not None
-        assert default_info.config.strict_mode_config.enabled is True
-
-        info = await any_qdrant_client.get_collection(store._vector_store_name)
-        assert info.config.strict_mode_config is not None
-        assert info.config.strict_mode_config.enabled is False
-
-        vector = _normalize([1.0, 0.0, 0.0])
-        alpha = _make_record(vector=vector, properties={"topic": "alpha"})
-        beta = _make_record(vector=vector, properties={"topic": "beta"})
-        await collection.upsert(records=[alpha, beta])
-        query_results = list(
-            await collection.query(
-                query_vectors=[vector],
-                limit=10,
-                property_filter=Comparison(field="topic", op="=", value="alpha"),
-            )
-        )
-        assert [match.record_uuid for match in query_results[0].matches] == [alpha.uuid]
 
 
 # ── Upsert + Query ──
@@ -590,6 +550,15 @@ async def test_an_upsert_that_fails_otherwise_is_not_sent_again(error: Exception
 
 
 # ── Filters ──
+
+
+class TestDeclaredSchema(DeclaredSchemaContract):
+    """The declared-schema contract, against this store."""
+
+    @staticmethod
+    async def settle(collection) -> None:
+        # A Qdrant write returns once applied, so reads reflect it already.
+        pass
 
 
 class TestFilters:
@@ -1292,11 +1261,21 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_a_filtered_query_returns_only_its_own_partitions_records(
-        self, store
+        self, any_qdrant_client, registry_engine
     ):
         """Two partitions share the store's native collection and hold
         records that match the same filters; a filtered query returns its
         own records."""
+        # A name of its own, declaring `note` beside the shared keys.
+        store = QdrantVectorStore(
+            await _params(
+                any_qdrant_client,
+                registry_engine,
+                vector_store_name="filtered_isolation",
+                indexed_properties={**INDEXED_PROPERTIES, "note": str},
+            )
+        )
+        await store.startup()
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
         coll_a = await store.open_partition("tenant_a")
@@ -1305,7 +1284,6 @@ class TestPartitionIsolation:
         assert coll_b is not None
 
         vector = _normalize([1.0, 0.0, 0.0])
-        # "note" is not declared in the schema.
         properties: dict[str, PropertyValue] = {
             "name": "alice",
             "age": 30,
@@ -1528,8 +1506,11 @@ _MODEL_STEPS = 200
 _MODEL_POOL_SIZE = 12
 _MODEL_STORE_NAME = "model"
 _MODEL_KEYS = ("model_a", "model_b")
-# "tag" is not declared in the schema.
-_MODEL_INDEXED_PROPERTIES: dict[str, PropertyType] = {"color": str, "size": int}
+_MODEL_INDEXED_PROPERTIES: dict[str, PropertyType] = {
+    "color": str,
+    "size": int,
+    "tag": str,
+}
 _MODEL_COLORS = ("red", "green", "blue")
 _MODEL_TAGS = ("x", "y")
 _MODEL_PROBE = [1.0, 0.0, 0.0]
@@ -2236,6 +2217,93 @@ class TestCollectionProvisioningAcrossWorkers:
             await client_a.delete_collection(native)
             await client_a.close()
             await client_b.close()
+
+
+@pytest.mark.integration
+class TestStrictMode:
+    """The collection is created in strict mode: a filter on an unindexed key is refused."""
+
+    @pytest.mark.asyncio
+    async def test_the_collection_is_strict(self, qdrant_client, registry_engine):
+        store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
+        await store.startup()
+        info = await qdrant_client.get_collection(VECTOR_STORE_NAME)
+        assert info.config.strict_mode_config is not None
+        assert info.config.strict_mode_config.enabled is True
+        assert info.config.strict_mode_config.unindexed_filtering_retrieve is False
+        # The server enforces it: a filter on a key the store never indexed
+        # is refused rather than scanned for.
+        with pytest.raises(UnexpectedResponse, match=r"(?i)strict mode|index"):
+            await qdrant_client.scroll(
+                collection_name=VECTOR_STORE_NAME,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="never_indexed", match=models.MatchValue(value="x")
+                        )
+                    ]
+                ),
+                limit=1,
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_predicate_of_another_type_matches_nothing(
+        self, qdrant_client, registry_engine
+    ):
+        """The store answers a mistyped leaf itself; the server would refuse it."""
+        store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
+        await store.startup()
+        await store.delete_partition("mistyped")
+        await store.create_partition("mistyped")
+        partition = await store.open_partition("mistyped")
+        assert partition is not None
+        held = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"age": 5})
+        await partition.upsert(records=[held])
+
+        for property_filter in (
+            Comparison(field="age", op="=", value="5"),
+            Comparison(field="age", op=">", value=1.5),
+            In(field="age", values=["5"]),
+            Comparison(field="name", op="=", value=5),
+        ):
+            [result] = await partition.query(
+                query_vectors=[held.vector], limit=5, property_filter=property_filter
+            )
+            assert result.matches == [], property_filter
+        [result] = await partition.query(
+            query_vectors=[held.vector],
+            limit=5,
+            property_filter=Comparison(field="age", op="=", value=5),
+        )
+        assert [match.record_uuid for match in result.matches] == [held.uuid]
+        await store.delete_partition("mistyped")
+
+
+class TestStrictModeIsRequested:
+    """Local mode does not record strict mode, so the request itself is checked."""
+
+    @pytest.mark.asyncio
+    async def test_startup_creates_the_collection_strict(
+        self, monkeypatch, registry_engine
+    ):
+        client = AsyncQdrantClient(location=":memory:")
+        requested: dict[str, models.StrictModeConfig | None] = {}
+        original = client.create_collection
+
+        async def recording_create_collection(*args, **kwargs):
+            requested[kwargs["collection_name"]] = kwargs.get("strict_mode_config")
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(client, "create_collection", recording_create_collection)
+        store = QdrantVectorStore(await _params(client, registry_engine))
+        await store.startup()
+
+        assert set(requested) == {VECTOR_STORE_NAME}
+        config = requested[VECTOR_STORE_NAME]
+        assert config is not None
+        assert config.enabled is True
+        assert config.unindexed_filtering_retrieve is False
+        assert config.unindexed_filtering_update is False
 
 
 class TestLifecycleContract(PartitionLifecycleContract):

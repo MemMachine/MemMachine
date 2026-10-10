@@ -54,9 +54,6 @@ Milvus supports two deployment shapes through the same configuration fields:
 The Milvus store needs Milvus 2.6.8 or later. Milvus
 Lite is not supported: it is a separate embedded engine that does not behave
 like the server. For a local, single-node deployment, use SQLiteVectorStore.
-A record's undeclared properties are stored together as one JSON value, which
-Milvus refuses above its `common.JSONMaxLength` setting (65,536 bytes unless
-the server sets it otherwise).
 
 Example:
 

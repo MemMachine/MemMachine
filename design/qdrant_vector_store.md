@@ -20,7 +20,15 @@ registry](vector_store_partition_registry.md),
   A handle's searches filter on it, as do the purge's scrolls and deletes. A
   handle's deletes name its points' ids instead (see [Point ids](#point-ids)).
 - **Declared properties:** a payload index per property of the store's
-  declared schema, typed by the property's type.
+  declared schema, typed by the property's type. A record or a filter naming
+  any other key is refused.
+- **Strict mode:** the collection is created with filtering on unindexed
+  fields off, for reads and updates alike, so the server refuses a filter on
+  a field it has not indexed instead of scanning for it. Every key a filter
+  may name is indexed: the declared keys and the incarnation. A condition
+  whose value is of another type than its key declares matches nothing; the
+  store answers it with a filter no point satisfies, since the server would
+  refuse it for the field's index.
 - **Startup converges:** the collection and each payload index are created at
   startup under separate already-exists guards, so a startup that failed
   between them is completed by the next.

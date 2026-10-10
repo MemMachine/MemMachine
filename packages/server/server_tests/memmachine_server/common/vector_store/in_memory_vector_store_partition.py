@@ -25,6 +25,10 @@ from memmachine_server.common.vector_store.data_types import (
     QueryResult,
     Record,
 )
+from memmachine_server.common.vector_store.declared_properties import (
+    validate_declared_properties,
+    validate_supported_filter,
+)
 
 # ---------------------------------------------------------------------------
 # Filter evaluation
@@ -114,18 +118,27 @@ def _passes_threshold(score: float, threshold: float, higher_is_better: bool) ->
 class InMemoryVectorStorePartition(VectorStorePartition):
     """In-memory VectorStorePartition for testing.
 
-    Supports all similarity metrics (cosine, dot, euclidean, manhattan)
-    and full FilterExpr evaluation on record properties.
+    Supports all similarity metrics (cosine, dot, euclidean, manhattan),
+    evaluates FilterExpr on record properties, and enforces the declared
+    schema the way a real store does.
     """
+
+    _SUPPORTED_FILTER_NODES = frozenset({Comparison, In, IsNull, And, Or, Not})
 
     def __init__(
         self,
         *,
         similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         indexed_properties: Mapping[str, PropertyType] | None = None,
+        supported_filter_nodes: Iterable[type] | None = None,
     ) -> None:
         self._similarity_metric = similarity_metric
         self._indexed_properties = dict(indexed_properties or {})
+        self._supported_filter_nodes = (
+            frozenset(supported_filter_nodes)
+            if supported_filter_nodes is not None
+            else InMemoryVectorStorePartition._SUPPORTED_FILTER_NODES
+        )
         self.records: dict[UUID, Record] = {}
 
     @property
@@ -136,7 +149,14 @@ class InMemoryVectorStorePartition(VectorStorePartition):
     def indexed_properties(self) -> Mapping[str, PropertyType]:
         return self._indexed_properties
 
+    @property
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return self._supported_filter_nodes
+
     async def upsert(self, *, records: Iterable[Record]) -> None:
+        records = list(records)
+        for record in records:
+            validate_declared_properties(record.properties, self._indexed_properties)
         for record in records:
             self.records[record.uuid] = Record(
                 uuid=record.uuid,
@@ -152,6 +172,11 @@ class InMemoryVectorStorePartition(VectorStorePartition):
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
     ) -> list[QueryResult]:
+        if property_filter is not None:
+            validate_supported_filter(
+                property_filter, self._indexed_properties, self._supported_filter_nodes
+            )
+
         metric = self._similarity_metric
         higher_is_better = metric.higher_is_better
 
