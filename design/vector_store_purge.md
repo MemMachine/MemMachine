@@ -4,9 +4,9 @@ Part of [vector store horizontal scaling](vector_store_horizontal_scaling.md).
 
 ## Problem
 
-Deleting a Qdrant or Milvus collection with one filter-delete by name, issued
-when the collection is deleted, has three defects once more than one process
-serves a backend:
+Deleting a partition of a Qdrant or Milvus store with one filter-delete,
+issued when the partition is deleted, has three defects once more than one
+process serves a backend:
 
 - A write in flight during the deletion, from a handle in another process,
   lands after it and outlives it.
@@ -22,9 +22,9 @@ and retried.
 
 ### Tombstones
 
-`unregister` removes the collection's row and queues the incarnation's
-*tombstone* in one transaction (see [collection
-registry](vector_store_collection_registry.md)). The collection is unreachable
+`unregister` removes the partition's row and queues the incarnation's
+*tombstone* in one transaction (see [partition
+registry](vector_store_partition_registry.md)). The partition is unreachable
 when it commits. Its records stay in the backend until purge rounds reclaim
 them.
 
@@ -45,7 +45,7 @@ A tombstone becomes *due* once `tombstone_retention_seconds` (per store;
 - **The retention decides nothing about validity.** A stale write is refused
   by the handle's check after it; the retention only has to outlast any write
   in flight. A write that lands after its tombstone is gone stays under a dead
-  incarnation no collection reads: leaked storage, never a wrong result.
+  incarnation no partition reads: leaked storage, never a wrong result.
 - **The configuration enforces a floor of 10 × `request_timeout_seconds` +
   300 s.** The request timeout is the only part of a write's time in flight
   the store knows. Neither Qdrant nor Milvus bounds how long a received write
@@ -62,12 +62,12 @@ A tombstone becomes *due* once `tombstone_retention_seconds` (per store;
   order). A changed retention therefore reaches every tombstone already
   queued, and no client clock enters a decision.
 - An incarnation is never re-minted while its tombstone exists, so no new
-  collection can adopt, or have reclaimed out from under it, a dead life's
+  partition can adopt, or have reclaimed out from under it, a dead life's
   records.
 
 ### The purge round
 
-`VectorStore.purge_deleted_collections()` is part of the contract: each call
+`VectorStore.purge_deleted_partitions()` is part of the contract: each call
 does a bounded amount of work and returns whether it ran a round, `False` once
 nothing is due, so a caller drains the queue by calling it until `False`. On
 Qdrant and Milvus a call is one round on the tombstone that came due first;
@@ -86,10 +86,9 @@ both SQLite stores, whose deletion reclaims physically, return `False`.
    SQLite drops the locking clause; there the claim's write serializes claims,
    for one statement.
 2. **Round.** The registry calls the store's round with the tombstone's
-   namespace, configuration, and incarnation, with no transaction open. The
-   round looks for records under the incarnation where the namespace and
-   configuration locate them, deletes what it finds (per backend, below), and
-   returns whether it found any.
+   incarnation, with no transaction open. The round looks for records under
+   the incarnation in the store's native collection, deletes what it finds (per
+   backend, below), and returns whether it found any.
 3. **Record.** In a short transaction: a round that found nothing removes the
    tombstone, which frees the incarnation; a round that found records ends its
    claim, keeping the tombstone due, and resets its attempts without
@@ -190,7 +189,7 @@ holds nothing: the round finds nothing, and the tombstone goes.
 
 The store never schedules its own purge. The resource manager starts one
 sweeper task per vector store the first time it hands the store out, and
-`close()` cancels them. A sweeper calls `purge_deleted_collections()` again
+`close()` cancels them. A sweeper calls `purge_deleted_partitions()` again
 after 1 s when it ran a round and after 60 s when nothing was due; a round that
 raises is logged and retried a tick later. Sweepers on other
 processes need no coordination: the claim arbitrates.
@@ -200,14 +199,14 @@ processes need no coordination: the claim arbitrates.
 Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 2 CPUs and SQLite in a file.
 
-- Backoff (commit 96a8b5bf6's claim; PostgreSQL 18.6 and SQLite 3.50.4;
-  1,000,000 tombstones not yet due; median of 50 calls): a call that claims
-  nothing reads each due tombstone that is backing off and none that is not
-  yet due. It took 1.5 / 2.9 / 20 ms on PostgreSQL and 1.0 / 4.5 / 40 ms on
-  SQLite with 1k / 10k / 100k tombstones backing off, and 1.3 ms on PostgreSQL
-  and 0.7 ms on SQLite with none due.
-- Interference (commit 503687c35's lease, whose rounds cost the same database
-  time as commit 96a8b5bf6's; 20,000 live collections and 20,000 due
+- Backoff (the claim of #1734's commit 96a8b5bf6, which this registry ports;
+  PostgreSQL 18.6 and SQLite 3.50.4; 1,000,000 tombstones not yet due; median
+  of 50 calls): a call that claims nothing reads each due tombstone that is
+  backing off and none that is not yet due. It took 1.5 / 2.9 / 20 ms on
+  PostgreSQL and 1.0 / 4.5 / 40 ms on SQLite with 1k / 10k / 100k tombstones
+  backing off, and 1.3 ms on PostgreSQL and 0.7 ms on SQLite with none due.
+- Interference (the lease of #1734's commit 503687c35, whose rounds cost the
+  same database time as 96a8b5bf6's; 20,000 live registry rows and 20,000 due
   tombstones; 16 interactive workers checking handles' liveness beside two
   sweepers, three phases each): on PostgreSQL 16, with rounds back to back
   (about 520 per second) or of 20 ms (about 70 per second), interactive
@@ -266,10 +265,10 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - **Store when the lease ends (`claimed_until`).** Rejected, as `retry_at` is,
   in favor of computing from the recorded `claimed_at`, so a changed lease
   reaches claims already held.
-- **A progress cursor on the tombstone**, as the segment store's queue keeps.
+- **A progress cursor on the tombstone**, as the event memory store's queue keeps.
   Qdrant's round deletes the whole incarnation at once and leaves nothing to
   resume. Milvus lists the incarnation's keys by its field, and its rounds
-  stayed flat to the end of a 1M purge, where the segment store's batches
+  stayed flat to the end of a 1M purge, where the event memory store's batches
   needed the cursor to avoid stepping over every row already purged; listing
   Milvus keys by primary-key range, which a cursor needs, measured no faster.
   A cursor would also make the round carry a backend-specific position.
