@@ -24,7 +24,6 @@ from memmachine_server.common.vector_store.data_types import (
     VectorStorePartitionAlreadyExistsError,
 )
 from memmachine_server.common.vector_store.sql_columns import (
-    offset_column_name,
     property_column_name,
 )
 from memmachine_server.common.vector_store.sqlite_vector_store import (
@@ -92,15 +91,14 @@ async def _stored(collection) -> dict[UUID, dict]:
 
 
 def _declared_values(row, indexed_properties) -> dict:
-    """A row's declared properties that hold a value, each as written."""
+    """A row's declared properties that hold a value, a datetime as its instant in UTC."""
     values = {}
     for key, property_type in indexed_properties.items():
         value = row[property_column_name(key)]
         if value is None:
             continue
         if property_type is datetime:
-            offset = timezone(timedelta(seconds=row[offset_column_name(key)]))
-            value = (_EPOCH + timedelta(microseconds=value)).astimezone(offset)
+            value = _EPOCH + timedelta(microseconds=value)
         values[key] = value
     return values
 
@@ -536,8 +534,8 @@ class TestFilters:
         assert len(uuids) == 1
 
     @pytest.mark.asyncio
-    async def test_datetime_timezone_roundtrip(self, collection):
-        """Original timezone is preserved through storage."""
+    async def test_a_datetime_is_stored_as_its_instant_in_utc(self, collection):
+        """A datetime is stored as its instant, read back in UTC."""
         v1 = _normalize([1.0, 0.0, 0.0])
         est = timezone(timedelta(hours=-5))
         dt = datetime(2024, 6, 15, 7, 0, 0, tzinfo=est)
@@ -546,7 +544,7 @@ class TestFilters:
 
         got = (await _stored(collection))[r1.uuid]["created_at"]
         assert got == dt
-        assert got.utcoffset() == timedelta(hours=-5)
+        assert got.utcoffset() == timedelta(0)
 
     # ── In / And / Or / Not ──
 

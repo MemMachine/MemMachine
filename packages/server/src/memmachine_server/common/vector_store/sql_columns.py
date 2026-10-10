@@ -8,9 +8,7 @@ declared key can never collide with the table's own columns.
 
 SQLite has no datetime type, so a datetime property is stored as an integer
 of microseconds since the epoch, the precision the SQL stores keep, and a
-bound compares as the same integer. Its UTC offset in seconds is stored
-beside it, in a column no filter reads, so the stored value is the one
-written.
+bound compares as the same integer.
 """
 
 from collections.abc import Mapping
@@ -22,7 +20,6 @@ from sqlalchemy import (
     Column,
     Float,
     Index,
-    Integer,
     Table,
     Text,
     and_,
@@ -41,10 +38,9 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
-from memmachine_server.common.utils import ensure_tz_aware, utc_offset_seconds
+from memmachine_server.common.utils import ensure_tz_aware
 
 PROPERTY_COLUMN_PREFIX = "p_"
-OFFSET_COLUMN_PREFIX = "tz_"
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MICROSECOND = timedelta(microseconds=1)
@@ -55,22 +51,13 @@ def property_column_name(key: str) -> str:
     return f"{PROPERTY_COLUMN_PREFIX}{key}"
 
 
-def offset_column_name(key: str) -> str:
-    """The column holding a declared datetime property's UTC offset in seconds."""
-    return f"{OFFSET_COLUMN_PREFIX}{key}"
-
-
 def epoch_microseconds(value: datetime) -> int:
     """A datetime as microseconds since the epoch, exactly."""
     return (ensure_tz_aware(value) - _EPOCH) // _MICROSECOND
 
 
 def property_columns(indexed_properties: Mapping[str, PropertyType]) -> list[Column]:
-    """
-    One nullable column per declared key, typed by the key's declared type.
-
-    A datetime key also gets the nullable column of its UTC offset.
-    """
+    """One nullable column per declared key, typed by the key's declared type."""
     columns: list[Column] = []
     for key, property_type in indexed_properties.items():
         if property_type is bool:
@@ -82,8 +69,6 @@ def property_columns(indexed_properties: Mapping[str, PropertyType]) -> list[Col
         else:
             column_type = Text()
         columns.append(Column(property_column_name(key), column_type, nullable=True))
-        if property_type is datetime:
-            columns.append(Column(offset_column_name(key), Integer(), nullable=True))
     return columns
 
 
@@ -116,7 +101,6 @@ def property_column_values(
     for key, value in properties.items():
         if isinstance(value, datetime):
             values[property_column_name(key)] = epoch_microseconds(value)
-            values[offset_column_name(key)] = utc_offset_seconds(value)
         else:
             values[property_column_name(key)] = value
     return values
