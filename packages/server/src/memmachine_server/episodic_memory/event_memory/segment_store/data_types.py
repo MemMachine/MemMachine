@@ -46,26 +46,6 @@ class SegmentStorePartitionConfig(BaseModel):
         return value
 
 
-class SegmentStorePartitionConfigMismatchError(Exception):
-    """Raised when opening a partition with a different configuration than it was created with."""
-
-    def __init__(
-        self,
-        partition_key: str,
-        existing_config: SegmentStorePartitionConfig,
-        requested_config: SegmentStorePartitionConfig,
-    ) -> None:
-        """Initialize with the partition key and configurations."""
-        self.partition_key = partition_key
-        self.existing_config = existing_config
-        self.requested_config = requested_config
-        super().__init__(
-            f"Partition {partition_key!r} already exists with a different configuration. "
-            f"Existing config: {existing_config.model_dump_json()}, "
-            f"requested config: {requested_config.model_dump_json()}."
-        )
-
-
 class SegmentStoreAttemptsExhaustedError(Exception):
     """The store exhausted its internal attempts; diagnose the cause.
 
