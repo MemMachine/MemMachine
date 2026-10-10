@@ -82,8 +82,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           segment_store: profile_storage
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
-          properties_schema:
-            source_role: str
         short_term_memory:
           session_key: user-session-id
           llm_model: my-summarization-llm
@@ -107,8 +105,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           segment_store: profile_storage # ID of the SQL database used by SegmentStore
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
-          properties_schema: # Optional filterable event-memory properties
-            source_role: str
         short_term_memory: # Configuration for short-term memory
           session_key: user-session-id # Reuses parent session_key
           llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
@@ -137,7 +133,6 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. Event backend can omit it to use embedding scores directly. | Depends on backend |
     | `long_term_memory.session_id`   | The same `session_key` used for long-term memory operations.               | *Inherited from `session_key`* |
-    | `long_term_memory.properties_schema` | Event backend only: user-defined filterable properties and their type names. | `{}` |
     | `short_term_memory.session_key` | Session key for short-term memory summarization.                           | *Inherited from `session_key`* |
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
     | `short_term_memory.summary_prompt_system` | System prompt ID for short-term summarization. | *Required* |
@@ -348,7 +343,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               grpc_port: 6334
               prefer_grpc: false
               https: false
-              collection_registry: profile_storage
+              partition_registry: profile_storage
               request_timeout_seconds: 30
               # api_key: $QDRANT_API_KEY
           milvus_vector_store:
@@ -358,7 +353,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               # uri: https://example.api.gcp-us-west1.zillizcloud.com
               # token: $MILVUS_TOKEN
               # db_name: default
-              collection_registry: profile_storage
+              partition_registry: profile_storage
               request_timeout_seconds: 30
       ```
     </Tab>
@@ -392,7 +387,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               grpc_port: 6334 # gRPC port
               prefer_grpc: false # Use gRPC instead of REST
               https: false # Use TLS
-              collection_registry: profile_storage # Relational database holding the collection registry
+              partition_registry: profile_storage # Relational database holding the partition registry
               request_timeout_seconds: 30 # Bounds every request to Qdrant
               # api_key: $QDRANT_API_KEY # Required for Qdrant Cloud
           milvus_vector_store: # VectorStore for event or vector-backed semantic memory
@@ -401,7 +396,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
               uri: http://localhost:19530 # Milvus server or Zilliz Cloud endpoint
               # token: $MILVUS_TOKEN # Required for Zilliz Cloud or auth-enabled Milvus
               # db_name: default # Optional Milvus database name
-              collection_registry: profile_storage # Relational database holding the collection registry
+              partition_registry: profile_storage # Relational database holding the partition registry
               request_timeout_seconds: 30 # Bounds every request to Milvus
       ```
     </Tab>
@@ -419,8 +414,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.uri`  | The URI for the given database.                                      | Depends on provider |
       | `config.token` | Milvus auth token for Zilliz Cloud or auth-enabled Milvus server.   | `""` |
       | `config.metrics_factory_id` | ID of the metrics exporter factory the Qdrant, Milvus, or Neo4j store reports its operation latencies to. | `prometheus` |
-      | `config.collection_registry` | Qdrant and Milvus: the name of a relational database under `resources.databases` that holds the store's collection registry (see [Vector stores](/open_source/databases#vector-stores)). | *Required* |
-      | `config.tombstone_retention_seconds` | Qdrant and Milvus: whole seconds a deleted collection's records are kept before they are purged; at least 10 × `request_timeout_seconds` + 300. | `86400` |
+      | `config.partition_registry` | Qdrant and Milvus: the name of a relational database under `resources.databases` that holds the store's partition registry (see [Vector stores](/open_source/databases#vector-stores)). | *Required* |
+      | `config.tombstone_retention_seconds` | Qdrant and Milvus: whole seconds a deleted partition's records are kept before they are purged; at least 10 × `request_timeout_seconds` + 300. | `86400` |
       | `config.request_timeout_seconds` | Qdrant and Milvus: whole seconds a request to the vector store may take before the client gives up; must be positive. | `30` |
       | `config.max_varchar_length` | Milvus: bytes a declared string property can hold, at most the server's `proxy.maxVarCharLength`. A native collection keeps the length it was created with. | `65535` |
       | `config.purge_batch_size` | Milvus: the most entities one purge round lists and deletes, at most the server's `quotaAndLimits.limits.maxQueryResultWindow`. | `10000` |

@@ -1,11 +1,15 @@
-"""In-memory VectorStoreCollection implementation for testing."""
+"""In-memory VectorStorePartition implementation for testing."""
 
 import math
 import operator
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from uuid import UUID
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import (
+    PropertyType,
+    PropertyValue,
+    SimilarityMetric,
+)
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -15,12 +19,15 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
-from memmachine_server.common.vector_store import VectorStoreCollection
+from memmachine_server.common.vector_store import VectorStorePartition
 from memmachine_server.common.vector_store.data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionConfig,
+)
+from memmachine_server.common.vector_store.declared_properties import (
+    require_declared_properties,
+    require_supported_filter,
 )
 
 # ---------------------------------------------------------------------------
@@ -104,26 +111,58 @@ def _passes_threshold(score: float, threshold: float, higher_is_better: bool) ->
 
 
 # ---------------------------------------------------------------------------
-# InMemoryVectorStoreCollection
+# InMemoryVectorStorePartition
 # ---------------------------------------------------------------------------
 
 
-class InMemoryVectorStoreCollection(VectorStoreCollection):
-    """In-memory VectorStoreCollection for testing.
+class InMemoryVectorStorePartition(VectorStorePartition):
+    """In-memory VectorStorePartition for testing.
 
-    Supports all similarity metrics (cosine, dot, euclidean, manhattan)
-    and full FilterExpr evaluation on record properties.
+    Supports all similarity metrics (cosine, dot, euclidean, manhattan),
+    evaluates FilterExpr on record properties, and enforces the declared
+    schema the way a real store does.
     """
 
-    def __init__(self, collection_config: VectorStoreCollectionConfig) -> None:
-        self.collection_config = collection_config
+    _SUPPORTED_FILTER_NODES = frozenset({Comparison, In, IsNull, And, Or, Not})
+
+    def __init__(
+        self,
+        *,
+        partition_key: str = "in_memory",
+        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
+        indexed_properties: Mapping[str, PropertyType] | None = None,
+        supported_filter_nodes: Iterable[type] | None = None,
+    ) -> None:
+        self._partition_key = partition_key
+        self._similarity_metric = similarity_metric
+        self._indexed_properties = dict(indexed_properties or {})
+        self._supported_filter_nodes = (
+            frozenset(supported_filter_nodes)
+            if supported_filter_nodes is not None
+            else InMemoryVectorStorePartition._SUPPORTED_FILTER_NODES
+        )
         self.records: dict[UUID, Record] = {}
 
     @property
-    def config(self) -> VectorStoreCollectionConfig:
-        return self.collection_config
+    def partition_key(self) -> str:
+        return self._partition_key
+
+    @property
+    def similarity_metric(self) -> SimilarityMetric:
+        return self._similarity_metric
+
+    @property
+    def indexed_properties(self) -> Mapping[str, PropertyType]:
+        return self._indexed_properties
+
+    @property
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return self._supported_filter_nodes
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
+        records = list(records)
+        for record in records:
+            require_declared_properties(record.properties, self._indexed_properties)
         for record in records:
             self.records[record.uuid] = Record(
                 uuid=record.uuid,
@@ -139,7 +178,12 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
     ) -> list[QueryResult]:
-        metric = self.collection_config.similarity_metric
+        if property_filter is not None:
+            require_supported_filter(
+                property_filter, self._indexed_properties, self._supported_filter_nodes
+            )
+
+        metric = self._similarity_metric
         higher_is_better = metric.higher_is_better
 
         results: list[QueryResult] = []

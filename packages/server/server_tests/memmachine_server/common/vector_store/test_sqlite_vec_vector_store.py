@@ -3,6 +3,7 @@
 import math
 import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,7 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.data_types import PropertyType, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -19,17 +20,21 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
-from memmachine_server.common.properties_json import decode_properties
 from memmachine_server.common.vector_store.data_types import (
     Record,
-    VectorStoreCollectionAlreadyExistsError,
-    VectorStoreCollectionConfig,
-    VectorStoreCollectionConfigMismatchError,
+    VectorStorePartitionAlreadyExistsError,
+    VectorStorePartitionSchemaMismatchError,
+)
+from memmachine_server.common.vector_store.sql_columns import (
+    property_column_name,
 )
 from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
     SQLiteVecVectorStore,
-    SQLiteVecVectorStoreCollection,
     SQLiteVecVectorStoreParams,
+    SQLiteVecVectorStorePartition,
+)
+from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
+    DeclaredSchemaContract,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -37,9 +42,18 @@ pytestmark = pytest.mark.skipif(
     reason="sqlite3 built without extension loading support",
 )
 
-NAMESPACE = "test_namespace"
+VECTOR_STORE_NAME = "test_vector_store"
 NAME = "test_name"
 VECTOR_DIM = 3
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+INDEXED_PROPERTIES: dict[str, PropertyType] = {
+    "name": str,
+    "age": int,
+    "score": float,
+    "active": bool,
+    "created_at": datetime,
+}
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -67,157 +81,144 @@ async def _stored(collection) -> dict[UUID, dict]:
     """
     table = collection._records_table
     async with collection._create_session() as session:
-        rows = (await session.execute(select(table.c.uuid, table.c.properties))).all()
-    return {row.uuid: decode_properties(row.properties) for row in rows}
+        rows = (await session.execute(select(table))).all()
+    return {
+        row.uuid: _declared_values(row._mapping, collection.indexed_properties)
+        for row in rows
+    }
+
+
+def _declared_values(row, indexed_properties) -> dict:
+    """A row's declared properties that hold a value, a datetime as its instant in UTC."""
+    values = {}
+    for key, property_type in indexed_properties.items():
+        value = row[property_column_name(key)]
+        if value is None:
+            continue
+        if property_type is datetime:
+            value = _EPOCH + timedelta(microseconds=value)
+        values[key] = value
+    return values
 
 
 @pytest_asyncio.fixture
 async def store(tmp_path):
     db_path = tmp_path / "test.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-    params = SQLiteVecVectorStoreParams(engine=engine)
-    vector_store = SQLiteVecVectorStore(params)
+    vector_store = SQLiteVecVectorStore(_params(engine))
     await vector_store.startup()
     yield vector_store
     await vector_store.shutdown()
     await engine.dispose()
 
 
+def _params(engine, **overrides) -> SQLiteVecVectorStoreParams:
+    params: dict[str, Any] = {
+        "engine": engine,
+        "vector_store_name": VECTOR_STORE_NAME,
+        "vector_dimensions": VECTOR_DIM,
+        "similarity_metric": SimilarityMetric.COSINE,
+        "indexed_properties": INDEXED_PROPERTIES,
+    }
+    params.update(overrides)
+    return SQLiteVecVectorStoreParams(**params)
+
+
+async def _store_with(
+    store, vector_store_name: str, **overrides
+) -> SQLiteVecVectorStore:
+    """Another store over the fixture's engine: its own collection, dimensions or metric."""
+    other = SQLiteVecVectorStore(
+        _params(store._engine, vector_store_name=vector_store_name, **overrides)
+    )
+    await other.startup()
+    return other
+
+
 @pytest_asyncio.fixture
 async def collection(store):
-    await store.create_collection(
-        namespace=NAMESPACE,
-        name=NAME,
-        config=VectorStoreCollectionConfig(
-            vector_dimensions=VECTOR_DIM,
-            similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
-                "name": str,
-                "age": int,
-                "score": float,
-                "active": bool,
-                "created_at": datetime,
-            },
-        ),
-    )
-    coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
+    await store.create_partition(NAME)
+    coll = await store.get_partition(NAME)
     assert coll is not None
     yield coll
-    await store.delete_collection(namespace=NAMESPACE, name=NAME)
+    await store.delete_partition(NAME)
 
 
-# ── Collection lifecycle ──
+# ── Partition lifecycle ──
 
 
-class TestCollectionLifecycle:
+class TestPartitionLifecycle:
     @pytest.mark.asyncio
     async def test_create_open_delete(self, store):
-        await store.create_collection(
-            namespace=NAMESPACE,
-            name="lifecycle",
-            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
-        )
-        coll = await store.open_collection(namespace=NAMESPACE, name="lifecycle")
-        assert isinstance(coll, SQLiteVecVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="lifecycle")
+        await store.create_partition("lifecycle")
+        coll = await store.get_partition("lifecycle")
+        assert isinstance(coll, SQLiteVecVectorStorePartition)
+        await store.delete_partition("lifecycle")
 
     @pytest.mark.asyncio
     async def test_open_returns_correct_type(self, store, collection):
-        coll = await store.open_collection(namespace=NAMESPACE, name=NAME)
-        assert isinstance(coll, SQLiteVecVectorStoreCollection)
+        coll = await store.get_partition(NAME)
+        assert isinstance(coll, SQLiteVecVectorStorePartition)
 
     @pytest.mark.asyncio
     async def test_duplicate_name_raises(self, store, collection):
-        with pytest.raises(VectorStoreCollectionAlreadyExistsError):
-            await store.create_collection(
-                namespace=NAMESPACE,
-                name=NAME,
-                config=VectorStoreCollectionConfig(
-                    vector_dimensions=VECTOR_DIM,
-                    similarity_metric=SimilarityMetric.COSINE,
-                    indexed_properties_schema={
-                        "name": str,
-                        "age": int,
-                        "score": float,
-                        "active": bool,
-                        "created_at": datetime,
-                    },
-                ),
-            )
+        with pytest.raises(VectorStorePartitionAlreadyExistsError):
+            await store.create_partition(NAME)
 
     @pytest.mark.asyncio
     async def test_delete_nonexistent_is_idempotent(self, store):
-        await store.delete_collection(namespace=NAMESPACE, name="nonexistent")
+        await store.delete_partition("nonexistent")
 
     @pytest.mark.asyncio
     async def test_open_or_create_creates_when_missing(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="new", config=config
-        )
-        assert isinstance(coll, SQLiteVecVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="new")
+        coll = await store.open_or_create_partition("new")
+        assert isinstance(coll, SQLiteVecVectorStorePartition)
+        await store.delete_partition("new")
 
     @pytest.mark.asyncio
     async def test_open_or_create_opens_when_exists(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="existing", config=config
-        )
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="existing", config=config
-        )
-        assert isinstance(coll, SQLiteVecVectorStoreCollection)
-        await store.delete_collection(namespace=NAMESPACE, name="existing")
+        await store.create_partition("existing")
+        coll = await store.open_or_create_partition("existing")
+        assert isinstance(coll, SQLiteVecVectorStorePartition)
+        await store.delete_partition("existing")
 
     @pytest.mark.asyncio
-    async def test_open_or_create_raises_on_config_mismatch(self, store):
-        await store.create_collection(
-            namespace=NAMESPACE,
-            name="mismatch",
-            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+    async def test_a_store_with_another_schema_cannot_open_the_partition(self, store):
+        """The schema is the collection's: another store of it must declare the same."""
+        await store.create_partition("mismatch")
+        other_dimensions = await _store_with(
+            store, VECTOR_STORE_NAME, vector_dimensions=VECTOR_DIM + 1
         )
-        with pytest.raises(VectorStoreCollectionConfigMismatchError):
-            await store.open_or_create_collection(
-                namespace=NAMESPACE,
-                name="mismatch",
-                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM + 1),
-            )
-        await store.delete_collection(namespace=NAMESPACE, name="mismatch")
+        with pytest.raises(VectorStorePartitionSchemaMismatchError, match="mismatch"):
+            await other_dimensions.open_or_create_partition("mismatch")
+        await other_dimensions.shutdown()
+        other_keys = await _store_with(
+            store, VECTOR_STORE_NAME, indexed_properties={"name": str}
+        )
+        with pytest.raises(VectorStorePartitionSchemaMismatchError, match="mismatch"):
+            await other_keys.get_partition("mismatch")
+        await other_keys.shutdown()
+        await store.delete_partition("mismatch")
 
     @pytest.mark.asyncio
     async def test_open_nonexistent_returns_none(self, store):
-        assert await store.open_collection(namespace=NAMESPACE, name="nope") is None
+        assert await store.get_partition("nope") is None
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):
         with pytest.raises(ValueError, match="sqlite-vec"):
-            await store.create_collection(
-                namespace=NAMESPACE,
-                name="bad_metric",
-                config=VectorStoreCollectionConfig(
-                    vector_dimensions=VECTOR_DIM,
+            SQLiteVecVectorStore(
+                _params(
+                    store._engine,
+                    vector_store_name="bad_metric",
                     similarity_metric=SimilarityMetric.DOT,
-                ),
+                )
             )
 
     @pytest.mark.asyncio
-    async def test_invalid_namespace_raises(self, store):
-        with pytest.raises(ValueError, match="Namespace 'INVALID' must match"):
-            await store.create_collection(
-                namespace="INVALID",
-                name="test",
-                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
-            )
-
-    @pytest.mark.asyncio
-    async def test_invalid_name_raises(self, store):
-        with pytest.raises(ValueError, match="Name 'INVALID' must match"):
-            await store.create_collection(
-                namespace="valid",
-                name="INVALID",
-                config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
-            )
+    async def test_invalid_partition_key_raises(self, store):
+        with pytest.raises(ValueError, match="Partition key 'INVALID' must match"):
+            await store.create_partition("INVALID")
 
 
 # ── Upsert + Query ──
@@ -311,6 +312,15 @@ class TestUpsertAndQuery:
 
 
 # ── Filters ──
+
+
+class TestDeclaredSchema(DeclaredSchemaContract):
+    """The declared-schema contract, against this store."""
+
+    @staticmethod
+    async def settle(collection) -> None:
+        # A write commits before it returns, so reads reflect it already.
+        pass
 
 
 class TestFilters:
@@ -518,8 +528,8 @@ class TestFilters:
         assert len(uuids) == 1
 
     @pytest.mark.asyncio
-    async def test_datetime_timezone_roundtrip(self, collection):
-        """Original timezone is preserved through storage."""
+    async def test_a_datetime_is_stored_as_its_instant_in_utc(self, collection):
+        """A datetime is stored as its instant, read back in UTC."""
         v1 = _normalize([1.0, 0.0, 0.0])
         est = timezone(timedelta(hours=-5))
         dt = datetime(2024, 6, 15, 7, 0, 0, tzinfo=est)
@@ -528,7 +538,7 @@ class TestFilters:
 
         got = (await _stored(collection))[r1.uuid]["created_at"]
         assert got == dt
-        assert got.utcoffset() == timedelta(hours=-5)
+        assert got.utcoffset() == timedelta(0)
 
     # ── In / And / Or / Not ──
 
@@ -632,15 +642,10 @@ class TestDelete:
 class TestPartitionIsolation:
     @pytest.mark.asyncio
     async def test_query_only_returns_own_collection(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_a", config=config
-        )
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_b", config=config
-        )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
+        await store.create_partition("tenant_a")
+        await store.create_partition("tenant_b")
+        coll_a = await store.get_partition("tenant_a")
+        coll_b = await store.get_partition("tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -659,20 +664,15 @@ class TestPartitionIsolation:
         assert uuids_a == {r1.uuid}
         assert uuids_b == {r2.uuid}
 
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
+        await store.delete_partition("tenant_a")
+        await store.delete_partition("tenant_b")
 
     @pytest.mark.asyncio
-    async def test_a_query_returns_only_its_own_collections_records(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_a", config=config
-        )
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_b", config=config
-        )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
+    async def test_a_query_returns_only_its_own_partitions_records(self, store):
+        await store.create_partition("tenant_a")
+        await store.create_partition("tenant_b")
+        coll_a = await store.get_partition("tenant_a")
+        coll_b = await store.get_partition("tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -686,20 +686,15 @@ class TestPartitionIsolation:
         [result] = await coll_a.query(query_vectors=[v1], limit=10)
         assert [match.record_uuid for match in result.matches] == [r1.uuid]
 
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
+        await store.delete_partition("tenant_a")
+        await store.delete_partition("tenant_b")
 
     @pytest.mark.asyncio
     async def test_delete_only_affects_own_collection(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_a", config=config
-        )
-        await store.create_collection(
-            namespace=NAMESPACE, name="tenant_b", config=config
-        )
-        coll_a = await store.open_collection(namespace=NAMESPACE, name="tenant_a")
-        coll_b = await store.open_collection(namespace=NAMESPACE, name="tenant_b")
+        await store.create_partition("tenant_a")
+        await store.create_partition("tenant_b")
+        coll_a = await store.get_partition("tenant_a")
+        coll_b = await store.get_partition("tenant_b")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -714,20 +709,17 @@ class TestPartitionIsolation:
 
         assert set(await _stored(coll_b)) == {r2.uuid}
 
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_a")
-        await store.delete_collection(namespace=NAMESPACE, name="tenant_b")
+        await store.delete_partition("tenant_a")
+        await store.delete_partition("tenant_b")
 
     @pytest.mark.asyncio
-    async def test_namespace_isolation(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        await store.create_collection(
-            namespace="namespace_a", name="coll", config=config
-        )
-        await store.create_collection(
-            namespace="namespace_b", name="coll", config=config
-        )
-        coll_a = await store.open_collection(namespace="namespace_a", name="coll")
-        coll_b = await store.open_collection(namespace="namespace_b", name="coll")
+    async def test_collections_on_one_engine_are_isolated(self, store):
+        """Two stores over one engine, named differently, never see each other's rows."""
+        other = await _store_with(store, "other_collection")
+        await store.create_partition("coll")
+        await other.create_partition("coll")
+        coll_a = await store.get_partition("coll")
+        coll_b = await other.get_partition("coll")
         assert coll_a is not None
         assert coll_b is not None
 
@@ -741,19 +733,16 @@ class TestPartitionIsolation:
         results_a = await coll_a.query(query_vectors=[v1], limit=10)
         assert {match.record_uuid for match in results_a[0].matches} == {r1.uuid}
 
-        await store.delete_collection(namespace="namespace_a", name="coll")
-        await store.delete_collection(namespace="namespace_b", name="coll")
+        await store.delete_partition("coll")
+        assert await other.get_partition("coll") is not None
+        await other.delete_partition("coll")
+        await other.shutdown()
 
     @pytest.mark.asyncio
-    async def test_delete_collection_does_not_affect_sibling(self, store):
+    async def test_delete_partition_does_not_affect_sibling(self, store):
         """Deleting one collection doesn't break a sibling sharing tables."""
-        config = VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM)
-        coll_a = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="sibling_a", config=config
-        )
-        coll_b = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="sibling_b", config=config
-        )
+        coll_a = await store.open_or_create_partition("sibling_a")
+        coll_b = await store.open_or_create_partition("sibling_b")
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -761,13 +750,13 @@ class TestPartitionIsolation:
         await coll_a.upsert(records=[r1])
         await coll_b.upsert(records=[r2])
 
-        await store.delete_collection(namespace=NAMESPACE, name="sibling_a")
+        await store.delete_partition("sibling_a")
 
         results = await coll_b.query(query_vectors=[v1], limit=10)
         assert len(results[0].matches) == 1
         assert results[0].matches[0].record_uuid == r2.uuid
 
-        await store.delete_collection(namespace=NAMESPACE, name="sibling_b")
+        await store.delete_partition("sibling_b")
 
 
 # ── Euclidean metric ──
@@ -776,13 +765,14 @@ class TestPartitionIsolation:
 class TestEuclideanMetric:
     @pytest.mark.asyncio
     async def test_euclidean_ordering(self, store):
-        config = VectorStoreCollectionConfig(
+        euclidean = await _store_with(
+            store,
+            "euclidean",
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.EUCLIDEAN,
+            indexed_properties={},
         )
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="euclidean", config=config
-        )
+        coll = await euclidean.open_or_create_partition("euclidean")
         r1 = _make_record(vector=[0.0, 0.0])
         r2 = _make_record(vector=[3.0, 4.0])
         await coll.upsert(records=[r1, r2])
@@ -790,7 +780,8 @@ class TestEuclideanMetric:
         results = await coll.query(query_vectors=[[0.0, 0.0]], limit=2)
         assert results[0].matches[0].score < results[0].matches[1].score
 
-        await store.delete_collection(namespace=NAMESPACE, name="euclidean")
+        await euclidean.delete_partition("euclidean")
+        await euclidean.shutdown()
 
 
 # ── No-properties collection ──
@@ -798,18 +789,19 @@ class TestEuclideanMetric:
 
 class TestNoProperties:
     @pytest.mark.asyncio
-    async def test_collection_without_properties(self, store):
-        config = VectorStoreCollectionConfig(vector_dimensions=2)
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="no_props", config=config
+    async def test_partition_without_properties(self, store):
+        bare = await _store_with(
+            store, "no_props", vector_dimensions=2, indexed_properties={}
         )
+        coll = await bare.open_or_create_partition("no_props")
         r1 = _make_record(vector=[1.0, 0.0])
         await coll.upsert(records=[r1])
 
         results = await coll.query(query_vectors=[[1.0, 0.0]], limit=1)
         assert len(results[0].matches) == 1
 
-        await store.delete_collection(namespace=NAMESPACE, name="no_props")
+        await bare.delete_partition("no_props")
+        await bare.shutdown()
 
 
 # ── Input validation ──
@@ -907,13 +899,14 @@ class TestScoreSemantics:
 
     @pytest.mark.asyncio
     async def test_euclidean_lower_is_better(self, store):
-        config = VectorStoreCollectionConfig(
+        euclidean = await _store_with(
+            store,
+            "euclidean_score",
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.EUCLIDEAN,
+            indexed_properties={},
         )
-        coll = await store.open_or_create_collection(
-            namespace=NAMESPACE, name="euclidean_score", config=config
-        )
+        coll = await euclidean.open_or_create_partition("euclidean_score")
         r1 = _make_record(vector=[0.0, 0.0])
         r2 = _make_record(vector=[3.0, 4.0])
         await coll.upsert(records=[r1, r2])
@@ -924,7 +917,8 @@ class TestScoreSemantics:
         assert scores[0] == pytest.approx(0.0, abs=0.01)
         assert scores[1] == pytest.approx(5.0, abs=0.01)
 
-        await store.delete_collection(namespace=NAMESPACE, name="euclidean_score")
+        await euclidean.delete_partition("euclidean_score")
+        await euclidean.shutdown()
 
 
 # A query, and vectors that each metric ranks in its own order, with no two
@@ -942,32 +936,31 @@ _THRESHOLD_VECTORS = [
 class TestScoreThreshold:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "metric", [SimilarityMetric.COSINE, SimilarityMetric.EUCLIDEAN]
+        "metric",
+        [SimilarityMetric.COSINE, SimilarityMetric.EUCLIDEAN],
     )
     async def test_a_threshold_keeps_a_match_scoring_exactly_it(self, store, metric):
         """A score threshold equal to a match's reported score keeps the
         match; one a step better than that score drops it."""
         name = f"edge_{metric.value}"
-        config = VectorStoreCollectionConfig(
-            vector_dimensions=VECTOR_DIM, similarity_metric=metric
+        edged = await _store_with(
+            store, name, vector_dimensions=VECTOR_DIM, similarity_metric=metric
         )
-        collection = await store.open_or_create_collection(
-            namespace=NAMESPACE, name=name, config=config
-        )
+        partition = await edged.open_or_create_partition(name)
         records = [_make_record(vector=vector) for vector in _THRESHOLD_VECTORS]
-        await collection.upsert(records=records)
-        [ranked] = await collection.query(
+        await partition.upsert(records=records)
+        [ranked] = await partition.query(
             query_vectors=[_THRESHOLD_QUERY], limit=len(records)
         )
         edge = ranked.matches[2]
         better = math.inf if metric.higher_is_better else -math.inf
 
-        [at_edge] = await collection.query(
+        [at_edge] = await partition.query(
             query_vectors=[_THRESHOLD_QUERY],
             limit=len(records),
             score_threshold=edge.score,
         )
-        [past_edge] = await collection.query(
+        [past_edge] = await partition.query(
             query_vectors=[_THRESHOLD_QUERY],
             limit=len(records),
             score_threshold=math.nextafter(edge.score, better),
@@ -979,7 +972,8 @@ class TestScoreThreshold:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await store.delete_collection(namespace=NAMESPACE, name=name)
+        await edged.delete_partition(name)
+        await edged.shutdown()
 
 
 # ── Upsert behavior ──
