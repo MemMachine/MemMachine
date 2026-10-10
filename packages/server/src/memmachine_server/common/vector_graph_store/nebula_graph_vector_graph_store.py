@@ -11,8 +11,8 @@ interface using NebulaGraph Enterprise as the backend. It supports:
 """
 
 import asyncio
-import hashlib
 import logging
+import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from nebulagraph_python.py_data_types import NVector
 
-from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
+from memmachine_server.common.data_types import OrderedValue
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -105,6 +105,15 @@ class NebulaGraphVectorGraphStoreParams:
     # Observability
     metrics_factory: Any | None = None
     user_metrics_labels: dict[str, str] = field(default_factory=dict)
+
+
+# NebulaGraph's `cosine()` is KNN-only -- it cannot take APPROXIMATE -- and its
+# vector indexes offer only L2 and IP. Cosine similarity between unit vectors
+# *is* their inner product, so embeddings are normalized on the way in and
+# compared with `inner_product()` against an IP index. That is cosine ranking,
+# and unlike `cosine()` it can be approximate.
+_INDEX_METRIC = "IP"
+_DISTANCE_FUNCTION = "inner_product"
 
 
 class NebulaGraphVectorGraphStore(VectorGraphStore):
@@ -205,14 +214,14 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         # Collect all properties and embeddings from all nodes to build schema
         all_properties: dict[str, PropertyValue] = {}
-        all_embeddings: dict[str, tuple[list[float], SimilarityMetric]] = {}
+        all_embeddings: dict[str, list[float]] = {}
 
         for node in nodes_list:
             all_properties.update(node.properties)
             # Track embeddings with their dimensions and metrics
-            for emb_name, (emb_vec, metric) in node.embeddings.items():
+            for emb_name, emb_vec in node.embeddings.items():
                 if emb_name not in all_embeddings:
-                    all_embeddings[emb_name] = (emb_vec, metric)
+                    all_embeddings[emb_name] = emb_vec
 
         # Ensure graph type exists with required schema
         await self._ensure_graph_type_for_nodes(
@@ -241,17 +250,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 prop_assignments.append(f"{sanitized}: {formatted_value}")
 
             # Add embeddings with companion metric property
-            for emb_name, (emb_vec, metric) in node.embeddings.items():
+            for emb_name, emb_vec in node.embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
                 sanitized = self._sanitize_name(mangled)
                 vec_literal = self._vector_to_gql_literal(emb_vec)
                 prop_assignments.append(f"{sanitized}: {vec_literal}")
-                # Store metric as companion STRING property (mirrors Neo4j pattern)
-                metric_prop = self._similarity_metric_property_name(emb_name)
-                mangled_metric = mangle_property_name(metric_prop)
-                sanitized_metric = self._sanitize_name(mangled_metric)
-                metric_value = self._format_value(metric.value)
-                prop_assignments.append(f"{sanitized_metric}: {metric_value}")
 
             insert_stmt = f"""
             INSERT (n@{sanitized_collection} {{
@@ -272,14 +275,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             and current_count < self._vector_index_threshold
         ):
             # Create vector indexes
-            for emb_name, (emb_vec, metric) in all_embeddings.items():
+            for emb_name, emb_vec in all_embeddings.items():
                 task = asyncio.create_task(
                     self._create_vector_index_if_not_exists(
                         EntityType.NODE,
                         collection,
                         emb_name,
                         len(emb_vec),
-                        metric,
                     )
                 )
                 self._background_tasks.add(task)
@@ -330,7 +332,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         # Collect all properties and embeddings from all edges
         all_properties: dict[str, PropertyValue] = {}
-        all_embeddings: dict[str, tuple[list[float], SimilarityMetric]] = {}
+        all_embeddings: dict[str, list[float]] = {}
 
         for edge in edges_list:
             all_properties.update(edge.properties)
@@ -364,17 +366,11 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 prop_assignments.append(f"{sanitized}: {formatted_value}")
 
             # Build embedding assignments with companion metric property
-            for emb_name, (emb_vec, metric) in edge.embeddings.items():
+            for emb_name, emb_vec in edge.embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
                 sanitized = self._sanitize_name(mangled)
                 vec_literal = self._vector_to_gql_literal(emb_vec)
                 prop_assignments.append(f"{sanitized}: {vec_literal}")
-                # Store metric as companion STRING property (mirrors Neo4j pattern)
-                metric_prop = self._similarity_metric_property_name(emb_name)
-                mangled_metric = mangle_property_name(metric_prop)
-                sanitized_metric = self._sanitize_name(mangled_metric)
-                metric_value = self._format_value(metric.value)
-                prop_assignments.append(f"{sanitized_metric}: {metric_value}")
 
             # Build INSERT statement with embedded values
             if prop_assignments:
@@ -404,14 +400,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             and current_count < self._vector_index_threshold
         ):
             # Create vector indexes for edge embeddings
-            for emb_name, (emb_vec, metric) in all_embeddings.items():
+            for emb_name, emb_vec in all_embeddings.items():
                 task = asyncio.create_task(
                     self._create_vector_index_if_not_exists(
                         EntityType.EDGE,
                         relation,
                         emb_name,
                         len(emb_vec),
-                        metric,
                     )
                 )
                 self._background_tasks.add(task)
@@ -438,7 +433,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         collection: str,
         embedding_name: str,
         query_embedding: list[float],
-        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         limit: int | None = 100,
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
@@ -455,7 +449,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             collection: Collection name to search
             embedding_name: Name of the embedding vector property
             query_embedding: Query vector
-            similarity_metric: COSINE or EUCLIDEAN
             limit: Maximum results to return
             property_filter: Optional property filter expression
 
@@ -480,14 +473,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         # Decide on search mode.
         # ANN requires both a vector index AND a function that supports APPROXIMATE.
         # cosine() is KNN-only in NebulaGraph, so COSINE must always use exact search.
-        metric_supports_ann = (
-            self._similarity_metric_to_nebula(similarity_metric) is not None
-        )
-        use_ann = (
-            has_index
-            and not self._force_exact_similarity_search
-            and metric_supports_ann
-        )
+        use_ann = has_index and not self._force_exact_similarity_search
 
         # Build WHERE clause from property filter
         where_clause = ""
@@ -505,29 +491,21 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             else:
                 search_limit = effective_limit
 
-            # Choose similarity function, order, and index metric
-            distance_func, order_dir = self._get_distance_func_and_order(
-                similarity_metric
-            )
-            metric_name = self._similarity_metric_to_nebula(similarity_metric)
-
             # Build vector literal
             vec_literal = self._vector_to_gql_literal(query_embedding)
 
             # Build OPTIONS clause
             if self._ann_index_type == "IVF":
-                options = (
-                    f"{{METRIC: {metric_name}, TYPE: IVF, NPROBE: {self._ivf_nprobe}}}"
-                )
+                options = f"{{METRIC: {_INDEX_METRIC}, TYPE: IVF, NPROBE: {self._ivf_nprobe}}}"
             else:  # HNSW
-                options = f"{{METRIC: {metric_name}, TYPE: HNSW, EFSEARCH: {self._hnsw_ef_search}}}"
+                options = f"{{METRIC: {_INDEX_METRIC}, TYPE: HNSW, EFSEARCH: {self._hnsw_ef_search}}}"
 
             # Build query
             query_parts = [f"MATCH (n:{sanitized_collection})"]
             if where_clause:
                 query_parts.append(f"WHERE {where_clause}")
             query_parts.append(
-                f"ORDER BY {distance_func}(n.{sanitized_embedding}, {vec_literal}) {order_dir}"
+                f"ORDER BY {_DISTANCE_FUNCTION}(n.{sanitized_embedding}, {vec_literal}) DESC"
             )
             query_parts.append("APPROXIMATE")
             query_parts.append(f"LIMIT {search_limit}")
@@ -563,7 +541,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                     collection=collection,
                     embedding_name=embedding_name,
                     query_embedding=query_embedding,
-                    similarity_metric=similarity_metric,
                     limit=limit,
                     property_filter=property_filter,
                 )
@@ -579,7 +556,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             collection=collection,
             embedding_name=embedding_name,
             query_embedding=query_embedding,
-            similarity_metric=similarity_metric,
             limit=limit,
             property_filter=property_filter,
         )
@@ -590,7 +566,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         collection: str,
         embedding_name: str,
         query_embedding: list[float],
-        similarity_metric: SimilarityMetric,
         limit: int | None,
         property_filter: FilterExpr | None,
     ) -> list[Node]:
@@ -604,7 +579,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             collection: Collection name
             embedding_name: Embedding property name
             query_embedding: Query vector
-            similarity_metric: COSINE or EUCLIDEAN
             limit: Maximum results
             property_filter: Optional filter
 
@@ -624,16 +598,13 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         # Build vector literal
         vec_literal = self._vector_to_gql_literal(query_embedding)
 
-        # Choose similarity function and order direction
-        distance_func, order_dir = self._get_distance_func_and_order(similarity_metric)
-
         # Build query (no APPROXIMATE keyword = exact search)
         query_parts = [f"MATCH (n:{sanitized_collection})"]
         if where_clause:
             query_parts.append(f"WHERE {where_clause}")
         query_parts.append("RETURN n")
         query_parts.append(
-            f"ORDER BY {distance_func}(n.{sanitized_embedding}, {vec_literal}) {order_dir}"
+            f"ORDER BY {_DISTANCE_FUNCTION}(n.{sanitized_embedding}, {vec_literal}) DESC"
         )
         if limit:
             query_parts.append(f"LIMIT {limit}")
@@ -1097,21 +1068,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             for k, v in node_data.items()
         }
 
-        # Build set of metric companion mangled keys to exclude from regular properties
-        embedding_keys = {k for k in desanitized_data if is_mangled_embedding_name(k)}
-        metric_companion_keys = {
-            mangle_property_name(
-                self._similarity_metric_property_name(demangle_embedding_name(emb_key))
-            )
-            for emb_key in embedding_keys
-        }
-
         for key, value in desanitized_data.items():
             if key == "uid":
                 continue
             if is_mangled_property_name(key):
-                if key in metric_companion_keys:
-                    continue  # Skip metric companions - read alongside embeddings below
                 # Skip NULL values - they represent absent properties from schema evolution
                 # PropertyValue type does not include None, so we filter them out
                 if value is None:
@@ -1120,23 +1080,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 properties[prop_name] = value
             elif is_mangled_embedding_name(key):
                 emb_name = demangle_embedding_name(key)
-
-                # Read metric from companion STRING property
-                metric_prop = self._similarity_metric_property_name(emb_name)
-                mangled_metric = mangle_property_name(metric_prop)
-                metric_str = desanitized_data.get(mangled_metric)
-                if metric_str is not None:
-                    try:
-                        sim_metric = SimilarityMetric(metric_str)
-                    except ValueError:
-                        logger.warning(
-                            "Unknown similarity metric '%s' for embedding '%s', defaulting to COSINE",
-                            metric_str,
-                            emb_name,
-                        )
-                        sim_metric = SimilarityMetric.COSINE
-                else:
-                    sim_metric = SimilarityMetric.COSINE  # fallback for legacy data
 
                 # Extract vector value
                 vec = None
@@ -1150,7 +1093,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                     logger.warning("Unexpected embedding value type: %s", type(value))
 
                 if vec is not None:
-                    embeddings[emb_name] = (vec, sim_metric)
+                    embeddings[emb_name] = vec
 
         return Node(
             uid=uid,
@@ -1408,6 +1351,18 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             return "NULL"
         raise ValueError(f"Unsupported value type: {type(value)}")
 
+    @staticmethod
+    def _unit(vec: list[float]) -> list[float]:
+        """Scale to unit length, so an inner product is a cosine similarity.
+
+        A zero vector has no direction to preserve and is left as it is; it
+        scores 0 against everything either way.
+        """
+        magnitude = math.sqrt(sum(component * component for component in vec))
+        if magnitude == 0.0:
+            return list(vec)
+        return [component / magnitude for component in vec]
+
     def _vector_to_gql_literal(self, vec: list[float]) -> str:
         """
         Convert Python list to GQL VECTOR literal.
@@ -1419,88 +1374,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             GQL VECTOR literal
 
         """
-        vec_str = ", ".join(str(v) for v in vec)
+        vec_str = ", ".join(str(v) for v in self._unit(vec))
         return f"VECTOR<{len(vec)}, FLOAT>([{vec_str}])"
-
-    @staticmethod
-    def _similarity_metric_property_name(embedding_name: str) -> str:
-        """
-        Return the companion property name for storing an embedding's similarity metric.
-
-        Args:
-            embedding_name: Demangled embedding name
-
-        Returns:
-            Property name for the metric companion (e.g., "similarity_metric_for_vec")
-
-        """
-        # Use hash for long embedding names to avoid exceeding NebulaGraph's
-        # 127 character identifier limit after mangling and sanitization
-        if len(embedding_name) > 30:
-            name_hash = hashlib.sha256(embedding_name.encode()).hexdigest()[:16]
-            return f"sim_metric_{name_hash}"
-        return f"similarity_metric_for_{embedding_name}"
-
-    @staticmethod
-    def _similarity_metric_to_nebula(metric: SimilarityMetric) -> str | None:
-        """
-        Convert SimilarityMetric to NebulaGraph vector index METRIC option.
-
-        NebulaGraph vector indexes support only L2 (Euclidean distance) and
-        IP (Inner Product). MANHATTAN has no equivalent index type and returns
-        None, signalling that no vector index can be created for that metric.
-
-        Args:
-            metric: Similarity metric
-
-        Returns:
-            NebulaGraph METRIC string ("L2" or "IP"), or None if not indexable.
-
-        """
-        if metric == SimilarityMetric.EUCLIDEAN:
-            return "L2"
-        if metric == SimilarityMetric.DOT:
-            # Dot product == inner product; IP indexes support ANN for this metric.
-            return "IP"
-        # COSINE: cosine() is KNN-only in NebulaGraph — APPROXIMATE is not supported,
-        # so no vector index can be created for cosine similarity.
-        # MANHATTAN: no NebulaGraph vector index type exists.
-        # Both return None to signal that no vector index should be created.
-        return None
-
-    @staticmethod
-    def _get_distance_func_and_order(metric: SimilarityMetric) -> tuple[str, str]:
-        """
-        Return the GQL distance function name and ORDER BY direction for a metric.
-
-        NebulaGraph supports three distance functions:
-        - euclidean(): KNN and ANN (with L2 index)
-        - inner_product(): KNN and ANN (with IP index)
-        - cosine(): KNN only — APPROXIMATE is not supported for this function
-
-        MANHATTAN has no native NebulaGraph distance function and raises ValueError.
-
-        Args:
-            metric: Similarity metric
-
-        Returns:
-            (distance_function_name, order_direction) e.g. ("euclidean", "ASC")
-
-        Raises:
-            ValueError: If the metric has no native NebulaGraph distance function.
-
-        """
-        if metric == SimilarityMetric.EUCLIDEAN:
-            return "euclidean", "ASC"
-        if metric == SimilarityMetric.DOT:
-            return "inner_product", "DESC"
-        if metric == SimilarityMetric.COSINE:
-            # cosine() is KNN-only; callers must not use APPROXIMATE with this function.
-            return "cosine", "DESC"
-        raise ValueError(
-            f"Similarity metric '{metric.value}' is not supported by NebulaGraph. "
-            "Supported metrics: COSINE, DOT, EUCLIDEAN."
-        )
 
     def _render_filter_expr(
         self,
@@ -1656,7 +1531,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         self,
         collection: str,
         properties: dict[str, PropertyValue],
-        embeddings: dict[str, tuple[list[float], SimilarityMetric]],
+        embeddings: dict[str, list[float]],
     ) -> None:
         """
         Ensure node type exists in graph type for this collection.
@@ -1686,15 +1561,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 sanitized = self._sanitize_name(mangled)
                 incoming_schema[sanitized] = self._infer_gql_type(prop_value)
 
-            for emb_name, (vec, _metric) in embeddings.items():
+            for emb_name, vec in embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
                 sanitized = self._sanitize_name(mangled)
                 incoming_schema[sanitized] = f"VECTOR<{len(vec)}, FLOAT>"
-                # Add companion STRING property to persist the similarity metric
-                metric_prop = self._similarity_metric_property_name(emb_name)
-                mangled_metric = mangle_property_name(metric_prop)
-                sanitized_metric = self._sanitize_name(mangled_metric)
-                incoming_schema[sanitized_metric] = "STRING"
 
             # Check if node type already exists in cache
             if collection in self._graph_type_schemas:
@@ -1767,7 +1637,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         source_collection: str,
         target_collection: str,
         properties: dict[str, PropertyValue],
-        embeddings: dict[str, tuple[list[float], SimilarityMetric]],
+        embeddings: dict[str, list[float]],
     ) -> None:
         """
         Ensure edge type exists in graph type for this relation.
@@ -1802,15 +1672,10 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 sanitized = self._sanitize_name(mangled)
                 incoming_schema[sanitized] = self._infer_gql_type(prop_value)
 
-            for emb_name, (vec, _metric) in embeddings.items():
+            for emb_name, vec in embeddings.items():
                 mangled = mangle_embedding_name(emb_name)
                 sanitized = self._sanitize_name(mangled)
                 incoming_schema[sanitized] = f"VECTOR<{len(vec)}, FLOAT>"
-                # Add companion STRING property to persist the similarity metric
-                metric_prop = self._similarity_metric_property_name(emb_name)
-                mangled_metric = mangle_property_name(metric_prop)
-                sanitized_metric = self._sanitize_name(mangled_metric)
-                incoming_schema[sanitized_metric] = "STRING"
 
             # Check if edge type already exists in cache
             if edge_key in self._graph_type_schemas:
@@ -1884,7 +1749,6 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         node_or_edge_type: str,
         embedding_name: str,
         dimensions: int,
-        similarity_metric: SimilarityMetric,
     ) -> None:
         """
         Create vector index if it doesn't exist.
@@ -1894,24 +1758,8 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             node_or_edge_type: Type name
             embedding_name: Embedding property name
             dimensions: Vector dimensions
-            similarity_metric: COSINE, DOT, or EUCLIDEAN (MANHATTAN is not supported)
 
         """
-        # NebulaGraph only supports L2 and IP index metrics.
-        # COSINE (KNN-only) and MANHATTAN have no ANN-capable index; skip creation so search falls back to KNN.
-        nebula_metric = self._similarity_metric_to_nebula(similarity_metric)
-        if nebula_metric is None:
-            logger.warning(
-                "Skipping vector index creation for '%s' on '%s': "
-                "metric '%s' is not supported by NebulaGraph ANN indexes "
-                "(ANN-supported metrics: EUCLIDEAN/L2, DOT/IP). "
-                "Search will use exact KNN instead.",
-                embedding_name,
-                node_or_edge_type,
-                similarity_metric.value,
-            )
-            return
-
         # Use mangled and sanitized embedding name to ensure valid identifier
         mangled_embedding = mangle_embedding_name(embedding_name)
         index_name = f"idx_{self._sanitize_name(node_or_edge_type)}_{self._sanitize_name(mangled_embedding)}"
@@ -1935,13 +1783,12 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
             try:
                 sanitized_type = self._sanitize_name(node_or_edge_type)
                 sanitized_embedding = self._sanitize_name(mangled_embedding)
-                metric = nebula_metric
 
                 # Build index options based on type
                 if self._ann_index_type == "IVF":
                     options = f"""{{
                         DIM: {dimensions},
-                        METRIC: {metric},
+                        METRIC: {_INDEX_METRIC},
                         TYPE: IVF,
                         NLIST: {self._ivf_nlist},
                         TRAINSIZE: 10000
@@ -1949,7 +1796,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
                 else:  # HNSW
                     options = f"""{{
                         DIM: {dimensions},
-                        METRIC: {metric},
+                        METRIC: {_INDEX_METRIC},
                         TYPE: HNSW,
                         MAXDEGREE: {self._hnsw_max_degree},
                         EFCONSTRUCTION: {self._hnsw_ef_construction},
