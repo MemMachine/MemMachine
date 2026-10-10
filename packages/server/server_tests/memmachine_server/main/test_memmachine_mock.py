@@ -28,8 +28,10 @@ from memmachine_server.common.episode_store import (
     EpisodeResponse,
 )
 from memmachine_server.common.errors import SessionNotFoundError
-from memmachine_server.common.filter.filter_parser import And as FilterAnd
-from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -302,9 +304,9 @@ def test_with_default_long_conf_enable_status(
 async def test_create_session_passes_generated_config(
     minimal_conf, patched_resource_manager
 ):
-    session_manager = AsyncMock()
-    patched_resource_manager.get_session_data_manager = AsyncMock(
-        return_value=session_manager
+    episodic_memory_manager = AsyncMock()
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_memory_manager
     )
 
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
@@ -321,9 +323,10 @@ async def test_create_session_passes_generated_config(
         user_conf=user_conf,
     )
 
-    session_manager.create_or_validate_session.assert_awaited_once()
-    _, kwargs = session_manager.create_or_validate_session.await_args
-    episodic_conf = kwargs["param"]
+    # Creation goes through the manager, which creates the storage with the row.
+    episodic_memory_manager.create_session.assert_awaited_once()
+    _, kwargs = episodic_memory_manager.create_session.await_args
+    episodic_conf = kwargs["episodic_memory_config"]
 
     assert episodic_conf.long_term_memory.embedder == "custom-embed"
     assert episodic_conf.long_term_memory.reranker == "custom-reranker"
@@ -1078,11 +1081,7 @@ async def test_count_episodes_filters_by_session_only(
 
     assert result == 7
     episode_storage.get_episode_messages_count.assert_awaited_once_with(
-        filter_expr=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        )
+        filter_expr=Equals(field="session_key", value=session.session_key)
     )
 
 
@@ -1092,7 +1091,7 @@ async def test_count_episodes_combines_search_filter(
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("session-with-filter")
-    custom_filter = FilterComparison(field="topic", op="=", value="alpha")
+    custom_filter = Equals(field="topic", value="alpha")
     parsed_specs: list[str] = []
 
     def _fake_parse(spec: str | None):
@@ -1115,13 +1114,8 @@ async def test_count_episodes_combines_search_filter(
     await_args = episode_storage.get_episode_messages_count.await_args
     assert await_args is not None
     combined_filter = await_args.kwargs["filter_expr"]
-    assert combined_filter == FilterAnd(
-        left=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        ),
-        right=custom_filter,
+    assert combined_filter == And(
+        (Equals(field="session_key", value=session.session_key), custom_filter)
     )
 
 
