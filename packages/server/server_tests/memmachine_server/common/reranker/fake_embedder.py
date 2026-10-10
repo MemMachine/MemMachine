@@ -1,18 +1,14 @@
 from typing import Any
 
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 
 
 class FakeEmbedder(Embedder):
     def __init__(
         self,
-        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         batch_size: int | None = None,
     ) -> None:
         super().__init__(batch_size=batch_size)
-
-        self._similarity_metric = similarity_metric
 
     async def _ingest_embed(
         self,
@@ -35,7 +31,3 @@ class FakeEmbedder(Embedder):
     @property
     def dimensions(self) -> int:
         return 2
-
-    @property
-    def similarity_metric(self) -> SimilarityMetric:
-        return self._similarity_metric
