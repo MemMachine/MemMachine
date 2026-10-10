@@ -353,6 +353,7 @@ class MemMachine:
                     reranker=reranker,
                     use_optimized_coq=conf.use_optimized_coq,
                     optimized_coq=conf.optimized_coq,
+                    progressive=conf.progressive,
                 )
             except Exception:
                 logger.exception("Failed to initialize retrieval agent.")
@@ -959,7 +960,7 @@ class MemMachine:
         if episodic_session.long_term_memory is None:
             return []
 
-        long_episodes, _ = await retrieval_agent.do_query(
+        long_episodes, metrics = await retrieval_agent.do_query(
             QueryPolicy(
                 token_cost=10,
                 time_cost=10,
@@ -978,6 +979,15 @@ class MemMachine:
             ),
         )
 
+        if "stop_reason" in metrics:
+            logger.info(
+                "Progressive retrieval: stop_reason=%s assessed_sufficient=%s "
+                "unique_candidates=%s returned_count=%s",
+                metrics["stop_reason"],
+                metrics["assessed_sufficient"],
+                metrics["unique_candidates"],
+                metrics["returned_count"],
+            )
         return long_episodes
 
     async def _query_short_term_response_for_agent(

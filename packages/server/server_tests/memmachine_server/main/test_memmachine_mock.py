@@ -21,7 +21,10 @@ from memmachine_server.common.configuration.episodic_config import (
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
-from memmachine_server.common.configuration.retrieval_config import RetrievalAgentConf
+from memmachine_server.common.configuration.retrieval_config import (
+    ProgressiveRetrievalConf,
+    RetrievalAgentConf,
+)
 from memmachine_server.common.episode_store import (
     Episode,
     EpisodeEntry,
@@ -38,8 +41,13 @@ from memmachine_server.common.session_manager.session_data_manager import (
 )
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.main.memmachine import MemMachine, MemoryType
+from memmachine_server.retrieval_agent.agents import ProgressiveQueryAgent
 from memmachine_server.retrieval_agent.common.agent_api import AgentToolBase
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature
+from server_tests.memmachine_server.retrieval_agent.test_retrieval_agent import (
+    DummyLanguageModel,
+    DummyReranker,
+)
 
 
 class DummySessionData:
@@ -253,6 +261,71 @@ def test_with_default_retrieval_agent_llm_falls_back_to_stm_model(
     memmachine = MemMachine(min_conf, patched_resource_manager)
 
     assert memmachine._conf.retrieval_agent.llm_model == "fallback-llm"
+
+
+@pytest.mark.asyncio
+async def test_progressive_configuration_reaches_server_search(
+    minimal_conf, patched_resource_manager, caplog
+):
+    minimal_conf.retrieval_agent = RetrievalAgentConf(
+        llm_model="agent-model",
+        reranker="agent-reranker",
+        progressive=ProgressiveRetrievalConf(initial_limit=1, max_candidates=3),
+    )
+    model = DummyLanguageModel(
+        [
+            (
+                '{"is_sufficient": false, "evidence_indices": [0], '
+                '"new_query": "query", "confidence_score": 1.0}'
+            ),
+            (
+                '{"is_sufficient": true, "evidence_indices": [0, 1], '
+                '"new_query": "query", "confidence_score": 1.0}'
+            ),
+        ]
+    )
+    patched_resource_manager.get_language_model.return_value = model
+    patched_resource_manager.get_reranker.return_value = DummyReranker()
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    agent = await memmachine._get_retrieval_agent()
+    assert isinstance(agent, ProgressiveQueryAgent)
+    assert await memmachine._get_retrieval_agent() is agent
+
+    episodes = [_make_episode("first", "s1"), _make_episode("second", "s1")]
+    memory = object.__new__(EpisodicMemory)
+    memory._session_key = "s1"
+    memory._long_term_memory = MagicMock()
+
+    async def retrieve(**kwargs):
+        return EpisodicMemory.QueryResponse(
+            long_term_memory=EpisodicMemory.QueryResponse.LongTermMemoryResponse(
+                episodes=[
+                    EpisodeResponse(score=1.0, **episode.model_dump())
+                    for episode in episodes[: kwargs["limit"]]
+                ]
+            ),
+            short_term_memory=EpisodicMemory.QueryResponse.ShortTermMemoryResponse(
+                episodes=[], episode_summary=[]
+            ),
+        )
+
+    memory.query_memory = AsyncMock(side_effect=retrieve)
+    with caplog.at_level("INFO"):
+        result = await memmachine._run_retrieval_agent_long_term_search(
+            episodic_session=memory,
+            retrieval_agent=agent,
+            query="query",
+            limit=2,
+            expand_context=0,
+            score_threshold=0,
+            search_filter=None,
+        )
+    assert [episode.uid for episode in result] == [episode.uid for episode in episodes]
+    assert [call.kwargs["limit"] for call in memory.query_memory.await_args_list] == [
+        1,
+        2,
+    ]
+    assert "stop_reason=sufficient assessed_sufficient=True" in caplog.text
 
 
 def test_with_default_short_conf_enable_status(
