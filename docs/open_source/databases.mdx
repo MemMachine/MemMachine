@@ -30,13 +30,20 @@ keeps event segments in a relational database. Configure the VectorStore under
 `episodic_memory.long_term_memory.vector_store`.
 
 Supported VectorStore providers include Qdrant, Milvus, SQLiteVectorStore, and
-SQLiteVecVectorStore. Qdrant and Milvus keep the registry of their logical
-collections in a relational database named by `collection_registry`, so any
-number of server processes can share one backend; the SQLite stores are bound
-to one node. A backend's registry is kept under its key in
-`resources.databases`, so several backends can keep their registries in one
-relational database. Every process must configure a given Qdrant server or Milvus
-database under the same key, so that they share its registry.
+SQLiteVecVectorStore. The event backend keeps one store per backend and
+embedder, one collection on the backend, and each session's data is a
+partition of it. The store's vector store name is a UUIDv5 of the embedder's
+id in a namespace derived from the backend's key, written as 32 hexadecimal
+digits, so neither the key nor the id is constrained, and stores on different
+backends never share a name; a Milvus collection is named `sys_` followed by
+the vector store name. Qdrant and Milvus keep the registry of their partitions
+in a relational database named by `partition_registry`, so any number of
+server processes can share one backend; the SQLite stores are bound to one
+node. The registries of every store share two tables there, keyed by vector
+store name, which identifies one store among all the stores whose registries
+share the database. Every process must configure
+a given Qdrant server or Milvus database with the same `partition_registry`, so
+that they share its stores' registries.
 
 Milvus supports two deployment shapes through the same configuration fields:
 
@@ -47,9 +54,6 @@ Milvus supports two deployment shapes through the same configuration fields:
 The Milvus store needs Milvus 2.6.8 or later. Milvus
 Lite is not supported: it is a separate embedded engine that does not behave
 like the server. For a local, single-node deployment, use SQLiteVectorStore.
-A record's undeclared properties are stored together as one JSON value, which
-Milvus refuses above its `common.JSONMaxLength` setting (65,536 bytes unless
-the server sets it otherwise).
 
 Example:
 
@@ -62,23 +66,22 @@ resources:
         uri: http://localhost:19530
         # token: $MILVUS_TOKEN
         # db_name: default
-        collection_registry: profile_storage
+        partition_registry: profile_storage
         request_timeout_seconds: 30
 
 episodic_memory:
   long_term_memory:
     backend: event
     vector_store: milvus_vector_store
-    segment_store: profile_storage
+    event_memory_store: profile_storage
 ```
 
-Upgrading does not carry existing vector store data over: drop the existing
-Qdrant and Milvus collections before upgrading. The stores keep the native
-collections' names. On Qdrant, points left in one stay there, invisible to
-every search and never purged, and dropping the collection after the upgrade
-drops the new data too. On Milvus, an existing collection has the earlier
-schema, which the store cannot prepare, so the first request of every new
-session fails.
+Upgrading does not carry existing vector store data over. The stores name
+their native collections by vector store name, which no earlier release did,
+so an existing Qdrant or Milvus collection stays as it is: no search reads it
+and no purge reaches it. Drop the existing collections, before or after
+upgrading, to free their space. The SQLite stores' tables are named anew too,
+and their existing data is likewise left in place.
 
 ## neo4j
 Neo4j is a leading **graph database**, which means it's specially designed to store and manage highly connected data. Instead of rows and columns, Neo4j works with three fundamental building blocks:
