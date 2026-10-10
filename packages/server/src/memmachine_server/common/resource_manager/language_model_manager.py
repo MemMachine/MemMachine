@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from pydantic import SecretStr
 
 from memmachine_server.common.configuration.language_model_conf import (
+    DEFAULT_ORCAROUTER_BASE_URL,
     AmazonBedrockLanguageModelConf,
     LanguageModelsConf,
     LiteLLMLanguageModelConf,
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
+    OrcaRouterLanguageModelConf,
 )
 from memmachine_server.common.errors import InvalidLanguageModelError
 from memmachine_server.common.language_model.language_model import LanguageModel
@@ -41,6 +44,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
             or name in self.conf.openai_chat_completions_language_model_confs
             or name in self.conf.amazon_bedrock_language_model_confs
             or name in self.conf.litellm_language_model_confs
+            or name in self.conf.orcarouter_language_model_confs
         )
 
     def _get_not_found_error(self, name: str) -> Exception:
@@ -54,6 +58,7 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         names.update(self.conf.openai_chat_completions_language_model_confs)
         names.update(self.conf.amazon_bedrock_language_model_confs)
         names.update(self.conf.litellm_language_model_confs)
+        names.update(self.conf.orcarouter_language_model_confs)
         return names
 
     async def build_all(self) -> dict[str, LanguageModel]:
@@ -90,6 +95,9 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         if name in self.conf.litellm_language_model_confs:
             del self.conf.litellm_language_model_confs[name]
             removed = True
+        if name in self.conf.orcarouter_language_model_confs:
+            del self.conf.orcarouter_language_model_confs[name]
+            removed = True
         return removed
 
     def add_language_model_config(
@@ -99,62 +107,51 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
         config: OpenAIResponsesLanguageModelConf
         | OpenAIChatCompletionsLanguageModelConf
         | AmazonBedrockLanguageModelConf
-        | LiteLLMLanguageModelConf,
+        | LiteLLMLanguageModelConf
+        | OrcaRouterLanguageModelConf,
     ) -> None:
         """
         Add a new language model configuration at runtime.
 
         Args:
             name: The name/id for the language model.
-            provider: The provider type ('openai-responses', 'openai-chat-completions', 'amazon-bedrock', 'litellm').
+            provider: The provider type ('openai-responses', 'openai-chat-completions', 'amazon-bedrock', 'litellm', 'orcarouter').
             config: The provider-specific configuration object.
 
         """
         # Clear any previous errors for this name
         self.clear_build_error(name)
 
-        if provider == "openai-responses":
-            from memmachine_server.common.configuration.language_model_conf import (
+        provider_to_conf: dict[str, tuple[type, dict[str, Any]]] = {
+            "openai-responses": (
                 OpenAIResponsesLanguageModelConf,
-            )
-
-            if not isinstance(config, OpenAIResponsesLanguageModelConf):
-                raise ValueError(
-                    "Expected OpenAIResponsesLanguageModelConf for provider 'openai-responses'"
-                )
-            self.conf.openai_responses_language_model_confs[name] = config
-        elif provider == "openai-chat-completions":
-            from memmachine_server.common.configuration.language_model_conf import (
+                self.conf.openai_responses_language_model_confs,
+            ),
+            "openai-chat-completions": (
                 OpenAIChatCompletionsLanguageModelConf,
-            )
-
-            if not isinstance(config, OpenAIChatCompletionsLanguageModelConf):
-                raise ValueError(
-                    "Expected OpenAIChatCompletionsLanguageModelConf for provider 'openai-chat-completions'"
-                )
-            self.conf.openai_chat_completions_language_model_confs[name] = config
-        elif provider == "amazon-bedrock":
-            from memmachine_server.common.configuration.language_model_conf import (
+                self.conf.openai_chat_completions_language_model_confs,
+            ),
+            "amazon-bedrock": (
                 AmazonBedrockLanguageModelConf,
-            )
-
-            if not isinstance(config, AmazonBedrockLanguageModelConf):
-                raise ValueError(
-                    "Expected AmazonBedrockLanguageModelConf for provider 'amazon-bedrock'"
-                )
-            self.conf.amazon_bedrock_language_model_confs[name] = config
-        elif provider == "litellm":
-            from memmachine_server.common.configuration.language_model_conf import (
+                self.conf.amazon_bedrock_language_model_confs,
+            ),
+            "litellm": (
                 LiteLLMLanguageModelConf,
-            )
+                self.conf.litellm_language_model_confs,
+            ),
+            "orcarouter": (
+                OrcaRouterLanguageModelConf,
+                self.conf.orcarouter_language_model_confs,
+            ),
+        }
 
-            if not isinstance(config, LiteLLMLanguageModelConf):
-                raise ValueError(
-                    "Expected LiteLLMLanguageModelConf for provider 'litellm'"
-                )
-            self.conf.litellm_language_model_confs[name] = config
-        else:
+        if provider not in provider_to_conf:
             raise ValueError(f"Unknown language model provider: {provider}")
+
+        conf_type, confs = provider_to_conf[provider]
+        if type(config) is not conf_type:
+            raise ValueError(f"Expected {conf_type.__name__} for provider '{provider}'")
+        confs[name] = config
 
     @staticmethod
     async def _validate_language_model(
@@ -186,6 +183,8 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
             ret = self._build_amazon_bedrock_language_model(name)
         elif name in self.conf.litellm_language_model_confs:
             ret = self._build_litellm_language_model(name)
+        elif name in self.conf.orcarouter_language_model_confs:
+            ret = self._build_orcarouter_language_model(name)
         if ret is None:
             raise InvalidLanguageModelError(
                 f"Language model with name {name} not found."
@@ -305,6 +304,28 @@ class LanguageModelManager(BaseResourceManager[LanguageModel]):
                 api_version=conf.api_version,
                 drop_params=conf.drop_params,
                 extra_kwargs=conf.extra_kwargs,
+                max_retry_interval_seconds=conf.max_retry_interval_seconds,
+                metrics_factory=conf.get_metrics_factory(),
+            ),
+        )
+
+    def _build_orcarouter_language_model(self, name: str) -> LanguageModel:
+        import openai
+
+        from memmachine_server.common.language_model.openai_chat_completions_language_model import (
+            OpenAIChatCompletionsLanguageModel,
+            OpenAIChatCompletionsLanguageModelParams,
+        )
+
+        conf = self.conf.orcarouter_language_model_confs[name]
+
+        return OpenAIChatCompletionsLanguageModel(
+            OpenAIChatCompletionsLanguageModelParams(
+                client=openai.AsyncOpenAI(
+                    api_key=conf.api_key.get_secret_value(),
+                    base_url=conf.base_url or DEFAULT_ORCAROUTER_BASE_URL,
+                ),
+                model=conf.model,
                 max_retry_interval_seconds=conf.max_retry_interval_seconds,
                 metrics_factory=conf.get_metrics_factory(),
             ),

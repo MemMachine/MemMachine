@@ -328,6 +328,9 @@ class SpecDoc:
     API_KEY_OPENAI = """
     OpenAI API key for authentication."""
 
+    API_KEY_ORCAROUTER = """
+    OrcaRouter API key for authentication."""
+
     MODEL_NAME = """
     The model name to use."""
 
@@ -336,6 +339,9 @@ class SpecDoc:
 
     API_BASE_URL = """
     Custom base URL for the API endpoint."""
+
+    ORCAROUTER_BASE_URL = """
+    OrcaRouter API base URL (defaults to 'https://api.orcarouter.ai/v1')."""
 
     MAX_INPUT_LENGTH = """
     Maximum input length in Unicode code points."""
@@ -374,7 +380,7 @@ class SpecDoc:
     Unique name/identifier for the language model."""
 
     LM_PROVIDER_TYPE = """
-    The language model provider type (e.g., 'openai-responses', 'openai-chat-completions', 'amazon-bedrock')."""
+    The language model provider type (e.g., 'openai-responses', 'openai-chat-completions', 'amazon-bedrock', 'orcarouter')."""
 
     INFERENCE_CONFIG = """
     Inference configuration for the model."""
@@ -898,6 +904,7 @@ class RouterDoc:
     - `openai-responses`: OpenAI models using the Responses API (requires api_key, model)
     - `openai-chat-completions`: OpenAI models using Chat Completions API (requires api_key, model)
     - `amazon-bedrock`: AWS Bedrock models (requires region, model_id)
+    - `orcarouter`: OrcaRouter models (requires api_key, model)
 
     The response indicates whether the model was successfully initialized:
     - `success: true, status: ready`: Model is available for use
