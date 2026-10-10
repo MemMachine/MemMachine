@@ -5,7 +5,7 @@ import contextlib
 import logging
 from asyncio import Task
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
 from uuid import UUID, uuid4
 
@@ -48,6 +48,7 @@ from memmachine_server.common.resource_manager.resource_manager import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.sql_lease_lock import LockAcquireTimeoutError
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.retrieval_agent import create_retrieval_agent
 from memmachine_server.retrieval_agent.common.agent_api import (
@@ -76,6 +77,8 @@ logger = logging.getLogger(__name__)
 
 ALL_MEMORY_TYPES: Final[list[MemoryType]] = list(MemoryType)
 EPISODE_DELETE_BATCH_SIZE: Final[int] = 1000
+DELETION_IDLE_SECONDS: Final[float] = 30.0
+SESSION_DELETE_LEASE_DURATION: Final[timedelta] = timedelta(seconds=30)
 
 
 def _raise_add_episode_errors(
@@ -139,6 +142,7 @@ class MemMachine:
             asyncio.Queue()
         )
         self._delete_worker: asyncio.Task[None] | None = None
+        self._key_to_session: Callable[[str], MemMachine.SessionData] | None = None
         self._started = False
 
     def _initialize_default_episodic_configuration(self) -> None:
@@ -363,7 +367,16 @@ class MemMachine:
     async def _delete_session_worker(self) -> None:
         """Background job that deletes queued sessions."""
         while True:
-            session = await self._deletion_queue.get()
+            try:
+                session = await asyncio.wait_for(
+                    self._deletion_queue.get(), timeout=DELETION_IDLE_SECONDS
+                )
+            except TimeoutError:
+                try:
+                    await self._queue_pending_session_deletions(from_worker=True)
+                except Exception:
+                    logger.exception("Failed to scan for pending session deletions")
+                continue
             if session is None:
                 self._deletion_queue.task_done()
                 return
@@ -376,16 +389,55 @@ class MemMachine:
                 self._deletion_queue.task_done()
 
     async def _delete_queued_session(self, session: SessionData) -> None:
-        tasks = [self._delete_session_episode_store(session.session_key)]
-        if self._conf.episodic_memory.enabled:
-            tasks.append(self._delete_session_episodic_memory(session.session_key))
-        if self._conf.semantic_memory.enabled:
-            tasks.append(self._delete_session_semantic_memory(session))
+        lock_service = await self._resources.get_sql_lock_service()
+        try:
+            # The lease prevents concurrent workers during normal operation.
+            # Store deletes still use the session key, so an expired lease
+            # cannot fence a stalled worker from a later session incarnation.
+            async with lock_service.lock(
+                f"session-deletion:{session.session_key}",
+                lease_duration=SESSION_DELETE_LEASE_DURATION,
+                wait_timeout=timedelta(0),
+            ):
+                manager = await self._resources.get_session_data_manager()
+                current = await manager.get_session_info(session.session_key)
+                if (
+                    current is None
+                    or current.status != SessionDataManager.SessionStatus.Deleted
+                ):
+                    return
+                await self._delete_queued_session_data(session, manager)
+        except LockAcquireTimeoutError:
+            # The lease holder will finish or a later database scan will retry.
+            logger.debug("Another worker is deleting session %s", session.session_key)
 
-        await asyncio.gather(*tasks)
-        manager = await self._resources.get_session_data_manager()
+    async def _delete_queued_session_data(
+        self, session: SessionData, manager: SessionDataManager
+    ) -> None:
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(self._delete_session_episode_store(session.session_key))
+            if self._conf.episodic_memory.enabled:
+                tasks.create_task(
+                    self._delete_session_episodic_memory(session.session_key)
+                )
+            if self._conf.semantic_memory.enabled:
+                tasks.create_task(self._delete_session_semantic_memory(session))
         await manager.delete_session(session_key=session.session_key)
         logger.info("Deleted session %s", session.session_key)
+
+    async def _queue_pending_session_deletions(
+        self, *, from_worker: bool = False
+    ) -> None:
+        if self._key_to_session is None:
+            return
+        manager = await self._resources.get_session_data_manager()
+        pending = await manager.get_sessions_by_status(
+            SessionDataManager.SessionStatus.Deleted
+        )
+        if from_worker and not self._started:
+            return
+        for session_key in pending:
+            self._deletion_queue.put_nowait(self._key_to_session(session_key))
 
     async def _delete_session_episode_store(self, session_key: str) -> None:
         episode_store = await self._resources.get_episode_storage()
@@ -401,7 +453,8 @@ class MemMachine:
             )
             if not episode_ids:
                 break
-            await self._cleanup_semantic_history(episode_ids)
+            if self._conf.semantic_memory.enabled:
+                await self._cleanup_semantic_history(episode_ids)
             await episode_store.delete_episodes(episode_ids)
 
     async def _delete_session_episodic_memory(self, session_key: str) -> None:
@@ -424,14 +477,9 @@ class MemMachine:
         """
         if self._started:
             return
+        self._key_to_session = key_to_session
+        await self._queue_pending_session_deletions()
         self._delete_worker = asyncio.create_task(self._delete_session_worker())
-        if key_to_session is not None:
-            session_data_manager = await self._resources.get_session_data_manager()
-            sessions = await session_data_manager.get_sessions_by_status(
-                SessionDataManager.SessionStatus.Deleted
-            )
-            for session in sessions:
-                self._deletion_queue.put_nowait(key_to_session(session))
         self._started = True
 
         if self._conf.semantic_memory.enabled:
@@ -453,13 +501,14 @@ class MemMachine:
         if not self._started:
             return
         self._started = False
-        self._deletion_queue.put_nowait(None)
-        await self._deletion_queue.join()
         if self._delete_worker is not None:
+            self._delete_worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                self._delete_worker.cancel()
                 await self._delete_worker
         self._delete_worker = None
+        while not self._deletion_queue.empty():
+            self._deletion_queue.get_nowait()
+            self._deletion_queue.task_done()
         if self._conf.semantic_memory.enabled:
             semantic_service = await self._resources.get_semantic_service()
             await semantic_service.stop()
@@ -626,7 +675,8 @@ class MemMachine:
             session_key=session_data.session_key,
             status=SessionDataManager.SessionStatus.Deleted,
         )
-        self._deletion_queue.put_nowait(session_data)
+        if self._started:
+            self._deletion_queue.put_nowait(session_data)
 
     async def search_sessions(
         self,
