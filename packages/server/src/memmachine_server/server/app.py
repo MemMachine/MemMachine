@@ -29,6 +29,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ExceptionHandler, Lifespan
 
 from memmachine_server.common.api.version import get_version
+from memmachine_server.server.api_v1.router import load_v1_api_router
 from memmachine_server.server.api_v2.mcp import (
     initialize_resource,
     load_configuration,
@@ -71,6 +72,7 @@ class MemMachineAPI(FastAPI):
         )
         self.mount("/mcp", mcp_app)
         load_v2_api_router(self, with_config_api=self._with_config_api)
+        load_v1_api_router(self)
 
     @staticmethod
     def _validation_error_handler_factory(error_code: int) -> ExceptionHandler:
