@@ -540,7 +540,7 @@ class TestAgentModelGpuCards(ModelBaseTest):
 
 
 # =============================================================================
-# 5. Qdrant episodes, bytes and node counts at 70% fill
+# 5. Qdrant episodes, bytes, and node counts at 70% fill
 # =============================================================================
 
 
@@ -823,7 +823,7 @@ class TestForcedNodeSize(ModelBaseTest):
 
 
 class TestForcedNodeSizeOnTheCommandLine(unittest.TestCase):
-    """--node-gb is offered by tier, calc and validate, and only by those."""
+    """--node-gb is offered by tier, calc, and validate, and only by those."""
 
     def test_calc_forces_two_512_gb_machines_at_100_ops(self):
         proc = run_cli("calc", "--ops", "100", "--node-gb", "512", "--json")
@@ -1665,7 +1665,7 @@ class TestResultShape(ModelBaseTest):
         """Every number must survive a strict parser.
 
         Python writes a floating-point infinity as the bare token Infinity,
-        which jq, JavaScript's JSON.parse and most other parsers reject. The
+        which jq, JavaScript's JSON.parse, and most other parsers reject. The
         default json.loads accepts it, so this test refuses it explicitly.
         """
         def refuse(token):
@@ -2550,7 +2550,7 @@ class TestModelConsistency(ModelBaseTest):
                         "Sensitivity: what the agent-mode quota costs")
 
     def test_every_row_of_every_report_section_carries_a_label(self):
-        """measured, derived, estimate or assumption on EVERY row, not just
+        """measured, derived, estimate, or assumption on EVERY row, not just
         the first row of each section, and at every tier - the scale tier has
         an extra sensitivity row and a different vector-store choice."""
         wanted = ("measured", "derived", "estimate", "assumption")
@@ -3676,7 +3676,7 @@ class TestTheOldAgentsFlagIsRefusedByName(unittest.TestCase):
         self.assertNotIn("ops/s", proc.stdout)
 
     def test_the_old_flag_is_refused_where_the_mix_share_lives_too(self):
-        """On tier, calc and validate, `--agents` sits beside `--agent`.
+        """On tier, calc, and validate, `--agents` sits beside `--agent`.
 
         Left undeclared it would be an unrecognized argument, which never
         names the flag the reader wants; declared, there is a real risk of it
@@ -4406,7 +4406,7 @@ def conversion_rows(pop: dict) -> dict:
 #   People:            50,000 users x 2 per 100 active x 1 session   = 1,000
 #   Automated clients:    200 users x 25 per 100 active x 20 sessions = 1,000
 #
-# Two very different user counts, two different shares and two different
+# Two very different user counts, two different shares, and two different
 # sessions per active user, arriving at the same number of sessions - which is
 # the point: neither session count can be read off its user count.
 #
@@ -5246,9 +5246,9 @@ class TestThePerCallerRatesCiteTheirSources(unittest.TestCase):
 class TestTheTwoReportedRatesEnterNoMachineCount(unittest.TestCase):
     """The point of the exercise: these two figures are printed and nothing
     else. Change either one to any value at all and every machine count, every
-    demand figure and every storage figure must come out identical."""
+    demand figure, and every storage figure must come out identical."""
 
-    # Every machine, demand and storage number the model publishes, so that a
+    # Every machine, demand, and storage number the model publishes, so that a
     # figure quietly reading one of the two new constants would be caught here
     # and not only in the machine counts.
     def snapshot(self):

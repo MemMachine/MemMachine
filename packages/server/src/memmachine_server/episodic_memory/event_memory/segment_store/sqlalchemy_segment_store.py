@@ -597,7 +597,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
         """Get backward/forward context per seed (SQLite fallback)."""
         # Build one statement per direction and run it for each seed, binding
-        # the seed's timestamp, event UUID, index and offset. Building a
+        # the seed's timestamp, event UUID, index, and offset. Building a
         # statement costs more CPU than SQLite spends running it, so building
         # one per seed would dominate the read.
         seed_ordering_values = tuple_(

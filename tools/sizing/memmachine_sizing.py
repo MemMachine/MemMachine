@@ -2,9 +2,9 @@
 """MemMachine deployment sizing calculator.
 
 Work out what a MemMachine deployment needs to serve a given design peak: how
-many API servers, vector-store machines and PostgreSQL servers, how many
+many API servers, vector-store machines, and PostgreSQL servers, how many
 embedding and agent-model GPU cards, how much storage, how many PostgreSQL
-connections and how much network bandwidth. Run ``validate`` to print the
+connections, and how much network bandwidth. Run ``validate`` to print the
 figures this program publishes for all three tiers, together with every named
 constant the model is built from, and to write them to a JSON file, so any
 figures quoted elsewhere can be checked against this program mechanically.
@@ -145,7 +145,7 @@ Storage. Episodes stored = adds/s x 86,400 seconds x retention days.
   2^30 bytes - decimal gigabytes, the unit hardware is sold in.
 
 One year with nothing ever deleted. The report also publishes hot vector RAM,
-  Qdrant NVMe and PostgreSQL disk for a full year of adds with no deletion at
+  Qdrant NVMe, and PostgreSQL disk for a full year of adds with no deletion at
   all: episodes in a year = adds/s x 86,400 x 365, multiplied by the same
   per-episode byte sizes as the retained figures. These three numbers are a year
   of adds and nothing else, so they do NOT move with the retention setting - at
@@ -166,7 +166,7 @@ ESTIMATE - not measured on this system
 Nothing below has been measured on a MemMachine deployment. Most of it has
 never been measured anywhere, and each entry says which case it is. The two
 per-caller rates are the exception: they now carry published measurements of
-other systems, named in full with the paper, the year and the web address, so
+other systems, named in full with the paper, the year, and the web address, so
 a reader can check the source without asking anybody. Measured elsewhere is
 still an estimate here.
 
@@ -208,7 +208,7 @@ Per-call message sizes, used only for the network figures. Every one of these is
       200 bytes;
     PostgreSQL 1,800 bytes per statement counting both directions;
     one language-model call 8,000 bytes of prompt and 2,000 bytes of answer;
-    and a flat 1.2x multiplier for TLS, HTTP and TCP framing overhead.
+    and a flat 1.2x multiplier for TLS, HTTP, and TCP framing overhead.
   The east-west total is built on the embedding demand WITHOUT the
   types: ["episodic"] fix and on the 1.5-call planning figure for language-model
   calls, which is the same pair of choices the embedding GPU count and the
@@ -245,8 +245,8 @@ Callers to capacity. There are two kinds of caller, and four rates between
   Across 55,295 conversation sessions and 176,466 gaps between one prompt and
   the next, the median gap was 131 seconds and a session held a mean of 4.19
   prompts. Over a session's BUSIEST FIVE MINUTES the rate was a median of
-  0.0067 prompts per second, a 90th percentile of 0.0167 and a 99th percentile
-  of 0.030; at two operations per prompt, 0.013, 0.033 and 0.060 operations
+  0.0067 prompts per second, a 90th percentile of 0.0167, and a 99th percentile
+  of 0.030; at two operations per prompt, 0.013, 0.033, and 0.060 operations
   per second. So 0.011 is about the median of a session's busiest five minutes
   and 0.028 is about its 90th percentile. It is still an ESTIMATE for this
   deployment: BurstGPT is one regional deployment, and who its users were is
@@ -336,7 +336,7 @@ Traffic mix: per 100 operations, 45 adds, 45 plain searches, 10 agent-mode
   hardware order more than any tuning does, because one agent-mode search costs
   about 22 plain searches. The mix is adjustable on every subcommand of this
   program, and the tier report always prints a sensitivity table showing what
-  happens to the API server count at 0, 2, 10 and 25 agent-mode searches per
+  happens to the API server count at 0, 2, 10, and 25 agent-mode searches per
   second, plus the deployment's own agent-mode rate when that is not already one
   of them - so the table always contains the row that matches the headline. That
   row is marked "this run", because two rates that a rounded label cannot tell
@@ -352,7 +352,7 @@ Tiers: pilot 20 ops/s, target 100 ops/s, scale 1,000 ops/s. Each is a DESIGN
   is not a deployment to size, so the program refuses it with a message and
   exit code 2 rather than printing a report that orders machines for no
   traffic. It must also be below MAX_OPS_PER_S, and retention, dimensions,
-  bytes per number and the vector-store machine size each have a bound of
+  bytes per number, and the vector-store machine size each have a bound of
   their own. Those bounds change no machine count. They are there so that a
   number far larger than any deployment is refused by name, instead of passing
   the finite check and then overflowing to infinity part-way through the byte
@@ -375,10 +375,10 @@ Retention 90 days by default, purely as a placeholder. Retention is undecided an
   episode is stored.
 
 Qdrant nodes are filled to at most 70% of their RAM, leaving room for the
-  operating system, for Qdrant's own metadata and for shards that come out
+  operating system, for Qdrant's own metadata, and for shards that come out
   uneven. This fixes a real defect found in review: an earlier version of this
   model filled seven 768 GB servers to 5.376 TB with a requirement of 5.375 TB,
-  which left no headroom at all. Node RAM options are 256, 512 and 768 GB.
+  which left no headroom at all. Node RAM options are 256, 512, and 768 GB.
   Unless a size is forced - with --node-gb, or with the "RAM per vector-store
   machine" box on the web form - the program prints the node count for all
   three sizes and recommends the one that buys the least total RAM, breaking a
@@ -663,7 +663,7 @@ QDRANT_UPSERT_RESPONSE_BYTES = 200
 POSTGRES_BYTES_PER_STATEMENT = 1800     # both directions
 LLM_CALL_REQUEST_BYTES = 8000
 LLM_CALL_RESPONSE_BYTES = 2000
-NETWORK_PROTOCOL_OVERHEAD_FACTOR = 1.2  # TLS, HTTP and TCP framing
+NETWORK_PROTOCOL_OVERHEAD_FACTOR = 1.2  # TLS, HTTP, and TCP framing
 BITS_PER_BYTE = 8
 BITS_PER_MBIT = 1_000_000               # Mbps means 10^6 bits per second
 
@@ -681,8 +681,8 @@ BITS_PER_MBIT = 1_000_000               # Mbps means 10^6 bits per second
 # identifier, which is what makes a per-session rate recoverable at all.
 # Across 55,295 conversation sessions and 176,466 gaps between one prompt and
 # the next, the busiest five minutes of a session ran at a median of 0.0067
-# prompts per second, a 90th percentile of 0.0167 and a 99th percentile of
-# 0.030. At OPS_PER_HUMAN_PROMPT operations per prompt those are 0.013, 0.033
+# prompts per second, a 90th percentile of 0.0167, and a 99th percentile of
+# 0.030. At OPS_PER_HUMAN_PROMPT operations per prompt those are 0.013, 0.033,
 # and 0.060 operations per second. The band below therefore brackets the
 # median to about the 90th percentile of a session's busiest five minutes.
 # What BurstGPT is not: it is one regional deployment, and who its users were
@@ -1232,7 +1232,7 @@ def size_deployment(ops_per_s: float,
     """Size one deployment. Returns a plain dictionary; prints nothing.
 
     ops_per_s       design peak, operations per second
-    mix             how 100 operations split between adds, plain and agent-mode
+    mix             how 100 operations split between adds, plain, and agent-mode
     retention_days  how long an episode is kept before deletion
     dims            vector dimensions (numbers per vector)
     bytes_per_value bytes stored per number (1 means int8 quantized)
@@ -1585,7 +1585,7 @@ def size_deployment(ops_per_s: float,
 class ConversionNames:
     """What one caller kind's four inputs are called, in one door's words.
 
-    The command line calls them --humans, --human-users, --human-peak-share
+    The command line calls them --humans, --human-users, --human-peak-share,
     and --human-sessions-per-active-user; the web form calls them boxes with
     names on them. The refusals below are written once and take these names,
     so the two doors give the same message about the same mistake and neither
@@ -1936,7 +1936,7 @@ def ops_for_population(humans: float, automated: float,
                     CALLER. It is not agent-mode search, which is a flag on
                     one request.
     human_mix       how the human sessions' operations split between adds,
-                    plain searches and agent-mode searches
+                    plain searches, and agent-mode searches
     automated_mix   the same for the automated client sessions
 
     The last two settings are the working behind those two counts, when the
@@ -1947,7 +1947,7 @@ def ops_for_population(humans: float, automated: float,
     which is what happens for a reader who gives concurrent sessions directly.
 
     The four settings after the mixes describe the shape of the store rather
-    than the traffic - how long an episode is kept, how big a vector is and how
+    than the traffic - how long an episode is kept, how big a vector is, and how
     much RAM one vector-store machine has - and they are passed straight
     through to size_deployment. They default to the same values the rest of the
     program defaults to, so a caller that leaves them off gets exactly what it
@@ -1979,7 +1979,7 @@ def ops_for_population(humans: float, automated: float,
     human_high = humans * HUMAN_SESSION_OPS_PER_S_HIGH
     automated_ops = automated * AUTOMATED_CLIENT_OPS_PER_S
     # Reported, never sized on. These two are the headroom check and the
-    # average-load check, and neither is added into low, high or the blend, so
+    # average-load check, and neither is added into low, high, or the blend, so
     # neither can move a machine count.
     human_heavy = humans * HUMAN_SESSION_OPS_PER_S_HEAVY
     automated_sustained = automated * AUTOMATED_CLIENT_OPS_PER_S_SUSTAINED
@@ -3677,7 +3677,7 @@ def population_boxes(values: dict):
 
     Returns (humans, automated, human_mix, automated_mix, human_conversion,
     automated_conversion) - the same six things --humans, --automated,
-    --human-mix, --automated-mix and the two sets of user flags give the users
+    --human-mix, --automated-mix, and the two sets of user flags give the users
     subcommand, so the two interfaces read one population the same way.
 
     The two count boxes and the two user-count boxes are the switch. Leave all
@@ -3717,7 +3717,7 @@ def population_boxes(values: dict):
 def store_shape_boxes(values: dict) -> tuple:
     """The four boxes that describe the store rather than the traffic.
 
-    Retention, vector dimensions, bytes per number and the RAM of one
+    Retention, vector dimensions, bytes per number, and the RAM of one
     vector-store machine. They are read the same way whether the deployment is
     sized from a design peak or from a caller population, because a population
     says how much traffic there is and nothing at all about how long an
