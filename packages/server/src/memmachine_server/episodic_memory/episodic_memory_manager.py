@@ -12,6 +12,7 @@ from memmachine_server.common.configuration.episodic_config import EpisodicMemor
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.errors import (
     EpisodicMemoryManagerClosedError,
+    SessionAlreadyExistsError,
     SessionDeletedError,
     SessionInUseError,
     SessionNotFoundError,
@@ -257,26 +258,32 @@ class EpisodicMemoryManager:
                     instance = await self._instance_cache.get(session_key)
                     if instance is None:
                         # try to load from the database
-                        session_info = await self.get_session_info(session_key)
-                        if session_info is not None:
-                            if (
-                                session_info.status
-                                != SessionDataManager.SessionStatus.Active
-                            ):
-                                raise SessionDeletedError(session_key)
+                        stored_config = await self._get_active_session_config(
+                            session_key
+                        )
+                        if stored_config is not None:
                             instance = await self._create_episodic_memory(
-                                session_key, session_info.episode_memory_conf
+                                session_key, stored_config
                             )
 
                     if instance is None:
                         # session does not exist, create it
-                        await self._session_data_manager.create_or_validate_session(
-                            session_key,
-                            config,
-                            episodic_memory_config,
-                            description,
-                            metadata,
-                        )
+                        try:
+                            await self._session_data_manager.create_or_validate_session(
+                                session_key,
+                                config,
+                                episodic_memory_config,
+                                description,
+                                metadata,
+                            )
+                        except SessionAlreadyExistsError:
+                            # A different worker created the session after our read.
+                            stored_config = await self._get_active_session_config(
+                                session_key
+                            )
+                            if stored_config is None:
+                                raise
+                            episodic_memory_config = stored_config
                         instance = await self._create_episodic_memory(
                             session_key, episodic_memory_config
                         )
@@ -284,6 +291,17 @@ class EpisodicMemoryManager:
             yield instance
         finally:
             await self._update_cache(instance, session_key)
+
+    async def _get_active_session_config(
+        self, session_key: str
+    ) -> EpisodicMemoryConf | None:
+        """Load a session's stored configuration and reject deleted sessions."""
+        session_info = await self.get_session_info(session_key)
+        if session_info is None:
+            return None
+        if session_info.status != SessionDataManager.SessionStatus.Active:
+            raise SessionDeletedError(session_key)
+        return session_info.episode_memory_conf
 
     async def delete_episodic_session(self, session_key: str) -> None:
         """

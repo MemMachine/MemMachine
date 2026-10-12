@@ -1,5 +1,7 @@
 from typing import cast
+from unittest.mock import AsyncMock
 
+import cohere
 import pytest
 from pydantic import SecretStr
 
@@ -15,6 +17,7 @@ from memmachine_server.common.configuration.reranker_conf import (
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.errors import InvalidRerankerError
+from memmachine_server.common.reranker.cohere_reranker import CohereReranker
 from memmachine_server.common.resource_manager.reranker_manager import (
     EmbedderFactory,
     RerankerManager,
@@ -136,15 +139,13 @@ async def test_build_cohere_rerankers(reranker_manager):
 @pytest.mark.asyncio
 async def test_build_cohere_reranker_passes_base_url(monkeypatch):
     captured_kwargs = {}
-
-    class FakeCohereClient:
-        pass
+    fake_client = AsyncMock(spec=cohere.AsyncClientV2)
 
     def fake_client_v2(**kwargs):
         captured_kwargs.update(kwargs)
-        return FakeCohereClient()
+        return fake_client
 
-    monkeypatch.setattr("cohere.ClientV2", fake_client_v2)
+    monkeypatch.setattr("cohere.AsyncClientV2", fake_client_v2)
 
     conf = RerankersConf(
         cohere={
@@ -160,8 +161,9 @@ async def test_build_cohere_reranker_passes_base_url(monkeypatch):
         embedder_factory=cast(EmbedderFactory, FakeEmbedderFactory()),
     )
 
-    await reranker_manager.get_reranker("cohere_reranker_id")
+    reranker = await reranker_manager.get_reranker("cohere_reranker_id")
 
+    assert isinstance(reranker, CohereReranker)
     assert captured_kwargs == {
         "api_key": "test-cohere-key",
         "base_url": "http://localhost:8000",
@@ -171,15 +173,13 @@ async def test_build_cohere_reranker_passes_base_url(monkeypatch):
 @pytest.mark.asyncio
 async def test_build_cohere_reranker_omits_base_url_when_not_configured(monkeypatch):
     captured_kwargs = {}
-
-    class FakeCohereClient:
-        pass
+    fake_client = AsyncMock(spec=cohere.AsyncClientV2)
 
     def fake_client_v2(**kwargs):
         captured_kwargs.update(kwargs)
-        return FakeCohereClient()
+        return fake_client
 
-    monkeypatch.setattr("cohere.ClientV2", fake_client_v2)
+    monkeypatch.setattr("cohere.AsyncClientV2", fake_client_v2)
 
     conf = RerankersConf(
         cohere={
@@ -194,8 +194,9 @@ async def test_build_cohere_reranker_omits_base_url_when_not_configured(monkeypa
         embedder_factory=cast(EmbedderFactory, FakeEmbedderFactory()),
     )
 
-    await reranker_manager.get_reranker("cohere_reranker_id")
+    reranker = await reranker_manager.get_reranker("cohere_reranker_id")
 
+    assert isinstance(reranker, CohereReranker)
     assert captured_kwargs == {"api_key": "test-cohere-key"}
 
 
