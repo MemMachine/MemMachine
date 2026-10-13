@@ -499,13 +499,14 @@ class MemMachineClient:
             # Re-raise other HTTP errors
             raise
 
-    def list_projects(self, timeout: int | None = None) -> list[Project]:
+    def list_projects(self, org_id: str, timeout: int | None = None) -> list[Project]:
         """
-        List all projects on the server.
+        List projects in an organization.
 
         This calls the v2 endpoint: POST /api/v2/projects/list
 
         Args:
+            org_id: Organization whose projects to list
             timeout: Request timeout in seconds (uses client default if not provided)
 
         Returns:
@@ -523,7 +524,9 @@ class MemMachineClient:
 
         url = f"{self.base_url}/api/v2/projects/list"
         try:
-            response = self.request("POST", url, timeout=timeout)
+            response = self.request(
+                "POST", url, json={"org_id": org_id}, timeout=timeout
+            )
             response.raise_for_status()
             data = response.json()
         except requests.RequestException:

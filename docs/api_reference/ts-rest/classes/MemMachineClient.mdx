@@ -48,9 +48,9 @@ Creates a `MemMachineProject` instance for managing a specific project.
 | ---------------- | ------------------------------------------------------------ | ----------------------------------------------- |
 | `projectContext` | [`ProjectContext`](../interfaces/ProjectContext) | Context options (e.g., `org_id`, `project_id`). |
 
-### `getProjects()`
+### `getProjects(orgId)`
 
-Retrieves a list of all projects accessible to the client.
+Retrieves projects belonging to the specified organization.
 
 - **Returns:** `Promise<Project[]>` 
 - **Throws:** [`MemMachineAPIError`](./MemMachineAPIError) 

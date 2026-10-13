@@ -251,6 +251,16 @@ def test_projects_create_uses_env_project_context(monkeypatch, capsys):
     )
 
 
+def test_projects_list_passes_organization_to_client(capsys):
+    client = Mock()
+    client.list_projects.return_value = []
+    args = cli.build_parser().parse_args(["projects", "list", "--org-id", "org1"])
+
+    assert cli.run_command(client, args) == 0
+    client.list_projects.assert_called_once_with("org1", timeout=None)
+    assert capsys.readouterr().out == "[]\n"
+
+
 @patch("memmachine_client.cli.MemMachineClient")
 def test_main_closes_client(mock_client_class, monkeypatch):
     """The top-level entry point should close the client after command execution."""

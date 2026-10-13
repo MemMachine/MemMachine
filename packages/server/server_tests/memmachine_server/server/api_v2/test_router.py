@@ -297,19 +297,28 @@ def test_get_episode_count(client, mock_memmachine):
 def test_list_projects(client, mock_memmachine):
     mock_memmachine.search_sessions.return_value = [
         "org1/proj1",
+        "org1/proj2",
         "org2/proj2",
+        "org10/proj3",
         "not-project-session",
     ]
 
-    response = client.post("/api/v2/projects/list")
+    response = client.post("/api/v2/projects/list", json={"org_id": "org1"})
 
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 2
     assert data[0] == {"org_id": "org1", "project_id": "proj1"}
-    assert data[1] == {"org_id": "org2", "project_id": "proj2"}
+    assert data[1] == {"org_id": "org1", "project_id": "proj2"}
 
     mock_memmachine.search_sessions.assert_awaited_once()
+
+
+def test_list_projects_requires_org_id(client, mock_memmachine):
+    response = client.post("/api/v2/projects/list", json={})
+
+    assert response.status_code == 422
+    mock_memmachine.search_sessions.assert_not_awaited()
 
 
 def test_delete_project(client, mock_memmachine):

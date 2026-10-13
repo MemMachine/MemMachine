@@ -1,9 +1,11 @@
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
 from pydantic import JsonValue
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import delete, insert
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
@@ -154,6 +156,115 @@ async def test_create_or_validate_existing_session_with_matching_data_succeeds(
     assert session_info.description == "original description"
     assert session_info.configuration == {"setting": "value"}
     assert session_info.user_metadata == {"owner": "tester"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_field", [None, "configuration", "param", "metadata"])
+async def test_concurrent_creation_validates_the_committed_session(
+    session_manager: SessionDataManager,
+    episodic_memory_conf: EpisodicMemoryConf,
+    monkeypatch: pytest.MonkeyPatch,
+    changed_field: str | None,
+) -> None:
+    """Workers racing for one key get the normal validation result."""
+    select_barrier = asyncio.Barrier(2)
+    original_execute = AsyncSession.execute
+    select_count = 0
+
+    async def synchronized_select(db_session: AsyncSession, statement, *args, **kwargs):
+        nonlocal select_count
+        result = await original_execute(db_session, statement, *args, **kwargs)
+        if statement.is_select and select_count < 2:
+            select_count += 1
+            async with asyncio.timeout(5):
+                await select_barrier.wait()
+        return result
+
+    monkeypatch.setattr(AsyncSession, "execute", synchronized_select)
+    configurations: list[dict[str, JsonValue]] = [
+        {"owner": "first"},
+        {"owner": "second" if changed_field == "configuration" else "first"},
+    ]
+    params = [episodic_memory_conf, episodic_memory_conf.model_copy(deep=True)]
+    if changed_field == "param":
+        params[1].enabled = not params[1].enabled
+    metadata: list[dict[str, JsonValue]] = [
+        {"source": "first"},
+        {"source": "second" if changed_field == "metadata" else "first"},
+    ]
+
+    async def create_session(index: int) -> None:
+        await session_manager.create_or_validate_session(
+            "shared-session", configurations[index], params[index], "", metadata[index]
+        )
+
+    results = await asyncio.gather(
+        *(create_session(index) for index in range(2)),
+        return_exceptions=True,
+    )
+
+    if changed_field is not None:
+        assert sum(result is None for result in results) == 1
+        assert (
+            sum(isinstance(result, SessionAlreadyExistsError) for result in results)
+            == 1
+        )
+    else:
+        assert results == [None, None]
+
+    session_info = await session_manager.get_session_info("shared-session")
+    assert session_info is not None
+    assert session_info.configuration in configurations
+    assert session_info.user_metadata in metadata
+    assert session_info.episode_memory_conf in params
+
+
+@pytest.mark.asyncio
+async def test_create_retries_when_conflicting_session_disappears(
+    session_manager: SessionDataManagerSQL,
+    episodic_memory_conf: EpisodicMemoryConf,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deleted conflict winner lets the pending creator insert its row."""
+    original_execute = AsyncSession.execute
+    insert_count = 0
+    select_count = 0
+    session_key = "disappearing-session"
+
+    async def interleaved_execute(db_session: AsyncSession, statement, *args, **kwargs):
+        nonlocal insert_count, select_count
+        if statement.is_insert:
+            insert_count += 1
+            if insert_count == 1:
+                await original_execute(
+                    db_session,
+                    insert(session_manager.SessionConfig).values(
+                        session_key=session_key,
+                        timestamp=0,
+                        configuration={"owner": "other"},
+                        param_data=episodic_memory_conf.model_dump(mode="json"),
+                        description="",
+                        user_metadata={},
+                    ),
+                )
+        elif statement.is_select:
+            select_count += 1
+            if select_count == 2:
+                await original_execute(
+                    db_session,
+                    delete(session_manager.SessionConfig).where(
+                        session_manager.SessionConfig.session_key == session_key
+                    ),
+                )
+        return await original_execute(db_session, statement, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "execute", interleaved_execute)
+    await session_manager.create_or_validate_session(
+        session_key, {"owner": "request"}, episodic_memory_conf, "", {}
+    )
+    session_info = await session_manager.get_session_info(session_key)
+    assert session_info is not None
+    assert session_info.configuration == {"owner": "request"}
 
 
 @pytest.mark.asyncio
