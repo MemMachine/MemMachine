@@ -73,6 +73,7 @@ async def _registry(
             base_purge_retry_backoff_seconds=base_purge_retry_backoff_seconds,
         )
     )
+    await registry.migrate()
     await registry.startup()
     return registry
 
@@ -758,6 +759,7 @@ async def test_the_backoff_stops_doubling_at_its_maximum(
             max_purge_retry_backoff_seconds=120,
         )
     )
+    await registry.migrate()
     await registry.startup()
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")

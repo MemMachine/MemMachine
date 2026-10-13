@@ -118,6 +118,7 @@ async def store(tmp_path):
     enable_sqlite_explicit_begin(engine)
     load_sqlite_vec_extension(engine)
     vector_store = SQLiteVecVectorStore(_params(engine))
+    await vector_store.migrate()
     await vector_store.startup()
     yield vector_store
     await vector_store.shutdown()
@@ -155,6 +156,7 @@ async def _store_with(
             store_schema=_schema(**overrides),
         )
     )
+    await other.migrate()
     await other.startup()
     return other
 

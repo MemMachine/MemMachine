@@ -47,7 +47,7 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.schema_migration import Lineage
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.sql import validate_engine_connections, write_session
 
 from .data_types import (
@@ -698,6 +698,10 @@ class SQLiteVectorStore(VectorStore):
             raise RuntimeError(
                 "VectorStore has not been started. Call startup() first."
             )
+
+    @override
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._sqlalchemy_engine, SQLITE_VECTOR_STORE_LINEAGE)
 
     @override
     async def startup(self) -> None:

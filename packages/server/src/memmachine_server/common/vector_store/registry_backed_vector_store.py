@@ -284,6 +284,14 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         self._reservation_cancellations: set[asyncio.Task[None]] = set()
 
     @override
+    async def migrate(self) -> None:
+        # The caller owns the registry's lifecycle and that of any client a
+        # subclass is given; migrating the store prepares the storage its
+        # partitions share.
+        async with self._tracker("migrate"):
+            await self._prepare_storage()
+
+    @override
     async def startup(self) -> None:
         # The caller owns the registry's lifecycle and that of any client a
         # subclass is given.
@@ -424,9 +432,9 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         That is whatever a partition needs besides its incarnation and its
         own storage. Storage of one partition's own is prepared when it
         registers, by `_prepare_partition_storage`. What is prepared for one
-        store serves no other. It runs when the store starts, by any number of
-        processes at once, so it must be idempotent and safe to race, and must
-        complete what a failed call left part-made.
+        store serves no other. It runs when the store migrates and when it
+        starts, by any number of processes at once, so it must be idempotent
+        and safe to race, and must complete what a failed call left part-made.
 
         Raises:
             Exception:

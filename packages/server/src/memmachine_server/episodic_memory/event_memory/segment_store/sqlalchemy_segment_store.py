@@ -78,7 +78,7 @@ from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
 )
-from memmachine_server.common.schema_migration import Lineage
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.sql import (
     validate_engine_connections,
     write_connection,
@@ -989,6 +989,11 @@ class SQLAlchemySegmentStore(SegmentStore):
         self._is_sqlite = self._engine.dialect.name == "sqlite"
 
     # Lifecycle
+
+    @override
+    async def migrate(self) -> None:
+        async with self._tracker("migrate"):
+            await upgrade_lineage(self._engine, SEGMENT_STORE_LINEAGE)
 
     @override
     async def startup(self) -> None:
