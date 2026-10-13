@@ -1,11 +1,13 @@
 """Test for the Episode models."""
 
 import json
-from datetime import UTC, datetime
+import math
+from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
 from memmachine_common.api import EpisodeType
+from pydantic import ValidationError
 
 from memmachine_server.common.episode_store import Episode, EpisodeEntry
 from memmachine_server.common.episode_store.episode_model import (
@@ -136,3 +138,48 @@ def test_episodes_to_string_output_is_utf8_encodable(base_episode_data):
 
     encoded = result.encode("utf-8")
     assert encoded.decode("utf-8") == result
+
+
+_ENTRY_FIELDS = {"content": "hello", "producer_id": "user", "producer_role": "user"}
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"metadata": {"key": math.nan}}, id="metadata-nan"),
+        pytest.param({"metadata": {"key": -math.inf}}, id="metadata-negative-inf"),
+        pytest.param({"metadata": {"key": 2**63}}, id="metadata-int-above-int64"),
+        pytest.param({"metadata": {"key": "a\x00b"}}, id="metadata-value-nul"),
+        pytest.param(
+            {"metadata": {"key": "a\ud800b"}}, id="metadata-value-lone-surrogate"
+        ),
+        pytest.param({"metadata": {"a\x00b": "value"}}, id="metadata-key-nul"),
+        pytest.param({"producer_id": "a\x00b"}, id="producer-id-nul"),
+        pytest.param({"producer_role": "a\x00b"}, id="producer-role-nul"),
+        pytest.param({"produced_for_id": "a\x00b"}, id="produced-for-id-nul"),
+        pytest.param(
+            {"created_at": datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=5)))},
+            id="created-at-before-year-1-in-utc",
+        ),
+        pytest.param(
+            {
+                "created_at": datetime(
+                    2026,
+                    1,
+                    1,
+                    tzinfo=timezone(timedelta(hours=5, minutes=30, seconds=45)),
+                )
+            },
+            id="created-at-offset-seconds",
+        ),
+    ],
+)
+def test_episode_entry_refuses_property_values_outside_the_domain(fields):
+    with pytest.raises(ValidationError, match="A property"):
+        EpisodeEntry.model_validate({**_ENTRY_FIELDS, **fields})
+
+
+def test_episode_entry_keeps_metadata_values_that_are_not_property_values():
+    metadata = {"tags": ["a", "b"], "nested": {"count": 2**64}, "missing": None}
+
+    assert EpisodeEntry(**_ENTRY_FIELDS, metadata=metadata).metadata == metadata
