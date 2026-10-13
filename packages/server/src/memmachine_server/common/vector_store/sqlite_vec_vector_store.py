@@ -15,6 +15,7 @@ admits fewer.
 
 import hashlib
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import ClassVar, override
 from uuid import UUID
 
@@ -68,6 +69,7 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
+from memmachine_server.common.schema_migration import Lineage
 
 from .data_types import (
     IndexedProperties,
@@ -112,6 +114,13 @@ class _PartitionRow(BaseSQLiteVecVectorStore):
     partition_key: MappedColumn[str] = mapped_column(
         String(_PARTITION_KEY_MAX_BYTES), primary_key=True
     )
+
+
+SQLITE_VEC_VECTOR_STORE_LINEAGE = Lineage(
+    name="sqlite_vec_vector_store",
+    versions=Path(__file__).parent / "migrations" / "sqlite_vec_vector_store",
+    metadata=BaseSQLiteVecVectorStore.metadata,
+)
 
 
 class SQLiteVecVectorStorePartition(VectorStorePartition):

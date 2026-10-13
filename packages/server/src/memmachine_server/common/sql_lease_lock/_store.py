@@ -3,6 +3,7 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -22,6 +23,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from memmachine_server.common.schema_migration import Lineage
+
 _metadata = MetaData()
 _lease_lock = Table(
     "lease_lock",
@@ -36,6 +39,13 @@ _counter = Table(
     _metadata,
     Column("id", Integer, primary_key=True),
     Column("value", BigInteger, nullable=False),
+)
+
+
+LEASE_LOCK_LINEAGE = Lineage(
+    name="lease_lock",
+    versions=Path(__file__).parent / "migrations",
+    metadata=_metadata,
 )
 
 

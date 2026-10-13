@@ -15,6 +15,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import override
 from uuid import UUID, uuid4
 
@@ -48,6 +49,7 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import StaticPool
 
+from memmachine_server.common.schema_migration import Lineage
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store.data_types import (
     VectorStoreAttemptsExhaustedError,
@@ -140,6 +142,13 @@ class PurgeQueueRow(BasePartitionRegistry):
     __table_args__ = (
         Index("partition_registry_gc__vs_ea", "vector_store_name", "enqueued_at"),
     )
+
+
+PARTITION_REGISTRY_LINEAGE = Lineage(
+    name="partition_registry",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BasePartitionRegistry.metadata,
+)
 
 
 class _RegistryInsertRejectedError(Exception):
