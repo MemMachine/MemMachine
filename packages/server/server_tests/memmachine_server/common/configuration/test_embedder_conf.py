@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from memmachine_server.common.configuration import EmbeddersConf
 from memmachine_server.common.configuration.embedder_conf import (
@@ -124,6 +124,39 @@ def test_embedder_to_yaml(embedder_conf):
 def test_open_ai_embeder_without_key():
     conf = OpenAIEmbedderConf(model="text-embedding-ada-002")
     assert conf.api_key.get_secret_value() == ""
+
+
+@pytest.mark.parametrize("timeout", [None, 0.5, 60])
+def test_openai_timeouts_yaml_round_trip(timeout):
+    conf = EmbeddersConf.parse(
+        {
+            "embedders": {
+                "local": {
+                    "provider": "openai",
+                    "config": {
+                        "search_timeout_seconds": timeout,
+                        "ingest_timeout_seconds": timeout,
+                    },
+                },
+            },
+        },
+    )
+    assert conf.openai["local"].search_timeout_seconds == timeout
+    assert conf.openai["local"].ingest_timeout_seconds == timeout
+    assert EmbeddersConf.parse(yaml.safe_load(conf.to_yaml())) == conf
+
+
+@pytest.mark.parametrize("field", ["search_timeout_seconds", "ingest_timeout_seconds"])
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
+def test_openai_timeouts_reject_invalid_values(field, timeout):
+    with pytest.raises(ValidationError, match=field):
+        OpenAIEmbedderConf(**{field: timeout})
+
+
+def test_openai_timeouts_unset_by_default():
+    conf = OpenAIEmbedderConf()
+    assert conf.search_timeout_seconds is None
+    assert conf.ingest_timeout_seconds is None
 
 
 @pytest.fixture(autouse=True)
