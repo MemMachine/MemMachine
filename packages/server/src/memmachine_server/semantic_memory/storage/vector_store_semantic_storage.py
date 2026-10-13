@@ -42,6 +42,7 @@ from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
 )
+from memmachine_server.common.schema_migration import check_tables
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store import Record, VectorStorePartition
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
@@ -199,7 +200,9 @@ class VectorStoreSemanticStorage(SemanticStorage):
             await conn.run_sync(BaseVectorSemanticStorage.metadata.create_all)
 
     async def startup(self) -> None:
-        await self.migrate()
+        await check_tables(
+            self._engine, BaseVectorSemanticStorage.metadata, name="semantic memory"
+        )
 
     async def cleanup(self) -> None:
         await self._engine.dispose()

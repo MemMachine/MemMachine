@@ -350,7 +350,7 @@ class ResourceManagerImpl:
             async with self._session_data_manager_lock:
                 if self._session_data_manager is None:
                     session_data_manager = await self._build_session_data_manager()
-                    await session_data_manager.create_tables()
+                    await session_data_manager.startup()
                     self._session_data_manager = session_data_manager
         assert self._session_data_manager is not None
         return self._session_data_manager

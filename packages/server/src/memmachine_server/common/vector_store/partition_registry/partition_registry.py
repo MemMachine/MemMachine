@@ -133,9 +133,14 @@ class VectorStorePartitionRegistry(ABC):
     @abstractmethod
     async def startup(self) -> None:
         """
-        Make the registry ready for use, creating its durable resources idempotently.
+        Make the registry ready for use, on the durable resources `migrate` created.
 
         Its owner calls it before the first use.
+
+        Raises:
+            SchemaMismatchError:
+                If `migrate` has not created the registry's durable resources
+                or brought them up to date.
         """
         raise NotImplementedError
 

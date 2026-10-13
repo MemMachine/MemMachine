@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import JSON
 
+from memmachine_server.common.schema_migration import check_tables
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.cluster_manager import (
     ClusterInfo,
@@ -103,7 +104,9 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
             await conn.run_sync(BaseClusterStore.metadata.create_all)
 
     async def startup(self) -> None:
-        await self.migrate()
+        await check_tables(
+            self._engine, BaseClusterStore.metadata, name="semantic memory cluster"
+        )
 
     async def delete_all(self) -> None:
         async with self._create_session() as session:

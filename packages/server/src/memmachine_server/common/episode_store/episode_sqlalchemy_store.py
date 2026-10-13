@@ -25,9 +25,8 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
@@ -59,15 +58,14 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 from memmachine_server.common.utils import ensure_tz_aware
 
 logger = logging.getLogger(__name__)
-
-_EPISODE_PG_ENUM = pg_dialect.ENUM(
-    *(member.name for member in EpisodeType),
-    name="episode_type",
-)
 
 
 class BaseEpisodeStore(DeclarativeBase):
@@ -172,21 +170,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
     async def startup(self) -> None:
         try:
-            async with self._engine.begin() as conn:
-                if conn.dialect.name == "postgresql":
-                    try:
-                        async with conn.begin_nested():
-                            await conn.run_sync(
-                                lambda sync_conn: _EPISODE_PG_ENUM.create(
-                                    sync_conn, checkfirst=True
-                                )
-                            )
-                    except (IntegrityError, ProgrammingError):
-                        logger.debug(
-                            "episode_type enum already exists (concurrent creation); continuing"
-                        )
-
-                await conn.run_sync(BaseEpisodeStore.metadata.create_all)
+            await check_lineage(self._engine, EPISODE_STORE_LINEAGE)
         except (OperationalError, socket.gaierror) as err:
             raise ConfigurationError(
                 "Failed to connect to the database during startup, please check your configuration."

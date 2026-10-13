@@ -6,7 +6,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Connection
+from sqlalchemy import Connection, MetaData, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.errors import SchemaMismatchError
@@ -61,6 +61,32 @@ async def check_lineage(engine: AsyncEngine, lineage: Lineage) -> None:
         f"The {lineage.name} tables in {location} are {found}, not at revision "
         f"{', '.join(sorted(newest))}. Run `memmachine-server migrate`."
     )
+
+
+async def check_tables(engine: AsyncEngine, metadata: MetaData, *, name: str) -> None:
+    """
+    Check that every table of the metadata exists in the engine's database.
+
+    For stores whose tables are created without a lineage, so no revision
+    can be compared.
+
+    Raises:
+        SchemaMismatchError:
+            If a table is missing.
+    """
+    async with engine.connect() as connection:
+        existing = set(
+            await connection.run_sync(
+                lambda sync_connection: inspect(sync_connection).get_table_names()
+            )
+        )
+    missing = sorted(set(metadata.tables) - existing)
+    if missing:
+        location = engine.url.render_as_string(hide_password=True)
+        raise SchemaMismatchError(
+            f"The {name} tables {', '.join(missing)} are missing in {location}. "
+            "Run `memmachine-server migrate`."
+        )
 
 
 def _upgrade(connection: Connection, lineage: Lineage) -> None:

@@ -69,7 +69,11 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 
 from .data_types import (
     IndexedProperties,
@@ -519,8 +523,7 @@ class SQLiteVecVectorStore(VectorStore):
 
     @override
     async def startup(self) -> None:
-        async with self._engine.begin() as connection:
-            await connection.run_sync(BaseSQLiteVecVectorStore.metadata.create_all)
+        await check_lineage(self._engine, SQLITE_VEC_VECTOR_STORE_LINEAGE)
 
     @override
     async def shutdown(self) -> None:

@@ -178,7 +178,7 @@ class SQLLeaseLockService:
         await self._store.migrate()
 
     async def startup(self) -> None:
-        """Create the service's SQL tables."""
+        """Check that `migrate` has created or brought up to date the service's SQL tables."""
         await self._store.startup()
 
     async def try_acquire(self, key: str, *, lease_duration: timedelta) -> Lease | None:

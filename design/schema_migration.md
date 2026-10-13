@@ -2,9 +2,9 @@
 
 Every store's durable resources (SQL tables, native vector collections and
 their indexes, graph schemas) are created and evolved by one setup step,
-`memmachine-server migrate`, run before servers start. This document records
-how that step is built, what it covers, and how schema changes will be
-carried by it.
+`memmachine-server migrate`, run before servers start; a serving process only
+checks them. This document records how that step is built, what it covers,
+what a server checks, and how schema changes will be carried by it.
 
 ## The setup step
 
@@ -32,6 +32,20 @@ embedder's model under an existing name.
 Every storage interface has `migrate()`: it creates the store's durable
 resources or brings them up to date, runs before `startup`, while no other
 process uses the store, and changes nothing when run again.
+
+`startup()` opens the store on what `migrate` created and never creates
+anything. It raises `SchemaMismatchError`, naming `memmachine-server migrate`,
+when that is missing or behind:
+
+- a SQL store compares its lineage's version table with the newest revision
+  this code has, and refuses a missing, older, or unknown revision;
+- a Qdrant or Milvus store checks that its native collection exists with its
+  dimensions and metric (and Milvus loads it);
+- a semantic store checks that its tables, or Neo4j constraints, exist.
+
+So an old server refuses a database a newer release migrated, and a new
+server refuses one not yet migrated. A server never runs beside a schema
+change it was not written for.
 
 ## What migrate covers
 

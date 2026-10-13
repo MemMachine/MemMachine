@@ -27,6 +27,7 @@ from memmachine_server.common.errors import (
     MilvusConfigurationError,
     Neo4JConfigurationError,
     QdrantConfigurationError,
+    SchemaMismatchError,
     SQLConfigurationError,
     VectorStoreConfigurationError,
 )
@@ -491,36 +492,6 @@ class DatabaseManager:
                 session_config=session_config,
                 session_pool_config=session_pool_config,
             )
-
-            # Initialize schema, graph type, and graph
-            try:
-                # Create schema if not exists
-                await client.execute(f"CREATE SCHEMA IF NOT EXISTS {conf.schema_name}")
-                logger.info("Ensured schema exists: %s", conf.schema_name)
-
-                # Set session to the schema
-                await client.execute(f"SESSION SET SCHEMA {conf.schema_name}")
-
-                # Create empty graph type if not exists
-                await client.execute(
-                    f"CREATE GRAPH TYPE IF NOT EXISTS {conf.graph_type_name} AS {{}}"
-                )
-                logger.info("Ensured graph type exists: %s", conf.graph_type_name)
-
-                # Create graph based on the graph type
-                await client.execute(
-                    f"CREATE GRAPH IF NOT EXISTS {conf.graph_name} TYPED {conf.graph_type_name}"
-                )
-                logger.info("Ensured graph exists: %s", conf.graph_name)
-
-                # Set session to the graph
-                await client.execute(f"SESSION SET GRAPH {conf.graph_name}")
-
-            except Exception as e:
-                await client.close()
-                raise ValueError(
-                    f"Failed to initialize NebulaGraph schema/graph for '{name}': {e}"
-                ) from e
 
             if validate:
                 await self.validate_nebula_client(name, client)
@@ -1053,6 +1024,8 @@ class DatabaseManager:
             await store.startup()
         except Exception as e:
             await self._release_unused_vector_store_sql_engine(backend)
+            if isinstance(e, SchemaMismatchError):
+                raise
             raise VectorStoreConfigurationError(
                 f"Vector store {vector_store_name!r} on backend '{backend}' failed to start: {e}",
             ) from e

@@ -317,7 +317,8 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
     `_similarity_metric`, and `_indexed_properties` are the store's
     parameters, `_partition_registry` is the registry, and `_tracker` times
     each operation, and a subclass implements `_prepare_storage`,
-    `_prepare_partition_storage`, `_partition_handle`, and `_purge_round`.
+    `_check_storage`, `_prepare_partition_storage`, `_partition_handle`, and
+    `_purge_round`.
     """
 
     def __init__(
@@ -340,17 +341,18 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
     async def migrate(self) -> None:
         # The caller owns the registry's lifecycle and that of any client a
         # subclass is given; migrating the store prepares the storage its
-        # partitions share.
+        # partitions share, then checks it against the store's declaration.
         async with self._tracker("migrate"):
             await self._prepare_storage()
+            await self._check_storage()
 
     @override
     async def startup(self) -> None:
         # The caller owns the registry's lifecycle and that of any client a
-        # subclass is given; starting the store prepares the storage its
+        # subclass is given; starting the store checks the storage its
         # partitions share.
         async with self._tracker("startup"):
-            await self._prepare_storage()
+            await self._check_storage()
 
     @override
     async def shutdown(self) -> None:
@@ -487,14 +489,30 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         own storage: a native collection they all live in, a container of
         per-partition units, or nothing. Storage of one partition's own is
         prepared when it registers, by `_prepare_partition_storage`. What is
-        prepared for one store serves no other. It runs when the store migrates and when it starts,
-        by any number of processes at once, so it must be idempotent and safe to race, and must
-        complete what a failed call left part-made.
+        prepared for one store serves no other. It runs when the store
+        migrates, with no other process using the store; it must be
+        idempotent, and must complete what a failed call left part-made.
 
         Raises:
             Exception:
-                Whatever the backend raises. Startup then fails, and the next
-                startup completes what this call left.
+                Whatever the backend raises. Migrating then fails, and the
+                next migration completes what this call left.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _check_storage(self) -> None:
+        """
+        Check that the storage the store's partitions share is prepared for the store.
+
+        It runs when the store starts, by any number of processes at once,
+        and after `_prepare_storage` when the store migrates. It changes
+        nothing.
+
+        Raises:
+            SchemaMismatchError:
+                If the storage is missing, or was prepared with other
+                dimensions or another metric.
         """
         raise NotImplementedError
 
@@ -507,7 +525,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
         The partition is reserved, pending, under the incarnation, and its
         reservation is confirmed once this returns. The storage the store's partitions
-        share was prepared at startup; this prepares what the partition
+        share was prepared when the store migrated; this prepares what the partition
         keeps of its own, such as a unit named by its
         incarnation, or nothing. Whatever a failed or interrupted call leaves
         must be recoverable: reclaimed by the purge rounds of the incarnation

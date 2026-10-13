@@ -501,7 +501,9 @@ async def test_get_vector_store_qdrant(tmp_path):
         ),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.migrate = AsyncMock()
         builder = DatabaseManager(conf)
+        await builder.migrate_vector_store("qdrant1", **_STORE)
         store = await builder.get_vector_store("qdrant1", **_STORE)
 
     assert store is mock_store_cls.return_value
@@ -553,7 +555,9 @@ async def test_qdrant_close(tmp_path):
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.migrate = AsyncMock()
         builder = DatabaseManager(conf)
+        await builder.migrate_vector_store("qdrant1", **_STORE)
         await builder.get_vector_store("qdrant1", **_STORE)
 
     assert "qdrant1" in builder.qdrant_clients
@@ -753,7 +757,9 @@ async def test_get_vector_store_milvus(tmp_path):
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.migrate = AsyncMock()
         builder = DatabaseManager(conf)
+        await builder.migrate_vector_store("milvus1", **_STORE)
         store = await builder.get_vector_store("milvus1", **_STORE)
 
     assert store is mock_store_cls.return_value
@@ -841,7 +847,9 @@ async def test_milvus_close(tmp_path):
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.migrate = AsyncMock()
         builder = DatabaseManager(conf)
+        await builder.migrate_vector_store("milvus1", **_STORE)
         await builder.get_vector_store("milvus1", **_STORE)
 
     assert "milvus1" in builder.milvus_clients

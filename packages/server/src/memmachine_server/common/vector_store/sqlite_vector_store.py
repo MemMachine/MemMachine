@@ -67,7 +67,11 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 
 from .data_types import (
     IndexedProperties,
@@ -768,8 +772,7 @@ class SQLiteVectorStore(VectorStore):
 
         if self._index_directory is not None:
             self._index_directory.mkdir(parents=True, exist_ok=True)
-        async with self._sqlalchemy_engine.begin() as connection:
-            await connection.run_sync(BaseSQLiteVectorStore.metadata.create_all)
+        await check_lineage(self._sqlalchemy_engine, SQLITE_VECTOR_STORE_LINEAGE)
         await self._replay_pending_operations()
 
         self._started = True

@@ -215,6 +215,7 @@ async def test_sql_lock_service_uses_session_database_and_is_shared(
     }
     resource_manager = ResourceManagerImpl(invalid_configure)
     try:
+        await (await resource_manager._build_sql_lock_service()).migrate()
         first, second = await asyncio.gather(
             resource_manager.get_sql_lock_service(),
             resource_manager.get_sql_lock_service(),

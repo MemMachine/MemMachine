@@ -1,12 +1,15 @@
 """`memmachine-server migrate`: the setup step that creates every configured store's durable resources."""
 
+import re
 import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
+from sqlalchemy import Engine, event
 
 from memmachine_server.common.configuration.log_conf import LogConf
+from memmachine_server.common.errors import SchemaMismatchError
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
@@ -120,28 +123,65 @@ async def test_a_rerun_changes_nothing(configuration_path):
     assert _tables(configuration_path.parent / "memmachine.db") == before
 
 
-@pytest.mark.asyncio
-async def test_stores_start_on_what_migrate_created(configuration_path):
-    await app.migrate()
+async def _start_every_store(resource_manager: ResourceManagerImpl) -> None:
+    await resource_manager.get_session_data_manager()
+    await resource_manager.get_sql_lock_service()
+    await resource_manager.get_episode_storage()
+    await resource_manager.get_segment_store("local_sql")
+    embedder = await resource_manager.get_embedder("openai_embedder")
+    await resource_manager.get_vector_store(
+        "local_vectors",
+        vector_store_name=event_backend_vector_store_name(
+            "local_vectors", "openai_embedder"
+        ),
+        vector_dimensions=embedder.dimensions,
+        similarity_metric=embedder.similarity_metric,
+        indexed_properties=event_backend_indexed_properties(),
+    )
+    semantic_manager = await resource_manager.get_semantic_manager()
+    await semantic_manager.get_semantic_storage()
+    await semantic_manager.get_semantic_config_storage()
 
+
+@pytest.mark.asyncio
+async def test_stores_start_on_what_migrate_created_without_ddl(configuration_path):
+    await app.migrate()
+    statements: list[str] = []
+
+    def record(_connection, _cursor, statement, _parameters, _context, _many):
+        statements.append(statement)
+
+    event.listen(Engine, "before_cursor_execute", record)
+    try:
+        resource_manager = ResourceManagerImpl(load_configuration())
+        try:
+            await _start_every_store(resource_manager)
+        finally:
+            await resource_manager.close()
+    finally:
+        event.remove(Engine, "before_cursor_execute", record)
+
+    assert statements
+    assert [
+        statement
+        for statement in statements
+        if re.match(r"\s*(CREATE|ALTER|DROP)\b", statement, re.IGNORECASE)
+    ] == []
+
+
+@pytest.mark.asyncio
+async def test_stores_refuse_to_start_before_migrate(configuration_path):
     resource_manager = ResourceManagerImpl(load_configuration())
     try:
-        await resource_manager.get_session_data_manager()
-        await resource_manager.get_sql_lock_service()
-        await resource_manager.get_episode_storage()
-        await resource_manager.get_segment_store("local_sql")
-        embedder = await resource_manager.get_embedder("openai_embedder")
-        await resource_manager.get_vector_store(
-            "local_vectors",
-            vector_store_name=event_backend_vector_store_name(
-                "local_vectors", "openai_embedder"
-            ),
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties=event_backend_indexed_properties(),
-        )
-        semantic_manager = await resource_manager.get_semantic_manager()
-        await semantic_manager.get_semantic_storage()
-        await semantic_manager.get_semantic_config_storage()
+        starts = [
+            resource_manager.get_session_data_manager,
+            resource_manager.get_sql_lock_service,
+            resource_manager.get_episode_storage,
+            lambda: resource_manager.get_segment_store("local_sql"),
+            lambda: _start_every_store(resource_manager),
+        ]
+        for start in starts:
+            with pytest.raises(SchemaMismatchError, match="memmachine-server migrate"):
+                await start()
     finally:
         await resource_manager.close()

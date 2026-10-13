@@ -2074,13 +2074,12 @@ class TestCollectionProvisioningAcrossWorkers:
     ):
         """A collection that exists without its indexes still gets them.
 
-        A second store starting, another worker's or a retry after one died
-        between the two calls, finds the collection there and creates the
-        indexes it lacks.
+        A migration after one that died between the two calls finds the
+        collection there and creates the indexes it lacks.
         """
         native, name = "raced", "raced_name"
 
-        # Stand in for a startup that got as far as the collection and no further.
+        # Stand in for a migration that got as far as the collection and no further.
         await qdrant_client.create_collection(
             collection_name=native,
             vectors_config=models.VectorParams(
@@ -2091,6 +2090,7 @@ class TestCollectionProvisioningAcrossWorkers:
         store = QdrantVectorStore(
             await _params(qdrant_client, registry_engine, vector_store_name=native)
         )
+        await store.migrate()
         await store.startup()
         try:
             await store.open_or_create_partition(name)
@@ -2185,51 +2185,6 @@ class TestCollectionProvisioningAcrossWorkers:
             await client_a.close()
             await client_b.close()
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("prefer_grpc", [False, True], ids=["rest", "grpc"])
-    async def test_two_stores_preparing_their_storage_at_once_both_succeed(
-        self, new_qdrant_client, registry_engine, monkeypatch, prefer_grpc
-    ):
-        """Two workers start stores of one name at once, so both prepare the
-        native collection they share at the same moment. Both startups
-        succeed, and a partition each worker creates holds its own records."""
-        client_a = new_qdrant_client(prefer_grpc=prefer_grpc)
-        client_b = new_qdrant_client(prefer_grpc=prefer_grpc)
-        native = f"race_storage_{'grpc' if prefer_grpc else 'rest'}"
-
-        store_a = QdrantVectorStore(
-            await _params(client_a, registry_engine, vector_store_name=native)
-        )
-        store_b = QdrantVectorStore(
-            await _params(client_b, registry_engine, vector_store_name=native)
-        )
-        self._together(monkeypatch, [store_a, store_b], "_prepare_storage")
-
-        try:
-            async with asyncio.timeout(60):
-                await asyncio.gather(store_a.startup(), store_b.startup())
-            await store_a.create_partition("first")
-            await store_b.create_partition("second")
-            first = await store_b.open_partition("first")
-            second = await store_a.open_partition("second")
-            assert first is not None
-            assert second is not None
-            records = {
-                partition: _make_record(vector=_normalize([1.0, 0.0, 0.0]))
-                for partition in (first, second)
-            }
-            for partition, record in records.items():
-                await partition.upsert(records=[record])
-            for partition, record in records.items():
-                [result] = await partition.query(
-                    query_vectors=[record.vector], limit=10
-                )
-                assert [match.record_uuid for match in result.matches] == [record.uuid]
-        finally:
-            await client_a.delete_collection(native)
-            await client_a.close()
-            await client_b.close()
-
 
 @pytest.mark.integration
 class TestStrictMode:
@@ -2297,7 +2252,7 @@ class TestStrictModeIsRequested:
     """Local mode does not record strict mode, so the request itself is checked."""
 
     @pytest.mark.asyncio
-    async def test_startup_creates_the_collection_strict(
+    async def test_migrate_creates_the_collection_strict(
         self, monkeypatch, registry_engine
     ):
         client = AsyncQdrantClient(location=":memory:")
@@ -2310,7 +2265,7 @@ class TestStrictModeIsRequested:
 
         monkeypatch.setattr(client, "create_collection", recording_create_collection)
         store = QdrantVectorStore(await _params(client, registry_engine))
-        await store.startup()
+        await store.migrate()
 
         assert set(requested) == {VECTOR_STORE_NAME}
         config = requested[VECTOR_STORE_NAME]

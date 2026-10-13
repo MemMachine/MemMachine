@@ -61,7 +61,7 @@ behind its choices.
 1. **Create.** The store reserves the key, inserting a pending registry row
    under a freshly minted incarnation, prepares the storage the partition
    needs of its own (on Qdrant and Milvus, none: its records go into the
-   store's one native collection, which startup prepared), and confirms the
+   store's one native collection, which `migrate` prepared), and confirms the
    reservation, which marks the row live. A racing creator loses at the
    registry's primary key, and a pending partition is not opened.
 2. **Open.** The registry resolves the partition key to the live incarnation;

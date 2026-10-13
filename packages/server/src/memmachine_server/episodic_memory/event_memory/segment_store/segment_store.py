@@ -177,7 +177,14 @@ class SegmentStore(ABC):
 
     @abstractmethod
     async def startup(self) -> None:
-        """Startup."""
+        """
+        Start the store.
+
+        Raises:
+            SchemaMismatchError:
+                If `migrate` has not created the store's durable resources
+                or brought them up to date.
+        """
         raise NotImplementedError
 
     @abstractmethod

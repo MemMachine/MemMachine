@@ -15,7 +15,7 @@ from memmachine_server.common.configuration import (
 from memmachine_server.common.data_types import PropertyType, SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
-from memmachine_server.common.errors import ResourceNotReadyError
+from memmachine_server.common.errors import ResourceNotReadyError, SchemaMismatchError
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
@@ -162,12 +162,14 @@ class SemanticResourceManager:
         vector_store = await self._resource_manager.get_vector_store(
             backend, **store_spec
         )
-
-        # The manager owns this partition, so opening it here, once, at the
-        # storage's first use is the owner's provisioning, not a request's.
-        vector_partition = await vector_store.open_or_create_partition(
+        vector_partition = await vector_store.open_partition(
             _VECTOR_STORE_PARTITION_KEY
         )
+        if vector_partition is None:
+            raise SchemaMismatchError(
+                f"Semantic memory's vector store partition on '{backend}' is "
+                "missing. Run `memmachine-server migrate`."
+            )
         storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()
         return storage

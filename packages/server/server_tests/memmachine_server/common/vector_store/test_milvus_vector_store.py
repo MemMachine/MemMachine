@@ -454,10 +454,10 @@ async def collection(store):
 class TestPartitionLifecycle:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("failing_step", ["create_index", "load_collection"])
-    async def test_a_startup_that_failed_part_way_is_as_if_never_attempted(
+    async def test_a_migration_that_failed_part_way_is_as_if_never_attempted(
         self, store, monkeypatch, failing_step
     ):
-        """The next startup completes the native collection a failed one left behind."""
+        """The next migration completes the native collection a failed one left behind."""
         partial = MilvusVectorStore(
             await _params(
                 store._client,
@@ -473,8 +473,9 @@ class TestPartitionLifecycle:
         with monkeypatch.context() as patch:
             patch.setattr(store._client, failing_step, refuse)
             with pytest.raises(pymilvus.MilvusException, match="refused"):
-                await partial.startup()
+                await partial.migrate()
 
+        await partial.migrate()
         await partial.startup()
         await partial.create_partition("partial")
         coll = await partial.open_partition("partial")
@@ -654,67 +655,6 @@ async def _require_usable(partition: MilvusVectorStorePartition) -> None:
         property_filter=Comparison(field="name", op="=", value="usable"),
     )
     assert [match.record_uuid for match in result.matches] == [record.uuid]
-
-
-class TestConcurrentPreparation:
-    @pytest.mark.asyncio
-    async def test_a_startup_finding_the_native_collection_mid_preparation_completes_it(
-        self, store, other_store, monkeypatch
-    ):
-        """Two stores of one name start at once, and the second finds the
-        native collection the first created but has not yet indexed or
-        loaded. The second's startup completes it, so its partition is usable
-        before the first startup goes on, and both stores' partitions end
-        usable with every index."""
-        # A name of its own, so the first startup creates the native collection.
-        first = MilvusVectorStore(
-            await _params(
-                store._client,
-                store._partition_registry._engine,
-                vector_store_name="raced_preparation",
-                indexed_properties={"name": str},
-            )
-        )
-        second = MilvusVectorStore(
-            await _params(
-                other_store._client,
-                other_store._partition_registry._engine,
-                vector_store_name="raced_preparation",
-                indexed_properties={"name": str},
-            )
-        )
-        first_created = asyncio.Event()
-        second_done = asyncio.Event()
-        create_native_collection = store._client.create_collection
-
-        async def create_and_hold(*args, **kwargs):
-            await create_native_collection(*args, **kwargs)
-            first_created.set()
-            await asyncio.wait_for(second_done.wait(), 60)
-
-        monkeypatch.setattr(store._client, "create_collection", create_and_hold)
-
-        async def start_second() -> None:
-            try:
-                await asyncio.wait_for(first_created.wait(), 60)
-                await second.startup()
-                await second.create_partition("second")
-                partition = await second.open_partition("second")
-                assert partition is not None
-                await _require_usable(partition)
-            finally:
-                second_done.set()
-
-        await asyncio.gather(first.startup(), start_second())
-
-        await first.create_partition("first")
-        partition = await first.open_partition("first")
-        assert partition is not None
-        await _require_usable(partition)
-        assert set(await store._client.list_indexes(first._collection_name)) == {
-            "vector",
-            "_p_name",
-        }
 
 
 class TestUpsertAndQuery:
@@ -1766,6 +1706,10 @@ async def test_a_purge_round_milvus_does_not_accept_in_full_raises(registry_url)
     # the deleted partition.
     client.has_collection = AsyncMock(return_value=True)
     client.list_indexes = AsyncMock(return_value=["vector"])
+    client.describe_collection = AsyncMock(
+        return_value={"fields": [{"name": "vector", "params": {"dim": VECTOR_DIM}}]}
+    )
+    client.describe_index = AsyncMock(return_value={"metric_type": "COSINE"})
     client.load_collection = AsyncMock(return_value=None)
     client.query = AsyncMock(return_value=[{"id": "listed_a"}, {"id": "listed_b"}])
     client.delete = AsyncMock(return_value={"delete_count": 1})
