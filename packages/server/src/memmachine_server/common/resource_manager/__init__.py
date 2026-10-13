@@ -59,6 +59,18 @@ class CommonResourceManager(Protocol):
         """Return the store of one name on a configured backend."""
         raise NotImplementedError
 
+    async def migrate_vector_store(
+        self,
+        backend: str,
+        *,
+        vector_store_name: str,
+        vector_dimensions: int,
+        similarity_metric: SimilarityMetric,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> None:
+        """Create the durable resources of the store of one name on a configured backend, or bring them up to date."""
+        raise NotImplementedError
+
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return the segment store by name."""
         raise NotImplementedError

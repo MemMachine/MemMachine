@@ -148,14 +148,20 @@ async def event_backend_vector_store(
     embedder = await resource_manager.get_embedder(config.embedder, validate=True)
     return await resource_manager.get_vector_store(
         config.vector_store,
-        vector_store_name=uuid5(
-            uuid5(_EVENT_BACKEND_VECTOR_STORE_NAMESPACE, config.vector_store),
-            config.embedder,
-        ).hex,
+        vector_store_name=event_backend_vector_store_name(
+            config.vector_store, config.embedder
+        ),
         vector_dimensions=embedder.dimensions,
         similarity_metric=embedder.similarity_metric,
         indexed_properties=event_backend_indexed_properties(),
     )
+
+
+def event_backend_vector_store_name(vector_store: str, embedder: str) -> str:
+    """The name of the event backend's store on a vector store backend, for one embedder."""
+    return uuid5(
+        uuid5(_EVENT_BACKEND_VECTOR_STORE_NAMESPACE, vector_store), embedder
+    ).hex
 
 
 def event_backend_indexed_properties() -> dict[str, PropertyType]:

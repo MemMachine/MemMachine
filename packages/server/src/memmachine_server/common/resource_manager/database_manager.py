@@ -36,6 +36,9 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStoreParams,
 )
 from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store.partition_registry import (
+    VectorStorePartitionRegistry,
+)
 from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
     SQLAlchemyVectorStorePartitionRegistry,
     SQLAlchemyVectorStorePartitionRegistryParams,
@@ -332,6 +335,14 @@ class DatabaseManager:
         raise ValueError(
             f"VectorGraphStore '{name}' not found in neo4j_confs or nebula_graph_confs"
         )
+
+    async def migrate_graph_stores(self) -> None:
+        """Create the durable resources of every configured graph store, or bring them up to date."""
+        # A Neo4j graph store creates its indexes as its labels grow, so only
+        # NebulaGraph stores have anything to create ahead of use.
+        for name in self.conf.nebula_graph_confs:
+            graph_store = await self.get_vector_graph_store(name)
+            await graph_store.migrate()
 
     @staticmethod
     async def validate_neo4j_driver(name: str, driver: AsyncDriver) -> None:
@@ -645,9 +656,8 @@ class DatabaseManager:
         vector_dimensions: int,
         similarity_metric: SimilarityMetric,
         indexed_properties: Mapping[str, PropertyType],
-    ) -> VectorStore:
-        # The registry first, so a failed lookup or startup leaves no
-        # client open.
+    ) -> tuple[VectorStore, VectorStorePartitionRegistry]:
+        # The registry first, so a failed lookup leaves no client open.
         partition_registry = SQLAlchemyVectorStorePartitionRegistry(
             SQLAlchemyVectorStorePartitionRegistryParams(
                 engine=await self.async_get_sql_engine(conf.partition_registry),
@@ -655,7 +665,6 @@ class DatabaseManager:
                 tombstone_retention_seconds=conf.tombstone_retention_seconds,
             )
         )
-        await partition_registry.startup()
         client = await self.async_get_qdrant_client(backend, validate=True)
 
         from memmachine_server.common.vector_store.qdrant_vector_store import (
@@ -663,7 +672,7 @@ class DatabaseManager:
             QdrantVectorStoreParams,
         )
 
-        return QdrantVectorStore(
+        store = QdrantVectorStore(
             QdrantVectorStoreParams(
                 client=client,
                 partition_registry=partition_registry,
@@ -674,6 +683,7 @@ class DatabaseManager:
                 metrics_factory=conf.get_metrics_factory(),
             )
         )
+        return store, partition_registry
 
     @staticmethod
     async def validate_qdrant_client(name: str, client: "AsyncQdrantClient") -> None:
@@ -752,9 +762,8 @@ class DatabaseManager:
         vector_dimensions: int,
         similarity_metric: SimilarityMetric,
         indexed_properties: Mapping[str, PropertyType],
-    ) -> VectorStore:
-        # The registry first, so a failed lookup or startup leaves no
-        # client open.
+    ) -> tuple[VectorStore, VectorStorePartitionRegistry]:
+        # The registry first, so a failed lookup leaves no client open.
         partition_registry = SQLAlchemyVectorStorePartitionRegistry(
             SQLAlchemyVectorStorePartitionRegistryParams(
                 engine=await self.async_get_sql_engine(conf.partition_registry),
@@ -762,7 +771,6 @@ class DatabaseManager:
                 tombstone_retention_seconds=conf.tombstone_retention_seconds,
             )
         )
-        await partition_registry.startup()
         client = await self.async_get_milvus_client(backend, validate=True)
 
         from memmachine_server.common.vector_store.milvus_vector_store import (
@@ -770,7 +778,7 @@ class DatabaseManager:
             MilvusVectorStoreParams,
         )
 
-        return MilvusVectorStore(
+        store = MilvusVectorStore(
             MilvusVectorStoreParams(
                 client=client,
                 partition_registry=partition_registry,
@@ -784,6 +792,7 @@ class DatabaseManager:
                 metrics_factory=conf.get_metrics_factory(),
             )
         )
+        return store, partition_registry
 
     @staticmethod
     async def validate_milvus_client(
@@ -867,13 +876,13 @@ class DatabaseManager:
         vector_dimensions: int,
         similarity_metric: SimilarityMetric,
         indexed_properties: Mapping[str, PropertyType],
-    ) -> VectorStore:
+    ) -> tuple[VectorStore, None]:
         from memmachine_server.common.vector_store.sqlite_vector_store import (
             SQLiteVectorStore,
             SQLiteVectorStoreParams,
         )
 
-        return SQLiteVectorStore(
+        store = SQLiteVectorStore(
             SQLiteVectorStoreParams(
                 sqlalchemy_engine=self._vector_store_sql_engine(backend, conf.path),
                 vector_store_name=vector_store_name,
@@ -887,6 +896,7 @@ class DatabaseManager:
                 save_threshold=conf.save_threshold,
             )
         )
+        return store, None
 
     async def _build_sqlite_vec_vector_store(
         self,
@@ -896,13 +906,13 @@ class DatabaseManager:
         vector_dimensions: int,
         similarity_metric: SimilarityMetric,
         indexed_properties: Mapping[str, PropertyType],
-    ) -> VectorStore:
+    ) -> tuple[VectorStore, None]:
         from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
             SQLiteVecVectorStore,
             SQLiteVecVectorStoreParams,
         )
 
-        return SQLiteVecVectorStore(
+        store = SQLiteVecVectorStore(
             SQLiteVecVectorStoreParams(
                 engine=self._vector_store_sql_engine(backend, conf.path),
                 vector_store_name=vector_store_name,
@@ -911,6 +921,7 @@ class DatabaseManager:
                 indexed_properties=indexed_properties,
             )
         )
+        return store, None
 
     def _vector_store_sql_engine(self, backend: str, path: str) -> AsyncEngine:
         """The engine behind a SQLite-backed vector store backend, shared by its collections."""
@@ -984,6 +995,28 @@ class DatabaseManager:
                 )
             return store
 
+    async def migrate_vector_store(
+        self,
+        backend: str,
+        *,
+        vector_store_name: str,
+        vector_dimensions: int,
+        similarity_metric: SimilarityMetric,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> None:
+        """Create the durable resources of one store on a configured backend, or bring them up to date, without starting it."""
+        store, partition_registry = await self._construct_vector_store(
+            backend,
+            self._vector_store_conf(backend),
+            vector_store_name,
+            vector_dimensions,
+            similarity_metric,
+            indexed_properties,
+        )
+        if partition_registry is not None:
+            await partition_registry.migrate()
+        await store.migrate()
+
     def _vector_store_conf(
         self, backend: str
     ) -> QdrantConf | MilvusConf | SQLiteVectorStoreConf | SQLiteVecVectorStoreConf:
@@ -1007,43 +1040,16 @@ class DatabaseManager:
     ) -> VectorStore:
         conf = self._vector_store_conf(backend)
         try:
-            match conf:
-                case QdrantConf():
-                    store = await self._build_qdrant_store(
-                        backend,
-                        conf,
-                        vector_store_name,
-                        vector_dimensions,
-                        similarity_metric,
-                        indexed_properties,
-                    )
-                case MilvusConf():
-                    store = await self._build_milvus_store(
-                        backend,
-                        conf,
-                        vector_store_name,
-                        vector_dimensions,
-                        similarity_metric,
-                        indexed_properties,
-                    )
-                case SQLiteVectorStoreConf():
-                    store = await self._build_sqlite_vector_store(
-                        backend,
-                        conf,
-                        vector_store_name,
-                        vector_dimensions,
-                        similarity_metric,
-                        indexed_properties,
-                    )
-                case SQLiteVecVectorStoreConf():
-                    store = await self._build_sqlite_vec_vector_store(
-                        backend,
-                        conf,
-                        vector_store_name,
-                        vector_dimensions,
-                        similarity_metric,
-                        indexed_properties,
-                    )
+            store, partition_registry = await self._construct_vector_store(
+                backend,
+                conf,
+                vector_store_name,
+                vector_dimensions,
+                similarity_metric,
+                indexed_properties,
+            )
+            if partition_registry is not None:
+                await partition_registry.startup()
             await store.startup()
         except Exception as e:
             await self._release_unused_vector_store_sql_engine(backend)
@@ -1051,3 +1057,54 @@ class DatabaseManager:
                 f"Vector store {vector_store_name!r} on backend '{backend}' failed to start: {e}",
             ) from e
         return store
+
+    async def _construct_vector_store(
+        self,
+        backend: str,
+        conf: QdrantConf
+        | MilvusConf
+        | SQLiteVectorStoreConf
+        | SQLiteVecVectorStoreConf,
+        vector_store_name: str,
+        vector_dimensions: int,
+        similarity_metric: SimilarityMetric,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> tuple[VectorStore, VectorStorePartitionRegistry | None]:
+        """Construct a store, and the partition registry it is backed by if any, without starting either."""
+        match conf:
+            case QdrantConf():
+                return await self._build_qdrant_store(
+                    backend,
+                    conf,
+                    vector_store_name,
+                    vector_dimensions,
+                    similarity_metric,
+                    indexed_properties,
+                )
+            case MilvusConf():
+                return await self._build_milvus_store(
+                    backend,
+                    conf,
+                    vector_store_name,
+                    vector_dimensions,
+                    similarity_metric,
+                    indexed_properties,
+                )
+            case SQLiteVectorStoreConf():
+                return await self._build_sqlite_vector_store(
+                    backend,
+                    conf,
+                    vector_store_name,
+                    vector_dimensions,
+                    similarity_metric,
+                    indexed_properties,
+                )
+            case SQLiteVecVectorStoreConf():
+                return await self._build_sqlite_vec_vector_store(
+                    backend,
+                    conf,
+                    vector_store_name,
+                    vector_dimensions,
+                    similarity_metric,
+                    indexed_properties,
+                )

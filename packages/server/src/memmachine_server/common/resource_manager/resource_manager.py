@@ -51,6 +51,10 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
 )
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    event_backend_indexed_properties,
+    event_backend_vector_store_name,
+)
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
@@ -170,6 +174,48 @@ class ResourceManagerImpl:
 
         # TODO: Build semantic storage, episodic storage, and session data storage lazily when actually used
 
+    async def migrate(self) -> None:
+        """
+        Create the durable resources of every store the configuration can select, or bring them up to date.
+
+        Run it with no server using the configured databases, before one
+        starts. Each store is migrated without being started, except the
+        stores semantic memory opens to create its own partition.
+        """
+        await (await self._build_session_data_manager()).migrate()
+        await (await self._build_sql_lock_service()).migrate()
+        await (await self._build_episode_storage()).migrate()
+
+        # A project can name any configured relational database as its
+        # segment store, and any configured vector store and embedder for
+        # its event backend.
+        databases = self._conf.resources.databases
+        for name in databases.relational_db_confs:
+            await (await self._build_segment_store(name)).migrate()
+        vector_store_backends = [
+            *databases.qdrant_confs,
+            *databases.milvus_confs,
+            *databases.sqlite_vector_store_confs,
+            *databases.sqlite_vec_vector_store_confs,
+        ]
+        for backend in vector_store_backends:
+            for embedder_name in sorted(self._embedder_manager.get_all_names()):
+                embedder = await self.get_embedder(embedder_name)
+                await self.migrate_vector_store(
+                    backend,
+                    vector_store_name=event_backend_vector_store_name(
+                        backend, embedder_name
+                    ),
+                    vector_dimensions=embedder.dimensions,
+                    similarity_metric=embedder.similarity_metric,
+                    indexed_properties=event_backend_indexed_properties(),
+                )
+
+        await self._database_manager.migrate_graph_stores()
+
+        if self._conf.semantic_memory.enabled:
+            await (await self.get_semantic_manager()).migrate()
+
     async def close(self) -> None:
         """Close resources and clean up state."""
         purge_tasks = list(self._segment_store_purge_tasks)
@@ -238,28 +284,46 @@ class ResourceManagerImpl:
             )
         return store
 
+    async def migrate_vector_store(
+        self,
+        backend: str,
+        *,
+        vector_store_name: str,
+        vector_dimensions: int,
+        similarity_metric: SimilarityMetric,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> None:
+        """Create the durable resources of the store of one name on a configured backend, or bring them up to date."""
+        await self._database_manager.migrate_vector_store(
+            backend,
+            vector_store_name=vector_store_name,
+            vector_dimensions=vector_dimensions,
+            similarity_metric=similarity_metric,
+            indexed_properties=indexed_properties,
+        )
+
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return a segment store by name, constructing it on first access."""
         if name not in self._segment_stores:
             async with self._segment_store_lock:
                 if name not in self._segment_stores:
-                    engine = await self.get_sql_engine(name)
-                    store = SQLAlchemySegmentStore(
-                        SQLAlchemySegmentStoreParams(
-                            engine=engine,
-                            metrics_factory=(
-                                await ResourceManagerImpl.get_metrics_factory(
-                                    "prometheus"
-                                )
-                            ),
-                        ),
-                    )
+                    store = await self._build_segment_store(name)
                     await store.startup()
                     self._segment_stores[name] = store
                     self._segment_store_purge_tasks.append(
                         asyncio.create_task(_purge_deleted_partitions_forever(store))
                     )
         return self._segment_stores[name]
+
+    async def _build_segment_store(self, name: str) -> SegmentStore:
+        return SQLAlchemySegmentStore(
+            SQLAlchemySegmentStoreParams(
+                engine=await self.get_sql_engine(name),
+                metrics_factory=await ResourceManagerImpl.get_metrics_factory(
+                    "prometheus"
+                ),
+            ),
+        )
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""
@@ -285,32 +349,33 @@ class ResourceManagerImpl:
         if self._session_data_manager is None:
             async with self._session_data_manager_lock:
                 if self._session_data_manager is None:
-                    database = self._conf.session_manager.database
-                    engine = await self.get_sql_engine(database)
-
-                    self._session_data_manager = SessionDataManagerSQL(
-                        engine,
-                        metrics_factory=await ResourceManagerImpl.get_metrics_factory(
-                            "prometheus"
-                        ),
-                    )
-                    await self._session_data_manager.create_tables()
+                    session_data_manager = await self._build_session_data_manager()
+                    await session_data_manager.create_tables()
+                    self._session_data_manager = session_data_manager
         assert self._session_data_manager is not None
         return self._session_data_manager
+
+    async def _build_session_data_manager(self) -> SessionDataManager:
+        return SessionDataManagerSQL(
+            await self.get_sql_engine(self._conf.session_manager.database),
+            metrics_factory=await ResourceManagerImpl.get_metrics_factory("prometheus"),
+        )
 
     async def get_sql_lock_service(self) -> SQLLeaseLockService:
         """Return the SQL lock service backed by the session database."""
         if self._sql_lock_service is None:
             async with self._sql_lock_service_lock:
                 if self._sql_lock_service is None:
-                    engine = await self.get_sql_engine(
-                        self._conf.session_manager.database
-                    )
-                    service = SQLLeaseLockService(engine)
+                    service = await self._build_sql_lock_service()
                     await service.startup()
                     self._sql_lock_service = service
         assert self._sql_lock_service is not None
         return self._sql_lock_service
+
+    async def _build_sql_lock_service(self) -> SQLLeaseLockService:
+        return SQLLeaseLockService(
+            await self.get_sql_engine(self._conf.session_manager.database)
+        )
 
     async def get_episodic_memory_manager(self) -> EpisodicMemoryManager:
         """Lazy-load the episodic memory manager."""
@@ -332,27 +397,24 @@ class ResourceManagerImpl:
         if self._episode_storage is None:
             async with self._episode_storage_lock:
                 if self._episode_storage is None:
-                    episode_storage_conf = getattr(self._conf, "episode_storage", None)
-                    if episode_storage_conf is None:
-                        episode_storage_conf = self._conf.episode_store
-
-                    database = episode_storage_conf.database
-                    engine = await self.get_sql_engine(database)
-
-                    episode_storage = SqlAlchemyEpisodeStore(
-                        engine,
-                        metrics_factory=await ResourceManagerImpl.get_metrics_factory(
-                            "prometheus"
-                        ),
-                    )
+                    episode_storage = await self._build_episode_storage()
                     await episode_storage.startup()
-
-                    if episode_storage_conf.with_count_cache:
-                        episode_storage = CountCachingEpisodeStorage(episode_storage)
-
                     self._episode_storage = episode_storage
         assert self._episode_storage is not None
         return self._episode_storage
+
+    async def _build_episode_storage(self) -> EpisodeStorage:
+        episode_storage_conf = getattr(self._conf, "episode_storage", None)
+        if episode_storage_conf is None:
+            episode_storage_conf = self._conf.episode_store
+
+        episode_storage: EpisodeStorage = SqlAlchemyEpisodeStore(
+            await self.get_sql_engine(episode_storage_conf.database),
+            metrics_factory=await ResourceManagerImpl.get_metrics_factory("prometheus"),
+        )
+        if episode_storage_conf.with_count_cache:
+            episode_storage = CountCachingEpisodeStorage(episode_storage)
+        return episode_storage
 
     async def get_semantic_service(self) -> SemanticService:
         """Return the semantic service manager."""
