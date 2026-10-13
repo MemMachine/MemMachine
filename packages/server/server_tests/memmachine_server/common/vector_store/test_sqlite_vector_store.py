@@ -1899,6 +1899,7 @@ class TestPartitionResources:
             )
         )
         stores.append(store)
+        await store.migrate()
         await store.startup()
         partition = await store.open_or_create_partition(NAME)
 

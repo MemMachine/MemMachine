@@ -35,7 +35,14 @@ class SemanticStorage(ABC):
 
     @abstractmethod
     async def startup(self) -> None:
-        """Initialize the semantic storage connection."""
+        """
+        Start the storage.
+
+        Raises:
+            SchemaMismatchError:
+                If `migrate` has not created the storage's durable resources
+                or brought them up to date.
+        """
         raise NotImplementedError
 
     @abstractmethod
