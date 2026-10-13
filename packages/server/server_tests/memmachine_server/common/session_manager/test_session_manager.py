@@ -288,6 +288,38 @@ async def test_get_sessions(
 
 
 @pytest.mark.asyncio
+async def test_get_sessions_filters_by_status(
+    session_manager: SessionDataManager,
+    episodic_memory_conf: EpisodicMemoryConf,
+):
+    """Test that a status filter excludes sessions in other states."""
+    for session_key, tag in (("live", "A"), ("deleted", "A"), ("other", "B")):
+        await session_manager.create_or_validate_session(
+            session_key,
+            {},
+            episodic_memory_conf,
+            "",
+            {"tag": tag},
+        )
+    await session_manager.update_session_status(
+        "deleted", SessionDataManager.SessionStatus.Deleted
+    )
+
+    active = await session_manager.get_sessions(
+        status=SessionDataManager.SessionStatus.Active
+    )
+    assert sorted(active) == ["live", "other"]
+
+    active_a = await session_manager.get_sessions(
+        filters={"tag": "A"}, status=SessionDataManager.SessionStatus.Active
+    )
+    assert active_a == ["live"]
+
+    all_sessions = await session_manager.get_sessions()
+    assert sorted(all_sessions) == ["deleted", "live", "other"]
+
+
+@pytest.mark.asyncio
 async def test_get_sessions_empty(session_manager: SessionDataManager):
     """Test retrieving sessions when none exist."""
     sessions = await session_manager.get_sessions()

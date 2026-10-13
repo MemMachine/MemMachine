@@ -84,6 +84,24 @@ async def test_delete_session_raises_session_not_found(
         await memmachine.delete_session(DummySessionData("missing-session"))
 
 
+@pytest.mark.asyncio
+async def test_search_sessions_lists_only_active_sessions(
+    minimal_conf, patched_resource_manager
+):
+    session_manager = AsyncMock()
+    session_manager.get_sessions = AsyncMock(return_value=["org/project"])
+    patched_resource_manager.get_session_data_manager = AsyncMock(
+        return_value=session_manager
+    )
+
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    assert await memmachine.search_sessions() == ["org/project"]
+    session_manager.get_sessions.assert_awaited_once_with(
+        filters=None, status=SessionDataManager.SessionStatus.Active
+    )
+
+
 def _minimal_conf(
     short_memory_enabled: bool = True, long_term_memory_enabled: bool = True
 ) -> Configuration:

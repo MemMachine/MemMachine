@@ -360,16 +360,18 @@ class SessionDataManagerSQL(SessionDataManager):
     async def get_sessions(
         self,
         filters: dict[str, PropertyValue | None] | None = None,
+        status: SessionDataManager.SessionStatus | None = None,
     ) -> list[str]:
-        """Retrieve session keys, optionally filtered by metadata."""
-        if filters is None:
-            stmt = select(self.SessionConfig.session_key)
-        else:
-            stmt = select(self.SessionConfig.session_key).where(
+        """Retrieve session keys, optionally filtered by metadata and status."""
+        stmt = select(self.SessionConfig.session_key)
+        if filters is not None:
+            stmt = stmt.where(
                 self._json_contains(
                     self.SessionConfig.user_metadata.property.columns[0], filters
                 ),
             )
+        if status is not None:
+            stmt = stmt.where(self.SessionConfig.status == status)
         async with self._async_session() as dbsession:
             sessions = await dbsession.execute(stmt)
             return list(sessions.scalars().all())
