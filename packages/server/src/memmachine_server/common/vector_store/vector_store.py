@@ -187,6 +187,16 @@ class VectorStore(ABC):
     """
 
     @abstractmethod
+    async def migrate(self) -> None:
+        """
+        Create the store's durable resources, or bring them up to date.
+
+        The caller runs it before `startup`, while no other process uses the
+        store. Running it again changes nothing.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def startup(self) -> None:
         """
         Start the store, creating its durable resources idempotently.

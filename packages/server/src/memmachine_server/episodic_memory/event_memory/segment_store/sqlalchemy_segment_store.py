@@ -80,7 +80,7 @@ from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
 )
-from memmachine_server.common.schema_migration import Lineage
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.utils import ensure_tz_aware, utc_offset_seconds
 from memmachine_server.episodic_memory.event_memory.data_types import (
     NullContext,
@@ -1032,6 +1032,11 @@ class SQLAlchemySegmentStore(SegmentStore):
         self._is_sqlite = self._engine.dialect.name == "sqlite"
 
     # Lifecycle
+
+    @override
+    async def migrate(self) -> None:
+        async with self._tracker("migrate"):
+            await upgrade_lineage(self._engine, SEGMENT_STORE_LINEAGE)
 
     @override
     async def startup(self) -> None:

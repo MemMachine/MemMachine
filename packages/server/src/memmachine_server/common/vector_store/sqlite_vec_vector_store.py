@@ -69,7 +69,7 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine_server.common.schema_migration import Lineage
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 
 from .data_types import (
     IndexedProperties,
@@ -512,6 +512,10 @@ class SQLiteVecVectorStore(VectorStore):
         # extension is loaded once per connection.
         if not event.contains(self._engine.sync_engine, "connect", _load_sqlite_vec):
             event.listen(self._engine.sync_engine, "connect", _load_sqlite_vec)
+
+    @override
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._engine, SQLITE_VEC_VECTOR_STORE_LINEAGE)
 
     @override
     async def startup(self) -> None:

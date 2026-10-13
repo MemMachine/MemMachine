@@ -43,6 +43,7 @@ async def sqlite_pgvector_history_storage(sqlalchemy_sqlite_engine: AsyncEngine)
 async def sqlite_vector_history_storage(sqlalchemy_sqlite_engine: AsyncEngine):
     partition = InMemoryVectorStorePartition(similarity_metric=SimilarityMetric.COSINE)
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, partition)
+    await storage.migrate()
     await storage.startup()
     return storage
 

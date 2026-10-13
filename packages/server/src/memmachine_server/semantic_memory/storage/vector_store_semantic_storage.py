@@ -194,9 +194,12 @@ class VectorStoreSemanticStorage(SemanticStorage):
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
 
-    async def startup(self) -> None:
+    async def migrate(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseVectorSemanticStorage.metadata.create_all)
+
+    async def startup(self) -> None:
+        await self.migrate()
 
     async def cleanup(self) -> None:
         await self._engine.dispose()

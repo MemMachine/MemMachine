@@ -53,6 +53,7 @@ async def test_older_than_compares_instants_not_wall_clocks(
     so comparing wall clocks wrongly selects the row.
     """
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.migrate()
     await storage.startup()
     try:
         await storage.add_history_to_set(
@@ -75,6 +76,7 @@ async def test_add_update_delete_feature_keeps_vector_collection_in_sync(
     vector_collection: InMemoryVectorStorePartition,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.migrate()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -115,6 +117,7 @@ async def test_vector_search_returns_relational_features_in_similarity_order(
     vector_collection: InMemoryVectorStorePartition,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.migrate()
     await storage.startup()
     try:
         await storage.add_feature(
@@ -157,6 +160,7 @@ async def test_vector_records_carry_no_properties(
 ):
     """The feature row is the authority; the vector record holds a vector."""
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.migrate()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -188,6 +192,7 @@ async def test_an_update_without_an_embedding_leaves_the_vector_record_alone(
     vector_collection: InMemoryVectorStorePartition,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.migrate()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -219,6 +224,7 @@ async def test_an_update_reads_nothing_back_from_the_vector_store(
 ):
     """An update succeeds with the vector record absent, as a backend may not show it yet."""
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.migrate()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -259,6 +265,7 @@ async def test_deleting_more_features_than_sqlite_binds_removes_every_vector_rec
     deletion: str,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_engine, vector_collection)
+    await storage.migrate()
     await storage.startup()
     try:
         vector_uuids = [uuid4() for _ in range(_MANY_FEATURES)]

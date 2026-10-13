@@ -49,7 +49,7 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import StaticPool
 
-from memmachine_server.common.schema_migration import Lineage
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store.data_types import (
     VectorStoreAttemptsExhaustedError,
@@ -302,6 +302,10 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         self._base_purge_retry_backoff_seconds = params.base_purge_retry_backoff_seconds
         self._max_purge_retry_backoff_seconds = params.max_purge_retry_backoff_seconds
         self._tombstone_claim_endings: set[asyncio.Task[None]] = set()
+
+    @override
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._engine, PARTITION_REGISTRY_LINEAGE)
 
     @override
     async def startup(self) -> None:

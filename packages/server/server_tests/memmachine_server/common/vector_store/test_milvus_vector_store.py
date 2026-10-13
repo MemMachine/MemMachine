@@ -126,6 +126,7 @@ async def _params(client, registry_engine, **overrides) -> MilvusVectorStorePara
             tombstone_retention_seconds=0,
         )
     )
+    await params["partition_registry"].migrate()
     await params["partition_registry"].startup()
     return MilvusVectorStoreParams(**params)
 
@@ -339,6 +340,7 @@ async def _started_store(
     vector_store = MilvusVectorStore(
         await _params(client, registry_engine, **overrides)
     )
+    await vector_store.migrate()
     await vector_store.startup()
     return vector_store
 
@@ -399,6 +401,7 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
             store._client, store._partition_registry._engine, vector_store_name="timed"
         )
     )
+    await timed.migrate()
     await timed.startup()
     await timed.create_partition("timed")
     coll = await timed.open_partition("timed")
@@ -519,6 +522,7 @@ class TestPartitionLifecycle:
                 vector_store_name="0_digit_first",
             )
         )
+        await digit_first.migrate()
         await digit_first.startup()
         await digit_first.create_partition("digit_first")
         assert await digit_first.open_partition("digit_first") is not None
@@ -1430,6 +1434,7 @@ class TestScores:
                 similarity_metric=metric,
             )
         )
+        await scored.migrate()
         await scored.startup()
         await scored.delete_partition("scores")
         await scored.create_partition("scores")
