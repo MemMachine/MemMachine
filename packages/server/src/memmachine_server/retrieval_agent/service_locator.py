@@ -2,12 +2,16 @@
 
 from typing import Any
 
-from memmachine_server.common.configuration.retrieval_config import OptimizedCoqConf
+from memmachine_server.common.configuration.retrieval_config import (
+    OptimizedCoqConf,
+    ProgressiveRetrievalConf,
+)
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.retrieval_agent.agents import (
     ChainOfQueryAgent,
     MemMachineAgent,
+    ProgressiveQueryAgent,
     RaragQueryAgent,
     SplitQueryAgent,
     ToolSelectAgent,
@@ -25,6 +29,7 @@ def create_retrieval_agent(
     agent_name: str = "ToolSelectAgent",
     use_optimized_coq: bool = False,
     optimized_coq: OptimizedCoqConf | None = None,
+    progressive: ProgressiveRetrievalConf | None = None,
 ) -> AgentToolBase:
     """Create the configured retrieval-agent strategy.
 
@@ -38,7 +43,17 @@ def create_retrieval_agent(
         optimized_coq: Settings forwarded to RaragQueryAgent when
             use_optimized_coq is true (hop-splitting strategy and per-sub-search
             limit). Ignored otherwise. Defaults are applied when None.
+        progressive: When set, select ProgressiveQueryAgent as the top-level
+            strategy. Cannot be combined with use_optimized_coq or another
+            explicit agent_name. Omit to preserve existing routing.
     """
+    if (progressive is not None or agent_name == "ProgressiveQueryAgent") and (
+        use_optimized_coq
+        or agent_name not in ("ToolSelectAgent", "ProgressiveQueryAgent")
+    ):
+        raise ValueError(
+            "progressive cannot be combined with another retrieval strategy"
+        )
     optimized_coq = optimized_coq or OptimizedCoqConf()
     # Hop-splitting settings consumed by RaragQueryAgent (and SplitQueryAgent)
     # via extra_params, mirroring the evaluation path in agent_utils.init_agent.
@@ -66,6 +81,11 @@ def create_retrieval_agent(
         extra_params=optimized_extra_params,
         reranker=reranker,
     )
+
+    if progressive is not None or agent_name == "ProgressiveQueryAgent":
+        return ProgressiveQueryAgent(
+            shared_param, progressive or ProgressiveRetrievalConf()
+        )
 
     # Use RaragQueryAgent (optimized variant) or ChainOfQueryAgent based on config.
     coq_agent = (

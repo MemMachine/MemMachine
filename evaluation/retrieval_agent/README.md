@@ -19,6 +19,43 @@ The file controls every component used during a run:
 `run_test.sh` checks for the file at startup and exits with an error if it is
 missing.
 
+## Comparing progressive retrieval
+
+Set `retrieval_agent.progressive` in `configuration.yml` to enable the opt-in
+progressive strategy for the `retrieval_agent` target:
+
+```yaml
+retrieval_agent:
+  # Keep the same configured models and reranker for every comparison.
+  progressive:
+    initial_limit: 5
+    max_candidates: 40
+    max_rounds: 3
+    confidence_threshold: 0.8
+```
+
+Run the same dataset sample and requested search limit with fixed retrieval
+(`memmachine` target), default tool selection (omit `progressive`), optimized tool
+selection (omit `progressive`, set `use_optimized_coq: true`), and progressive
+retrieval. Record the actual selected agent; tool selection does not always use
+CoQ. For a controlled CoQ/RaRag comparison, call `init_agent` with
+`agent_name="ChainOfQueryAgent"` and `use_optimized_coq=False`/`True` respectively.
+RaRag currently uses its own return cap, so record actual returned counts rather
+than assuming the strategies have identical candidate or final-result budgets.
+Do not combine the two opt-in settings. Explicit baseline agent selection still
+works with a progressive configuration. Preserve dataset/sample IDs, upstream
+commit, model identifiers, configuration, and per-question outputs for replay.
+
+Progressive agent metrics include per-round requested limits, raw returned and
+newly admitted candidates, retrieval/model time, token usage, and stopping reason.
+Compare supporting-evidence recall in the **returned** episodes separately from
+answer scores, latency, and model usage. The WikiMultiHop answer prompt permits
+world-knowledge fallback, so its answer score alone cannot demonstrate retrieval
+success. Use an additional grounded-answer evaluation that forbids external
+knowledge before claiming answer-quality gains. Scripted unit tests establish
+budget and selection behavior; they do not establish real-model quality or cost
+improvements.
+
 The samples below keep semantic memory disabled because these retrieval-agent
 benchmarks do not use it directly. A `semantic_memory` section is optional;
 `enabled: false` alone (or omitting the section) is enough to turn it off.

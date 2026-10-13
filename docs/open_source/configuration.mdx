@@ -170,6 +170,50 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     |-----------------------|-----------------------------------------------------------------------------|--------------|
     | `llm_model`           | The language model ID used by retrieval-agent routing/rewrite steps.       | Auto-resolved from configured memory models when omitted. |
     | `reranker`            | The reranker ID used by retrieval-agent result reranking.                  | Auto-resolved from episodic long-term-memory reranker when omitted. |
+
+    To opt into progressive long-term episodic retrieval, add:
+
+    ```yaml
+    retrieval_agent:
+      llm_model: my-agent-llm
+      reranker: my-rrf-reranker
+      progressive:
+        initial_limit: 5
+        max_candidates: 40
+        max_rounds: 3
+        confidence_threshold: 0.8
+    ```
+
+    With `agent_mode=true`, this selects the progressive agent directly, including
+    for simple queries. Omitting `progressive` preserves existing tool selection
+    and CoQ/RaRag behavior. Do not combine it with `use_optimized_coq=true`.
+
+    Each insufficient round can rewrite the query and doubles the requested
+    candidate count (5, 10, 20 with these settings). Repeating a query at a wider
+    limit is allowed. The request's `top_k` still caps the final long-term result;
+    it does not cap candidates examined across rounds. Short-term and semantic
+    memory retain their existing limits.
+
+    `max_candidates` bounds the unique episode UUIDs admitted for assessment,
+    including expanded neighbors. The first payload seen for a UUID is retained.
+    `max_rounds` bounds searches (also subject to the query policy's attempt limit).
+    These limits do not bound backend computation, raw expanded results, tokens,
+    or elapsed time. Progressive retrieval may cost more than a single search.
+
+    A confident sufficiency decision returns its selected evidence without a
+    subsequent truncation. Otherwise, selected evidence is prioritized and the
+    remaining return slots are filled from admitted candidates. Invalid decisions
+    stop with bounded fallback results. No new UUIDs means the search stalled;
+    it does not prove the database was exhausted. A request to "list all" is not
+    guaranteed complete by this strategy.
+
+    Direct agent callers receive stopping reason, candidate counts, token usage,
+    and assessment metrics. `returned_sufficient=true` only confirms that the
+    agent retained the assessed supporting snapshot; other outcomes are unknown.
+    The server logs `stop_reason` and `assessed_sufficient` without episode content.
+    REST response schemas are unchanged. Assessment describes the agent snapshot,
+    before existing short-term deduplication and score filtering; it is not a
+    sufficiency guarantee for the final mixed-memory response.
   </Accordion>
 
   <Accordion title="Semantic Memory">
