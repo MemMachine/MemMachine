@@ -54,6 +54,10 @@ class ConfigurationError(MemMachineError):
     """Error related to system configuration."""
 
 
+class SchemaMismatchError(ConfigurationError):
+    """Error when a store's durable resources are not in the shape this code expects."""
+
+
 class DefaultRerankerNotConfiguredError(ConfigurationError):
     """Error when default reranker is missing."""
 
