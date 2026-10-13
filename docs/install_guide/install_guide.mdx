@@ -349,6 +349,8 @@ Now you can start the MemMachine server:
 memmachine-server
 ```
 
+The server refuses to start on a schema `memmachine-server migrate` has not created or brought up to date, and names the command to run.
+
 You should now have the MemMachine server running.
 
 <Note> If you are using Docker to run your databases, ensure they are started and accessible before you try to start MemMachine.</Note>

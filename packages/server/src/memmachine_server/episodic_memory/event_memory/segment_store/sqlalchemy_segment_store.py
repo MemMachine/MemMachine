@@ -78,7 +78,11 @@ from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
 )
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 from memmachine_server.common.sql import (
     validate_engine_connections,
     write_connection,
@@ -997,8 +1001,8 @@ class SQLAlchemySegmentStore(SegmentStore):
 
     @override
     async def startup(self) -> None:
-        async with self._tracker("startup"), self._engine.begin() as connection:
-            await connection.run_sync(BaseSegmentStore.metadata.create_all)
+        async with self._tracker("startup"):
+            await check_lineage(self._engine, SEGMENT_STORE_LINEAGE)
 
     @override
     async def shutdown(self) -> None:

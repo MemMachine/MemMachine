@@ -281,6 +281,7 @@ async def test_delete_feature_set_keeps_rows_when_vector_delete_fails(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
+    await storage.migrate()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -322,6 +323,7 @@ async def test_delete_feature_set_keeps_a_late_row_when_its_vector_delete_fails(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
+    await storage.migrate()
     await storage.startup()
     try:
         first_id = await storage.add_feature(
@@ -378,6 +380,7 @@ async def test_delete_feature_set_deletes_a_row_that_stops_matching_with_its_vec
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
+    await storage.migrate()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(

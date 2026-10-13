@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from memmachine_server.common.sql import (
     enable_sqlite_explicit_begin,
-    write_connection,
 )
 from memmachine_server.common.sql_lease_lock import (
     LeaseLostError,
@@ -43,16 +42,6 @@ async def two_stores(
     finally:
         await first_engine.dispose()
         await second_engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_startup_waits_for_another_connections_write(tmp_path: Path) -> None:
-    async with two_stores(tmp_path / "locks.db") as (first, second):
-        async with write_connection(first._engine):
-            startup = asyncio.create_task(second.startup())
-            await asyncio.sleep(0.2)
-            assert not startup.done()
-        await startup
 
 
 @pytest.mark.asyncio

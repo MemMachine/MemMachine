@@ -28,6 +28,14 @@ class EpisodeStorage(ABC):
 
     @abstractmethod
     async def startup(self) -> None:
+        """
+        Start the storage.
+
+        Raises:
+            SchemaMismatchError:
+                If `migrate` has not created the storage's durable resources
+                or brought them up to date.
+        """
         raise NotImplementedError
 
     @abstractmethod
