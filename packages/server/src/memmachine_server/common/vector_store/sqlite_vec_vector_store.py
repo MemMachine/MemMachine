@@ -13,6 +13,7 @@ admits fewer.
 
 import logging
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import ClassVar, override
 from uuid import UUID, uuid4
 
@@ -46,6 +47,7 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.schema_migration import Lineage
 from memmachine_server.common.sql import validate_engine_connections, write_session
 
 from .data_types import (
@@ -106,6 +108,13 @@ class _PartitionRow(BaseSQLiteVecVectorStore):
         String(_PARTITION_KEY_MAX_BYTES), primary_key=True
     )
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
+
+
+SQLITE_VEC_VECTOR_STORE_LINEAGE = Lineage(
+    name="sqlite_vec_vector_store",
+    versions=Path(__file__).parent / "migrations" / "sqlite_vec_vector_store",
+    metadata=BaseSQLiteVecVectorStore.metadata,
+)
 
 
 class SQLiteVecVectorStorePartition(VectorStorePartition):
