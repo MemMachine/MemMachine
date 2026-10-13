@@ -13,7 +13,15 @@ from typing import Any, cast
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import JSON, Column, Integer, String, create_engine, select
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Integer,
+    String,
+    create_engine,
+    select,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Session
@@ -44,6 +52,7 @@ class _Item(_JsonBase):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=True)
     json_metadata = Column(JSON, nullable=True)
 
 
@@ -53,6 +62,7 @@ def _resolve_json_field(field: str):
     field_mapping = {
         "id": _Item.id.expression,
         "name": _Item.name.expression,
+        "created_at": _Item.created_at.expression,
     }
     if normalized in field_mapping:
         return field_mapping[normalized], "column"
@@ -74,6 +84,7 @@ def json_session():
             [
                 _Item(
                     name="alpha",
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
                     json_metadata={
                         "count": 5,
                         "score": 1.5,
@@ -83,6 +94,7 @@ def json_session():
                 ),
                 _Item(
                     name="beta",
+                    created_at=datetime(2026, 1, 1, 12, tzinfo=UTC),
                     json_metadata={
                         "count": 10,
                         "score": 2.5,
@@ -250,6 +262,36 @@ def test_column_in(json_session):
         "alpha",
         "beta",
     }
+
+
+def test_column_datetime_ordering(json_session):
+    assert _query_json_names(
+        json_session, "created_at > date('2026-01-01T00:00:00Z')"
+    ) == {"beta"}
+    assert _query_json_names(
+        json_session, "created_at >= date('2026-01-01T00:00:00Z')"
+    ) == {"alpha", "beta"}
+
+
+@pytest.mark.parametrize(
+    "filter_str",
+    [
+        "created_at > '2026-01-01T00:00:00Z'",
+        "created_at = '2026-01-01T00:00:00Z'",
+        "created_at > 5",
+        "created_at IN (1, 2)",
+    ],
+)
+def test_column_datetime_rejects_non_datetime_value(json_session, filter_str):
+    """A datetime column takes a date() literal; any other value type is
+    rejected at compile time rather than handed to the database."""
+    with pytest.raises(ValueError, match="holds a datetime"):
+        _query_json_names(json_session, filter_str)
+
+
+def test_column_non_datetime_rejects_datetime_value(json_session):
+    with pytest.raises(ValueError, match="does not hold a datetime"):
+        _query_json_names(json_session, "name > date('2026-01-01T00:00:00Z')")
 
 
 # --- Compound ---
@@ -617,7 +659,7 @@ class TestColumnDatetimeNormalization:
 
     def test_bounds_are_normalized_to_utc(self):
         bound = datetime(2024, 1, 1, 8, 0, tzinfo=timezone(timedelta(hours=8)))
-        column = Column("ts", String)
+        column = Column("ts", DateTime(timezone=True))
 
         def resolve(field: str):
             return column, "column"
