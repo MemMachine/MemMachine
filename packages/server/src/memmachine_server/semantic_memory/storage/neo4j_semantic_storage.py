@@ -16,7 +16,7 @@ from collections.abc import (
 )
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, LiteralString, cast
+from typing import Any, ClassVar, LiteralString, cast
 from uuid import UUID
 
 import numpy as np
@@ -24,6 +24,7 @@ from neo4j import AsyncDriver, Query
 from neo4j.graph import Node as Neo4jNode
 from pydantic import InstanceOf
 
+from memmachine_server.common.concurrency_scope import ConcurrencyScope
 from memmachine_server.common.data_types import FilterValue, PropertyValue
 from memmachine_server.common.errors import InvalidArgumentError
 from memmachine_server.common.filter.filter_parser import (
@@ -119,6 +120,9 @@ def _neo4j_query(text: str) -> Query:
 
 class Neo4jSemanticStorage(SemanticStorage):
     """Concrete :class:`SemanticStorageBase` backed by Neo4j."""
+
+    # Set embedding dimensions and indexes are cached only in this process.
+    CONCURRENCY_SCOPE: ClassVar[ConcurrencyScope] = ConcurrencyScope.PROCESS
 
     _VECTOR_INDEX_PREFIX = "feature_embedding_index"
     _DEFAULT_VECTOR_QUERY_CANDIDATES = 100
