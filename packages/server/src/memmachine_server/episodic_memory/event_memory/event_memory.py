@@ -72,8 +72,8 @@ def _validate_property_filter(property_filter: FilterExpr) -> None:
     """
     Raise ValueError unless every field of a filter names a property or the timestamp.
 
-    The memory's own reserved keys are not properties: the timestamp is
-    named `timestamp`, and no `m.<key>` names one of them.
+    A filter names the memory's timestamp as `timestamp`, never by its
+    reserved key.
     """
     for field in filter_fields(property_filter):
         if field == _TIMESTAMP_FIELD:
