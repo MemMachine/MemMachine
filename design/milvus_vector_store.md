@@ -1,22 +1,21 @@
 # Milvus vector store
 
-How the Milvus store meets the shared contracts: [collection
-registry](vector_store_collection_registry.md),
+How the Milvus store meets the shared contracts: [partition
+registry](vector_store_partition_registry.md),
 [purge](vector_store_purge.md), [consistency](vector_store_consistency.md),
 [isolation](vector_store_isolation.md).
 
 ## Layout
 
-- **One native collection per namespace and configuration**, named
-  `memmachine_{namespace}__{sha256(config)}`, the digest over the
-  configuration's JSON. It holds every logical collection of that namespace
-  and configuration, one incarnation each. Admitting a collection creates
-  nothing in Milvus unless its configuration is new.
+- **One native collection per store**, named `sys_` followed by the vector
+  store name. It holds every partition of the store, one incarnation each.
+  Creating a partition creates nothing in Milvus.
 - **Fields:** `id` (VARCHAR primary key, `"{incarnation}:{record_uuid}"`),
   `record_uuid` (VARCHAR), `partition_key` (VARCHAR, the incarnation,
-  `is_partition_key`), `vector` (FLOAT_VECTOR), `properties` (JSON), and one
-  nullable typed field per declared property, `_p_<name>`. Dynamic fields
-  are off, so each property is stored once.
+  `is_partition_key`), `vector` (FLOAT_VECTOR), and one nullable typed field
+  per declared property, `_p_<name>`. Dynamic fields are off, and a record or
+  a filter naming an undeclared key is refused, so every property is a typed
+  field.
 - **Tenancy:** partition-key multi-tenancy with `partitionkey.isolation`: each
   segment builds its vector index per group of tenants, so a search filtered
   on one incarnation searches only its group. Milvus documents isolation for
@@ -36,14 +35,16 @@ registry](vector_store_collection_registry.md),
   a TIMESTAMPTZ field holding its instant, written in UTC: a filter compares
   only instants, a search answers with record UUIDs and scores, and Milvus
   refuses an offset with a seconds component. Milvus caps a collection at
-  `proxy.maxFieldNum` fields (64 on 2.6, 256 on 3.0), so a configuration
-  declares at most 59 properties on 2.6.
-  Undeclared properties go in the JSON field, still filterable by path.
-  Negation is the complement, as on Qdrant: a negated condition holds where
-  the property has no value, which Milvus's SQL-style null evaluation does not
+  `proxy.maxFieldNum` fields (64 on 2.6, 256 on 3.0), so a store declares at
+  most 60 properties on 2.6. A filter is bound to the declared schema before
+  anything is sent, as on every store: a value of another type than its key
+  declares is refused, and an int for a float key becomes the float it equals,
+  so a condition compares a field only with a literal of its type. Negation
+  is the complement, as on Qdrant: a negated condition holds where the
+  property has no value, which Milvus's SQL-style null evaluation does not
   give on its own.
-- **Scores** are the server's (cosine similarity, inner product, and the
-  square root of Milvus's squared Euclidean distance).
+- **Scores** are the server's: a COSINE index answers the cosine similarity
+  as a hit's distance.
 - **Server-configured limits stay the server's.** A search `limit` reaches the
   server, which refuses one above `quotaAndLimits.limits.topK`. A declared
   string's VARCHAR length is `max_varchar_length` (65,535 unless configured,
@@ -52,13 +53,11 @@ registry](vector_store_collection_registry.md),
   `quotaAndLimits.limits.maxQueryResultWindow`); both are settings, not
   constants. A native collection keeps the VARCHAR length it was created
   with, so a changed `max_varchar_length` applies to native collections
-  created afterward. A record's undeclared properties share one JSON field,
-  which the server refuses above `common.JSONMaxLength` bytes (65,536 unless
-  configured). A declared property's field name is its key, at most 32
+  created afterward. A declared property's field name is its key, at most 32
   bytes, under `_p_`, within `proxy.maxNameLength` (255 unless configured).
-- **Creation converges:** the collection and its indexes (named by their
-  fields) are created only when missing, and the collection is loaded, a
-  no-op when it is loaded already.
+- **Startup converges:** the collection and its indexes (named by their
+  fields) are created at startup only when missing, and the collection is
+  loaded, a no-op when it is loaded already.
 - **A delete raises unless Milvus accepted every key sent.** Milvus counts the
   primary keys a delete accepts, present or not (milvus-io/milvus#51566), and
   pymilvus's async client returns that count for a delete Milvus rejected, so
@@ -144,8 +143,8 @@ throughput unchanged.
 
 The incarnation is in the primary key because Milvus's upsert deletes by
 primary key in every partition (`AllPartitionsID`) before inserting: with the
-bare record UUID as the key, one collection's upsert would delete another
-collection's record of the same UUID. With the composite key, two collections'
+bare record UUID as the key, one partition's upsert would delete another
+partition's record of the same UUID. With the composite key, two partitions'
 records of one UUID are two entities, and a reused UUID's record is simply
 stored, which meets the [isolation](vector_store_isolation.md) guarantee. The
 record UUID is also kept in its own field, which reads return. Measured
@@ -168,10 +167,7 @@ variation.
 
 Bounded batches. A round lists up to `purge_batch_size` of the incarnation's
 primary keys, by a query on the incarnation field at the store's read level,
-and deletes them by key. It first creates the native collection's missing
-indexes and loads it, as a creation does: a creation that failed partway can
-leave it unindexed and unloaded, and only a loaded collection answers the
-listing. Measured (Milvus 3.0.2; 2.11M points in this layout,
+and deletes them by key. Measured (Milvus 3.0.2; 2.11M points in this layout,
 dead incarnations of 10k to 1M among live tenants under search, upsert, and
 scroll traffic; 2 CPUs / 4 GB): rounds stayed flat at about 100 ms to the end
 of a 1M purge, with at most a 0.3 s stall for other tenants; one filter-delete
@@ -233,7 +229,7 @@ behind, the read waits rather than reads staler, and fails over to another
 replica if the node's tsafe stalls for 3 s (`queryNode.waitTsafeStallTimeout`,
 from 2.6.15).
 
-**The store reads at Bounded**: it creates each native collection at Bounded
+**The store reads at Bounded**: it creates its native collection at Bounded
 by name, rather than at whatever level pymilvus defaults to, and names no
 level on a read, so every read runs at the collection's level. The level is not configurable:
 the stated delay of at most `common.gracefulTime` and the tombstone retention
@@ -296,7 +292,8 @@ both.
 
 ## Consequences
 
-- An existing native Milvus collection created with the earlier schema is not
-  usable by this store and has to be dropped.
+- A native Milvus collection from an earlier release has another name than
+  this store's, so the store neither reads nor purges it; dropping it frees
+  its space.
 - A deployment that raises `common.gracefulTime` lengthens the store's read
   delay, which the tombstone retention must still exceed by far.

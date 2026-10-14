@@ -13,10 +13,13 @@ from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     FilterExpr,
-    demangle_user_metadata_key,
+    extract_filter,
     map_filter_fields,
+)
+from memmachine_server.common.filter.filter_parser import (
+    demangle_user_metadata_key,
     normalize_filter_field,
 )
 from memmachine_server.common.metrics_factory import (
@@ -26,7 +29,7 @@ from memmachine_server.common.metrics_factory import (
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import (
     Record,
-    VectorStoreCollection,
+    VectorStorePartition,
 )
 
 from .data_types import (
@@ -56,8 +59,8 @@ class EventMemoryParams(BaseModel):
     Attributes:
         segment_store_partition (SegmentStorePartition):
             Segment store partition.
-        vector_store_collection (VectorStoreCollection):
-            Vector store collection.
+        vector_store_partition (VectorStorePartition):
+            Vector store partition.
         segmenter (Segmenter):
             Segmenter that segments events into segments.
         deriver (Deriver):
@@ -77,7 +80,7 @@ class EventMemoryParams(BaseModel):
         ...,
         description="Segment store partition",
     )
-    vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
+    vector_store_partition: InstanceOf[VectorStorePartition] = Field(
         ...,
         description="Vector store collection",
     )
@@ -117,10 +120,11 @@ class EventMemory:
     @classmethod
     def expected_vector_store_collection_schema(cls) -> dict[str, type[PropertyValue]]:
         """
-        Return the vector store collection schema expected by EventMemory.
+        Return the vector store collection schema EventMemory requires.
 
-        Callers should merge this with any user or external system-defined properties
-        when creating the collection so that EventMemory's reserved fields are efficiently filterable.
+        A vector record carries only the properties the vector store
+        declares, so the vector search can filter only on those; a condition
+        on any other property applies to the seeds the search returns.
         """
         return {
             cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
@@ -136,7 +140,7 @@ class EventMemory:
 
         """
         self._segment_store_partition = params.segment_store_partition
-        self._vector_store_collection = params.vector_store_collection
+        self._vector_store_partition = params.vector_store_partition
         self._segmenter = params.segmenter
         self._deriver = params.deriver
         self._embedder = params.embedder
@@ -148,7 +152,7 @@ class EventMemory:
         )
 
         self._schema_fields = frozenset(
-            params.vector_store_collection.config.indexed_properties_schema
+            params.vector_store_partition.indexed_properties
         )
 
         missing_base_fields = (
@@ -156,7 +160,7 @@ class EventMemory:
         )
         if missing_base_fields:
             raise ValueError(
-                f"Collection schema missing fields required by EventMemory: "
+                f"Vector store schema missing fields required by EventMemory: "
                 f"{', '.join(sorted(missing_base_fields))}"
             )
 
@@ -278,7 +282,7 @@ class EventMemory:
         t_segment_store = time.monotonic()
 
         derivative_records = [
-            EventMemory._build_derivative_record(derivative, derivative_embedding)
+            self._build_derivative_record(derivative, derivative_embedding)
             for derivative, derivative_embedding in zip(
                 derivatives,
                 derivative_embeddings,
@@ -287,7 +291,7 @@ class EventMemory:
         ]
 
         if derivative_records:
-            await self._vector_store_collection.upsert(records=derivative_records)
+            await self._vector_store_partition.upsert(records=derivative_records)
         t_vector_store = time.monotonic()
 
         phase_durations = {
@@ -313,20 +317,26 @@ class EventMemory:
                     duration, labels={"phase": phase}
                 )
 
-    @classmethod
     def _build_derivative_record(
-        cls,
+        self,
         derivative: Derivative,
         derivative_embedding: Sequence[float],
     ) -> Record:
-        """Build a vector record from a derivative and its embedding."""
-        properties: dict[str, PropertyValue] = {}
+        """Build a vector record from a derivative and its embedding.
 
-        # System-defined metadata (underscore-prefixed).
-        properties[cls._TIMESTAMP_FIELD_NAME] = derivative.timestamp
-
-        # User-defined properties.
-        properties.update(derivative.properties)
+        The record carries the reserved timestamp and the properties the
+        vector store declares. Every other property stays on the
+        segment: the segment store holds them all and evaluates the whole
+        filter (see `query`).
+        """
+        properties: dict[str, PropertyValue] = {
+            self._TIMESTAMP_FIELD_NAME: derivative.timestamp,
+            **{
+                key: value
+                for key, value in derivative.properties.items()
+                if key in self._schema_fields
+            },
+        }
 
         return Record(
             uuid=derivative.uuid,
@@ -374,6 +384,11 @@ class EventMemory:
                 Property fields and values
                 to use for filtering segments
                 (default: None).
+                The vector search applies only the part of the filter
+                that names declared fields alone (see `extract_filter`);
+                the whole filter then applies to the seeds it returns,
+                so fewer than `vector_search_limit` seeds, or none,
+                may survive it.
             format_options (FormatOptions | None):
                 Options for formatting.
                 (default: None).
@@ -409,15 +424,20 @@ class EventMemory:
         )[0]
         t_embedding = time.monotonic()
 
-        # Translate filter fields for vector store.
-        collection_filter = (
-            map_filter_fields(property_filter, EventMemory._to_vector_record_property)
-            if property_filter is not None
-            else None
-        )
+        # A vector record carries the properties the vector store declares, so
+        # a condition naming any other field has nothing to match there. The
+        # vector store gets the part of the filter on declared fields, which
+        # only ever widens its search; the segment store, which holds every
+        # property, gets the whole filter below and narrows it back.
+        collection_filter = None
+        if property_filter is not None:
+            collection_filter = extract_filter(
+                map_filter_fields(property_filter, self._to_vector_record_property),
+                allowed_fields=self._schema_fields,
+            )
 
         # Search derivative collection for matches.
-        [query_result] = await self._vector_store_collection.query(
+        [query_result] = await self._vector_store_partition.query(
             query_vectors=[query_embedding],
             limit=vector_search_limit,
             property_filter=collection_filter,
@@ -430,19 +450,18 @@ class EventMemory:
             )
         )
 
-        # Extract seed segment UUIDs and their best embedding scores.
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
         # First occurrence has the best score since matches are ordered best-to-worst.
-        seed_embedding_scores: dict[UUID, float] = {}
+        seed_cosine_similarities: dict[UUID, float] = {}
         for match in query_result.matches:
             segment_uuid = segments_by_derivatives.get(match.record_uuid)
             if segment_uuid is None:
                 # The derivative's segment is gone; its vector outlived it.
                 continue
-            if segment_uuid not in seed_embedding_scores:
-                seed_embedding_scores[segment_uuid] = match.score
+            if segment_uuid not in seed_cosine_similarities:
+                seed_cosine_similarities[segment_uuid] = match.cosine_similarity
 
-        seed_segment_uuids = list(seed_embedding_scores)
+        seed_segment_uuids = list(seed_cosine_similarities)
 
         max_backward_segments = expand_context // 3
         max_forward_segments = expand_context - max_backward_segments
@@ -471,7 +490,7 @@ class EventMemory:
         # Use embedding scores if reranker is not available.
         if self._reranker is None:
             scores = [
-                seed_embedding_scores[seed_uuid]
+                seed_cosine_similarities[seed_uuid]
                 for seed_uuid in kept_seed_segment_uuids
             ]
         else:
@@ -482,13 +501,6 @@ class EventMemory:
                 query, segment_contexts, reranker_format_options
             )
         t_scoring = time.monotonic()
-
-        # Reranker scores are always higher-is-better.
-        # Embedding scores depend on the similarity metric.
-        higher_is_better = (
-            self._reranker is not None
-            or self._vector_store_collection.config.similarity_metric.higher_is_better
-        )
 
         # Return scored contexts ordered by score.
         scored_segment_contexts = [
@@ -503,7 +515,7 @@ class EventMemory:
                     strict=True,
                 ),
                 key=lambda triple: triple[0],
-                reverse=higher_is_better,
+                reverse=True,
             )
         ]
 
@@ -713,7 +725,7 @@ class EventMemory:
 
         # Delete from vector DB first, then segment store.
         if derivative_uuids:
-            await self._vector_store_collection.delete(record_uuids=derivative_uuids)
+            await self._vector_store_partition.delete(record_uuids=derivative_uuids)
 
         await self._segment_store_partition.delete_segments(
             segment_uuids=segment_uuids,
