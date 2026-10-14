@@ -67,8 +67,10 @@ class LongTermMemoryConfigResponse(BaseModel):
         Field(
             default=None,
             description=(
-                "Long-term memory backend. None means the writer predates the "
-                "discriminator and is treated as 'declarative'."
+                "Long-term memory backend. None means the config sets none, "
+                "and the store fields decide: 'event' when a vector_store or "
+                "segment_store is named and no vector_graph_store is, "
+                "'declarative' otherwise."
             ),
         ),
     ]

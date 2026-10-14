@@ -216,7 +216,11 @@ class MemMachineClient:
             reranker: Reranker model name to use (default: "").
                      Use "" to let server use its configured defaults, or specify a model name like "default".
             backend: Long-term-memory backend selector. ``None`` (default)
-                lets the server pick its configured default. Set to ``"event"``
+                uses the server's configured backend if it sets one, and
+                otherwise lets the store ids decide: a ``vector_graph_store``,
+                here or in the server's config, selects declarative, then a
+                ``vector_store`` or ``segment_store`` selects event, and
+                naming no store selects declarative. Set to ``"event"``
                 for the VectorStore + SegmentStore event backend or
                 ``"declarative"`` for the legacy VectorGraphStore backend.
             vector_graph_store: VectorGraphStore resource id (declarative

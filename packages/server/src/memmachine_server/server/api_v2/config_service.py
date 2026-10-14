@@ -179,17 +179,18 @@ def _handle_backend_change(
 ) -> list[str]:
     """Apply a backend assignment, clearing stale cross-backend state on flip.
 
-    On a flip away from event (or from unset/declarative-by-default toward
-    event), wipe the OTHER backend's resource-id fields so they don't surface
-    as half-baked state through merge() into the runtime config.
+    Leaving the event backend, whether set or inferred from the store fields,
+    wipes the event-only fields, and arriving at it wipes the
+    `vector_graph_store`, so that neither surfaces as half-baked state through
+    merge() into the runtime config.
     """
     if new_backend == ltm.backend:
         # Idempotent re-assertion of the same backend; no change to emit.
         return []
 
     changes: list[str] = []
-    coming_from_event = ltm.backend == "event"
-    if coming_from_event:
+    coming_from_event = ltm.resolve_backend() == "event"
+    if coming_from_event and new_backend == "declarative":
         # Wipe event-only state when leaving the event backend.
         if ltm.vector_store is not None:
             ltm.vector_store = None

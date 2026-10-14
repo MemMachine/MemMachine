@@ -218,8 +218,10 @@ class ProjectConfig(BaseModel):
       SegmentStore. Requires `vector_store` and `segment_store`.
     - `backend="declarative"`: uses VectorGraphStore. Requires
       `vector_graph_store`.
-    - Empty/null `backend`: server falls back to its parse-time default
-      (declarative, for backwards compatibility with pre-discriminator clients).
+    - Empty/null `backend`: the server's configured backend if its config sets
+      one. Otherwise the store ids decide: a `vector_graph_store`, here or in
+      the server's config, selects declarative, then a `vector_store` or
+      `segment_store` selects event, and naming no store selects declarative.
     """
 
     backend: Annotated[

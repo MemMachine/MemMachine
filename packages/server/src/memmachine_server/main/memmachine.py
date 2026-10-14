@@ -188,11 +188,7 @@ class MemMachine:
             return
 
         # Reranker is required for declarative; optional for event.
-        # `backend is None` means the writer predates the discriminator, so
-        # treat it as declarative for backwards compatibility (matches the
-        # parse-time default).
-        backend = ltm.backend if ltm.backend is not None else "declarative"
-        if backend == "declarative":
+        if ltm.resolve_backend() == "declarative":
             ltm.reranker = self._resolve_ltm_resource_default(
                 current_value=ltm.reranker,
                 default_getter=lambda: self._conf.default_long_term_memory_reranker,
