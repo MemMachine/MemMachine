@@ -29,14 +29,15 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
 )
 from memmachine_server.common.property_keys import (
+    is_reserved_property_key,
     reserved_property_key,
-    validate_user_property_key,
 )
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import (
     Record,
     VectorStorePartition,
 )
+from memmachine_server.common.vector_store.utils import is_valid_identifier
 
 from .data_types import (
     Block,
@@ -59,8 +60,11 @@ logger = logging.getLogger(__name__)
 
 # The keys the memory writes into a vector record; `em` names this memory,
 # short because the keys share the identifier budget.
-EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key("em", "timestamp")
-EVENT_SOURCE_KEY: Final[str] = reserved_property_key("em", "source")
+_EVENT_MEMORY_SYSTEM: Final[str] = "em"
+EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
+    _EVENT_MEMORY_SYSTEM, "timestamp"
+)
+EVENT_SOURCE_KEY: Final[str] = reserved_property_key(_EVENT_MEMORY_SYSTEM, "source")
 
 # The filter field naming the event's timestamp; any other field names a
 # property, as `m.<key>` or `metadata.<key>`.
@@ -104,12 +108,24 @@ def _system_predicates(
 
 
 def _validate_property_filter(property_filter: FilterExpr) -> None:
-    """Raise ValueError unless every field of a filter names a property or the timestamp."""
+    """
+    Raise ValueError unless every field of a filter names a property or the timestamp.
+
+    The memory's own reserved keys are its typed search parameters, and no
+    filter names them.
+    """
     for field in filter_fields(property_filter):
-        if field != _TIMESTAMP_FIELD and _filter_field_property_key(field) is None:
+        if field == _TIMESTAMP_FIELD:
+            continue
+        key = _filter_field_property_key(field)
+        if key is None:
             raise ValueError(
                 f"Filter field {field!r} names no property: a property is "
                 f"'m.<key>', and {_TIMESTAMP_FIELD!r} is the event's timestamp."
+            )
+        if is_reserved_property_key(key, system=_EVENT_MEMORY_SYSTEM):
+            raise ValueError(
+                f"Filter field {field!r} names a key reserved for the event memory."
             )
 
 
@@ -246,12 +262,22 @@ class EventMemory:
         """
         Validate a batch of events before encoding.
 
-        Raises ValueError if any event supplies a property key in the
-        reserved namespace or outside the naming contract.
+        Raises ValueError if any event supplies a property key outside the
+        naming contract or under the memory's own reserved keys. A key
+        reserved for another system belongs to the component that embeds
+        the memory and is kept as given.
         """
         for event in events:
             for key in event.properties:
-                validate_user_property_key(key)
+                if not is_valid_identifier(key):
+                    raise ValueError(
+                        f"Property key {key!r} must match [a-z0-9_] and be at "
+                        "most 32 bytes."
+                    )
+                if is_reserved_property_key(key, system=_EVENT_MEMORY_SYSTEM):
+                    raise ValueError(
+                        f"Property key {key!r} is reserved for the event memory."
+                    )
 
     async def encode_events(self, events: Iterable[Event]) -> None:
         """
@@ -265,7 +291,8 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If any event supplies a reserved or illegal property key.
+                If any event supplies an illegal property key, or one of
+                the memory's own reserved keys.
         """
         async with self._tracker("encode_events"):
             await self._encode_events(events)
@@ -467,7 +494,8 @@ class EventMemory:
             ValueError:
                 If `expand_context` is negative, `since` or `until` is
                 naive, or `property_filter` names a field that is neither
-                a property nor the timestamp.
+                a property nor the timestamp, or a key reserved for the
+                memory.
 
         """
         if property_filter is not None:

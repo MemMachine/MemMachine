@@ -3,7 +3,7 @@
 import datetime
 import logging
 from collections.abc import Iterable
-from typing import Annotated, Literal, NamedTuple, cast
+from typing import Annotated, Final, Literal, NamedTuple, cast
 from uuid import UUID, uuid5
 
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
@@ -21,11 +21,17 @@ from memmachine_server.common.filter.filter_parser import (
     Comparison,
     FilterExpr,
     In,
+    demangle_user_metadata_key,
     mangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.property_keys import (
+    is_reserved_property_key,
+    reserved_property_key,
+    validate_user_property_key,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import (
@@ -67,16 +73,30 @@ logger = logging.getLogger(__name__)
 # change without a data migration.
 _EVENT_UUID_NAMESPACE = UUID("8c2c0e0a-3a2f-4b9c-9d1f-9b6c2a3a4f7e")
 
-# The adapter's fields, stored on `event.properties` under a leading
-# underscore; a search names each by its bare client-API name.
-_EPISODE_UID_FIELD = "_episode_uid"
-_SESSION_KEY_FIELD = "_session_key"
-_PRODUCER_ID_FIELD = "_producer_id"
-_PRODUCER_ROLE_FIELD = "_producer_role"
-_PRODUCED_FOR_ID_FIELD = "_produced_for_id"
-_EPISODE_TYPE_FIELD = "_episode_type"
-_CONTENT_TYPE_FIELD = "_content_type"
-_CREATED_AT_FIELD = "_created_at"
+# The adapter's fields, stored on `event.properties` under the keys it
+# reserves, by the bare name a client filters each by; `ltm` names this
+# memory, short because the keys share the identifier budget.
+_SYSTEM_FIELD_KEYS: Final[dict[str, str]] = {
+    name: reserved_property_key("ltm", name)
+    for name in (
+        "episode_uid",
+        "session_key",
+        "producer_id",
+        "producer_role",
+        "produced_for_id",
+        "episode_type",
+        "content_type",
+        "created_at",
+    )
+}
+_EPISODE_UID_FIELD = _SYSTEM_FIELD_KEYS["episode_uid"]
+_SESSION_KEY_FIELD = _SYSTEM_FIELD_KEYS["session_key"]
+_PRODUCER_ID_FIELD = _SYSTEM_FIELD_KEYS["producer_id"]
+_PRODUCER_ROLE_FIELD = _SYSTEM_FIELD_KEYS["producer_role"]
+_PRODUCED_FOR_ID_FIELD = _SYSTEM_FIELD_KEYS["produced_for_id"]
+_EPISODE_TYPE_FIELD = _SYSTEM_FIELD_KEYS["episode_type"]
+_CONTENT_TYPE_FIELD = _SYSTEM_FIELD_KEYS["content_type"]
+_CREATED_AT_FIELD = _SYSTEM_FIELD_KEYS["created_at"]
 
 # The fields the adapter writes into every event's properties, with their
 # types. The segment store holds them with the caller's properties; the
@@ -94,11 +114,11 @@ EVENT_BACKEND_SYSTEM_FIELDS: dict[str, type[PropertyValue]] = {
 }
 
 # Bare client-API filter names for the system fields above (e.g. `producer_id`,
-# not `_producer_id`). Used to validate filter expressions on the event backend
-# so a typo'd field name surfaces as a ValueError rather than silently matching
-# nothing in the storage layer.
+# not `memmachine_ltm_producer_id`). Used to validate filter expressions on the
+# event backend so a typo'd field name surfaces as a ValueError rather than
+# silently matching nothing in the storage layer.
 _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES: frozenset[str] = frozenset(
-    key.removeprefix("_") for key in EVENT_BACKEND_SYSTEM_FIELDS
+    _SYSTEM_FIELD_KEYS
 ) | {"timestamp"}
 
 # Filterable-metadata sentinel: Episode.filterable_metadata=None vs {} carry
@@ -106,7 +126,7 @@ _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES: frozenset[str] = frozenset(
 _FILTERABLE_METADATA_NONE_FLAG = "_filterable_metadata_none"
 
 # Multiplier applied to `num_episodes_limit` when over-fetching from EventMemory
-# so that dedup-by-`_episode_uid` has enough headroom to return that many
+# so that dedup by episode uid has enough headroom to return that many
 # distinct episodes even when a single episode produces multiple segments
 # (e.g., under TextSegmenter with chunking).
 _EVENT_BACKEND_DEDUP_OVERFETCH = 4
@@ -332,7 +352,7 @@ class LongTermMemory:
         expand_context = max(0, min(expand_context, num_episodes_limit - 1))
         # Over-fetch from EventMemory: the per-segment results can have many
         # segments per episode under non-passthrough segmenters, and we dedup
-        # them by `_episode_uid` below. Without headroom, the dedup loop can
+        # them by episode uid below. Without headroom, the dedup loop can
         # return fewer than `num_episodes_limit` distinct episodes.
         vector_search_limit = max(
             num_episodes_limit * _EVENT_BACKEND_DEDUP_OVERFETCH,
@@ -374,8 +394,8 @@ class LongTermMemory:
                 score_threshold=score_threshold,
             )
 
-        # Map seed segment -> _episode_uid (system field already lives on
-        # event/segment.properties under the underscore-prefixed key). Keep
+        # Map seed segment -> episode uid (system field already lives on
+        # event/segment.properties under its reserved key). Keep
         # first-seen score per episode_uid; preserve query result ordering.
         # Cosine similarities and reranker scores are both higher-is-better,
         # so the threshold always drops scores below it.
@@ -671,11 +691,12 @@ class LongTermMemory:
     def _event_memory_filter_field(field: str) -> str:
         """The EventMemory filter field a client filter field names.
 
-        A system field's bare name names its key as a property; `timestamp`
-        and a `m.<key>` / `metadata.<key>` name are the same field in both.
+        A system field's bare name names its reserved key as a property;
+        `timestamp` and a `m.<key>` / `metadata.<key>` name are the same
+        field in both.
         """
-        key = f"_{field}"
-        if key not in EVENT_BACKEND_SYSTEM_FIELDS:
+        key = _SYSTEM_FIELD_KEYS.get(field)
+        if key is None:
             return field
         return mangle_user_metadata_key(key)
 
@@ -683,17 +704,23 @@ class LongTermMemory:
         self,
         property_filter: FilterExpr | None,
     ) -> None:
-        """Reject bare filter fields that name no system field.
+        """Reject filter fields that name no system field or a reserved key.
 
-        A `m.<key>` / `metadata.<key>` name may be any caller key; a bare
-        name is a system field or a mistake.
+        A `m.<key>` / `metadata.<key>` name may be any caller key outside
+        the reserved namespace; a bare name is a system field or a mistake.
         """
         if property_filter is None:
             return
 
         def _check(field: str) -> str:
-            _, is_user_metadata = normalize_filter_field(field)
+            internal_name, is_user_metadata = normalize_filter_field(field)
             if is_user_metadata:
+                if is_reserved_property_key(demangle_user_metadata_key(internal_name)):
+                    raise ValueError(
+                        f"Filter field {field!r} names a reserved key; filter "
+                        f"a system field by its bare name: "
+                        f"{sorted(_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES)}."
+                    )
                 return field
             if field not in _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES:
                 raise ValueError(
@@ -827,7 +854,7 @@ class LongTermMemory:
 
     @staticmethod
     def _hit_episode_uid(hit: QueryHit) -> UUID | None:
-        """Pull `_episode_uid` from the seed segment of a hit."""
+        """Pull the episode uid from the seed segment of a hit."""
         value = hit.seed.properties.get(_EPISODE_UID_FIELD)
         return UUID(str(value)) if value is not None else None
 
@@ -836,24 +863,22 @@ class LongTermMemory:
         """Translate an Episode into an event-memory Event.
 
         - Event.uuid = uuid5(NAMESPACE, episode.uid) so the mapping is
-          deterministic and reversible (`_episode_uid` carries the original).
+          deterministic and reversible (the episode uid field carries the
+          original).
         - Event.source_id = producer_id, the one source an episode has.
           Context: ProducerContext for messages; NullContext otherwise.
         - One TextBlock per event (Episode.content is a string today).
-        - Properties: system fields stored with `_` prefix, user filterable
-          metadata stored bare; a search names a system field by its bare
-          name (`producer_id`) and a user key as `m.<key>`. A search lifts the
-          fields mapped above (`producer_id`, `created_at`) back into the
-          memory's typed filters (`_lift_typed_filters`).
+        - Properties: system fields under the adapter's reserved keys, user
+          filterable metadata under its own keys; a search names a system
+          field by its bare name (`producer_id`) and a user key as
+          `m.<key>`. A search lifts the fields mapped above (`producer_id`,
+          `created_at`) back into the memory's typed filters
+          (`_lift_typed_filters`).
 
-        Reject `_`-prefixed user metadata keys (event-backend only — the
-        declarative backend mangles user keys with a `metadata.` prefix and
-        is unaffected). Without this check a client could send
-        `{"_producer_id": "victim", "_session_key": "other-session"}` and
-        have its content indexed under those spoofed identities, enabling
-        cross-producer / cross-session impersonation through
-        `search_scored(property_filter=...)`. We raise loudly instead of
-        silently dropping so the client sees the misuse.
+        A user key is refused unless it is a legal user property key
+        (`validate_user_property_key`): one in the reserved namespace would
+        claim a system field's identity, such as another producer's or
+        session's, and so is refused rather than dropped.
         """
         properties: dict[str, PropertyValue] = {
             _EPISODE_UID_FIELD: str(episode.uid),
@@ -867,18 +892,8 @@ class LongTermMemory:
         if episode.produced_for_id is not None:
             properties[_PRODUCED_FOR_ID_FIELD] = episode.produced_for_id
         if episode.filterable_metadata is not None:
-            reserved = sorted(
-                k for k in episode.filterable_metadata if k.startswith("_")
-            )
-            if reserved:
-                raise ValueError(
-                    "Episode filterable_metadata contains reserved "
-                    f"`_`-prefixed keys (event backend only): {reserved}. "
-                    "These collide with system-defined properties "
-                    "(`_producer_id`, `_session_key`, `_episode_uid`, ...) "
-                    "and are rejected to prevent cross-producer / "
-                    "cross-session impersonation."
-                )
+            for key in episode.filterable_metadata:
+                validate_user_property_key(key)
             properties.update(episode.filterable_metadata)
 
         if episode.episode_type == EpisodeType.MESSAGE:

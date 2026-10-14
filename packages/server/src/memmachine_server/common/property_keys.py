@@ -16,9 +16,16 @@ from memmachine_server.common.vector_store.utils import is_valid_identifier
 RESERVED_PROPERTY_KEY_PREFIX: Final[str] = "memmachine_"
 
 
-def is_reserved_property_key(key: str) -> bool:
-    """Return whether `key` belongs to MemMachine rather than to the user."""
-    return key.startswith(RESERVED_PROPERTY_KEY_PREFIX)
+def is_reserved_property_key(key: str, *, system: str | None = None) -> bool:
+    """
+    Return whether `key` belongs to MemMachine rather than to the user.
+
+    With `system`, return whether it belongs to that system: whether
+    `reserved_property_key(system, ...)` builds it.
+    """
+    if system is None:
+        return key.startswith(RESERVED_PROPERTY_KEY_PREFIX)
+    return key.startswith(f"{RESERVED_PROPERTY_KEY_PREFIX}{system}_")
 
 
 def reserved_property_key(system: str, field: str) -> str:

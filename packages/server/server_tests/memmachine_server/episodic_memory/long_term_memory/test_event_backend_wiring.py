@@ -39,6 +39,7 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
+from memmachine_server.common.property_keys import reserved_property_key
 from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Neighborhood,
@@ -79,6 +80,8 @@ from server_tests.memmachine_server.episodic_memory.event_memory.conftest import
 )
 
 pytestmark = pytest.mark.asyncio
+
+_EPISODE_UID_KEY = reserved_property_key("ltm", "episode_uid")
 
 
 class FakeEpisodeStorage(EpisodeStorage):
@@ -301,9 +304,10 @@ async def test_delete_episodes_removes_from_event_memory(
     # ep-1's segment should be gone; the others should remain.
     assert len(segment_store_partition.segments) == 2
     # Map back: ep-1's event_uuid is uuid5(NS, "ep-1"); easier to assert by
-    # checking the *_episode_uid* property on remaining segments.
+    # checking the episode uid property on remaining segments.
     remaining_episode_uids = {
-        s.properties["_episode_uid"] for s in segment_store_partition.segments.values()
+        s.properties[_EPISODE_UID_KEY]
+        for s in segment_store_partition.segments.values()
     }
     assert str(_uid("ep-1")) not in remaining_episode_uids
 
@@ -380,7 +384,7 @@ async def test_system_field_filter_round_trips(
     vector_store_partition,
     monkeypatch,
 ):
-    """A bare client-API field (`producer_role`) names the adapter's key.
+    """A bare client-API field (`producer_role`) names the adapter's reserved key.
 
     Both the vector store and the segment store filter on that key, so a
     system-field filter actually narrows results.
@@ -421,7 +425,25 @@ async def test_system_field_filter_round_trips(
     )
 
     assert {ep.uid for _, ep in scored} == {_uid("s-1")}
-    assert seen == [FilterComparison(field="_producer_role", op="=", value="user")]
+    assert seen == [
+        FilterComparison(
+            field=reserved_property_key("ltm", "producer_role"), op="=", value="user"
+        )
+    ]
+
+
+async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
+    """A caller names a system field by its bare name, never by its reserved key."""
+    with pytest.raises(ValueError, match="names a reserved key"):
+        await long_term_memory.search_scored(
+            "msg",
+            num_episodes_limit=10,
+            property_filter=FilterComparison(
+                field=f"m.{reserved_property_key('ltm', 'producer_id')}",
+                op="=",
+                value="alice",
+            ),
+        )
 
 
 async def test_close_is_a_noop(long_term_memory):
@@ -446,7 +468,7 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
 
 
 async def test_any_user_metadata_field_is_accepted(long_term_memory):
-    """Any `m.<x>` is a valid filter field; only bare names are checked."""
+    """Any `m.<x>` outside the reserved namespace is a valid filter field."""
     # Doesn't raise.
     scored = await long_term_memory.search_scored(
         "msg",
@@ -962,7 +984,7 @@ def test_episode_uid_context_dedup_and_nucleus():
             offset=0,
             timestamp=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
             block=TextBlock(text=uid),
-            properties={"_episode_uid": str(_uid(uid))},
+            properties={_EPISODE_UID_KEY: str(_uid(uid))},
         )
 
     hit = QueryHit(

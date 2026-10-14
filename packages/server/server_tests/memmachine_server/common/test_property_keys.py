@@ -16,6 +16,14 @@ def test_reserved_key_is_prefix_system_field():
     assert not is_reserved_property_key("timestamp")
 
 
+def test_a_system_s_reserved_keys_are_those_it_builds():
+    key = reserved_property_key("em", "timestamp")
+    assert is_reserved_property_key(key, system="em")
+    assert not is_reserved_property_key(key, system="e")
+    assert not is_reserved_property_key(key, system="ltm")
+    assert not is_reserved_property_key("timestamp", system="em")
+
+
 def test_reserved_key_overrunning_the_budget_fails_at_build_time():
     with pytest.raises(ValueError, match="naming contract"):
         reserved_property_key("event", "a_field_name_far_too_long_for_it")

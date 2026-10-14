@@ -134,7 +134,7 @@ class Event(BaseModel):
     blocks: list[Block] = Field(description="The blocks of the event, in order")
     properties: dict[str, PropertyValue] = Field(
         default_factory=dict,
-        description="User-defined values the event can be filtered by",
+        description="Values the event can be filtered by",
     )
 
     @field_validator("properties", mode="before")
