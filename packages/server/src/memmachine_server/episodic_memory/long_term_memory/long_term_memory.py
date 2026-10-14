@@ -875,10 +875,9 @@ class LongTermMemory:
           `created_at`) back into the memory's typed filters
           (`_lift_typed_filters`).
 
-        A user key is refused unless it is a legal user property key
+        A user key must be a legal user property key
         (`validate_user_property_key`): one in the reserved namespace would
-        claim a system field's identity, such as another producer's or
-        session's, and so is refused rather than dropped.
+        claim a system field, so it is refused.
         """
         properties: dict[str, PropertyValue] = {
             _EPISODE_UID_FIELD: str(episode.uid),

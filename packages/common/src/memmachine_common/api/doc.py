@@ -187,9 +187,9 @@ class SpecDoc:
     MEMORY_METADATA = """
     Additional metadata associated with the message, represented as key-value
     pairs. Optional; defaults to an empty object.
-    Each key must match `[a-z0-9_]+`, be at most 32 bytes, and not begin with
-    `memmachine_`, which is reserved; a request with another key is refused
-    with 422.
+    Each key is lowercase letters, digits, and underscores, at most 32 bytes,
+    outside the reserved prefix `memmachine_`; a request with another key is
+    refused with 422.
     Retrieval operations may utilize this metadata for filtering.
     Use 'metadata.{key}' to filter based on specific metadata keys.
     """

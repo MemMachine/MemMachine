@@ -798,8 +798,8 @@ class MemMachine:
         Raises:
             ValueError:
                 If an entry's metadata holds a key that is not a legal user
-                property key (`validate_user_property_key`); no store is
-                written.
+                property key (`validate_user_property_key`), before any store
+                is written.
 
         """
         episode_storage = await self._resources.get_episode_storage()

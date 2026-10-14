@@ -111,8 +111,8 @@ def _validate_property_filter(property_filter: FilterExpr) -> None:
     """
     Raise ValueError unless every field of a filter names a property or the timestamp.
 
-    The memory's own reserved keys are its typed search parameters, and no
-    filter names them.
+    The memory's own reserved keys are reached through its typed search
+    parameters alone.
     """
     for field in filter_fields(property_filter):
         if field == _TIMESTAMP_FIELD:
