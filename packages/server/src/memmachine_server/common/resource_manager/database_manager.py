@@ -4,7 +4,7 @@ import asyncio
 import logging
 from asyncio import Lock
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
 from sqlalchemy import event, text
@@ -67,6 +67,43 @@ def enable_sqlite_foreign_keys(engine: AsyncEngine) -> None:
     ) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
+# The driver default is 5 s, which a reader waiting behind a long write
+# can run out of and fail with "database is locked".
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+
+
+def enable_sqlite_wal(
+    engine: AsyncEngine, *, synchronous: Literal["FULL", "NORMAL"]
+) -> None:
+    """Run every connection of a SQLite engine in WAL mode.
+
+    With the default rollback journal a writer blocks every reader for the
+    whole transaction; with WAL, readers keep going while one writer
+    writes. journal_mode is stored in the database file, so repeating it on
+    each connection is a no-op, while busy_timeout and synchronous are per
+    connection. An in-memory database ignores the request and stays in
+    "memory" mode. NORMAL is safe with WAL across application crashes; only
+    a power loss can drop the last commits. Registered at engine creation
+    for the same reason as enable_sqlite_foreign_keys. No-op for other
+    dialects.
+    """
+    if engine.dialect.name != "sqlite":
+        return
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _enable_wal(
+        dbapi_connection: DBAPIConnection,
+        _connection_record: ConnectionPoolEntry,
+    ) -> None:
+        cursor = dbapi_connection.cursor()
+        # Set the timeout first so the switch to WAL waits for a lock held
+        # by another connection instead of failing.
+        cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute(f"PRAGMA synchronous={synchronous}")
         cursor.close()
 
 
@@ -382,6 +419,8 @@ class DatabaseManager:
 
             engine = create_async_engine(conf.uri, **_sql_engine_kwargs(conf))
             enable_sqlite_foreign_keys(engine)
+            # Relational stores keep synchronous=FULL; see #1605.
+            enable_sqlite_wal(engine, synchronous="FULL")
             if validate:
                 await self.validate_sql_engine(name, engine)
             self.sql_engines[name] = engine
@@ -810,6 +849,8 @@ class DatabaseManager:
             )
 
             engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+            # Vector store contents are rebuildable, so NORMAL is enough.
+            enable_sqlite_wal(engine, synchronous="NORMAL")
             self.vector_store_sql_engines[name] = engine
 
             try:
@@ -854,6 +895,8 @@ class DatabaseManager:
             )
 
             engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+            # Vector store contents are rebuildable, so NORMAL is enough.
+            enable_sqlite_wal(engine, synchronous="NORMAL")
             self.vector_store_sql_engines[name] = engine
 
             try:
