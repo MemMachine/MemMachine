@@ -7,6 +7,7 @@ from llama_index.core.base.llms.types import ChatMessage, MessageRole
 from llama_index.core.memory import BaseMemory
 from llama_index.core.memory import Memory as LlamaIndexMemory
 from memmachine_client import MemMachineClient
+from memmachine_common.api import EpisodeType
 
 DEFAULT_INTRO_PREFERENCES = "Below are a set of relevant preferences retrieved from potentially several memory sources:"
 DEFAULT_OUTRO_PREFERENCES = "This is the end of the retrieved preferences."
@@ -147,7 +148,7 @@ class MemMachineMemory(BaseMemory):
             success = memory.add(
                 content=content,
                 role=role or "user",
-                episode_type="text",
+                episode_type=EpisodeType.MESSAGE,
                 metadata=metadata or {},
             )
             if success:
