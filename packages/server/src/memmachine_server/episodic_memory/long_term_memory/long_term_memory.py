@@ -18,6 +18,7 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
+    mangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
@@ -62,10 +63,8 @@ logger = logging.getLogger(__name__)
 # change without a data migration.
 _EVENT_UUID_NAMESPACE = UUID("8c2c0e0a-3a2f-4b9c-9d1f-9b6c2a3a4f7e")
 
-# Reserved system-defined property keys on the event-backend. Stored on
-# event.properties with the leading underscore so EventMemory's existing
-# `_to_vector_record_property` translation (bare client-API field -> `_field`)
-# matches the storage layout transparently.
+# The adapter's fields, stored on `event.properties` under a leading
+# underscore; a search names each by its bare client-API name.
 _EPISODE_UID_FIELD = "_episode_uid"
 _SESSION_KEY_FIELD = "_session_key"
 _PRODUCER_ID_FIELD = "_producer_id"
@@ -335,7 +334,11 @@ class LongTermMemory:
             query,
             vector_search_limit=vector_search_limit,
             expand_context=expand_context,
-            property_filter=property_filter,
+            property_filter=map_filter_fields(
+                property_filter, LongTermMemory._event_memory_filter_field
+            )
+            if property_filter is not None
+            else None,
         )
 
         if expand_context > 0:
@@ -579,6 +582,18 @@ class LongTermMemory:
 
     # --- Episode <-> Event translation (event backend) ---
 
+    @staticmethod
+    def _event_memory_filter_field(field: str) -> str:
+        """The EventMemory filter field a client filter field names.
+
+        A system field's bare name names its key as a property; `timestamp`
+        and a `m.<key>` / `metadata.<key>` name are the same field in both.
+        """
+        key = f"_{field}"
+        if key not in EVENT_BACKEND_SYSTEM_FIELDS:
+            return field
+        return mangle_user_metadata_key(key)
+
     def _validate_event_backend_filter(
         self,
         property_filter: FilterExpr | None,
@@ -755,9 +770,8 @@ class LongTermMemory:
         - Context: ProducerContext for messages; NullContext otherwise.
         - One TextBlock per event (Episode.content is a string today).
         - Properties: system fields stored with `_` prefix, user filterable
-          metadata stored bare. Matches EventMemory's `_to_vector_record_property`
-          translation so the client-facing filter API (`producer_id`,
-          `m.my_field`) Just Works.
+          metadata stored bare; a search names a system field by its bare
+          name (`producer_id`) and a user key as `m.<key>`.
 
         Reject `_`-prefixed user metadata keys (event-backend only — the
         declarative backend mangles user keys with a `metadata.` prefix and

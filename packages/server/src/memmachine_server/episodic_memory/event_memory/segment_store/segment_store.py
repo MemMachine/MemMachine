@@ -72,13 +72,19 @@ class SegmentStorePartition(ABC):
             max_forward_segments (int):
                 The maximum number of segments to include after each seed segment (default: 0).
             property_filter (FilterExpr | None):
-                An optional filter expression to apply to the segments (default: None).
+                A filter expression over the segments' properties, each
+                named `m.<key>` or `metadata.<key>`, and their `timestamp`
+                (default: None).
 
         Returns:
             dict[UUID, list[Segment]]:
                 A mapping from each seed segment UUID to its context segments.
                 A seed that does not match the filter has no entry, and a
                 context holds only segments that match it.
+
+        Raises:
+            ValueError:
+                If `property_filter` names another field.
         """
         raise NotImplementedError
 
