@@ -21,6 +21,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
     map_filter_fields,
 )
+from memmachine_server.common.property_keys import reserved_property_key
 from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.common.vector_store.data_types import (
     Record,
@@ -281,6 +282,18 @@ class TestEncodeEvents:
         event = _make_event("hi", properties={EVENT_TIMESTAMP_KEY: "spoofed"})
         with pytest.raises(ValueError, match="reserved"):
             await event_memory.encode_events([event])
+
+    async def test_a_key_reserved_for_another_system_is_kept(
+        self,
+        event_memory: EventMemory,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        """The component embedding the memory writes its own reserved keys."""
+        key = reserved_property_key("other", "field")
+        await event_memory.encode_events([_make_event("hi", properties={key: "v"})])
+
+        segment = next(iter(fake_segment_store_partition.segments.values()))
+        assert segment.properties[key] == "v"
 
     async def test_illegal_property_key_is_rejected(self, event_memory: EventMemory):
         event = _make_event("hi", properties={"Color": "red"})
@@ -1153,6 +1166,18 @@ class TestQueryWithFilter:
             await event_memory.query(
                 "hi", property_filter=Comparison(field=field, op="=", value="Alice")
             )
+
+    async def test_a_filter_on_the_memory_s_own_key_is_refused(
+        self, event_memory: EventMemory
+    ):
+        """The memory's own keys are not properties; the timestamp is `timestamp`."""
+        await event_memory.encode_events([_make_event("hi", timestamp=_ts(0))])
+        property_filter = Comparison(
+            field=f"m.{EVENT_TIMESTAMP_KEY}", op=">=", value=_ts(0)
+        )
+
+        with pytest.raises(ValueError, match="reserved for the event memory"):
+            await event_memory.query("hi", property_filter=property_filter)
 
 
 # ===================================================================
