@@ -377,11 +377,13 @@ async def test_user_metadata_filter_round_trips(
 async def test_system_field_filter_round_trips(
     long_term_memory,
     fake_episode_storage,
+    vector_store_partition,
+    monkeypatch,
 ):
-    """Bare client-API field (`producer_id`) translates to storage key `_producer_id`.
+    """A bare client-API field (`producer_role`) names the adapter's key.
 
-    EventMemory translates the filter consistently for both vector_store and
-    segment_store stages so a system-field filter actually narrows results.
+    Both the vector store and the segment store filter on that key, so a
+    system-field filter actually narrows results.
     """
     episodes = [
         Episode(
@@ -398,19 +400,28 @@ async def test_system_field_filter_round_trips(
             session_key="sess1",
             created_at=datetime(2026, 1, 15, 12, 1, tzinfo=UTC),
             producer_id="bob",
-            producer_role="user",
+            producer_role="assistant",
         ),
     ]
     fake_episode_storage._episodes.update({e.uid: e for e in episodes})
     await long_term_memory.add_episodes(episodes)
+    seen: list[object] = []
+    original_query = vector_store_partition.query
+
+    async def recording_query(**kwargs):
+        seen.append(kwargs.get("property_filter"))
+        return await original_query(**kwargs)
+
+    monkeypatch.setattr(vector_store_partition, "query", recording_query)
 
     scored = await long_term_memory.search_scored(
         "msg",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="producer_id", op="=", value="alice"),
+        property_filter=FilterComparison(field="producer_role", op="=", value="user"),
     )
-    uids = {ep.uid for _, ep in scored}
-    assert uids == {_uid("s-1")}
+
+    assert {ep.uid for _, ep in scored} == {_uid("s-1")}
+    assert seen == [FilterComparison(field="_producer_role", op="=", value="user")]
 
 
 async def test_close_is_a_noop(long_term_memory):

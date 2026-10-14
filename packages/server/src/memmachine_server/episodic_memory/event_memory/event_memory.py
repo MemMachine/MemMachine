@@ -20,6 +20,7 @@ from memmachine_server.common.filter.filter_parser import (
     In,
     demangle_user_metadata_key,
     extract_filter,
+    filter_fields,
     map_filter_fields,
     normalize_filter_field,
 )
@@ -61,6 +62,10 @@ logger = logging.getLogger(__name__)
 EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key("em", "timestamp")
 EVENT_SOURCE_KEY: Final[str] = reserved_property_key("em", "source")
 
+# The filter field naming the event's timestamp; any other field names a
+# property, as `m.<key>` or `metadata.<key>`.
+_TIMESTAMP_FIELD: Final[str] = "timestamp"
+
 
 def _conjoin(clauses: Iterable[FilterExpr | None]) -> FilterExpr | None:
     """The conjunction of the given clauses; None when there are none."""
@@ -96,6 +101,24 @@ def _system_predicates(
         else None,
     ]
     return _conjoin(clauses)
+
+
+def _validate_property_filter(property_filter: FilterExpr) -> None:
+    """Raise ValueError unless every field of a filter names a property or the timestamp."""
+    for field in filter_fields(property_filter):
+        if field != _TIMESTAMP_FIELD and _filter_field_property_key(field) is None:
+            raise ValueError(
+                f"Filter field {field!r} names no property: a property is "
+                f"'m.<key>', and {_TIMESTAMP_FIELD!r} is the event's timestamp."
+            )
+
+
+def _filter_field_property_key(field: str) -> str | None:
+    """The property key a filter field names; None when it names none."""
+    internal_name, is_user_metadata = normalize_filter_field(field)
+    if not is_user_metadata:
+        return None
+    return demangle_user_metadata_key(internal_name)
 
 
 class EventMemoryParams(BaseModel):
@@ -369,18 +392,25 @@ class EventMemory:
             properties=properties,
         )
 
-    @classmethod
-    def _to_vector_record_property(cls, field: str) -> str:
-        """
-        Translates canonical filter field name to vector record property.
+    def _vector_store_filter(self, property_filter: FilterExpr) -> FilterExpr | None:
+        """The part of a filter that names declared properties alone; None when there is none.
 
-        Event memory base properties (`foo`) translate to `_foo`.
-        User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
+        A vector record carries only the properties the vector store
+        declares, so a condition on any other property, or on the event's
+        timestamp, is left to the segment store.
         """
-        internal_name, is_user_metadata = normalize_filter_field(field)
-        if is_user_metadata:
-            return demangle_user_metadata_key(internal_name)
-        return f"_{field}"
+        declared_keys = {
+            field: key
+            for field in filter_fields(property_filter)
+            if (key := _filter_field_property_key(field)) is not None
+            and key in self._schema_fields
+        }
+        vector_store_filter = extract_filter(
+            property_filter, allowed_fields=declared_keys.keys()
+        )
+        if vector_store_filter is None:
+            return None
+        return map_filter_fields(vector_store_filter, declared_keys.__getitem__)
 
     async def query(
         self,
@@ -419,12 +449,13 @@ class EventMemory:
                 Keep only events of these sources; an empty list keeps
                 none, and None keeps every source (default: None).
             property_filter (FilterExpr | None):
-                A filter over the segments' properties; None filters
-                nothing (default: None). The vector search applies only
-                the part of the filter that names declared fields alone
-                (see `extract_filter`); the whole filter then applies to
-                the seeds it returns, so fewer than `vector_search_limit`
-                seeds, or none, may survive it.
+                A filter over the segments' properties, each named
+                `m.<key>` or `metadata.<key>`, and their `timestamp`;
+                None filters nothing (default: None). The vector search
+                applies only the part of the filter that names declared
+                properties alone (see `extract_filter`); the whole filter
+                then applies to the seeds it returns, so fewer than
+                `vector_search_limit` seeds, or none, may survive it.
 
         Returns:
             list[QueryHit]:
@@ -434,10 +465,13 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If `expand_context` is negative, or `since` or `until` is
-                naive.
+                If `expand_context` is negative, `since` or `until` is
+                naive, or `property_filter` names a field that is neither
+                a property nor the timestamp.
 
         """
+        if property_filter is not None:
+            _validate_property_filter(property_filter)
         async with self._tracker("query"):
             return await self._query(
                 query,
@@ -487,10 +521,7 @@ class EventMemory:
                     until=until,
                     source_ids=source_ids,
                 ),
-                extract_filter(
-                    map_filter_fields(property_filter, self._to_vector_record_property),
-                    allowed_fields=self._schema_fields,
-                )
+                self._vector_store_filter(property_filter)
                 if property_filter is not None
                 else None,
             ]
@@ -614,8 +645,8 @@ class EventMemory:
                 Keep only neighbors of these sources; an empty list keeps
                 none, and None keeps every source (default: None).
             property_filter (FilterExpr | None):
-                A filter over the neighbors' user properties; None filters
-                nothing (default: None).
+                A filter over the neighbors' properties, named as in
+                `query`; None filters nothing (default: None).
 
         Returns:
             Neighborhood:
@@ -625,9 +656,11 @@ class EventMemory:
             LookupError:
                 If the seed is not a segment of this memory.
             ValueError:
-                If `before` or `after` is negative, or `since` or `until`
-                is naive.
+                If `before` or `after` is negative, `since` or `until` is
+                naive, or `property_filter` names a field `query` refuses.
         """
+        if property_filter is not None:
+            _validate_property_filter(property_filter)
         async with self._tracker("expand"):
             neighborhoods = (
                 await self._segment_store_partition.get_segment_neighborhoods(

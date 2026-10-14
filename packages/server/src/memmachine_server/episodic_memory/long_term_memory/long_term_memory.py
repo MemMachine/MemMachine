@@ -21,6 +21,7 @@ from memmachine_server.common.filter.filter_parser import (
     Comparison,
     FilterExpr,
     In,
+    mangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
@@ -67,7 +68,7 @@ logger = logging.getLogger(__name__)
 _EVENT_UUID_NAMESPACE = UUID("8c2c0e0a-3a2f-4b9c-9d1f-9b6c2a3a4f7e")
 
 # The adapter's fields, stored on `event.properties` under a leading
-# underscore; the segment store maps a bare client-API name to `_<name>`.
+# underscore; a search names each by its bare client-API name.
 _EPISODE_UID_FIELD = "_episode_uid"
 _SESSION_KEY_FIELD = "_session_key"
 _PRODUCER_ID_FIELD = "_producer_id"
@@ -348,7 +349,11 @@ class LongTermMemory:
             since=lifted.since,
             until=lifted.until,
             source_ids=lifted.source_ids,
-            property_filter=lifted.rest,
+            property_filter=map_filter_fields(
+                lifted.rest, LongTermMemory._event_memory_filter_field
+            )
+            if lifted.rest is not None
+            else None,
         )
         if self._reranker is not None:
             hits = await EventMemory.rerank(
@@ -662,6 +667,18 @@ class LongTermMemory:
             ]
         return [expr]
 
+    @staticmethod
+    def _event_memory_filter_field(field: str) -> str:
+        """The EventMemory filter field a client filter field names.
+
+        A system field's bare name names its key as a property; `timestamp`
+        and a `m.<key>` / `metadata.<key>` name are the same field in both.
+        """
+        key = f"_{field}"
+        if key not in EVENT_BACKEND_SYSTEM_FIELDS:
+            return field
+        return mangle_user_metadata_key(key)
+
     def _validate_event_backend_filter(
         self,
         property_filter: FilterExpr | None,
@@ -824,8 +841,8 @@ class LongTermMemory:
           Context: ProducerContext for messages; NullContext otherwise.
         - One TextBlock per event (Episode.content is a string today).
         - Properties: system fields stored with `_` prefix, user filterable
-          metadata stored bare, the layout the segment store maps a filter's
-          bare name (`producer_id`) and `m.<key>` onto. A search lifts the
+          metadata stored bare; a search names a system field by its bare
+          name (`producer_id`) and a user key as `m.<key>`. A search lifts the
           fields mapped above (`producer_id`, `created_at`) back into the
           memory's typed filters (`_lift_typed_filters`).
 

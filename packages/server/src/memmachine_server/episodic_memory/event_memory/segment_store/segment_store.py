@@ -88,14 +88,18 @@ class SegmentStorePartition(ABC):
                 empty list keeps none, and None keeps every source
                 (default: None).
             property_filter (FilterExpr | None):
-                A filter expression over segment properties (default: None).
+                A filter expression over segment properties, each named
+                `m.<key>` or `metadata.<key>`, and their `timestamp`
+                (default: None).
 
         Returns:
             dict[UUID, Segment]:
                 A mapping from each UUID found and admitted to its segment.
 
         Raises:
-            ValueError: If `since` or `until` is naive.
+            ValueError:
+                If `since` or `until` is naive, or `property_filter` names
+                another field.
         """
         raise NotImplementedError
 
@@ -143,8 +147,8 @@ class SegmentStorePartition(ABC):
                 empty list keeps none, and None keeps every source
                 (default: None).
             property_filter (FilterExpr | None):
-                A filter expression over the neighbors' properties
-                (default: None).
+                A filter expression over the neighbors' properties, named
+                as in `get_segments` (default: None).
 
         Returns:
             dict[UUID, Neighborhood]:
@@ -156,8 +160,8 @@ class SegmentStorePartition(ABC):
 
         Raises:
             ValueError:
-                If `before` or `after` is negative, or `since` or `until`
-                is naive.
+                If `before` or `after` is negative, `since` or `until` is
+                naive, or `property_filter` names another field.
         """
         raise NotImplementedError
 

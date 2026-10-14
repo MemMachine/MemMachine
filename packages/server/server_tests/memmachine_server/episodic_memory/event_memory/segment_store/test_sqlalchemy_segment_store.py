@@ -680,77 +680,27 @@ async def test_context_comes_from_the_segments_nearest_the_seed(
 
 
 @pytest.mark.asyncio
-async def test_contexts_filter_by_context_producer(
+@pytest.mark.parametrize("field", ["context.producer", "context.context_type"])
+async def test_a_filter_on_the_context_is_refused(
     partition: SQLAlchemySegmentStorePartition,
+    field: str,
 ) -> None:
-    """`context.producer` is not a stored property; the filter just matches nothing.
-
-    Bare names that aren't `timestamp` are looked up as `_<name>` in the JSON
-    properties (matching EventMemory's `_to_vector_record_property` convention
-    for system fields). `context.producer` becomes `_context.producer`, which
-    isn't a stored key on any segment, so the filter returns no contexts.
-    """
-    ep = uuid4()
+    """The context is no property, and a filter field naming no property is refused."""
     s0 = _seg(
-        event_uuid=ep,
+        event_uuid=uuid4(),
         offset=0,
         ts_offset_seconds=0,
         context=_author("Alice"),
     )
-    s1 = _seg(
-        event_uuid=ep,
-        offset=1,
-        ts_offset_seconds=1,
-        context=_author("Bob"),
-    )
-    s2 = _seg(
-        event_uuid=ep,
-        offset=2,
-        ts_offset_seconds=2,
-        context=_author("Alice"),
-    )
-    await partition.add_segments(_links(s0, s1, s2))
+    await partition.add_segments(_links(s0))
 
-    filt = Comparison(field="context.producer", op="=", value="Alice")
-    assert await partition.get_segments([s0.uuid], property_filter=filt) == {}
-    neighborhoods = await partition.get_segment_neighborhoods(
-        [s0.uuid], before=5, after=5, property_filter=filt
-    )
-    assert neighborhoods == {s0.uuid: Neighborhood(before=[], after=[])}
-
-
-@pytest.mark.asyncio
-async def test_contexts_filter_by_context_type(
-    partition: SQLAlchemySegmentStorePartition,
-) -> None:
-    """`context.context_type` is not a stored property; filter matches nothing."""
-    ep = uuid4()
-    s0 = _seg(
-        event_uuid=ep,
-        offset=0,
-        ts_offset_seconds=0,
-        context=_author("Alice"),
-    )
-    s1 = _seg(
-        event_uuid=ep,
-        offset=1,
-        ts_offset_seconds=1,
-        context=NullContext(),
-    )
-    s2 = _seg(
-        event_uuid=ep,
-        offset=2,
-        ts_offset_seconds=2,
-        context=_author("Bob"),
-    )
-    await partition.add_segments(_links(s0, s1, s2))
-
-    filt = Comparison(field="context.context_type", op="=", value="producer")
-    assert await partition.get_segments([s0.uuid], property_filter=filt) == {}
-    neighborhoods = await partition.get_segment_neighborhoods(
-        [s0.uuid], before=5, after=5, property_filter=filt
-    )
-    assert neighborhoods == {s0.uuid: Neighborhood(before=[], after=[])}
+    filt = Comparison(field=field, op="=", value="Alice")
+    with pytest.raises(ValueError, match="names no segment property"):
+        await partition.get_segments([s0.uuid], property_filter=filt)
+    with pytest.raises(ValueError, match="names no segment property"):
+        await partition.get_segment_neighborhoods(
+            [s0.uuid], before=5, after=5, property_filter=filt
+        )
 
 
 @pytest.mark.asyncio

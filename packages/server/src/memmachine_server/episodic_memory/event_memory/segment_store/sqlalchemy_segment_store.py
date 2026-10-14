@@ -988,14 +988,20 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         *,
         columns: ColumnCollection[str, ColumnElement],
     ) -> tuple[ColumnElement, FieldEncoding]:
-        """Map a filter field name to one of `columns` and its encoding."""
+        """
+        Map a filter field name to one of `columns` and its encoding.
+
+        `timestamp` names the segment's timestamp, and `m.<key>` or
+        `metadata.<key>` its property `<key>`. Raises ValueError for any
+        other name.
+        """
         if field == "timestamp":
             return columns.timestamp, "column"
         internal_name, is_user_metadata = normalize_filter_field(field)
-        if is_user_metadata:
-            key = demangle_user_metadata_key(internal_name)
-            return columns.properties[key], "properties_json"
-        return columns.properties[f"_{field}"], "properties_json"
+        if not is_user_metadata:
+            raise ValueError(f"Filter field {field!r} names no segment property.")
+        key = demangle_user_metadata_key(internal_name)
+        return columns.properties[key], "properties_json"
 
     def _segment_from_segment_row(self, row: SegmentRow) -> Segment:
         """Convert a SegmentRow into a Segment."""

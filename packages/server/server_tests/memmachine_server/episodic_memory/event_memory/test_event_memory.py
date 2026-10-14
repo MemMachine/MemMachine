@@ -283,14 +283,14 @@ class TestEncodeEvents:
     ):
         """An undeclared property is the segment store's; the vector record carries the declared keys."""
         event = _make_event(
-            "hi", properties={"color": "red", "_episode_uid": "episode-1"}
+            "hi", properties={"color": "red", "episode_uid": "episode-1"}
         )
         await event_memory.encode_events([event])
 
         record = next(iter(fake_vector_store_partition.records.values()))
         props = _record_properties(record)
         assert "color" not in props
-        assert props["_episode_uid"] == "episode-1"
+        assert props["episode_uid"] == "episode-1"
         segment = next(iter(fake_segment_store_partition.segments.values()))
         assert segment.properties["color"] == "red"
 
@@ -849,9 +849,9 @@ class TestQueryWithFilter:
     ):
         """The vector store gets the conjuncts on declared fields; the segment store gets the whole filter."""
         seen = _record_query_filters(fake_vector_store_partition, monkeypatch)
-        e1 = _make_event("red thing", properties={"color": "red", "_episode_uid": "e1"})
+        e1 = _make_event("red thing", properties={"color": "red", "episode_uid": "e1"})
         e2 = _make_event(
-            "blue thing", properties={"color": "blue", "_episode_uid": "e2"}
+            "blue thing", properties={"color": "blue", "episode_uid": "e2"}
         )
         await event_memory.encode_events([e1, e2])
 
@@ -859,11 +859,11 @@ class TestQueryWithFilter:
             "thing",
             property_filter=And(
                 left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="episode_uid", op="=", value="e1"),
+                right=Comparison(field="m.episode_uid", op="=", value="e1"),
             ),
         )
 
-        assert seen == [Comparison(field="_episode_uid", op="=", value="e1")]
+        assert seen == [Comparison(field="episode_uid", op="=", value="e1")]
         assert _texts(hits) == {"red thing"}
 
     async def test_an_undeclared_property_under_or_leaves_the_vector_search_unfiltered(
@@ -880,7 +880,7 @@ class TestQueryWithFilter:
             "thing",
             property_filter=Or(
                 left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="episode_uid", op="=", value="e1"),
+                right=Comparison(field="m.episode_uid", op="=", value="e1"),
             ),
         )
 
@@ -893,16 +893,16 @@ class TestQueryWithFilter:
                 Or(
                     left=And(
                         left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="episode_uid", op="=", value="e1"),
+                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
                     ),
                     right=And(
                         left=Comparison(field="m.color", op="=", value="blue"),
-                        right=Comparison(field="episode_uid", op="=", value="e2"),
+                        right=Comparison(field="m.episode_uid", op="=", value="e2"),
                     ),
                 ),
                 Or(
-                    left=Comparison(field="_episode_uid", op="=", value="e1"),
-                    right=Comparison(field="_episode_uid", op="=", value="e2"),
+                    left=Comparison(field="episode_uid", op="=", value="e1"),
+                    right=Comparison(field="episode_uid", op="=", value="e2"),
                 ),
                 id="each arm of an or",
             ),
@@ -910,17 +910,17 @@ class TestQueryWithFilter:
                 Not(
                     expr=Or(
                         left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="episode_uid", op="=", value="e1"),
+                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
                     )
                 ),
-                Not(expr=Comparison(field="_episode_uid", op="=", value="e1")),
+                Not(expr=Comparison(field="episode_uid", op="=", value="e1")),
                 id="a negated or",
             ),
             pytest.param(
                 Not(
                     expr=And(
                         left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="episode_uid", op="=", value="e1"),
+                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
                     )
                 ),
                 None,
@@ -931,13 +931,11 @@ class TestQueryWithFilter:
                     expr=Or(
                         left=Comparison(field="m.color", op="=", value="red"),
                         right=Not(
-                            expr=Comparison(field="episode_uid", op="=", value="e1")
+                            expr=Comparison(field="m.episode_uid", op="=", value="e1")
                         ),
                     )
                 ),
-                Not(
-                    expr=Not(expr=Comparison(field="_episode_uid", op="=", value="e1"))
-                ),
+                Not(expr=Not(expr=Comparison(field="episode_uid", op="=", value="e1"))),
                 id="a negation under a negated or",
             ),
         ],
@@ -1119,34 +1117,36 @@ class TestQueryWithFilter:
         )
         assert hits == []
 
-    async def test_context_filter_returns_no_results(self, event_memory: EventMemory):
-        """Context is never filterable."""
+    @pytest.mark.parametrize("field", ["context.author", "episode_uid"])
+    async def test_a_filter_field_naming_no_property_is_refused(
+        self, event_memory: EventMemory, field: str
+    ):
+        """A property is named `m.<key>`; context is never filterable."""
         await event_memory.encode_events([_make_event("hi", context=_author("Alice"))])
 
-        hits = await event_memory.query(
-            "hi",
-            property_filter=Comparison(field="context.author", op="=", value="Alice"),
-        )
-        assert hits == []
+        with pytest.raises(ValueError, match="names no property"):
+            await event_memory.query(
+                "hi", property_filter=Comparison(field=field, op="=", value="Alice")
+            )
 
 
 # ===================================================================
 # Queries with and without the vector store's part of the filter
 # ===================================================================
 
-_FIELDS_ON_THE_RECORD = ("d1", "d2", "d3")
+_FIELDS_ON_THE_RECORD = ("m.d1", "m.d2", "m.d3")
 _FIELDS_ON_THE_SEGMENT_ONLY = ("m.u1", "m.u2")
 
 
 @pytest.fixture
 def declaring_event_memory(fake_embedder, fake_segment_store_partition) -> EventMemory:
-    """Event memory whose vector store declares `_d1`, `_d2`, and `_d3` but not `u1` or `u2`."""
+    """Event memory whose vector store declares `d1`, `d2`, and `d3` but not `u1` or `u2`."""
     collection = InMemoryVectorStorePartition(
         indexed_properties={
             **EventMemory.expected_vector_store_collection_schema(),
-            "_d1": int,
-            "_d2": int,
-            "_d3": int,
+            "d1": int,
+            "d2": int,
+            "d3": int,
         },
     )
     return EventMemory(
@@ -1165,7 +1165,7 @@ async def _encode_random_events(
 ) -> dict[str, dict[str, PropertyValue]]:
     """Encode `count` events with random properties; their properties by text."""
     properties_by_text = {
-        f"event {index}": random_properties(rng, ("_d1", "_d2", "_d3", "u1", "u2"))
+        f"event {index}": random_properties(rng, ("d1", "d2", "d3", "u1", "u2"))
         for index in range(count)
     }
     await event_memory.encode_events(
@@ -1300,14 +1300,14 @@ class TestQueryWithAConditionOnAnUndeclaredField:
                     _make_event(
                         f"blue thing {index}",
                         timestamp=_ts(index),
-                        properties={"color": "blue", "_episode_uid": f"blue-{index}"},
+                        properties={"color": "blue", "episode_uid": f"blue-{index}"},
                     )
                     for index in range(10)
                 ),
                 _make_event(
                     "red thing",
                     timestamp=_ts(10),
-                    properties={"color": "red", "_episode_uid": "red"},
+                    properties={"color": "red", "episode_uid": "red"},
                 ),
             ]
         )
@@ -1326,7 +1326,7 @@ class TestQueryWithAConditionOnAnUndeclaredField:
         )
         on_the_record = await _query_texts(
             event_memory,
-            Comparison(field="episode_uid", op="=", value="red"),
+            Comparison(field="m.episode_uid", op="=", value="red"),
             limit=3,
             query="blue thing",
         )
