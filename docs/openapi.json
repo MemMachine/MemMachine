@@ -4409,7 +4409,7 @@
             },
             "type": "object",
             "title": "Metadata",
-            "description": "\n    Additional metadata associated with the message, represented as key-value\n    pairs. Optional; defaults to an empty object.\n    Retrieval operations may utilize this metadata for filtering.\n    Use 'metadata.{key}' to filter based on specific metadata keys.\n    "
+            "description": "\n    Additional metadata associated with the message, represented as key-value\n    pairs. Optional; defaults to an empty object.\n    Each key must match `[a-z0-9_]+`, be at most 32 bytes, and not begin with\n    `memmachine_`, which is reserved; a request with another key is refused\n    with 422.\n    Retrieval operations may utilize this metadata for filtering.\n    Use 'metadata.{key}' to filter based on specific metadata keys.\n    "
           },
           "episode_type": {
             "anyOf": [
