@@ -317,7 +317,6 @@ class Config:
         backend: Literal["declarative", "event"] | None = None,
         vector_store: str | None = None,
         segment_store: str | None = None,
-        properties_schema: dict[str, str] | None = None,
         enabled: bool | None = None,
         timeout: int | None = None,
     ) -> UpdateMemoryConfigResponse:
@@ -338,9 +337,6 @@ class Config:
             vector_store: VectorStore resource id (event backend only)
             segment_store: SQL engine resource id backing the segment store
                 (event backend only)
-            properties_schema: User-defined filterable property names mapped
-                to type strings ("bool", "int", "float", "str", "datetime").
-                Event backend only.
             enabled: Whether long-term memory is enabled
             timeout: Request timeout in seconds (uses client default if not provided)
 
@@ -360,7 +356,6 @@ class Config:
             vector_graph_store=vector_graph_store,
             vector_store=vector_store,
             segment_store=segment_store,
-            properties_schema=properties_schema,
         )
         payload = spec.model_dump(exclude_none=True)
         if enabled is not None:

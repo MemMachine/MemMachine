@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
-from memmachine_server.common.data_types import SimilarityMetric
-
 # Types that can be used as property values in nodes and edges.
 PropertyValue = (
     bool
@@ -35,9 +33,7 @@ class Node:
 
     uid: str
     properties: dict[str, PropertyValue] = field(default_factory=dict)
-    embeddings: dict[str, tuple[list[float], SimilarityMetric]] = field(
-        default_factory=dict,
-    )
+    embeddings: dict[str, list[float]] = field(default_factory=dict)
 
     def __eq__(self, other: object) -> bool:
         """Compare nodes by UID, properties, and embeddings."""
@@ -62,9 +58,7 @@ class Edge:
     source_uid: str
     target_uid: str
     properties: dict[str, PropertyValue] = field(default_factory=dict)
-    embeddings: dict[str, tuple[list[float], SimilarityMetric]] = field(
-        default_factory=dict,
-    )
+    embeddings: dict[str, list[float]] = field(default_factory=dict)
 
     def __eq__(self, other: object) -> bool:
         """Compare edges by uid, properties, and embeddings."""

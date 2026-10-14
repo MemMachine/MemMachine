@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from uuid import UUID
 
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
 )
@@ -77,6 +77,8 @@ class SegmentStorePartition(ABC):
         Returns:
             dict[UUID, list[Segment]]:
                 A mapping from each seed segment UUID to its context segments.
+                A seed that does not match the filter has no entry, and a
+                context holds only segments that match it.
         """
         raise NotImplementedError
 
@@ -198,7 +200,7 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(self, partition_key: str) -> SegmentStorePartition | None:
+    async def get_partition(self, partition_key: str) -> SegmentStorePartition | None:
         """
         Open a partition-scoped handle for an existing partition.
 
@@ -209,48 +211,6 @@ class SegmentStore(ABC):
         Returns:
             SegmentStorePartition | None:
                 A partition-scoped handle, or None if the partition does not exist.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def open_or_create_partition(
-        self,
-        partition_key: str,
-        config: SegmentStorePartitionConfig,
-    ) -> SegmentStorePartition:
-        """
-        Open the partition if it exists, or create it if it does not.
-
-        Args:
-            partition_key (str):
-                The key of the partition.
-            config (SegmentStorePartitionConfig):
-                Configuration for the partition.
-
-        Returns:
-            SegmentStorePartition:
-                A partition-scoped handle.
-
-        Raises:
-            SegmentStorePartitionConfigMismatchError:
-                If the partition already exists with a different configuration.
-            SegmentStoreAttemptsExhaustedError:
-                If creation exhausted its internal attempts on a
-                failure that should not recur; an immediate retry is
-                unlikely to succeed -- diagnose the chained cause.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def close_partition(
-        self, segment_store_partition: SegmentStorePartition
-    ) -> None:
-        """
-        Close a partition-scoped handle.
-
-        Args:
-            segment_store_partition (SegmentStorePartition):
-                The partition-scoped handle to close.
         """
         raise NotImplementedError
 

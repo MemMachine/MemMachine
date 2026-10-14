@@ -4322,21 +4322,6 @@
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
           },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
-          },
           "enabled": {
             "type": "boolean",
             "title": "Enabled",
@@ -4518,14 +4503,6 @@
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)",
             "default": ""
-          },
-          "properties_schema": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only). Maps name to type (\"bool\", \"int\", \"float\", \"str\", \"datetime\")."
           }
         },
         "type": "object",
@@ -5478,21 +5455,6 @@
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
           },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only)"
-          },
           "enabled": {
             "anyOf": [
               {
@@ -5586,21 +5548,6 @@
             ],
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
-          },
-          "properties_schema": {
-            "anyOf": [
-              {
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Properties Schema",
-            "description": "User-defined filterable properties (event backend only)"
           }
         },
         "type": "object",
