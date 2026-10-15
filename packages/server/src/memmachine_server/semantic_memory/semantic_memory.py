@@ -149,6 +149,11 @@ class SemanticService:
         self._shutdown_event = asyncio.Event()
         self._debug_fail_loudly = params.debug_fail_loudly
 
+    @property
+    def semantic_storage(self) -> SemanticStorage:
+        """The storage this service reads and writes."""
+        return self._semantic_storage
+
     async def start(self) -> None:
         logger.info("Starting semantic memory services")
 

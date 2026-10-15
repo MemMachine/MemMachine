@@ -4,7 +4,7 @@ import asyncio
 import gc
 import weakref
 from datetime import timedelta
-from unittest.mock import AsyncMock, create_autospec, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 from pydantic import SecretStr
@@ -509,3 +509,47 @@ async def test_vector_store_purge_task_does_not_pin_the_manager(
     assert manager_ref() is None
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_semantic_deletion_storage_prefers_the_built_service_storage(
+    invalid_configure, monkeypatch
+):
+    builder = AsyncMock(side_effect=AssertionError("must not build from config"))
+    monkeypatch.setattr(
+        "memmachine_server.common.resource_manager.resource_manager."
+        "build_semantic_deletion_storage",
+        builder,
+    )
+    resource_manager = ResourceManagerImpl(invalid_configure)
+    service_storage = MagicMock()
+    resource_manager._semantic_manager = MagicMock()
+    resource_manager._semantic_manager.built_semantic_storage.return_value = (
+        service_storage
+    )
+
+    assert await resource_manager.get_semantic_deletion_storage() is service_storage
+    builder.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("manager_built", [False, True])
+async def test_semantic_deletion_storage_builds_from_config_without_a_service(
+    invalid_configure, monkeypatch, manager_built
+):
+    built = MagicMock()
+    builder = AsyncMock(return_value=built)
+    monkeypatch.setattr(
+        "memmachine_server.common.resource_manager.resource_manager."
+        "build_semantic_deletion_storage",
+        builder,
+    )
+    resource_manager = ResourceManagerImpl(invalid_configure)
+    if manager_built:
+        resource_manager._semantic_manager = MagicMock()
+        resource_manager._semantic_manager.built_semantic_storage.return_value = None
+
+    assert await resource_manager.get_semantic_deletion_storage() is built
+    builder.assert_awaited_once_with(
+        invalid_configure.semantic_memory, resource_manager
+    )

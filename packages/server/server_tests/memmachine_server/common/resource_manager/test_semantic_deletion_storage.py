@@ -282,3 +282,23 @@ async def test_neo4j_deletes_features(neo4j_semantic_storage, neo4j_driver):
     await storage.delete_feature_set(filter_expr=In(field="set_id", values=[SET_ID]))
 
     assert await neo4j_semantic_storage.get_feature(feature_id) is None
+
+
+def test_built_semantic_storage_returns_the_service_storage_without_building():
+    resources = MagicMock()
+    resources.get_sql_engine = AsyncMock(
+        side_effect=AssertionError("must not build storage")
+    )
+    manager = SemanticResourceManager(
+        semantic_conf=_vector_store_conf(vector_dimensions=2),
+        prompt_conf=PromptConf(),
+        resource_manager=resources,
+        episode_storage=MagicMock(),
+    )
+
+    assert manager.built_semantic_storage() is None
+    resources.get_sql_engine.assert_not_called()
+
+    service_storage = MagicMock()
+    manager._semantic_service = MagicMock(semantic_storage=service_storage)
+    assert manager.built_semantic_storage() is service_storage

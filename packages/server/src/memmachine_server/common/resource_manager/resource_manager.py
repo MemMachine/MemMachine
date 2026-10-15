@@ -363,7 +363,16 @@ class ResourceManagerImpl:
         return await semantic_manager.get_semantic_session_manager()
 
     async def get_semantic_deletion_storage(self) -> SemanticDeletionStorage | None:
-        """Return semantic storage for deletes only; None if never initialized."""
+        """Return semantic storage for deletes only; None if never initialized.
+
+        A built semantic service's storage wins over the configuration: the
+        config API can change storage settings without rebuilding the service,
+        and deletion must follow the storage the process writes to.
+        """
+        if self._semantic_manager is not None:
+            storage = self._semantic_manager.built_semantic_storage()
+            if storage is not None:
+                return storage
         return await build_semantic_deletion_storage(self._conf.semantic_memory, self)
 
     @staticmethod

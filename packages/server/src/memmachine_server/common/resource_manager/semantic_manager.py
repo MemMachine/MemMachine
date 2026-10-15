@@ -170,6 +170,12 @@ class SemanticResourceManager:
 
         await asyncio.gather(*tasks)
 
+    def built_semantic_storage(self) -> SemanticStorage | None:
+        """The storage of the semantic service if built, without building it."""
+        if self._semantic_service is None:
+            return None
+        return self._semantic_service.semantic_storage
+
     async def get_semantic_storage(self) -> SemanticStorage:
         if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
             return await self._get_vector_store_semantic_storage()
