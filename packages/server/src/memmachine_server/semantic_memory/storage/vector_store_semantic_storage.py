@@ -52,6 +52,9 @@ from memmachine_server.semantic_memory.storage.storage_base import (
 from memmachine_server.semantic_memory.storage.text_sanitizer import sanitize_pg_text
 
 _DEFAULT_VECTOR_QUERY_LIMIT = 10_000
+# Matches the episode deletion batch (EPISODE_DELETE_BATCH_SIZE in
+# main/memmachine.py); far below SQLite's 32,766 bound parameters.
+_FEATURE_DELETE_BATCH_SIZE = 1000
 
 
 class BaseVectorSemanticStorage(DeclarativeBase):
@@ -388,30 +391,30 @@ class VectorStoreSemanticStorage(SemanticStorage):
         *,
         filter_expr: FilterExpr | None = None,
     ) -> None:
-        selected = select(VectorSemanticFeature.vector_uuid)
-        deleted = delete(VectorSemanticFeature).returning(
-            VectorSemanticFeature.vector_uuid
+        selected = select(VectorSemanticFeature.vector_uuid).limit(
+            _FEATURE_DELETE_BATCH_SIZE
         )
         if filter_expr is not None:
-            condition = compile_sql_filter(
-                filter_expr, self._resolve_feature_field_default
+            selected = selected.where(
+                compile_sql_filter(filter_expr, self._resolve_feature_field_default)
             )
-            selected = selected.where(condition)
-            deleted = deleted.where(condition)
 
-        # Vectors before rows: once a row is gone nothing names its vector, so
-        # a retry after a failed vector delete could not find it again.
-        async with self._create_session() as session:
-            vector_uuids = set((await session.execute(selected)).scalars())
-        await self._vector_collection.delete(record_uuids=vector_uuids)
-
-        async with self._create_session() as session:
-            late_vector_uuids = (
-                set((await session.execute(deleted)).scalars()) - vector_uuids
-            )
-            await session.commit()
-        if late_vector_uuids:
-            await self._vector_collection.delete(record_uuids=late_vector_uuids)
+        # A row goes only after its vector, and is deleted by that vector's
+        # uuid: once the row is gone nothing names the vector, so a retry
+        # after a failed vector delete could not find it again.
+        while True:
+            async with self._create_session() as session:
+                vector_uuids = list((await session.execute(selected)).scalars())
+            if not vector_uuids:
+                return
+            await self._vector_collection.delete(record_uuids=vector_uuids)
+            async with self._create_session() as session:
+                await session.execute(
+                    delete(VectorSemanticFeature).where(
+                        VectorSemanticFeature.vector_uuid.in_(vector_uuids)
+                    )
+                )
+                await session.commit()
 
     async def add_citations(
         self,
