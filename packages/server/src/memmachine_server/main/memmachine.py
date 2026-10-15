@@ -897,7 +897,8 @@ class MemMachine:
             limit: Optional maximum number of results.
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional property filter for narrowing results.
-            score_threshold: Optional minimum score threshold for results.
+            score_threshold: Optional score cutoff for results, applied in the
+                direction of the similarity metric.
                 ``None`` means no threshold.
             retrieval_agent: Optional top-level retrieval agent for long-term search.
 
@@ -1108,7 +1109,8 @@ class MemMachine:
             limit: Optional maximum number of results per memory.
             expand_context: Number of surrounding episodes to return with each match.
             search_filter: Optional filter string applied to each memory query.
-            score_threshold: Optional minimum score threshold for results.
+            score_threshold: Optional score cutoff for results, applied in the
+                direction of the similarity metric.
                 ``None`` means no threshold. Do not pass ``-inf``: under
                 lower-is-better metrics that sentinel drops every hit.
             agent_mode: Whether to enable top-level retrieval-agent orchestration.

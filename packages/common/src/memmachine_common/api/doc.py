@@ -214,7 +214,9 @@ class SpecDoc:
     """
 
     SCORE_THRESHOLD = """
-    The minimum score for a memory to be included in the search results. Defaults
+    The score cutoff for a memory to be included in the search results, applied
+    in the direction of the similarity metric: a floor for higher-is-better
+    metrics such as cosine, a ceiling for distances such as Euclidean. Defaults
     to None (no threshold). Meaningful only for certain ranking methods. Do not
     send -inf: under lower-is-better metrics that sentinel drops every hit.
     """
