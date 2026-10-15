@@ -108,7 +108,9 @@ class SemanticMemoryConf(YamlSerializableMixin):
         default=True,
         description="Whether semantic memory is enabled. "
         "Auto-disabled when required backend, config_database, llm_model, "
-        "or embedding_model fields are empty.",
+        "or embedding_model fields are empty. Deleting a project or its "
+        "episodes still removes its stored semantic data while database "
+        "(or feature_store and vector_collection) remains set.",
     )
     database: str | None = Field(
         default=None,
@@ -193,16 +195,24 @@ class SemanticMemoryConf(YamlSerializableMixin):
         self.auto_disable_when_incomplete()
         return self
 
+    def storage_configured(self) -> bool:
+        """Whether the selected storage backend has its storage set."""
+        if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+            return bool(self.feature_store and self.vector_collection)
+        return bool(self.database)
+
     def missing_required_fields(self) -> list[str]:
         """Names of the fields that must be set for semantic memory to run."""
         missing: list[str] = []
-        if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
-            if not self.feature_store:
-                missing.append("feature_store")
-            if not self.vector_collection:
-                missing.append("vector_collection")
-        elif not self.database:
-            missing.append("database")
+        if not self.storage_configured():
+            if self.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+                missing.extend(
+                    name
+                    for name in ("feature_store", "vector_collection")
+                    if not getattr(self, name)
+                )
+            else:
+                missing.append("database")
         missing.extend(
             name
             for name in ("config_database", "llm_model", "embedding_model")

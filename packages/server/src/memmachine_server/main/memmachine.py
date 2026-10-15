@@ -59,6 +59,7 @@ from memmachine_server.retrieval_agent.common.agent_api import (
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )
+from memmachine_server.semantic_memory.semantic_memory import with_has_set_ids
 from memmachine_server.semantic_memory.semantic_model import (
     CategoryIdT,
     FeatureIdT,
@@ -70,6 +71,9 @@ from memmachine_server.semantic_memory.semantic_model import (
 )
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
+)
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SemanticDeletionStorage,
 )
 
 logger = logging.getLogger(__name__)
@@ -414,14 +418,21 @@ class MemMachine:
     async def _delete_queued_session_data(
         self, session: SessionData, manager: SessionDataManager
     ) -> None:
+        semantic_storage = await self._semantic_deletion_storage()
         async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(self._delete_session_episode_store(session.session_key))
+            tasks.create_task(
+                self._delete_session_episode_store(
+                    session.session_key, semantic_storage
+                )
+            )
             if self._conf.episodic_memory.enabled:
                 tasks.create_task(
                     self._delete_session_episodic_memory(session.session_key)
                 )
-            if self._conf.semantic_memory.enabled:
-                tasks.create_task(self._delete_session_semantic_memory(session))
+            if semantic_storage is not None:
+                tasks.create_task(
+                    self._delete_session_semantic_memory(session, semantic_storage)
+                )
         await manager.delete_session(session_key=session.session_key)
         logger.info("Deleted session %s", session.session_key)
 
@@ -439,7 +450,11 @@ class MemMachine:
         for session_key in pending:
             self._deletion_queue.put_nowait(self._key_to_session(session_key))
 
-    async def _delete_session_episode_store(self, session_key: str) -> None:
+    async def _delete_session_episode_store(
+        self,
+        session_key: str,
+        semantic_storage: SemanticDeletionStorage | None,
+    ) -> None:
         episode_store = await self._resources.get_episode_storage()
         session_filter = FilterComparison(
             field="session_key",
@@ -453,17 +468,42 @@ class MemMachine:
             )
             if not episode_ids:
                 break
-            if self._conf.semantic_memory.enabled:
-                await self._cleanup_semantic_history(episode_ids)
+            if semantic_storage is not None:
+                await semantic_storage.delete_history(episode_ids)
             await episode_store.delete_episodes(episode_ids)
 
     async def _delete_session_episodic_memory(self, session_key: str) -> None:
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
         await episodic_memory_manager.delete_episodic_session(session_key=session_key)
 
-    async def _delete_session_semantic_memory(self, session: SessionData) -> None:
-        semantic_memory_manager = await self._resources.get_semantic_session_manager()
-        await semantic_memory_manager.delete_feature_set(session_data=session)
+    async def _delete_session_semantic_memory(
+        self,
+        session: SessionData,
+        semantic_storage: SemanticDeletionStorage,
+    ) -> None:
+        set_ids = SemanticSessionManager.project_deletion_set_ids(
+            org_id=session.org_id,
+            project_id=session.project_id,
+        )
+        if not set_ids:
+            # An empty filter would delete every feature in the store.
+            raise RuntimeError(
+                f"Session {session.session_key} has no semantic set ids to delete."
+            )
+        await semantic_storage.delete_feature_set(
+            filter_expr=with_has_set_ids(set_ids, None)
+        )
+
+    async def _semantic_deletion_storage(self) -> SemanticDeletionStorage | None:
+        if not self._conf.semantic_memory.storage_configured():
+            logger.debug("No semantic storage configured; skipping semantic cleanup.")
+            return None
+        storage = await self._resources.get_semantic_deletion_storage()
+        if storage is None:
+            logger.debug(
+                "Semantic storage was never initialized; no semantic data to delete."
+            )
+        return storage
 
     async def start(
         self, key_to_session: Callable[[str], SessionData] | None = None
@@ -632,23 +672,6 @@ class MemMachine:
             session_key, status=SessionDataManager.SessionStatus.Active
         )
 
-    async def _cleanup_semantic_history(
-        self,
-        episode_ids: list[UUID],
-    ) -> None:
-        """Remove semantic history and citations for the given episode IDs."""
-        try:
-            semantic_service = await self._resources.get_semantic_service()
-        except ResourceNotReadyError:
-            logger.exception(
-                "Semantic service not ready during history cleanup; "
-                "skipping cleanup for episode IDs %s",
-                episode_ids,
-            )
-            return
-
-        await semantic_service.delete_history(episode_ids)
-
     async def delete_session(self, session_data: SessionData) -> None:
         """
         Delete all data associated with a session.
@@ -761,8 +784,8 @@ class MemMachine:
         list alone says nothing about whether semantic memory is configured.
         Dispatching on it while semantic memory is disabled reaches a backend
         whose required fields are legally unset and raises
-        `ResourceNotReadyError`; skip it instead, as the startup, shutdown, and
-        session-deletion paths already do.
+        `ResourceNotReadyError`; skip it instead, as the startup and shutdown
+        paths already do.
 
         Args:
             target_memories: Memory types this request asked for.
@@ -1297,6 +1320,11 @@ class MemMachine:
                     f"Episode '{episode.uid}' was not found in this session."
                 )
 
+        semantic_storage = await self._semantic_deletion_storage()
+        if semantic_storage is not None:
+            # First, so a failure leaves the episodes in place for a retry.
+            await semantic_storage.delete_history(episode_ids)
+
         episodic_memory_manager = await self._resources.get_episodic_memory_manager()
 
         async def delete_from_episodic_memory() -> None:
@@ -1314,9 +1342,6 @@ class MemMachine:
         tasks.append(delete_from_episodic_memory())
 
         tasks.append(episode_storage.delete_episodes(episode_ids))
-        if self._conf.semantic_memory.enabled:
-            semantic_service = await self._resources.get_semantic_service()
-            tasks.append(semantic_service.delete_history(episode_ids))
         await asyncio.gather(*tasks)
 
     async def delete_features(

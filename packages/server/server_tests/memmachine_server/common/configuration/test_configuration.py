@@ -455,3 +455,15 @@ def test_bare_disabled_semantic_memory_round_trips_through_yaml():
     assert dumped["semantic_memory"]["enabled"] is False
     assert "config_database" not in dumped["semantic_memory"]
     assert conf_cp.semantic_memory.enabled is False
+
+
+def test_empty_openai_key_disables_semantic_memory_but_keeps_its_storage():
+    data = _sample_config_data()
+    embedder = data["resources"]["embedders"]["openai_embedder"]["config"]
+    embedder["api_key"] = ""
+    embedder.pop("base_url")
+
+    conf = Configuration(**data)
+
+    assert conf.semantic_memory.enabled is False
+    assert conf.semantic_memory.storage_configured() is True
