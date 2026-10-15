@@ -33,9 +33,10 @@ from memmachine_server.common.filter.filter_parser import (
 # Matched with fullmatch: `$` also matches before a trailing newline.
 _IDENTIFIER_RE = re.compile(r"[a-z0-9_]+")
 _IDENTIFIER_MAX_BYTES = 32
+_PARTITION_KEY_MAX_BYTES = 255
 
 
-def validate_identifier(value: str) -> bool:
+def is_valid_identifier(value: str) -> bool:
     """Return True if value is a valid identifier (a-z0-9_, max 32 bytes)."""
     return (
         bool(_IDENTIFIER_RE.fullmatch(value))
@@ -43,23 +44,27 @@ def validate_identifier(value: str) -> bool:
     )
 
 
-def require_identifiers(namespace: str, name: str) -> None:
-    """Raise ValueError unless both the namespace and the name are valid identifiers."""
-    if not validate_identifier(namespace):
+def validate_partition_key(partition_key: str) -> None:
+    """Raise ValueError unless the partition key is non-empty, at most 255 bytes, and free of NUL."""
+    # PostgreSQL text cannot hold NUL, and the registry may live there.
+    if (
+        not partition_key
+        or "\x00" in partition_key
+        or len(partition_key.encode()) > _PARTITION_KEY_MAX_BYTES
+    ):
         raise ValueError(
-            f"Namespace {namespace!r} must match [a-z0-9_]+ and be at most 32 bytes"
+            f"Partition key {partition_key!r} must be non-empty, at most "
+            f"{_PARTITION_KEY_MAX_BYTES} bytes, and free of NUL characters"
         )
-    if not validate_identifier(name):
-        raise ValueError(f"Name {name!r} must match [a-z0-9_]+ and be at most 32 bytes")
 
 
-def require_declared_types(
+def validate_declared_types(
     properties: Mapping[str, PropertyValue],
-    indexed_properties_schema: Mapping[str, type[PropertyValue]],
+    indexed_properties: Mapping[str, type[PropertyValue]],
 ) -> None:
     """Raise unless every declared property holds a value of its declared type."""
     for key, value in properties.items():
-        declared_type = indexed_properties_schema.get(key)
+        declared_type = indexed_properties.get(key)
         # `bool` is an `int` at runtime and is its own property type here.
         if declared_type is not None and type(value) is not declared_type:
             raise ValueError(
@@ -69,9 +74,9 @@ def require_declared_types(
             )
 
 
-def require_valid_query_vector(query_vector: Sequence[float], dimensions: int) -> None:
-    """Raise ValueError unless a query vector has the collection's dimensions and finite coordinates."""
-    require_dimensions(query_vector, dimensions)
+def validate_query_vector(query_vector: Sequence[float], dimensions: int) -> None:
+    """Raise ValueError unless a query vector has the store's dimensions and finite coordinates."""
+    validate_dimensions(query_vector, dimensions)
     if not all(map(math.isfinite, query_vector)):
         position = next(
             position
@@ -84,32 +89,32 @@ def require_valid_query_vector(query_vector: Sequence[float], dimensions: int) -
         )
 
 
-def require_valid_score_threshold(score_threshold: float | None) -> None:
+def validate_score_threshold(score_threshold: float | None) -> None:
     """Raise ValueError if a score threshold is not finite; None means no threshold."""
     if score_threshold is not None and not math.isfinite(score_threshold):
         raise ValueError(f"Score threshold is not finite: {score_threshold}")
 
 
-def require_valid_limit(limit: int) -> None:
+def validate_limit(limit: int) -> None:
     """Raise ValueError unless a query limit is positive."""
     if not limit > 0:
         raise ValueError(f"Limit is not positive: {limit}")
 
 
-def require_dimensions(vector: Sequence[float], dimensions: int) -> None:
-    """Raise ValueError unless a vector has the collection's dimensions."""
+def validate_dimensions(vector: Sequence[float], dimensions: int) -> None:
+    """Raise ValueError unless a vector has the store's dimensions."""
     if len(vector) != dimensions:
         raise ValueError(
-            f"Vector has {len(vector)} dimensions; the collection has {dimensions}"
+            f"Vector has {len(vector)} dimensions; the store has {dimensions}"
         )
 
 
-def validate_filter(expr: FilterExpr) -> bool:
+def is_valid_filter(expr: FilterExpr) -> bool:
     """Return whether all field names in the filter tree are valid identifiers."""
     if isinstance(expr, (FilterComparison, FilterIn, FilterIsNull)):
-        return validate_identifier(expr.field)
+        return is_valid_identifier(expr.field)
     if isinstance(expr, FilterNot):
-        return validate_filter(expr.expr)
+        return is_valid_filter(expr.expr)
     if isinstance(expr, (FilterAnd, FilterOr)):
-        return validate_filter(expr.left) and validate_filter(expr.right)
+        return is_valid_filter(expr.left) and is_valid_filter(expr.right)
     raise TypeError(f"Unsupported filter expression type: {type(expr)}")

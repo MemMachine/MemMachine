@@ -10,7 +10,6 @@ from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
 from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
@@ -22,8 +21,8 @@ from memmachine_server.semantic_memory.storage.storage_base import SemanticStora
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorStoreSemanticStorage,
 )
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
-    InMemoryVectorStoreCollection,
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    InMemoryVectorStorePartition,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -42,13 +41,8 @@ async def sqlite_pgvector_history_storage(sqlalchemy_sqlite_engine: AsyncEngine)
 
 @pytest_asyncio.fixture
 async def sqlite_vector_history_storage(sqlalchemy_sqlite_engine: AsyncEngine):
-    collection = InMemoryVectorStoreCollection(
-        VectorStoreCollectionConfig(
-            vector_dimensions=2,
-            similarity_metric=SimilarityMetric.COSINE,
-        )
-    )
-    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, collection)
+    partition = InMemoryVectorStorePartition(similarity_metric=SimilarityMetric.COSINE)
+    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, partition)
     await storage.startup()
     return storage
 
