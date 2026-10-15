@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 import numpy as np
@@ -16,6 +16,18 @@ from memmachine_server.semantic_memory.semantic_model import (
     SemanticFeature,
     SetIdT,
 )
+
+
+class SemanticDeletionStorage(Protocol):
+    """The deletes a deletion may run against storage built without startup."""
+
+    async def delete_feature_set(
+        self,
+        *,
+        filter_expr: FilterExpr | None = None,
+    ) -> None: ...
+
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None: ...
 
 
 class SemanticStorage(ABC):
