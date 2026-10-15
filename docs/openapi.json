@@ -4730,7 +4730,7 @@
               }
             ],
             "title": "Score Threshold",
-            "description": "\n    The minimum score for a memory to be included in the search results. Defaults\n    to None (no threshold). Meaningful only for certain ranking methods. Do not\n    send -inf: under lower-is-better metrics that sentinel drops every hit.\n    ",
+            "description": "\n    The score cutoff for a memory to be included in the search results, applied\n    in the direction of the similarity metric: a floor for higher-is-better\n    metrics such as cosine, a ceiling for distances such as Euclidean. Defaults\n    to None (no threshold). Meaningful only for certain ranking methods. Do not\n    send -inf: under lower-is-better metrics that sentinel drops every hit.\n    ",
             "examples": [
               0.0,
               0.5,
