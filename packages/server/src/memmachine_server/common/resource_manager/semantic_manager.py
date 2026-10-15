@@ -43,8 +43,8 @@ from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
 from memmachine_server.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
-    Feature,
     SqlAlchemyPgVectorSemanticStorage,
+    semantic_schema_is_current,
 )
 from memmachine_server.semantic_memory.storage.storage_base import (
     SemanticDeletionStorage,
@@ -134,10 +134,17 @@ async def build_semantic_deletion_storage(
         return VectorStoreSemanticStorage(sql_engine, collection)
 
     backend = await _database_backend(conf, resource_manager)
-    if isinstance(backend, AsyncEngine) and not await _has_table(
-        backend, Feature.__tablename__
-    ):
-        return None
+    if isinstance(backend, AsyncEngine):
+        schema_current = await semantic_schema_is_current(backend)
+        if schema_current is None:
+            return None
+        if not schema_current:
+            raise ResourceNotReadyError(
+                "Semantic storage has not been migrated to this version, so "
+                "its data cannot be deleted until the migrations run; they "
+                "run when semantic memory starts.",
+                "semantic_memory",
+            )
     return _database_storage(backend)
 
 

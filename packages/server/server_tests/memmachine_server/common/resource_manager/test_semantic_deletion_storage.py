@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pytest
 import pytest_asyncio
+from alembic import command
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
@@ -36,6 +37,7 @@ from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
 )
 from memmachine_server.semantic_memory.storage.sqlalchemy_pgvector_semantic import (
     SqlAlchemyPgVectorSemanticStorage,
+    _alembic_config,
 )
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorStoreSemanticStorage,
@@ -224,6 +226,40 @@ async def test_pgvector_never_migrated_returns_none(sqlalchemy_pg_engine):
 
     assert storage is None
     assert not await _has_table(sqlalchemy_pg_engine, "feature")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "revision",
+    [
+        pytest.param("001", id="legacy-prof-table"),
+        pytest.param("d1a9df11343b", id="legacy-set-ids"),
+    ],
+)
+async def test_pgvector_not_migrated_to_head_raises(sqlalchemy_pg_engine, revision):
+    async with sqlalchemy_pg_engine.begin() as conn:
+        await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
+
+        def upgrade(sync_conn):
+            config = _alembic_config()
+            config.set_main_option("sqlalchemy.url", str(sync_conn.engine.url))
+            config.attributes["connection"] = sync_conn
+            command.upgrade(config, revision)
+
+        await conn.run_sync(upgrade)
+    resources = MagicMock()
+    resources.get_sql_engine = AsyncMock(return_value=sqlalchemy_pg_engine)
+
+    with pytest.raises(ResourceNotReadyError, match="migrated"):
+        await build_semantic_deletion_storage(
+            SemanticMemoryConf(
+                enabled=False,
+                storage_backend=SemanticMemoryStorageBackend.PGVECTOR,
+                database="pg",
+            ),
+            resources,
+        )
 
 
 @pytest.mark.integration
