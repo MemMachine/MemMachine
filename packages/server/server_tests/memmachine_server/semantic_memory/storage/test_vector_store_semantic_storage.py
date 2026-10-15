@@ -255,6 +255,45 @@ _MANY_FEATURES = 40_000
 
 
 @pytest.mark.asyncio
+async def test_delete_feature_set_keeps_rows_when_vector_delete_fails(
+    sqlalchemy_sqlite_engine,
+    vector_collection: InMemoryVectorStoreCollection,
+    monkeypatch,
+):
+    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.startup()
+    try:
+        feature_id = await storage.add_feature(
+            set_id="user",
+            category_name="default",
+            feature="likes",
+            value="pizza",
+            tag="food",
+            embedding=np.array([1.0, 0.0], dtype=float),
+        )
+        record_uuid = await _vector_uuid(storage, feature_id)
+        delete_vectors = vector_collection.delete
+
+        async def unreachable(*, record_uuids):
+            raise ConnectionError("vector store unreachable")
+
+        monkeypatch.setattr(vector_collection, "delete", unreachable)
+        with pytest.raises(ConnectionError):
+            await storage.delete_feature_set(
+                filter_expr=parse_filter("set_id IN (user)")
+            )
+        assert await storage.get_feature(feature_id) is not None
+
+        monkeypatch.setattr(vector_collection, "delete", delete_vectors)
+        await storage.delete_feature_set(filter_expr=parse_filter("set_id IN (user)"))
+        assert await storage.get_feature(feature_id) is None
+        assert record_uuid not in vector_collection.records
+    finally:
+        await storage.delete_all()
+        await storage.cleanup()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("deletion", ["delete_all", "delete_feature_set"])
 async def test_deleting_more_features_than_sqlite_binds_removes_every_vector_record(
     sqlalchemy_engine,

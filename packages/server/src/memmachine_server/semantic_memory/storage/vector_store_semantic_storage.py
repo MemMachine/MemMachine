@@ -388,17 +388,30 @@ class VectorStoreSemanticStorage(SemanticStorage):
         *,
         filter_expr: FilterExpr | None = None,
     ) -> None:
-        stmt = delete(VectorSemanticFeature).returning(
+        selected = select(VectorSemanticFeature.vector_uuid)
+        deleted = delete(VectorSemanticFeature).returning(
             VectorSemanticFeature.vector_uuid
         )
         if filter_expr is not None:
-            stmt = stmt.where(
-                compile_sql_filter(filter_expr, self._resolve_feature_field_default)
+            condition = compile_sql_filter(
+                filter_expr, self._resolve_feature_field_default
             )
+            selected = selected.where(condition)
+            deleted = deleted.where(condition)
+
+        # Vectors before rows: once a row is gone nothing names its vector, so
+        # a retry after a failed vector delete could not find it again.
         async with self._create_session() as session:
-            vector_uuids = list((await session.execute(stmt)).scalars())
-            await session.commit()
+            vector_uuids = set((await session.execute(selected)).scalars())
         await self._vector_collection.delete(record_uuids=vector_uuids)
+
+        async with self._create_session() as session:
+            late_vector_uuids = (
+                set((await session.execute(deleted)).scalars()) - vector_uuids
+            )
+            await session.commit()
+        if late_vector_uuids:
+            await self._vector_collection.delete(record_uuids=late_vector_uuids)
 
     async def add_citations(
         self,
