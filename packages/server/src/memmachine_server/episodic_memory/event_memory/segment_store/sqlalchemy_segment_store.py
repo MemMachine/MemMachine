@@ -92,7 +92,6 @@ from memmachine_server.episodic_memory.event_memory.segment_store.data_types imp
     SegmentStoreAttemptsExhaustedError,
     SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
-    SegmentStorePartitionConfigMismatchError,
     SegmentStorePartitionHandleStaleError,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.segment_store import (
@@ -1131,11 +1130,11 @@ class SQLAlchemySegmentStore(SegmentStore):
             ) from err
 
     @override
-    async def open_partition(
+    async def get_partition(
         self, partition_key: str
     ) -> SQLAlchemySegmentStorePartition | None:
         validate_partition_key(partition_key)
-        async with self._tracker("open_partition"):
+        async with self._tracker("get_partition"):
             async with self._create_session() as session:
                 partition_row = await SQLAlchemySegmentStore._get_partition_row(
                     session, partition_key
@@ -1144,86 +1143,6 @@ class SQLAlchemySegmentStore(SegmentStore):
                 return None
 
             return await self._partition_from_partition_row(partition_row)
-
-    @override
-    async def open_or_create_partition(
-        self,
-        partition_key: str,
-        config: SegmentStorePartitionConfig,
-    ) -> SQLAlchemySegmentStorePartition:
-        validate_partition_key(partition_key)
-        async with self._tracker("open_or_create_partition"):
-            return await self._open_or_create_partition(partition_key, config)
-
-    async def _open_or_create_partition(
-        self,
-        partition_key: str,
-        config: SegmentStorePartitionConfig,
-    ) -> SQLAlchemySegmentStorePartition:
-        attempts = 0
-        # Read-then-insert, retried: losing the insert race means a
-        # concurrent creator won (reopen its row), and finding no row
-        # after losing means a concurrent delete removed the winner --
-        # every retry requires another actor to have changed the state
-        # (or, vanishingly, a minted incarnation to have collided).
-        while True:
-            async with self._create_session() as session:
-                partition_row = await SQLAlchemySegmentStore._get_partition_row(
-                    session, partition_key
-                )
-
-            if partition_row is not None:
-                SQLAlchemySegmentStore._raise_if_partition_config_mismatch(
-                    partition_row, config
-                )
-                return await self._partition_from_partition_row(partition_row)
-
-            # Materialized before the insert so an unloadable codec
-            # config fails without committing a registry row for a
-            # partition that could never be opened; the open path above
-            # loads its codec from the committed row instead.
-            payload_codec = await self._load_payload_codec(config)
-            incarnation = uuid4()
-            try:
-                await self._insert_partition_row(partition_key, incarnation, config)
-            except (
-                SegmentStorePartitionAlreadyExistsError,
-                _RegistryInsertRejectedError,
-            ) as err:
-                if isinstance(err, _RegistryInsertRejectedError):
-                    logger.warning(
-                        "Creating partition %r was rejected: %s; minting "
-                        "another incarnation",
-                        partition_key,
-                        err,
-                    )
-                attempts += 1
-                if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise SegmentStoreAttemptsExhaustedError(
-                        f"Opening or creating partition {partition_key!r} "
-                        f"made no progress after {_MAX_MINT_ATTEMPTS} "
-                        f"attempts"
-                    ) from err
-                # Lost the creation race (reopen the winner's row next
-                # iteration) or minted a colliding incarnation (mint a
-                # fresh one).
-                continue
-
-            return SQLAlchemySegmentStorePartition(
-                partition_key=partition_key,
-                incarnation=incarnation,
-                create_session=self._create_session,
-                is_sqlite=self._is_sqlite,
-                config=config,
-                payload_codec=payload_codec,
-                tracker=self._tracker,
-            )
-
-    @override
-    async def close_partition(
-        self, segment_store_partition: SegmentStorePartition
-    ) -> None:
-        pass
 
     @override
     async def delete_partition(self, partition_key: str) -> None:
@@ -1441,21 +1360,3 @@ class SQLAlchemySegmentStore(SegmentStore):
                 select(PartitionRow).where(PartitionRow.partition_key == partition_key)
             )
         ).scalar_one_or_none()
-
-    @staticmethod
-    def _raise_if_partition_config_mismatch(
-        partition_row: PartitionRow,
-        config: SegmentStorePartitionConfig,
-    ) -> None:
-        """Raise if an existing partition row does not match the requested config."""
-        existing_config = SegmentStorePartitionConfig(
-            payload_codec_config=decode_payload_codec_config(
-                partition_row.payload_codec_config
-            )
-        )
-        if existing_config != config:
-            raise SegmentStorePartitionConfigMismatchError(
-                partition_row.partition_key,
-                existing_config,
-                config,
-            )
