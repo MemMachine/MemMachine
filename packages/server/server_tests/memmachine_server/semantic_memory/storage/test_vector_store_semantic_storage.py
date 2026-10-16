@@ -7,32 +7,27 @@ import numpy as np
 import pytest
 from sqlalchemy import insert
 
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.filter.filter_parser import parse_filter
-from memmachine_server.common.vector_store import Record, VectorStoreCollectionConfig
+from memmachine_server.common.vector_store import Record
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorSemanticFeature,
     VectorStoreSemanticStorage,
 )
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
-    InMemoryVectorStoreCollection,
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    InMemoryVectorStorePartition,
 )
 
 
 @pytest.fixture
-def vector_collection() -> InMemoryVectorStoreCollection:
-    return InMemoryVectorStoreCollection(
-        VectorStoreCollectionConfig(
-            vector_dimensions=2,
-            similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
-                "set_id": str,
-                "category": str,
-                "tag": str,
-                "feature_name": str,
-            },
-        )
+def vector_collection() -> InMemoryVectorStorePartition:
+    return InMemoryVectorStorePartition(
+        indexed_properties={
+            "set_id": str,
+            "category": str,
+            "tag": str,
+            "feature_name": str,
+        },
     )
 
 
@@ -47,7 +42,7 @@ async def _vector_uuid(storage: VectorStoreSemanticStorage, feature_id) -> UUID:
 @pytest.mark.asyncio
 async def test_older_than_compares_instants_not_wall_clocks(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     """A non-UTC-offset bound names an instant on SQLite, not a wall clock.
 
@@ -75,7 +70,7 @@ async def test_older_than_compares_instants_not_wall_clocks(
 @pytest.mark.asyncio
 async def test_add_update_delete_feature_keeps_vector_collection_in_sync(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
     await storage.startup()
@@ -115,7 +110,7 @@ async def test_add_update_delete_feature_keeps_vector_collection_in_sync(
 @pytest.mark.asyncio
 async def test_vector_search_returns_relational_features_in_similarity_order(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
     await storage.startup()
@@ -156,7 +151,7 @@ async def test_vector_search_returns_relational_features_in_similarity_order(
 @pytest.mark.asyncio
 async def test_vector_records_carry_no_properties(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     """The feature row is the authority; the vector record holds a vector."""
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
@@ -188,7 +183,7 @@ async def test_vector_records_carry_no_properties(
 @pytest.mark.asyncio
 async def test_an_update_without_an_embedding_leaves_the_vector_record_alone(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
     await storage.startup()
@@ -218,7 +213,7 @@ async def test_an_update_without_an_embedding_leaves_the_vector_record_alone(
 @pytest.mark.asyncio
 async def test_an_update_reads_nothing_back_from_the_vector_store(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
 ):
     """An update succeeds with the vector record absent, as a backend may not show it yet."""
     storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
@@ -258,7 +253,7 @@ _MANY_FEATURES = 40_000
 @pytest.mark.parametrize("deletion", ["delete_all", "delete_feature_set"])
 async def test_deleting_more_features_than_sqlite_binds_removes_every_vector_record(
     sqlalchemy_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_collection: InMemoryVectorStorePartition,
     deletion: str,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_engine, vector_collection)
