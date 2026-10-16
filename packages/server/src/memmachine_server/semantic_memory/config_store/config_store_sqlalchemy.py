@@ -233,9 +233,12 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
 
-    async def startup(self) -> None:
+    async def migrate(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseSemanticConfigStore.metadata.create_all)
+
+    async def startup(self) -> None:
+        await self.migrate()
 
     async def delete_all(self) -> None:
         async with self._create_session() as session:

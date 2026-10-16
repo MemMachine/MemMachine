@@ -85,6 +85,7 @@ def episodic_memory_conf():
 async def session_manager(sqlalchemy_engine: AsyncEngine):
     """Fixture for SessionDataManagerImpl, with tables created."""
     manager = SessionDataManagerSQL(engine=sqlalchemy_engine)
+    await manager.migrate()
     await manager.create_tables()
     yield manager
     await manager.drop_tables()
@@ -95,6 +96,7 @@ async def session_manager(sqlalchemy_engine: AsyncEngine):
 async def test_create_tables(sqlalchemy_engine: AsyncEngine):
     """Test that create_tables creates the expected tables."""
     manager = SessionDataManagerSQL(engine=sqlalchemy_engine)
+    await manager.migrate()
     await manager.create_tables()
 
 
