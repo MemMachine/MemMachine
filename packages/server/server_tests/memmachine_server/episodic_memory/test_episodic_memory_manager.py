@@ -41,7 +41,8 @@ async def db_engine():
 async def mock_session_storage(db_engine):
     """Fixture for a mocked SessionDataManager."""
     storage = SessionDataManagerSQL(engine=db_engine)
-    await storage.create_tables()
+    await storage.migrate()
+    await storage.startup()
     return storage
 
 

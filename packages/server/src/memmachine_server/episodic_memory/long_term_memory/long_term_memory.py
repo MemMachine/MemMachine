@@ -26,7 +26,7 @@ from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import (
     VectorStore,
-    VectorStoreCollection,
+    VectorStorePartition,
 )
 from memmachine_server.episodic_memory.declarative_memory import (
     DeclarativeMemory,
@@ -125,11 +125,10 @@ class EventBackendParams(BaseModel):
         ...,
         description="Parent VectorStore (for partition lifecycle)",
     )
-    vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
+    vector_store_partition: InstanceOf[VectorStorePartition] = Field(
         ...,
-        description="Already-opened VectorStore collection",
+        description="The session's VectorStore partition",
     )
-    vector_store_collection_namespace: str = Field(...)
     segment_store: InstanceOf[SegmentStore] = Field(
         ...,
         description="Parent SegmentStore (for partition lifecycle)",
@@ -176,7 +175,6 @@ class LongTermMemory:
         self._declarative_memory: DeclarativeMemory | None = None
         self._event_memory: EventMemory | None = None
         self._vector_store: VectorStore | None = None
-        self._vector_store_namespace: str | None = None
         self._segment_store: SegmentStore | None = None
         self._partition_key: str | None = None
         self._episode_storage: EpisodeStorage | None = None
@@ -204,7 +202,7 @@ class LongTermMemory:
                 self._event_memory = EventMemory(
                     EventMemoryParams(
                         segment_store_partition=params.segment_store_partition,
-                        vector_store_collection=params.vector_store_collection,
+                        vector_store_partition=params.vector_store_partition,
                         segmenter=params.segmenter,
                         deriver=params.deriver,
                         embedder=params.embedder,
@@ -213,13 +211,12 @@ class LongTermMemory:
                     ),
                 )
                 self._vector_store = params.vector_store
-                self._vector_store_namespace = params.vector_store_collection_namespace
                 self._segment_store = params.segment_store
                 self._partition_key = params.partition_key
                 self._episode_storage = params.episode_storage
                 self._score_higher_is_better = (
                     params.reranker is not None
-                    or params.vector_store_collection.config.similarity_metric.higher_is_better
+                    or params.vector_store_partition.similarity_metric.higher_is_better
                 )
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
@@ -412,14 +409,13 @@ class LongTermMemory:
     async def drop_session_partition(self) -> None:
         """Delete all data for this session/partition.
 
-        On the event backend, this drops the underlying VectorStore collection
-        and SegmentStore partition. After this returns the instance is no
+        On the event backend, this drops the session's VectorStore and
+        SegmentStore partitions. After this returns the instance is no
         longer usable — `EventMemory` still holds handles to the deleted
-        collection and partition, and any reuse would talk to deleted
-        resources. We null those handles so subsequent calls fail loudly
-        rather than silently corrupt state. If the caller needs the same
-        session_id again, build a fresh LongTermMemory (which will open or
-        create a new collection/partition).
+        partitions, and any reuse would talk to deleted resources. We null
+        those handles so subsequent calls fail loudly rather than silently
+        corrupt state. If the caller needs the same session_id again, build
+        a fresh LongTermMemory (which will open or create new partitions).
         """
         if self._backend == "declarative":
             assert self._declarative_memory is not None
@@ -430,13 +426,9 @@ class LongTermMemory:
             return
 
         assert self._vector_store is not None
-        assert self._vector_store_namespace is not None
         assert self._segment_store is not None
         assert self._partition_key is not None
-        await self._vector_store.delete_collection(
-            namespace=self._vector_store_namespace,
-            name=self._partition_key,
-        )
+        await self._vector_store.delete_partition(self._partition_key)
         await self._segment_store.delete_partition(self._partition_key)
         # Drop references to the now-deleted resources so any further
         # add_episodes / search_scored / delete_episodes calls raise
@@ -470,8 +462,8 @@ class LongTermMemory:
         if self._event_memory is None:
             raise RuntimeError(
                 "LongTermMemory event backend is no longer usable: "
-                "drop_session_partition() deleted the underlying collection "
-                "and partition. Construct a new LongTermMemory to operate "
+                "drop_session_partition() deleted the session's partitions. "
+                "Construct a new LongTermMemory to operate "
                 "on this session again."
             )
         return self._event_memory

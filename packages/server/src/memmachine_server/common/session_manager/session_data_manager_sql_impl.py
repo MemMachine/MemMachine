@@ -1,14 +1,12 @@
 """Manages database for session config and short term data."""
 
-import json
 import os
-import pickle
+from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic import JsonValue
 from sqlalchemy import (
     JSON,
-    Connection,
     ForeignKeyConstraint,
     Integer,
     PrimaryKeyConstraint,
@@ -16,7 +14,6 @@ from sqlalchemy import (
     and_,
     func,
     insert,
-    inspect,
     select,
     text,
     update,
@@ -44,6 +41,11 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -61,6 +63,13 @@ IntColumn = Annotated[int, mapped_column(Integer)]
 StringKeyColumn = Annotated[str, mapped_column(String, primary_key=True)]
 StringColumn = Annotated[str, mapped_column(String)]
 JSONColumn = Annotated[dict, mapped_column(JSON_AUTO)]
+
+
+SESSION_LINEAGE = Lineage(
+    name="session",
+    versions=Path(__file__).parent / "migrations",
+    metadata=Base.metadata,
+)
 
 
 class SessionDataManagerSQL(SessionDataManager):
@@ -119,46 +128,13 @@ class SessionDataManagerSQL(SessionDataManager):
             for table in Base.metadata.tables.values():
                 table.schema = schema
 
-    def _check_status_column(self, conn: Connection) -> bool:
-        inspector = inspect(conn)
-        assert inspector is not None
+    async def migrate(self) -> None:
+        """Create the session tables, or bring them up to date."""
+        await upgrade_lineage(self._engine, SESSION_LINEAGE)
 
-        schema = self.SessionConfig.__table__.schema
-        table_name = "sessions"
-        table_names = inspector.get_table_names(schema=schema)
-        if table_name not in table_names:
-            return False
-        columns = inspector.get_columns(table_name, schema=schema)
-        return all(column["name"] != "status" for column in columns)
-
-    async def create_tables(self) -> None:
-        """Create the necessary tables in the database."""
-
-        def _check_pickle_migration_needed(conn: Connection) -> bool:
-            inspector = inspect(conn)
-            assert inspector is not None
-
-            schema = self.SessionConfig.__table__.schema
-            table_name = "sessions"
-            table_names = inspector.get_table_names(schema=schema)
-            if table_name not in table_names:
-                return False
-            columns = inspector.get_columns(table_name, schema=schema)
-            for column in columns:
-                if column["name"] == "param_data":
-                    return "JSON" not in str(column["type"]).upper()
-            return False
-
-        async with self._engine.begin() as conn:
-            pickle_needed = await conn.run_sync(_check_pickle_migration_needed)
-            status_needed = await conn.run_sync(self._check_status_column)
-        if pickle_needed:
-            await self._migrate_pickle_to_json()
-        if status_needed:
-            await self._add_status_column()
-
-        async with self._engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+    async def startup(self) -> None:
+        """Check that the session tables are migrated."""
+        await check_lineage(self._engine, SESSION_LINEAGE)
 
     async def drop_tables(self) -> None:
         """Drop all tables from the database."""
@@ -168,68 +144,6 @@ class SessionDataManagerSQL(SessionDataManager):
     async def close(self) -> None:
         """Close any underlying connections."""
 
-    async def _migrate_pickle_to_json(self) -> None:
-        """Migrate param_data from pickle to JSON."""
-        schema = self.SessionConfig.__table__.schema
-        table_name = f"{schema}.sessions" if schema else "sessions"
-        json_type = "JSON"
-
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                text(
-                    f"ALTER TABLE {table_name} RENAME COLUMN param_data TO param_data_blob"
-                )
-            )
-            await conn.execute(
-                text(f"ALTER TABLE {table_name} ADD COLUMN param_data {json_type}")
-            )
-
-            result = await conn.execute(
-                text(f"SELECT session_key, param_data_blob FROM {table_name}")
-            )
-
-            for session_key, blob_data in result:
-                if not blob_data:
-                    continue
-                try:
-                    obj = pickle.loads(blob_data)
-                    if hasattr(obj, "model_dump"):
-                        json_data = obj.model_dump(mode="json")
-                    elif hasattr(obj, "dict"):
-                        json_data = obj.dict()
-                    else:
-                        json_data = obj.__dict__
-
-                    val = json.dumps(json_data, default=str)
-
-                    await conn.execute(
-                        text(
-                            f"UPDATE {table_name} SET param_data = :val WHERE session_key = :key"
-                        ),
-                        {"val": val, "key": session_key},
-                    )
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"Error migrating session {session_key}"
-                    ) from exc
-
-            await conn.execute(
-                text(f"ALTER TABLE {table_name} DROP COLUMN param_data_blob")
-            )
-
-    async def _add_status_column(self) -> None:
-        """Add status column to sessions table."""
-        schema = self.SessionConfig.__table__.schema
-        table_name = f"{schema}.sessions" if schema else "sessions"
-
-        async with self._engine.begin() as conn:
-            await conn.execute(
-                text(
-                    f"ALTER TABLE {table_name} ADD COLUMN status VARCHAR DEFAULT 'active'"
-                )
-            )
-
-    @timed("create_or_validate_session")
     async def create_or_validate_session(
         self,
         session_key: str,

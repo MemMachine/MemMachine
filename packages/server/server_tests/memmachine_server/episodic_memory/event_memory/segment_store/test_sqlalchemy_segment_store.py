@@ -202,6 +202,7 @@ async def sqlite_store(
     store = SQLAlchemySegmentStore(
         SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
     )
+    await store.migrate()
     await store.startup()
     yield store
     async with sqlalchemy_sqlite_engine.begin() as conn:
@@ -215,6 +216,7 @@ async def pg_store(
     store = SQLAlchemySegmentStore(
         SQLAlchemySegmentStoreParams(engine=sqlalchemy_pg_engine)
     )
+    await store.migrate()
     await store.startup()
     yield store
     async with sqlalchemy_pg_engine.begin() as conn:
@@ -2407,6 +2409,7 @@ async def test_purge_bound_comes_from_params(
             purge_max_segments=2,
         )
     )
+    await store.migrate()
     await store.startup()
     try:
         partition = await store.open_or_create_partition(
@@ -2726,6 +2729,7 @@ async def test_purge_bounds_entries_processed_per_call(
             purge_max_partitions=2,
         )
     )
+    await store.migrate()
     await store.startup()
     try:
         for index in range(5):

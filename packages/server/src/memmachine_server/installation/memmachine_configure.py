@@ -483,7 +483,11 @@ def main() -> None:
         install_memmachine()
         setup_nltk()
         logger.info("MemMachine setup complete.")
-        logger.info("Use 'memmachine-server' to start the API server.")
+        logger.info(
+            "Once the configured databases are running, use 'memmachine-server "
+            "migrate' to create their schema, then 'memmachine-server' to start "
+            "the API server."
+        )
     except KeyboardInterrupt:
         logger.warning("Configuration cancelled by user.")
         sys.exit(130)  # Standard exit code for Ctrl+C
