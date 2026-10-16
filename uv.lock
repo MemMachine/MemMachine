@@ -2406,7 +2406,7 @@ requires-dist = [
     { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.93.0" },
     { name = "memmachine-common", editable = "packages/common" },
     { name = "milvus-lite", marker = "extra == 'milvus'", specifier = ">=3.0.0" },
-    { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1,<5.3" },
+    { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1,<5.4" },
     { name = "neo4j", specifier = ">=5.28.2" },
     { name = "nltk", specifier = ">=3.9.4" },
     { name = "openai", specifier = ">=2.21.0" },
