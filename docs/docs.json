@@ -93,6 +93,7 @@
             "pages": [
               "open_source/introduction",
               "open_source/configuration",
+              "open_source/scaling",
               "open_source/memory_types",
               "open_source/databases",
               "open_source/retrieval_agent_architecture",

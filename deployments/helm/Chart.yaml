@@ -7,5 +7,5 @@ apiVersion: v2
 name: memmachine
 description: A Helm chart for deploying memmachine, Neo4j, Postgres, and Qdrant
 type: application
-version: 0.2.0
+version: 0.2.1
 appVersion: "v0.2.6"

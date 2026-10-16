@@ -10,11 +10,14 @@ metadata:
   name: memmachine-service
   namespace: {{ .Release.Namespace }}
 spec:
+  sessionAffinity: {{ .Values.service.sessionAffinity }}
   selector:
     app: memmachine
   ports:
     - name: http8080
       port: 80
       targetPort: 8080
+      {{- if eq .Values.service.type "NodePort" }}
       nodePort: {{ .Values.nodePorts.http8080 }}
-  type: NodePort
+      {{- end }}
+  type: {{ .Values.service.type }}
