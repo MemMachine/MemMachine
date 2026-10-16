@@ -153,19 +153,6 @@ class SemanticResourceManager:
             config=VectorStoreCollectionConfig(
                 vector_dimensions=vector_dimensions,
                 similarity_metric=self._conf.vector_similarity_metric,
-                indexed_properties_schema={
-                    "feature_id": str,
-                    "set_id": str,
-                    "set": str,
-                    "semantic_category_id": str,
-                    "category_name": str,
-                    "category": str,
-                    "tag_id": str,
-                    "tag": str,
-                    "feature": str,
-                    "feature_name": str,
-                    "value": str,
-                },
             ),
         )
         storage = VectorStoreSemanticStorage(sql_engine, collection)

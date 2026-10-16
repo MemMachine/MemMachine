@@ -96,6 +96,7 @@ data:
             grpc_port: {{ .Values.qdrant.grpcPort }}
             prefer_grpc: {{ .Values.qdrant.prefer_grpc }}
             https: {{ .Values.qdrant.https }}
+            collection_registry: db_postgres
             {{- if include "memmachine.qdrantApiKeySecret" . }}
             api_key: $QDRANT_API_KEY
             {{- end }}

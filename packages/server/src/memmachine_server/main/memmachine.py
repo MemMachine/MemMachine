@@ -683,18 +683,19 @@ class MemMachine:
         search_filter: FilterExpr | None = None,
     ) -> list[str]:
         """
-        List session keys matching a filter.
+        List active session keys matching a filter.
 
         Args:
             search_filter: Optional property filter expression.
 
         Returns:
-            Session keys matching the filter.
+            Keys of active sessions matching the filter.
 
         """
         session_data_manager = await self._resources.get_session_data_manager()
         return await session_data_manager.get_sessions(
-            filters=to_property_filter(search_filter)
+            filters=to_property_filter(search_filter),
+            status=SessionDataManager.SessionStatus.Active,
         )
 
     async def update_session_episodic_config(

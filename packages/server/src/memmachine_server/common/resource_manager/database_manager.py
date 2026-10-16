@@ -33,6 +33,10 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStoreParams,
 )
 from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store.collection_registry.sqlalchemy_collection_registry import (
+    SQLAlchemyVectorStoreCollectionRegistry,
+    SQLAlchemyVectorStoreCollectionRegistryParams,
+)
 from memmachine_server.common.vector_store.vector_search_engine import (
     VectorSearchEngine,
 )
@@ -42,7 +46,7 @@ from memmachine_server.common.vector_store.vector_search_engine import (
 # installed unless those backends are actually used. Imports happen at use sites.
 if TYPE_CHECKING:
     from nebulagraph_python.client import NebulaAsyncClient
-    from pymilvus import MilvusClient
+    from pymilvus import AsyncMilvusClient
     from qdrant_client import AsyncQdrantClient
 
 logger = logging.getLogger(__name__)
@@ -115,7 +119,7 @@ class DatabaseManager:
         # Type checkers see it, but runtime treats it as a string literal.
         self.nebula_clients: dict[str, NebulaAsyncClient] = {}
         self.qdrant_clients: dict[str, AsyncQdrantClient] = {}
-        self.milvus_clients: dict[str, MilvusClient] = {}
+        self.milvus_clients: dict[str, AsyncMilvusClient] = {}
         # SQLAlchemy engines that back SQLite-based vector stores. Tracked
         # separately from `sql_engines` (which holds user-facing relational
         # databases) so vector store internals don't collide with caller names.
@@ -615,9 +619,21 @@ class DatabaseManager:
                 "grpc_port": conf.grpc_port,
                 "prefer_grpc": conf.prefer_grpc,
                 "https": conf.https,
+                "timeout": conf.request_timeout_seconds,
             }
             if conf.api_key.get_secret_value():
                 client_kwargs["api_key"] = conf.api_key.get_secret_value()
+
+            # The registry first, so a failed lookup or startup leaves no
+            # client open.
+            collection_registry = SQLAlchemyVectorStoreCollectionRegistry(
+                SQLAlchemyVectorStoreCollectionRegistryParams(
+                    engine=await self.async_get_sql_engine(conf.collection_registry),
+                    vector_store_name=name,
+                    tombstone_retention_seconds=conf.tombstone_retention_seconds,
+                )
+            )
+            await collection_registry.startup()
 
             client = AsyncQdrantClient(**client_kwargs)
 
@@ -631,7 +647,7 @@ class DatabaseManager:
 
             params = QdrantVectorStoreParams(
                 client=client,
-                registry_replication_factor=conf.registry_replication_factor,
+                collection_registry=collection_registry,
                 metrics_factory=conf.get_metrics_factory(),
             )
             try:
@@ -667,15 +683,15 @@ class DatabaseManager:
     # --- Milvus ---
 
     @staticmethod
-    async def _close_milvus_client(name: str, client: "MilvusClient") -> None:
+    async def _close_milvus_client(name: str, client: "AsyncMilvusClient") -> None:
         try:
-            await asyncio.to_thread(client.close)
+            await client.close()
         except Exception as ex:
             logger.warning("Error closing Milvus client '%s': %s", name, ex)
 
     async def async_get_milvus_client(
         self, name: str, validate: bool = False
-    ) -> "MilvusClient":
+    ) -> "AsyncMilvusClient":
         """Return a Milvus client, creating it if necessary (lazy)."""
         if name not in self._milvus_locks:
             async with self._lock:
@@ -689,19 +705,39 @@ class DatabaseManager:
             if not conf:
                 raise ValueError(f"Milvus config '{name}' not found.")
 
-            from pymilvus import MilvusClient
+            from pymilvus import AsyncMilvusClient
 
-            client_kwargs: dict[str, Any] = {"uri": conf.uri}
+            # The constructor's timeout bounds connecting and reconnecting;
+            # the store passes the same bound to every request it makes.
+            client_kwargs: dict[str, Any] = {
+                "uri": conf.uri,
+                "timeout": conf.request_timeout_seconds,
+            }
             token = conf.token.get_secret_value()
             if token:
                 client_kwargs["token"] = token
             if conf.db_name:
                 client_kwargs["db_name"] = conf.db_name
 
-            client = MilvusClient(**client_kwargs)
+            # The registry first, so a failed lookup or startup leaves no
+            # client open.
+            collection_registry = SQLAlchemyVectorStoreCollectionRegistry(
+                SQLAlchemyVectorStoreCollectionRegistryParams(
+                    engine=await self.async_get_sql_engine(conf.collection_registry),
+                    vector_store_name=name,
+                    tombstone_retention_seconds=conf.tombstone_retention_seconds,
+                )
+            )
+            await collection_registry.startup()
+
+            client = AsyncMilvusClient(**client_kwargs)
 
             if validate:
-                await self.validate_milvus_client(name, client)
+                await self.validate_milvus_client(
+                    name,
+                    client,
+                    request_timeout_seconds=conf.request_timeout_seconds,
+                )
 
             from memmachine_server.common.vector_store.milvus_vector_store import (
                 MilvusVectorStore,
@@ -710,13 +746,17 @@ class DatabaseManager:
 
             params = MilvusVectorStoreParams(
                 client=client,
-                consistency_level=conf.consistency_level,
+                collection_registry=collection_registry,
+                request_timeout_seconds=conf.request_timeout_seconds,
+                max_varchar_length=conf.max_varchar_length,
+                purge_batch_size=conf.purge_batch_size,
+                metrics_factory=conf.get_metrics_factory(),
             )
             try:
                 store = MilvusVectorStore(params)
                 await store.startup()
             except Exception:
-                await asyncio.to_thread(client.close)
+                await client.close()
                 raise
 
             self.milvus_clients[name] = client
@@ -725,14 +765,16 @@ class DatabaseManager:
             return client
 
     @staticmethod
-    async def validate_milvus_client(name: str, client: "MilvusClient") -> None:
-        """Validate connectivity to a Milvus instance."""
+    async def validate_milvus_client(
+        name: str, client: "AsyncMilvusClient", *, request_timeout_seconds: int
+    ) -> None:
+        """Validate connectivity to a Milvus instance, within the request timeout."""
         try:
             logger.info("Validating Milvus client '%s'", name)
-            await asyncio.to_thread(client.list_collections)
+            await client.list_collections(timeout=request_timeout_seconds)
             logger.info("Milvus client '%s' validated successfully", name)
         except Exception as e:
-            await asyncio.to_thread(client.close)
+            await client.close()
             raise MilvusConfigurationError(
                 f"Milvus config '{name}' failed verification: {e}",
             ) from e
@@ -740,7 +782,13 @@ class DatabaseManager:
     async def _validate_milvus_clients(self) -> None:
         """Validate connectivity to each Milvus instance."""
         for name, client in self.milvus_clients.items():
-            await self.validate_milvus_client(name, client)
+            await self.validate_milvus_client(
+                name,
+                client,
+                request_timeout_seconds=self.conf.milvus_confs[
+                    name
+                ].request_timeout_seconds,
+            )
 
     # --- SQLite-backed VectorStores ---
 

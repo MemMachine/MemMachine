@@ -50,8 +50,8 @@ One physical schema on every dialect; the ORM models are the tables.
   composite string key, and random UUIDs are unique across nodes without
   coordination, so a tenant's rows move between databases verbatim.
 - `segment_store_gc`, the purge queue: one row per dead incarnation, with
-  the logical key kept for forensics and the purge's cursor, the last
-  segment key purged.
+  the purge's cursor, the last segment key purged. An entry holds only what
+  the purge reads.
 
 The link table keeps its foreign key to the segment table (`ON DELETE
 CASCADE`), both sides keyed by incarnation. The segment table has no

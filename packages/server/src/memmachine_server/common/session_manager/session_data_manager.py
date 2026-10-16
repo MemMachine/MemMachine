@@ -89,6 +89,7 @@ class SessionDataManager(ABC):
     async def get_sessions(
         self,
         filters: dict[str, PropertyValue | None] | None = None,
+        status: SessionStatus | None = None,
     ) -> list[str]:
         """Return a list of all session keys (optionally filtered)."""
         raise NotImplementedError

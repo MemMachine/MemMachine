@@ -95,6 +95,10 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         for seed_uuid in seed_segment_uuids:
             if seed_uuid not in self.segments:
                 continue
+            if normalized_filter is not None and not evaluate_filter(
+                normalized_filter, self.segments[seed_uuid].properties
+            ):
+                continue
             try:
                 pos = self.segment_order.index(seed_uuid)
             except ValueError:
@@ -153,6 +157,19 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return result
 
     @override
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        wanted = set(derivative_uuids)
+        return {
+            derivative_uuid: segment_uuid
+            for segment_uuid, owned in self.segment_to_derivatives.items()
+            for derivative_uuid in owned
+            if derivative_uuid in wanted
+        }
+
+    @override
     async def delete_segments(
         self,
         segment_uuids: Iterable[UUID],
@@ -201,7 +218,7 @@ def fake_vector_store_collection(fake_embedder):
         similarity_metric=fake_embedder.similarity_metric,
         indexed_properties_schema={
             **EventMemory.expected_vector_store_collection_schema(),
-            "color": str,
+            "_episode_uid": str,
         },
     )
     return InMemoryVectorStoreCollection(config)

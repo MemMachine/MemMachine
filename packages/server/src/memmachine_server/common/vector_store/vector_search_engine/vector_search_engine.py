@@ -93,21 +93,6 @@ class VectorSearchEngine(ABC):
         """
 
     @abstractmethod
-    async def get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        """
-        Retrieve vectors by key.
-
-        Args:
-            keys (Iterable[int]):
-                Keys of vectors to retrieve.
-
-        Returns:
-            dict[int, list[float]]:
-                Mapping of key to vector for keys that exist.
-                Missing keys are omitted.
-        """
-
-    @abstractmethod
     async def remove(self, keys: Iterable[int]) -> None:
         """
         Remove vectors by key.

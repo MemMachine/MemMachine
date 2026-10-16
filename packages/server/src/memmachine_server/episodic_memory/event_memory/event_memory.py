@@ -16,6 +16,7 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
     demangle_user_metadata_key,
+    extract_filter,
     map_filter_fields,
     normalize_filter_field,
 )
@@ -108,23 +109,22 @@ class EventMemory:
     """Event memory system."""
 
     # System-defined metadata field names. Reserved.
-    _SEGMENT_UUID_FIELD_NAME = "_segment_uuid"
     _TIMESTAMP_FIELD_NAME = "_timestamp"
 
     _BASE_EVENT_MEMORY_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {_SEGMENT_UUID_FIELD_NAME, _TIMESTAMP_FIELD_NAME}
+        {_TIMESTAMP_FIELD_NAME}
     )
 
     @classmethod
     def expected_vector_store_collection_schema(cls) -> dict[str, type[PropertyValue]]:
         """
-        Return the vector store collection schema expected by EventMemory.
+        Return the vector store collection schema EventMemory requires.
 
-        Callers should merge this with any user or external system-defined properties
-        when creating the collection so that EventMemory's reserved fields are efficiently filterable.
+        A vector record carries only the properties its collection declares,
+        so the vector search can filter only on those; a condition on any
+        other property applies to the seeds the search returns.
         """
         return {
-            cls._SEGMENT_UUID_FIELD_NAME: cast(type[PropertyValue], str),
             cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
         }
 
@@ -280,7 +280,7 @@ class EventMemory:
         t_segment_store = time.monotonic()
 
         derivative_records = [
-            EventMemory._build_derivative_record(derivative, derivative_embedding)
+            self._build_derivative_record(derivative, derivative_embedding)
             for derivative, derivative_embedding in zip(
                 derivatives,
                 derivative_embeddings,
@@ -315,21 +315,26 @@ class EventMemory:
                     duration, labels={"phase": phase}
                 )
 
-    @classmethod
     def _build_derivative_record(
-        cls,
+        self,
         derivative: Derivative,
         derivative_embedding: Sequence[float],
     ) -> Record:
-        """Build a vector record from a derivative and its embedding."""
-        properties: dict[str, PropertyValue] = {}
+        """Build a vector record from a derivative and its embedding.
 
-        # System-defined metadata (underscore-prefixed).
-        properties[cls._SEGMENT_UUID_FIELD_NAME] = str(derivative.segment_uuid)
-        properties[cls._TIMESTAMP_FIELD_NAME] = derivative.timestamp
-
-        # User-defined properties.
-        properties.update(derivative.properties)
+        The record carries the reserved timestamp and the properties the
+        vector store collection declares. Every other property stays on the
+        segment: the segment store holds them all and evaluates the whole
+        filter (see `query`).
+        """
+        properties: dict[str, PropertyValue] = {
+            self._TIMESTAMP_FIELD_NAME: derivative.timestamp,
+            **{
+                key: value
+                for key, value in derivative.properties.items()
+                if key in self._schema_fields
+            },
+        }
 
         return Record(
             uuid=derivative.uuid,
@@ -377,6 +382,11 @@ class EventMemory:
                 Property fields and values
                 to use for filtering segments
                 (default: None).
+                The vector search applies only the part of the filter
+                that names declared fields alone (see `extract_filter`);
+                the whole filter then applies to the seeds it returns,
+                so fewer than `vector_search_limit` seeds, or none,
+                may survive it.
             format_options (FormatOptions | None):
                 Options for formatting.
                 (default: None).
@@ -412,36 +422,41 @@ class EventMemory:
         )[0]
         t_embedding = time.monotonic()
 
-        # Translate filter fields for vector store.
-        collection_filter = (
-            map_filter_fields(property_filter, EventMemory._to_vector_record_property)
-            if property_filter is not None
-            else None
-        )
+        # A vector record carries the properties the collection declares, so
+        # a condition naming any other field has nothing to match there. The
+        # vector store gets the part of the filter on declared fields, which
+        # only ever widens its search; the segment store, which holds every
+        # property, gets the whole filter below and narrows it back.
+        collection_filter = None
+        if property_filter is not None:
+            collection_filter = extract_filter(
+                map_filter_fields(property_filter, self._to_vector_record_property),
+                allowed_fields=self._schema_fields,
+            )
 
         # Search derivative collection for matches.
         [query_result] = await self._vector_store_collection.query(
             query_vectors=[query_embedding],
             limit=vector_search_limit,
             property_filter=collection_filter,
-            return_vector=False,
-            return_properties=True,
         )
         t_vector_query = time.monotonic()
+
+        segments_by_derivatives = (
+            await self._segment_store_partition.get_segment_uuids_by_derivative_uuids(
+                match.record_uuid for match in query_result.matches
+            )
+        )
 
         # Extract seed segment UUIDs and their best embedding scores.
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
         # First occurrence has the best score since matches are ordered best-to-worst.
         seed_embedding_scores: dict[UUID, float] = {}
         for match in query_result.matches:
-            segment_uuid = UUID(
-                str(
-                    cast(
-                        dict[str, PropertyValue],
-                        match.record.properties,
-                    )[EventMemory._SEGMENT_UUID_FIELD_NAME]
-                )
-            )
+            segment_uuid = segments_by_derivatives.get(match.record_uuid)
+            if segment_uuid is None:
+                # The derivative's segment is gone; its vector outlived it.
+                continue
             if segment_uuid not in seed_embedding_scores:
                 seed_embedding_scores[segment_uuid] = match.score
 

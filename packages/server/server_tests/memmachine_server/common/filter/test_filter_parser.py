@@ -1,20 +1,32 @@
 import datetime
+import itertools
+import random
+from collections.abc import Iterator
 
 import pytest
 
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
+    FilterExpr,
     FilterParseError,
     In,
     IsNull,
     Not,
     Or,
+    extract_filter,
+    filter_fields,
     map_filter_fields,
     normalize_filter_field,
     parse_filter,
     to_property_filter,
 )
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
+    evaluate_filter,
+)
+
+from .random_filters import VALUES, random_filter, random_properties
 
 
 def _flatten_and(expr: And) -> list[Comparison]:
@@ -580,3 +592,175 @@ def test_map_filter_fields_with_normalize() -> None:
     assert isinstance(result, And)
     assert result.left == Comparison(field="metadata.foo", op="=", value="bar")
     assert result.right == Comparison(field="producer_id", op="=", value="alice")
+
+
+def test_filter_fields_names_every_field_under_every_node() -> None:
+    expr = parse_filter(
+        "m.color = 'red' AND (age > 3 OR NOT tag IN ('a')) AND name IS NULL"
+    )
+    assert expr is not None
+    assert filter_fields(expr) == frozenset({"m.color", "age", "tag", "name"})
+
+
+# --- extract_filter tests ---
+
+_ALLOWED = frozenset({"d1", "d2", "d3"})
+_OTHER = ("u1", "u2")
+_FIELDS = (*sorted(_ALLOWED), *_OTHER)
+
+_D1 = Comparison(field="d1", op="=", value=1)
+_D2 = Comparison(field="d2", op="<", value=2)
+_D3 = In(field="d3", values=[1, 2])
+_U1 = Comparison(field="u1", op="=", value=1)
+_U2 = IsNull(field="u2")
+
+
+@pytest.mark.parametrize(
+    ("expr", "part"),
+    [
+        pytest.param(_D1, _D1, id="an allowed leaf"),
+        pytest.param(_U1, None, id="another leaf"),
+        pytest.param(
+            And(left=_D1, right=_D2), And(left=_D1, right=_D2), id="and, both allowed"
+        ),
+        pytest.param(And(left=_D1, right=_U1), _D1, id="and, right other"),
+        pytest.param(And(left=_U1, right=_D1), _D1, id="and, left other"),
+        pytest.param(And(left=_U1, right=_U2), None, id="and, both other"),
+        pytest.param(
+            Or(left=_D1, right=_D2), Or(left=_D1, right=_D2), id="or, both allowed"
+        ),
+        pytest.param(Or(left=_D1, right=_U1), None, id="or, right other"),
+        pytest.param(Or(left=_U1, right=_D1), None, id="or, left other"),
+        pytest.param(
+            Or(left=And(left=_D1, right=_U1), right=And(left=_U2, right=_D2)),
+            Or(left=_D1, right=_D2),
+            id="or of ands",
+        ),
+        pytest.param(Not(expr=_D1), Not(expr=_D1), id="not, allowed"),
+        pytest.param(Not(expr=_U1), None, id="not, other"),
+        pytest.param(
+            Not(expr=And(left=_D1, right=_D2)),
+            Not(expr=And(left=_D1, right=_D2)),
+            id="negated and, both allowed",
+        ),
+        pytest.param(
+            Not(expr=And(left=_D1, right=_U1)), None, id="negated and, right other"
+        ),
+        pytest.param(
+            Not(expr=And(left=_U1, right=_D1)), None, id="negated and, left other"
+        ),
+        pytest.param(
+            Not(expr=Or(left=_D1, right=_U1)),
+            Not(expr=_D1),
+            id="negated or, right other",
+        ),
+        pytest.param(
+            Not(expr=Or(left=_U1, right=_D1)),
+            Not(expr=_D1),
+            id="negated or, left other",
+        ),
+        pytest.param(
+            Not(expr=Or(left=_U1, right=_U2)), None, id="negated or, both other"
+        ),
+        pytest.param(
+            Not(expr=Not(expr=And(left=_D1, right=_U1))),
+            Not(expr=Not(expr=_D1)),
+            id="double negation",
+        ),
+        pytest.param(
+            Not(expr=Or(left=_U1, right=Not(expr=_D1))),
+            Not(expr=Not(expr=_D1)),
+            id="negation under a negated or",
+        ),
+        pytest.param(
+            And(
+                left=_D1,
+                right=Or(
+                    left=And(left=_D2, right=_U1),
+                    right=Not(expr=Or(left=_U2, right=_D3)),
+                ),
+            ),
+            And(left=_D1, right=Or(left=_D2, right=Not(expr=_D3))),
+            id="deep, with every node",
+        ),
+        pytest.param(
+            Or(left=_D1, right=And(left=_U1, right=Or(left=_U2, right=_D2))),
+            None,
+            id="deep, an or arm with no allowed part",
+        ),
+        pytest.param(
+            Not(expr=And(left=_D1, right=Or(left=_U1, right=_D2))),
+            Not(expr=And(left=_D1, right=_D2)),
+            id="deep, negated",
+        ),
+    ],
+)
+def test_extract_filter(expr: FilterExpr, part: FilterExpr | None) -> None:
+    """Each node keeps what it can of its operands, by its kind and its parity of negations."""
+    assert extract_filter(expr, allowed_fields=_ALLOWED) == part
+
+
+def test_extract_filter_keeps_every_record_the_filter_matches() -> None:
+    """The part names only allowed fields, and only ever widens the filter."""
+    rng = random.Random(1702)
+    for _ in range(2_000):
+        expr = random_filter(rng, _FIELDS, depth=4)
+        part = extract_filter(expr, allowed_fields=_ALLOWED)
+        assert part is None or filter_fields(part) <= _ALLOWED, (expr, part)
+        for _ in range(32):
+            properties = random_properties(rng, _FIELDS)
+            if evaluate_filter(expr, properties):
+                assert _matches(part, properties), (expr, part, properties)
+
+
+def test_extract_filter_returns_a_filter_on_allowed_fields_alone_unchanged() -> None:
+    rng = random.Random(1703)
+    for _ in range(500):
+        expr = random_filter(rng, sorted(_ALLOWED), depth=4)
+        assert extract_filter(expr, allowed_fields=_ALLOWED) == expr
+
+
+def test_extract_filter_is_the_tightest_when_each_other_field_appears_once() -> None:
+    """A record matches the part exactly when some values of the other fields make it match the filter."""
+    rng = random.Random(1704)
+    # Missing, and values on both sides of every compared value, so each leaf
+    # on another field can go either way.
+    other_values = (None, -1, *VALUES, 4)
+    checked = 0
+    while checked < 500:
+        expr = random_filter(rng, _FIELDS, depth=4)
+        leaf_fields = list(_leaf_fields(expr))
+        if any(leaf_fields.count(field) > 1 for field in _OTHER):
+            continue
+        part = extract_filter(expr, allowed_fields=_ALLOWED)
+        for _ in range(16):
+            allowed = random_properties(rng, sorted(_ALLOWED))
+            completions = (
+                allowed
+                | {
+                    field: value
+                    for field, value in zip(_OTHER, values, strict=True)
+                    if value is not None
+                }
+                for values in itertools.product(other_values, repeat=len(_OTHER))
+            )
+            assert _matches(part, allowed) == any(
+                evaluate_filter(expr, completion) for completion in completions
+            ), (expr, part, allowed)
+        checked += 1
+
+
+def _leaf_fields(expr: FilterExpr) -> Iterator[str]:
+    """The field of every leaf, once per leaf."""
+    if isinstance(expr, (And, Or)):
+        yield from _leaf_fields(expr.left)
+        yield from _leaf_fields(expr.right)
+    elif isinstance(expr, Not):
+        yield from _leaf_fields(expr.expr)
+    else:
+        yield from filter_fields(expr)
+
+
+def _matches(part: FilterExpr | None, properties: dict[str, PropertyValue]) -> bool:
+    """Whether a record matches a part; no part places no condition."""
+    return part is None or evaluate_filter(part, properties)
