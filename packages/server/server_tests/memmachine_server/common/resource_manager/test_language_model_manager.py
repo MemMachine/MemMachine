@@ -6,6 +6,7 @@ from memmachine_server.common.configuration.language_model_conf import (
     LanguageModelsConf,
     OpenAIChatCompletionsLanguageModelConf,
     OpenAIResponsesLanguageModelConf,
+    OrcaRouterLanguageModelConf,
 )
 from memmachine_server.common.resource_manager.language_model_manager import (
     LanguageModelManager,
@@ -40,6 +41,13 @@ def mock_conf():
                 model="llama3",
                 api_key=SecretStr("DUMMY_OLLAMA_API_KEY"),
                 base_url="http://localhost:11434/v1",
+            ),
+        },
+        orcarouter_language_model_confs={
+            "orca_model": OrcaRouterLanguageModelConf(
+                model="orcarouter/auto",
+                api_key=SecretStr("DUMMY_ORCAROUTER_API_KEY"),
+                base_url="https://api.orcarouter.ai/v1",
             ),
         },
     )
@@ -77,4 +85,15 @@ async def test_build_openai_chat_completions_model(mock_conf):
     assert "ollama_model" in builder._language_models
 
     model = builder.get_language_model("ollama_model")
+    assert model is not None
+
+
+@pytest.mark.asyncio
+async def test_build_orcarouter_model(mock_conf):
+    builder = LanguageModelManager(mock_conf)
+    await builder.build_all()
+
+    assert "orca_model" in builder._language_models
+
+    model = builder.get_language_model("orca_model")
     assert model is not None
