@@ -42,6 +42,7 @@ from memmachine_server.common.filter.filter_parser import (
     parse_filter,
     to_property_filter,
 )
+from memmachine_server.common.property_keys import validate_user_property_key
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
@@ -794,10 +795,19 @@ class MemMachine:
         Returns:
             IDs of the created episodes.
 
+        Raises:
+            ValueError:
+                If an entry's metadata holds a key that is not a legal user
+                property key (`validate_user_property_key`), before any store
+                is written.
+
         """
         episode_storage = await self._resources.get_episode_storage()
         if not episode_entries:
             return []
+        for entry in episode_entries:
+            for key in entry.metadata or {}:
+                validate_user_property_key(key)
         created_at = datetime.now(UTC)
         # UUID order preserves input order within a batch when timestamps tie.
         batch_ids = sorted(uuid4() for _ in episode_entries)
