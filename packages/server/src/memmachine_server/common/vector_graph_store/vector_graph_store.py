@@ -8,7 +8,7 @@ and deleting nodes and edges.
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 
-from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
+from memmachine_server.common.data_types import OrderedValue
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
@@ -70,7 +70,6 @@ class VectorGraphStore(ABC):
         collection: str,
         embedding_name: str,
         query_embedding: list[float],
-        similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
         limit: int | None = 100,
         property_filter: FilterExpr | None = None,
     ) -> list[Node]:
@@ -84,9 +83,6 @@ class VectorGraphStore(ABC):
                 The name of the embedding vector property.
             query_embedding (list[float]):
                 The embedding vector to compare against.
-            similarity_metric (SimilarityMetric):
-                The similarity metric to use
-                (default: SimilarityMetric.COSINE).
             limit (int | None):
                 Maximum number of similar nodes to return.
                 If None, return as many similar nodes as possible
