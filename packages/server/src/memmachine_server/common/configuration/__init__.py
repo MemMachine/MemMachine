@@ -27,7 +27,6 @@ from memmachine_server.common.configuration.mixin_confs import (
 )
 from memmachine_server.common.configuration.reranker_conf import RerankersConf
 from memmachine_server.common.configuration.retrieval_config import RetrievalAgentConf
-from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.errors import (
     DefaultEmbedderNotConfiguredError,
     DefaultLLMModelNotConfiguredError,
@@ -142,10 +141,6 @@ class SemanticMemoryConf(YamlSerializableMixin):
             "vector_store storage, the configured embedder dimensions are used."
         ),
         gt=0,
-    )
-    vector_similarity_metric: SimilarityMetric = Field(
-        default=SimilarityMetric.COSINE,
-        description="Similarity metric for vector_store semantic memory search.",
     )
     config_database: str | None = Field(
         default=None,

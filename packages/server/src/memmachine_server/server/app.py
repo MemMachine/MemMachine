@@ -17,6 +17,8 @@ import logging
 import os
 import sys
 import tempfile
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -29,6 +31,8 @@ from starlette.responses import JSONResponse
 from starlette.types import ExceptionHandler, Lifespan
 
 from memmachine_server.common.api.version import get_version
+from memmachine_server.server.api_v1.mcp import mcp_app as v1_mcp_app
+from memmachine_server.server.api_v1.router import load_v1_api_router
 from memmachine_server.server.api_v2.mcp import (
     initialize_resource,
     load_configuration,
@@ -70,7 +74,9 @@ class MemMachineAPI(FastAPI):
             self._validation_error_handler_factory(422),
         )
         self.mount("/mcp", mcp_app)
+        self.mount("/v1/mcp", v1_mcp_app)
         load_v2_api_router(self, with_config_api=self._with_config_api)
+        load_v1_api_router(self)
 
     @staticmethod
     def _validation_error_handler_factory(error_code: int) -> ExceptionHandler:
@@ -90,8 +96,20 @@ class MemMachineAPI(FastAPI):
         return cast(ExceptionHandler, handler)
 
 
+@asynccontextmanager
+async def application_lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """Run the server's resources and the lifespan of each mounted MCP app.
+
+    A mounted application's lifespan is not run by the application that
+    mounts it, so every MCP app the server serves has its session manager
+    started here, and the v1 tools answer as soon as the server does.
+    """
+    async with mcp_http_lifespan(application), v1_mcp_app.lifespan(application):
+        yield
+
+
 app = MemMachineAPI(
-    lifespan=mcp_http_lifespan,
+    lifespan=application_lifespan,
     with_config_api=bool(os.getenv("MEMMACHINE_CONFIG_API")),
 )
 app.add_middleware(cast(type, AccessLogMiddleware))
