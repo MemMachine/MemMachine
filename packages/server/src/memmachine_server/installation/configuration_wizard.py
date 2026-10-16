@@ -496,7 +496,7 @@ class ConfigurationWizard:
                 # or similar; user can edit cfg.yml to point at a remote Qdrant.
                 databases.qdrant_confs = {
                     self.QDRANT_VECTOR_STORE_ID: QdrantConf(
-                        collection_registry=self.SQLITE_DB_ID,
+                        partition_registry=self.SQLITE_DB_ID,
                     )
                 }
             case self.MILVUS_VECTOR_STORE_ID:
@@ -504,7 +504,7 @@ class ConfigurationWizard:
                 # user edits cfg.yml to point at another Milvus or Zilliz Cloud.
                 databases.milvus_confs = {
                     self.MILVUS_VECTOR_STORE_ID: MilvusConf(
-                        collection_registry=self.SQLITE_DB_ID,
+                        partition_registry=self.SQLITE_DB_ID,
                     )
                 }
             case self.SQLITE_VECTOR_STORE_ID:
