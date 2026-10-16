@@ -203,25 +203,35 @@ async def apply_alembic_migrations(engine: AsyncEngine) -> None:
         await conn.run_sync(run_migrations)
 
 
+# The last migration that moves existing semantic data. Deletion refuses stores
+# not yet past it, since its queries would miss data still in the old place.
+# Raise it whenever a new migration moves data.
+_LAST_DATA_MIGRATION = "b65f7f4a9d2c"
+
+
 @functools.cache
-def _alembic_head() -> str | None:
-    return ScriptDirectory.from_config(_alembic_config()).get_current_head()
+def _revisions_safe_to_delete_from() -> frozenset[str]:
+    script = ScriptDirectory.from_config(_alembic_config())
+    return frozenset(
+        rev.revision for rev in script.iterate_revisions("heads", _LAST_DATA_MIGRATION)
+    ) | {_LAST_DATA_MIGRATION}
 
 
-async def semantic_schema_is_current(engine: AsyncEngine) -> bool | None:
-    """Whether the semantic tables are migrated to head; None if there are none.
+async def semantic_schema_supports_deletion(engine: AsyncEngine) -> bool | None:
+    """Whether the semantic tables can be deleted from; None if there are none.
 
-    Reads only, never migrates. A store whose migrations have not run may hold
-    data under the legacy `prof` table or legacy set ids, which queries written
-    for the current schema would silently miss.
+    Reads only, never migrates. A store whose data migrations have not run may
+    hold data under the legacy `prof` table or legacy set ids, which queries
+    written for the current schema would silently miss. A revision this code
+    does not know comes from a newer version, whose schema it cannot vouch for.
     """
-    head = _alembic_head()
+    safe = _revisions_safe_to_delete_from()
 
     def read(sync_conn: Connection) -> bool | None:
         inspector = inspect(sync_conn)
         if not (inspector.has_table("feature") or inspector.has_table("prof")):
             return None
-        return MigrationContext.configure(sync_conn).get_current_revision() == head
+        return MigrationContext.configure(sync_conn).get_current_revision() in safe
 
     async with engine.connect() as conn:
         return await conn.run_sync(read)

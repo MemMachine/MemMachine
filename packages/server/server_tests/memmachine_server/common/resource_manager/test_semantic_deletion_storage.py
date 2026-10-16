@@ -3,12 +3,13 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import numpy as np
 import pytest
 import pytest_asyncio
 from alembic import command
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from memmachine_server.common.configuration import (
@@ -209,19 +210,37 @@ async def test_auto_backend_falls_back_to_neo4j_without_startup():
     driver.execute_query.assert_not_awaited()
 
 
+async def _migrate_pgvector_to(engine: AsyncEngine, revision: str) -> None:
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
+
+        def upgrade(sync_conn):
+            config = _alembic_config()
+            config.set_main_option("sqlalchemy.url", str(sync_conn.engine.url))
+            config.attributes["connection"] = sync_conn
+            command.upgrade(config, revision)
+
+        await conn.run_sync(upgrade)
+
+
+def _pgvector_resources(engine: AsyncEngine) -> MagicMock:
+    resources = MagicMock()
+    resources.get_sql_engine = AsyncMock(return_value=engine)
+    return resources
+
+
+_PGVECTOR_CONF = SemanticMemoryConf(
+    enabled=False,
+    storage_backend=SemanticMemoryStorageBackend.PGVECTOR,
+    database="pg",
+)
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_pgvector_never_migrated_returns_none(sqlalchemy_pg_engine):
-    resources = MagicMock()
-    resources.get_sql_engine = AsyncMock(return_value=sqlalchemy_pg_engine)
-
     storage = await build_semantic_deletion_storage(
-        SemanticMemoryConf(
-            enabled=False,
-            storage_backend=SemanticMemoryStorageBackend.PGVECTOR,
-            database="pg",
-        ),
-        resources,
+        _PGVECTOR_CONF, _pgvector_resources(sqlalchemy_pg_engine)
     )
 
     assert storage is None
@@ -237,36 +256,45 @@ async def test_pgvector_never_migrated_returns_none(sqlalchemy_pg_engine):
         pytest.param("d1a9df11343b", id="legacy-set-ids"),
     ],
 )
-async def test_pgvector_not_migrated_to_head_raises(sqlalchemy_pg_engine, revision):
-    async with sqlalchemy_pg_engine.begin() as conn:
-        await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
+async def test_pgvector_before_data_migrations_raises(sqlalchemy_pg_engine, revision):
+    await _migrate_pgvector_to(sqlalchemy_pg_engine, revision)
 
-        def upgrade(sync_conn):
-            config = _alembic_config()
-            config.set_main_option("sqlalchemy.url", str(sync_conn.engine.url))
-            config.attributes["connection"] = sync_conn
-            command.upgrade(config, revision)
-
-        await conn.run_sync(upgrade)
-    resources = MagicMock()
-    resources.get_sql_engine = AsyncMock(return_value=sqlalchemy_pg_engine)
-
-    with pytest.raises(ResourceNotReadyError, match="migrated"):
+    with pytest.raises(ResourceNotReadyError, match="data migrations"):
         await build_semantic_deletion_storage(
-            SemanticMemoryConf(
-                enabled=False,
-                storage_backend=SemanticMemoryStorageBackend.PGVECTOR,
-                database="pg",
-            ),
-            resources,
+            _PGVECTOR_CONF, _pgvector_resources(sqlalchemy_pg_engine)
         )
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_pgvector_deletes_features(sqlalchemy_pg_engine):
+async def test_pgvector_from_a_newer_version_raises(sqlalchemy_pg_engine):
+    await _migrate_pgvector_to(sqlalchemy_pg_engine, "head")
+    async with sqlalchemy_pg_engine.begin() as conn:
+        await conn.exec_driver_sql(
+            "UPDATE alembic_version SET version_num = 'f00000000000'"
+        )
+
+    with pytest.raises(ResourceNotReadyError, match="newer version"):
+        await build_semantic_deletion_storage(
+            _PGVECTOR_CONF, _pgvector_resources(sqlalchemy_pg_engine)
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "revision",
+    [
+        pytest.param("b65f7f4a9d2c", id="at-last-data-migration"),
+        pytest.param("c7a2f8e31b90", id="behind-head"),
+        pytest.param("head", id="head"),
+    ],
+)
+async def test_pgvector_past_data_migrations_deletes_features_and_history(
+    sqlalchemy_pg_engine, revision
+):
+    await _migrate_pgvector_to(sqlalchemy_pg_engine, revision)
     serving = SqlAlchemyPgVectorSemanticStorage(sqlalchemy_pg_engine)
-    await serving.startup()
     feature_id = await serving.add_feature(
         set_id=SET_ID,
         category_name="profile",
@@ -275,18 +303,32 @@ async def test_pgvector_deletes_features(sqlalchemy_pg_engine):
         tag="facts",
         embedding=np.array([1.0, 0.0]),
     )
-    resources = MagicMock()
-    resources.get_sql_engine = AsyncMock(return_value=sqlalchemy_pg_engine)
+    history_id = uuid4()
+    async with sqlalchemy_pg_engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO set_ingested_history (set_id, history_id, ingested) "
+                "VALUES (:set_id, :history_id, true)"
+            ),
+            {"set_id": SET_ID, "history_id": str(history_id)},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO citations (feature_id, history_id) "
+                "VALUES (:feature_id, :history_id)"
+            ),
+            {"feature_id": int(feature_id), "history_id": str(history_id)},
+        )
 
     storage = await build_semantic_deletion_storage(
-        SemanticMemoryConf(
-            enabled=False,
-            storage_backend=SemanticMemoryStorageBackend.PGVECTOR,
-            database="pg",
-        ),
-        resources,
+        _PGVECTOR_CONF, _pgvector_resources(sqlalchemy_pg_engine)
     )
     assert storage is not None
+    await storage.delete_history([history_id])
+    async with sqlalchemy_pg_engine.connect() as conn:
+        for table in ("set_ingested_history", "citations"):
+            count = await conn.scalar(text(f"SELECT count(*) FROM {table}"))
+            assert count == 0, table
     await storage.delete_feature_set(filter_expr=In(field="set_id", values=[SET_ID]))
 
     assert await serving.get_feature(feature_id) is None
