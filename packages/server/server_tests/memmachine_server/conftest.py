@@ -4,6 +4,7 @@ import shutil
 import subprocess
 from importlib.util import find_spec
 from unittest.mock import create_autospec
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -205,9 +206,9 @@ def cohere_integration_config():
 
 @pytest.fixture(scope="session")
 def cohere_client(cohere_integration_config):
-    from cohere import ClientV2
+    from cohere import AsyncClientV2
 
-    return ClientV2(api_key=cohere_integration_config["api_key"])
+    return AsyncClientV2(api_key=cohere_integration_config["api_key"])
 
 
 @pytest.fixture(scope="session")
@@ -304,19 +305,31 @@ async def pg_server(pg_container):
 
 @pytest_asyncio.fixture
 async def sqlalchemy_pg_engine(pg_server):
-    engine = create_async_engine(
-        URL.create(
-            "postgresql+asyncpg",
-            username=pg_server["user"],
-            password=pg_server["password"],
-            host=pg_server["host"],
-            port=pg_server["port"],
-            database=pg_server["database"],
-        ),
+    admin_url = URL.create(
+        "postgresql+asyncpg",
+        username=pg_server["user"],
+        password=pg_server["password"],
+        host=pg_server["host"],
+        port=pg_server["port"],
+        database=pg_server["database"],
     )
+    database_name = f"memmachine_test_{uuid4().hex}"
+    admin_engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        async with admin_engine.connect() as conn:
+            await conn.exec_driver_sql(f'CREATE DATABASE "{database_name}"')
 
-    yield engine
-    await engine.dispose()
+        engine = create_async_engine(admin_url.set(database=database_name))
+        try:
+            yield engine
+        finally:
+            await engine.dispose()
+            async with admin_engine.connect() as conn:
+                await conn.exec_driver_sql(
+                    f'DROP DATABASE "{database_name}" WITH (FORCE)'
+                )
+    finally:
+        await admin_engine.dispose()
 
 
 @pytest_asyncio.fixture
@@ -456,6 +469,7 @@ async def sql_db_episode_storage(sqlalchemy_engine: AsyncEngine):
         await conn.run_sync(BaseEpisodeStore.metadata.create_all)
 
     storage = SqlAlchemyEpisodeStore(engine)
+    await storage.startup()
     try:
         await storage.delete_episode_messages()
         yield storage

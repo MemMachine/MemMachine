@@ -35,6 +35,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
 from memmachine_server.common.session_manager.session_data_manager_sql_impl import (
     SessionDataManagerSQL,
 )
+from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.episodic_memory_manager import (
@@ -112,6 +113,7 @@ class ResourceManagerImpl:
         )
 
         self._session_data_manager: SessionDataManager | None = None
+        self._sql_lock_service: SQLLeaseLockService | None = None
         self._episodic_memory_manager: EpisodicMemoryManager | None = None
 
         self._episode_storage: EpisodeStorage | None = None
@@ -120,6 +122,7 @@ class ResourceManagerImpl:
         self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
 
         self._session_data_manager_lock = Lock()
+        self._sql_lock_service_lock = Lock()
         self._episodic_memory_manager_lock = Lock()
         self._episode_storage_lock = Lock()
         self._semantic_manager_lock = Lock()
@@ -238,6 +241,20 @@ class ResourceManagerImpl:
                     await self._session_data_manager.create_tables()
         assert self._session_data_manager is not None
         return self._session_data_manager
+
+    async def get_sql_lock_service(self) -> SQLLeaseLockService:
+        """Return the SQL lock service backed by the session database."""
+        if self._sql_lock_service is None:
+            async with self._sql_lock_service_lock:
+                if self._sql_lock_service is None:
+                    engine = await self.get_sql_engine(
+                        self._conf.session_manager.database
+                    )
+                    service = SQLLeaseLockService(engine)
+                    await service.startup()
+                    self._sql_lock_service = service
+        assert self._sql_lock_service is not None
+        return self._sql_lock_service
 
     async def get_episodic_memory_manager(self) -> EpisodicMemoryManager:
         """Lazy-load the episodic memory manager."""

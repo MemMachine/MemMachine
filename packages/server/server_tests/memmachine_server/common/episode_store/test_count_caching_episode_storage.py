@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -80,7 +81,8 @@ async def test_deletes_clear_cached_counts(wrapped_store):
         filter_expr=session_filter
     )
 
-    await storage.delete_episodes(["1", "2"])
+    ids = [uuid4(), uuid4()]
+    await storage.delete_episodes(ids)
     after_delete_ids = await storage.get_episode_messages_count(
         filter_expr=session_filter
     )
@@ -93,7 +95,7 @@ async def test_deletes_clear_cached_counts(wrapped_store):
         start_time=None,
         end_time=None,
     )
-    wrapped_store.delete_episodes.assert_awaited_once_with(["1", "2"])
+    wrapped_store.delete_episodes.assert_awaited_once_with(ids)
 
 
 @pytest.mark.asyncio

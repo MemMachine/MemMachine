@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import DateTime, Integer, String, delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -154,10 +155,10 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
             )
             for row in cluster_rows
         }
-        event_to_cluster = {row.event_id: row.cluster_id for row in event_rows}
-        pending_events: dict[str, dict[str, datetime]] = {}
+        event_to_cluster = {UUID(row.event_id): row.cluster_id for row in event_rows}
+        pending_events: dict[str, dict[UUID, datetime]] = {}
         for row in pending_rows:
-            pending_events.setdefault(row.cluster_id, {})[row.event_id] = (
+            pending_events.setdefault(row.cluster_id, {})[UUID(row.event_id)] = (
                 ensure_tz_aware(row.created_at)
             )
         next_cluster_id = state_row.next_cluster_id if state_row is not None else 0
@@ -223,7 +224,7 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
                     [
                         ClusterEventRow(
                             set_id=set_key,
-                            event_id=event_id,
+                            event_id=str(event_id),
                             cluster_id=cluster_id,
                         )
                         for event_id, cluster_id in state.event_to_cluster.items()
@@ -236,7 +237,7 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
                         ClusterPendingRow(
                             set_id=set_key,
                             cluster_id=cluster_id,
-                            event_id=event_id,
+                            event_id=str(event_id),
                             created_at=ensure_tz_aware(created_at).astimezone(UTC),
                         )
                         for cluster_id, events in state.pending_events.items()

@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 import regex
 from pydantic import (
@@ -68,8 +69,6 @@ logger = logging.getLogger(__name__)
 # without pulling in server-only packages.
 # --------------------------------------------------------------------------------------
 
-EpisodeIdT = str
-
 
 class ContentType(Enum):
     """Enumeration for the type of content within an Episode."""
@@ -100,14 +99,14 @@ class EpisodeEntry(BaseModel):
 class EpisodeResponse(EpisodeEntry):
     """Episode data returned in search responses."""
 
-    uid: EpisodeIdT = Field(..., description=SpecDoc.EPISODE_UID)
+    uid: UUID = Field(..., description=SpecDoc.EPISODE_UID)
     score: float | None = Field(default=None, description=SpecDoc.EPISODE_SCORE)
 
 
 class Episode(BaseModel):
     """Episode data returned in list responses."""
 
-    uid: EpisodeIdT = Field(..., description=SpecDoc.EPISODE_UID)
+    uid: UUID = Field(..., description=SpecDoc.EPISODE_UID)
     content: str = Field(..., description=SpecDoc.EPISODE_CONTENT)
     session_key: str = Field(..., description=SpecDoc.EPISODE_SESSION_KEY)
     created_at: AwareDatetime = Field(..., description=SpecDoc.EPISODE_CREATED_AT)
@@ -116,7 +115,6 @@ class Episode(BaseModel):
     produced_for_id: str | None = Field(
         default=None, description=SpecDoc.EPISODE_PRODUCED_FOR_ID
     )
-    sequence_num: int = Field(default=0, description=SpecDoc.EPISODE_SEQUENCE_NUM)
     episode_type: EpisodeType = Field(
         default=EpisodeType.MESSAGE, description=SpecDoc.EPISODE_TYPE
     )
@@ -145,7 +143,7 @@ class SemanticFeature(BaseModel):
     class Metadata(BaseModel):
         """Storage metadata for a semantic feature, including id and citations."""
 
-        citations: list[EpisodeIdT] | None = Field(
+        citations: list[UUID] | None = Field(
             default=None, description=SpecDoc.SEMANTIC_METADATA_CITATIONS
         )
         id: FeatureIdT | None = Field(
@@ -369,6 +367,15 @@ class ProjectResponse(BaseModel):
     ]
 
 
+class ListProjectsSpec(BaseModel):
+    """Organization whose projects should be listed."""
+
+    org_id: Annotated[
+        SafeId,
+        Field(description=SpecDoc.ORG_ID, examples=Examples.ORG_ID),
+    ]
+
+
 class GetProjectSpec(BaseModel):
     """
     Specification model for retrieving a project.
@@ -534,7 +541,7 @@ class AddMemoryResult(BaseModel):
     """Response model for adding memories."""
 
     uid: Annotated[
-        str,
+        UUID,
         Field(
             ...,
             description=SpecDoc.MEMORY_UID,
@@ -563,6 +570,22 @@ class SearchMemoriesSpec(_WithOrgAndProj):
             default=10,
             description=SpecDoc.TOP_K,
             examples=Examples.TOP_K,
+            # Rejected at the schema, where a client's number belongs.
+            #
+            # Without a bound, 0 and -1 passed validation and reached
+            # retrieval, which cannot use them: the Qdrant path answered 500
+            # with a bare "Internal Server Error" body, so nothing caught it
+            # and nothing logged it through the API's handler.
+            #
+            # A bound rather than a guard, because the two guards that already
+            # exist disagree about what a non-positive limit means --
+            # agent_api treats <= 0 as "no limit" and returns everything,
+            # sqlite_vector_store treats it as "no results" and returns
+            # nothing. Picking either would make one of them wrong; refusing
+            # the input makes neither reachable. top_k is documented as "the
+            # maximum number of memories to return", and -1 has no reading at
+            # all under that.
+            ge=1,
         ),
     ]
     query: Annotated[
@@ -626,7 +649,7 @@ class DeleteMemoriesSpec(_WithOrgAndProj):
     """Specification model for deleting memories."""
 
     episodic_memory_uids: Annotated[
-        list[EpisodeIdT],
+        list[UUID],
         Field(
             default=[],
             description=SpecDoc.EPISODIC_IDS,
@@ -692,15 +715,15 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
     """Specification model for deleting episodic memories."""
 
     episodic_id: Annotated[
-        SafeId,
+        UUID | None,
         Field(
-            default="",
+            default=None,
             description=SpecDoc.EPISODIC_ID,
             examples=Examples.EPISODIC_ID,
         ),
     ]
     episodic_ids: Annotated[
-        list[SafeId],
+        list[UUID],
         Field(
             default=[],
             description=SpecDoc.EPISODIC_IDS,
@@ -708,12 +731,11 @@ class DeleteEpisodicMemorySpec(_WithOrgAndProj):
         ),
     ]
 
-    def get_ids(self) -> list[str]:
+    def get_ids(self) -> list[UUID]:
         """Get a list of episodic IDs to delete."""
         id_set = set(self.episodic_ids)
-        if len(self.episodic_id) > 0:
+        if self.episodic_id is not None:
             id_set.add(self.episodic_id)
-        id_set = {i.strip() for i in id_set if i and i.strip()}
         return sorted(id_set)
 
     @model_validator(mode="after")
@@ -809,7 +831,7 @@ class AddFeatureSpec(_WithOrgAndProj):
         ),
     ]
     citations: Annotated[
-        list[EpisodeIdT] | None,
+        list[UUID] | None,
         Field(
             default=None,
             description=SpecDoc.FEATURE_CITATIONS,

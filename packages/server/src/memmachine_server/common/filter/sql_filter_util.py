@@ -10,6 +10,7 @@ Supports different field encodings via `FieldEncoding`:
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Literal
+from uuid import UUID
 
 from sqlalchemy import ColumnElement, and_, false, or_
 
@@ -32,7 +33,7 @@ from memmachine_server.common.properties_json import (
 )
 from memmachine_server.common.utils import ensure_tz_aware
 
-FieldEncoding = Literal["column", "json", "properties_json"]
+FieldEncoding = Literal["column", "json", "properties_json", "uuid"]
 
 FieldResolver = Callable[[str], tuple[ColumnElement, FieldEncoding]]
 """
@@ -73,6 +74,19 @@ def _compile_column_leaf(
             return false()
         return column.in_(expr.values)
     return _get_op(expr.op)(column, expr.value)
+
+
+def _compile_uuid_leaf(
+    expr: IsNull | In | Comparison,
+    column: ColumnElement,
+) -> ColumnElement[bool]:
+    if isinstance(expr, IsNull):
+        return column.is_(None)
+    if isinstance(expr, In):
+        if not expr.values:
+            return false()
+        return column.in_([UUID(str(value)) for value in expr.values])
+    return _get_op(expr.op)(column, UUID(str(expr.value)))
 
 
 def _cast_json_value(
@@ -192,6 +206,8 @@ def compile_sql_filter(
         column, kind = resolve_field(expr.field)
         if kind == "column":
             return _compile_column_leaf(expr, column)
+        if kind == "uuid":
+            return _compile_uuid_leaf(expr, column)
         if kind == "json":
             return _compile_json_leaf(expr, column)
         if kind == "properties_json":

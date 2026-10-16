@@ -986,8 +986,18 @@
           "Projects"
         ],
         "summary": "List Projects",
-        "description": "List all projects.\n\n    Returns a list of all projects accessible within the system. Each entry\n    contains the project's organization ID and project ID. Identifiers follow\n    the standard rules: no slashes; only letters, numbers, underscores,\n    hyphens, colon, and Unicode characters.\n\n    Projects are isolated memory namespaces. Memories (episodes) belong\n    exclusively to their project. All project operations, including queries and\n    any background processes (e.g., memory summarization or knowledge\n    extraction), only operate within the project's own data. No cross-project\n    access is allowed.",
+        "description": "List projects in the specified organization.\n\n    Requires `org_id` in the request body. Returns only projects belonging to\n    that organization. Each entry contains the project's organization ID and\n    project ID. Identifiers follow the standard rules: no slashes; only letters,\n    numbers, underscores, hyphens, colon, and Unicode characters.\n\n    Projects are isolated memory namespaces. Memories (episodes) belong\n    exclusively to their project. All project operations, including queries and\n    any background processes (e.g., memory summarization or knowledge\n    extraction), only operate within the project's own data. No cross-project\n    access is allowed.",
         "operationId": "list_projects",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListProjectsSpec"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1002,6 +1012,16 @@
                   },
                   "type": "array",
                   "title": "Response List Projects Api V2 Projects List Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -2208,7 +2228,8 @@
             "anyOf": [
               {
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "format": "uuid"
                 },
                 "type": "array"
               },
@@ -2340,6 +2361,7 @@
         "properties": {
           "uid": {
             "type": "string",
+            "format": "uuid",
             "title": "Uid",
             "description": "The unique identifier of the memory message."
           }
@@ -2913,18 +2935,26 @@
             ]
           },
           "episodic_id": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Episodic Id",
             "description": "\n    The unique ID of the specific episodic memory.\n    ",
-            "default": "",
             "examples": [
-              "123",
-              "345"
+              "550e8400-e29b-41d4-a716-446655440001",
+              "550e8400-e29b-41d4-a716-446655440002"
             ]
           },
           "episodic_ids": {
             "items": {
-              "type": "string"
+              "type": "string",
+              "format": "uuid"
             },
             "type": "array",
             "title": "Episodic Ids",
@@ -2932,11 +2962,11 @@
             "default": [],
             "examples": [
               [
-                "123",
-                "345"
+                "550e8400-e29b-41d4-a716-446655440001",
+                "550e8400-e29b-41d4-a716-446655440002"
               ],
               [
-                "23"
+                "550e8400-e29b-41d4-a716-446655440003"
               ]
             ]
           }
@@ -3206,6 +3236,7 @@
         "properties": {
           "uid": {
             "type": "string",
+            "format": "uuid",
             "title": "Uid",
             "description": "Unique identifier for the episode."
           },
@@ -3246,12 +3277,6 @@
             ],
             "title": "Produced For Id",
             "description": "Identifier of the intended recipient of the episode."
-          },
-          "sequence_num": {
-            "type": "integer",
-            "title": "Sequence Num",
-            "description": "Sequence number within the session.",
-            "default": 0
           },
           "episode_type": {
             "$ref": "#/components/schemas/EpisodeType",
@@ -3409,6 +3434,7 @@
           },
           "uid": {
             "type": "string",
+            "format": "uuid",
             "title": "Uid",
             "description": "Unique identifier for the episode."
           },
@@ -4001,6 +4027,25 @@
         "title": "ListMemoriesSpec",
         "description": "Specification model for listing memories."
       },
+      "ListProjectsSpec": {
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "title": "Org Id",
+            "description": "\n    The unique identifier of the organization.\n\n    - Must not contain slashes (`/`).\n    - Must contain only letters, numbers, underscores, hyphens, colon, and Unicode\n      characters (e.g., Chinese/Japanese/Korean). No slashes or other symbols\n      are allowed.\n\n    This value determines the namespace the project belongs to.\n    ",
+            "examples": [
+              "MemVerge",
+              "AI_Labs"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "org_id"
+        ],
+        "title": "ListProjectsSpec",
+        "description": "Organization whose projects should be listed."
+      },
       "ListResult": {
         "properties": {
           "status": {
@@ -4415,7 +4460,8 @@
             "anyOf": [
               {
                 "items": {
-                  "type": "string"
+                  "type": "string",
+                  "format": "uuid"
                 },
                 "type": "array"
               },
@@ -5909,6 +5955,13 @@
           "type": {
             "type": "string",
             "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
         "type": "object",

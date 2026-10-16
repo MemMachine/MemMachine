@@ -5,12 +5,13 @@ import itertools
 import logging
 from collections.abc import Sequence
 from itertools import chain
+from uuid import UUID
 
 import numpy as np
 from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import Episode, EpisodeIdT, EpisodeStorage
+from memmachine_server.common.episode_store import Episode, EpisodeStorage
 from memmachine_server.common.filter.filter_parser import And, Comparison
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.semantic_memory.semantic_llm import (
@@ -81,6 +82,7 @@ class IngestionService:
         resource_retriever: ResourceRetrieverT
         consolidated_threshold: int = 20
         debug_fail_loudly: bool = False
+        missing_episode_grace_period_sec: float = Field(default=30.0, ge=0)
         max_features_per_update: int = Field(
             50,
             description=(
@@ -98,6 +100,7 @@ class IngestionService:
         self._resource_retriever = params.resource_retriever
         self._consolidation_threshold = params.consolidated_threshold
         self._debug_fail_loudly = params.debug_fail_loudly
+        self._missing_episode_grace_period_sec = params.missing_episode_grace_period_sec
         self._max_features_per_update = params.max_features_per_update
 
     async def process_set_ids(self, set_ids: list[SetIdT]) -> None:
@@ -130,7 +133,6 @@ class IngestionService:
                 is_ingested=False,
             )
         ]
-
         if len(resources.semantic_categories) == 0:
             logger.debug(
                 "No semantic categories configured for set %s, skipping ingestion",
@@ -157,27 +159,53 @@ class IngestionService:
         none_h_ids = [h_id for h_id, task in tasks.items() if task.result() is None]
 
         if len(none_h_ids) != 0:
-            logger.warning(
-                "Failed to retrieve messages. Invalid episode_ids exist for set_id %s; delisting the following messages as recovery: %s",
-                set_id,
-                none_h_ids,
+            registration_times = (
+                await self._semantic_storage.get_history_registration_times(
+                    set_id, none_h_ids
+                )
             )
-            if self._debug_fail_loudly:
+            now = await self._semantic_storage.get_storage_time()
+            expired_h_ids = []
+            deferred_h_ids = []
+            for history_id in none_h_ids:
+                registered_at = registration_times.get(history_id)
+                if registered_at is None:
+                    # Another worker may have deleted the history row.
+                    continue
+                if (
+                    now - registered_at
+                ).total_seconds() >= self._missing_episode_grace_period_sec:
+                    expired_h_ids.append(history_id)
+                else:
+                    deferred_h_ids.append(history_id)
+
+            if self._debug_fail_loudly and expired_h_ids:
                 raise ValueError(
-                    f"Failed to retrieve messages for set_id {set_id} due to invalid episode_ids: {none_h_ids}"
+                    f"Failed to retrieve messages for set_id {set_id} due to invalid episode_ids: {expired_h_ids}"
                 )
 
-            try:
-                await self._semantic_storage.delete_history(
-                    history_ids=none_h_ids,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to delete messages with invalid episode_ids for set_id %s",
+            if deferred_h_ids:
+                logger.warning(
+                    "Failed to retrieve messages for set_id %s; retaining recently missing episode_ids for retry: %s",
                     set_id,
+                    deferred_h_ids,
                 )
-                if self._debug_fail_loudly:
-                    raise
+
+            if expired_h_ids:
+                logger.warning(
+                    "Failed to retrieve messages. Invalid episode_ids exist for set_id %s; delisting the following messages as recovery: %s",
+                    set_id,
+                    expired_h_ids,
+                )
+                try:
+                    await self._semantic_storage.delete_history(
+                        history_ids=expired_h_ids,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to delete messages with invalid episode_ids for set_id %s",
+                        set_id,
+                    )
 
         messages = TypeAdapter(list[Episode]).validate_python(raw_messages)
 
@@ -187,15 +215,6 @@ class IngestionService:
             semantic_category: InstanceOf[SemanticCategory],
         ) -> None:
             for message in messages:
-                if message.uid is None:
-                    logger.error(
-                        "Message ID is None for message %s", message.model_dump()
-                    )
-
-                    raise ValueError(
-                        f"Message ID is None for message {message.model_dump()}"
-                    )
-
                 filter_expr = And(
                     left=Comparison(field="set_id", op="=", value=set_id),
                     right=Comparison(
@@ -249,7 +268,7 @@ class IngestionService:
 
                 mark_messages.append(message.uid)
 
-        mark_messages: list[EpisodeIdT] = []
+        mark_messages: list[UUID] = []
         semantic_category_runners = []
         for t in resources.semantic_categories:
             task = process_semantic_type(t)
@@ -283,7 +302,7 @@ class IngestionService:
         commands: list[SemanticCommand],
         set_id: SetIdT,
         category_name: str,
-        citation_id: EpisodeIdT | None,
+        citation_id: UUID | None,
         embedder: InstanceOf[Embedder],
     ) -> None:
         for command in commands:
@@ -481,14 +500,14 @@ class IngestionService:
             [m.metadata.id for m in memories_to_delete if m.metadata.id is not None],
         )
 
-        merged_citations: chain[EpisodeIdT] = itertools.chain.from_iterable(
+        merged_citations: chain[UUID] = itertools.chain.from_iterable(
             [
                 m.metadata.citations
                 for m in memories_to_delete
                 if m.metadata.citations is not None
             ],
         )
-        citation_ids = TypeAdapter(list[EpisodeIdT]).validate_python(
+        citation_ids = TypeAdapter(list[UUID]).validate_python(
             list(set(merged_citations)),
         )
 

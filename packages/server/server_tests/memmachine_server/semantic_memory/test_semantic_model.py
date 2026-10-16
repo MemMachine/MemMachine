@@ -1,6 +1,7 @@
 """Unit tests for semantic model classes and their methods."""
 
 from datetime import UTC
+from uuid import UUID
 
 import pytest
 
@@ -151,7 +152,7 @@ class TestHistoryMessage:
 
         now = datetime.now(UTC)
         msg = Episode(
-            uid="123",
+            uid=UUID("550e8400-e29b-41d4-a716-446655440123"),
             content="Test message",
             created_at=now,
             session_key="session_key",
@@ -161,7 +162,7 @@ class TestHistoryMessage:
 
         assert msg.content == "Test message"
         assert msg.created_at == now
-        assert msg.uid == "123"
+        assert msg.uid == UUID("550e8400-e29b-41d4-a716-446655440123")
         assert msg.metadata is None
 
     def test_history_message_with_metadata(self):
@@ -171,7 +172,7 @@ class TestHistoryMessage:
         msg = Episode(
             content="Test message",
             created_at=now,
-            uid="123",
+            uid=UUID("550e8400-e29b-41d4-a716-446655440123"),
             metadata={"source": "test", "priority": "high"},
             session_key="session_key",
             producer_id="profile_id",
@@ -180,7 +181,7 @@ class TestHistoryMessage:
 
         assert msg.content == "Test message"
         assert msg.created_at == now
-        assert msg.uid == "123"
+        assert msg.uid == UUID("550e8400-e29b-41d4-a716-446655440123")
         assert msg.metadata == {"source": "test", "priority": "high"}
 
 
@@ -211,7 +212,7 @@ class TestSemanticFeature:
         citation = Episode(
             content="I love pasta",
             created_at=now,
-            uid="456aw3w",
+            uid=UUID("550e8400-e29b-41d4-a716-446655440456"),
             session_key="session_key",
             producer_id="profile_id",
             producer_role="user_role",
@@ -238,7 +239,7 @@ class TestSemanticFeature:
         assert feature.metadata.id == "a789"
         assert feature.metadata.citations is not None
         assert len(feature.metadata.citations) == 1
-        assert feature.metadata.citations[0] == "456aw3w"
+        assert feature.metadata.citations[0] == citation.uid
         assert feature.metadata.other == {"confidence": 0.95}
 
 

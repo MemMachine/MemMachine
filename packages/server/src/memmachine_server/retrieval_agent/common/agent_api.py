@@ -98,12 +98,12 @@ class AgentToolBase:
         self, query: QueryParam, episodes: list[Episode]
     ) -> list[Episode]:
         if query.limit <= 0:
-            return sorted(episodes, key=lambda x: x.created_at)
+            return sorted(episodes, key=lambda x: (x.created_at, x.uid))
 
         if len(episodes) <= query.limit or self._reranker is None:
             if len(episodes) == 0:
                 return episodes
-            return sorted(episodes[: query.limit], key=lambda x: x.created_at)
+            return sorted(episodes[: query.limit], key=lambda x: (x.created_at, x.uid))
 
         contents = [episodes_to_string([episode]) for episode in episodes]
         success = False
@@ -134,7 +134,7 @@ class AgentToolBase:
 
         result = result[: query.limit] if query.limit > 0 else result
         res = [r[0] for r in result]
-        return sorted(res, key=lambda x: x.created_at)
+        return sorted(res, key=lambda x: (x.created_at, x.uid))
 
     async def do_query(
         self, policy: QueryPolicy, query: QueryParam

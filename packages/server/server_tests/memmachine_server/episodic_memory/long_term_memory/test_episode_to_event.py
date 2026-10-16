@@ -1,7 +1,7 @@
 """Unit tests for the Episode → Event translation in LongTermMemory."""
 
 from datetime import UTC, datetime
-from uuid import uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -28,21 +28,19 @@ def _episode(
     producer_id: str = "alice",
     producer_role: str = "user",
     produced_for_id: str | None = None,
-    sequence_num: int = 0,
     episode_type: EpisodeType = EpisodeType.MESSAGE,
     filterable_metadata: dict | None = None,
     metadata: dict | None = None,
     session_key: str = "session-1",
 ) -> Episode:
     return Episode(
-        uid=uid,
+        uid=uuid5(NAMESPACE_URL, uid),
         content=content,
         session_key=session_key,
         created_at=datetime(2026, 1, 15, 12, 0, tzinfo=UTC),
         producer_id=producer_id,
         producer_role=producer_role,
         produced_for_id=produced_for_id,
-        sequence_num=sequence_num,
         episode_type=episode_type,
         content_type=ContentType.STRING,
         filterable_metadata=filterable_metadata,
@@ -53,7 +51,7 @@ def _episode(
 def test_event_uuid_is_deterministic_uuid5_of_episode_uid():
     episode = _episode(uid="abc-123")
     event = LongTermMemory._episode_to_event(episode)
-    assert event.uuid == uuid5(_EVENT_UUID_NAMESPACE, "abc-123")
+    assert event.uuid == uuid5(_EVENT_UUID_NAMESPACE, str(episode.uid))
     # Stable across calls.
     assert LongTermMemory._episode_to_event(episode).uuid == event.uuid
 
@@ -97,17 +95,15 @@ def test_system_fields_are_underscore_prefixed():
         producer_id="alice",
         producer_role="user",
         produced_for_id="bob",
-        sequence_num=42,
         session_key="sess-X",
     )
     event = LongTermMemory._episode_to_event(episode)
     p = event.properties
-    assert p["_episode_uid"] == "ep-1"
+    assert p["_episode_uid"] == str(episode.uid)
     assert p["_session_key"] == "sess-X"
     assert p["_producer_id"] == "alice"
     assert p["_producer_role"] == "user"
     assert p["_produced_for_id"] == "bob"
-    assert p["_sequence_num"] == 42
     assert p["_episode_type"] == "message"
     assert p["_content_type"] == "string"
     assert p["_created_at"] == episode.created_at

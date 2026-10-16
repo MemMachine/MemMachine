@@ -595,7 +595,7 @@ class Memory:
 
     def delete_episodic(
         self,
-        episodic_id: str = "",
+        episodic_id: str | None = None,
         episodic_ids: builtins.list[str] | None = None,
         timeout: int | None = None,
     ) -> bool:

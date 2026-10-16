@@ -15,6 +15,7 @@ import string
 from collections import deque
 from datetime import datetime
 from typing import Self
+from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
 
@@ -264,7 +265,7 @@ class ShortTermMemory:
         async with self._lock.write_lock():
             await self._do_reset()
 
-    async def delete_episode(self, uid: str) -> bool:
+    async def delete_episode(self, uid: UUID) -> bool:
         """Delete one episode by UID."""
         async with self._lock.write_lock():
             for index, episode in enumerate(self._memory):
@@ -641,7 +642,7 @@ class ShortTermMemoryConsolidator:
                 await self._data_manager.save_short_term_memory(
                     self._session_key,
                     new_summary,
-                    episodes[-1].sequence_num,
+                    0,
                     len(episodes),
                 )
         except (ExternalServiceAPIError, ValueError, RuntimeError) as e:

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 import numpy as np
 import pytest
 
@@ -8,7 +10,7 @@ from memmachine_server.semantic_memory.storage.storage_base import SemanticStora
 async def test_delete_history_removes_history_and_citations(
     semantic_storage: SemanticStorage,
 ):
-    history_id = "history-1"
+    history_id = UUID("550e8400-e29b-41d4-a716-446655440001")
     await semantic_storage.add_history_to_set(
         set_id="user-a",
         history_id=history_id,

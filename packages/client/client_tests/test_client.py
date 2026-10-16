@@ -1,12 +1,15 @@
 """Unit tests for MemMachineClient class (v2 API)."""
 
 from unittest.mock import Mock, patch
+from uuid import UUID
 
 import pytest
 import requests
 from memmachine_common.api import MemoryType
 
 from memmachine_client import MemMachineClient, Memory, Project
+
+EPISODE_UID = "550e8400-e29b-41d4-a716-446655440001"
 
 
 class TestMemMachineClient:
@@ -386,23 +389,24 @@ class TestMemMachineClient:
         mock_response.raise_for_status = Mock()
         mock_response.json.return_value = [
             {"org_id": "org1", "project_id": "proj1"},
-            {"org_id": "org2", "project_id": "proj2"},
+            {"org_id": "org1", "project_id": "proj2"},
         ]
         with patch.object(
             client, "request", return_value=mock_response
         ) as mock_request:
-            result = client.list_projects()
+            result = client.list_projects("org1")
 
             assert isinstance(result, list)
             assert len(result) == 2
             assert all(isinstance(p, Project) for p in result)
             assert result[0].org_id == "org1"
             assert result[0].project_id == "proj1"
-            assert result[1].org_id == "org2"
+            assert result[1].org_id == "org1"
             assert result[1].project_id == "proj2"
             mock_request.assert_called_once()
             assert mock_request.call_args[0][0] == "POST"
             assert "/api/v2/projects/list" in mock_request.call_args[0][1]
+            assert mock_request.call_args.kwargs["json"] == {"org_id": "org1"}
 
     def test_get_metrics_success(self):
         """Test successful metrics retrieval."""
@@ -451,14 +455,13 @@ class TestMemory:
             "content": {
                 "episodic_memory": [
                     {
-                        "uid": "e1",
+                        "uid": EPISODE_UID,
                         "content": "hello",
                         "session_key": "org1/proj1",
                         "created_at": "2025-01-01T00:00:00Z",
                         "producer_id": "u1",
                         "producer_role": "user",
                         "produced_for_id": None,
-                        "sequence_num": 0,
                         "episode_type": "message",
                         "content_type": "string",
                         "filterable_metadata": None,
@@ -493,7 +496,7 @@ class TestMemory:
 
             assert isinstance(result, ListResult)
             assert result.content.episodic_memory is not None
-            assert result.content.episodic_memory[0].uid == "e1"
+            assert result.content.episodic_memory[0].uid == UUID(EPISODE_UID)
             assert result.content.semantic_memory == []
 
 

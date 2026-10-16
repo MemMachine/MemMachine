@@ -282,6 +282,61 @@ async def test_create_or_open_episodic_memory_success(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("deleted", [False, True])
+async def test_open_or_create_handles_session_created_during_insert(
+    manager: EpisodicMemoryManager,
+    mock_session_storage: SessionDataManagerSQL,
+    monkeypatch: pytest.MonkeyPatch,
+    deleted: bool,
+) -> None:
+    """A concurrent creator's stored configuration and status win."""
+    session_key = "racing-session"
+    requested_conf = EpisodicMemoryConf(session_key=session_key, enabled=False)
+    stored_conf = EpisodicMemoryConf(session_key=session_key, enabled=True)
+    original_create = mock_session_storage.create_or_validate_session
+
+    async def create_after_other_worker(
+        key: str,
+        configuration: dict[str, JsonValue],
+        param: EpisodicMemoryConf,
+        description: str,
+        metadata: dict[str, JsonValue],
+    ) -> None:
+        await original_create(key, {"source": "other"}, stored_conf, "", {})
+        if deleted:
+            await mock_session_storage.update_session_status(key, "delete")
+        await original_create(key, configuration, param, description, metadata)
+
+    monkeypatch.setattr(
+        mock_session_storage, "create_or_validate_session", create_after_other_worker
+    )
+    with (
+        patch(
+            "memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory"
+        ) as memory_class,
+        patch(
+            "memmachine_server.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
+            new_callable=AsyncMock,
+        ) as params_from_config,
+    ):
+        if deleted:
+            with pytest.raises(SessionDeletedError):
+                async with manager.open_or_create_episodic_memory(
+                    session_key, requested_conf, "", {}
+                ):
+                    pass
+            memory_class.assert_not_called()
+        else:
+            async with manager.open_or_create_episodic_memory(
+                session_key, requested_conf, "", {}
+            ) as memory:
+                assert memory is memory_class.return_value
+            params_from_config.assert_awaited_once_with(
+                stored_conf, manager._resource_manager
+            )
+
+
+@pytest.mark.asyncio
 @patch(
     "memmachine_server.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config",
     new_callable=AsyncMock,
@@ -388,15 +443,18 @@ async def test_delete_episodic_session_not_in_use(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("instance_cache_size", [0, 100])
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_delete_episodic_session_in_use_raises_error(
     mock_episodic_memory_cls,
     manager: EpisodicMemoryManager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
+    instance_cache_size: int,
 ):
-    """Test deleting a session that is in use."""
+    """Refused deletes preserve references and can be retried after release."""
     session_key = "session_to_delete"
+    manager._instance_cache.capacity = instance_cache_size
     mock_episodic_memory_cls.return_value = mock_episodic_memory_instance
 
     # Create and release the session so it's in cache but not in use
@@ -412,6 +470,16 @@ async def test_delete_episodic_session_in_use_raises_error(
             match=f"Session '{session_key}' is in use",
         ):
             await manager.delete_episodic_session(session_key)
+        assert await manager._instance_cache.get_ref_count(session_key) == 1
+
+    expected_ref_count = 0 if instance_cache_size else -1
+    assert (
+        await manager._instance_cache.get_ref_count(session_key) == expected_ref_count
+    )
+
+    await manager.delete_episodic_session(session_key)
+    assert await manager._instance_cache.get(session_key) is None
+    mock_episodic_memory_instance.delete_session_episodes.assert_awaited_once()
 
 
 @pytest.mark.asyncio

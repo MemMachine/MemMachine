@@ -77,7 +77,7 @@ The v2 API uses a project-based model where all operations are scoped to an orga
 
 - `POST /api/v2/projects` - Create a new project
 - `POST /api/v2/projects/get` - Get project information
-- `POST /api/v2/projects/list` - List all projects
+- `POST /api/v2/projects/list` - List projects in an organization
 - `POST /api/v2/projects/delete` - Delete a project
 - `POST /api/v2/memories` - Add memories (episodes)
 - `POST /api/v2/memories/search` - Search memories
@@ -194,10 +194,10 @@ List all projects in an organization:
 ```bash
 curl -X POST "http://localhost:8080/api/v2/projects/list" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d '{"org_id": "your-organization-id"}'
 ```
 
-**Response**: Returns a list of all projects with their configurations.
+**Response**: Returns the organization and project IDs for projects in that organization.
 
 #### Create a Project
 

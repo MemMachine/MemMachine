@@ -11,10 +11,10 @@ Covers:
 from __future__ import annotations
 
 import socket
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Uuid, text
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -25,6 +25,7 @@ from memmachine_server.common.episode_store.episode_model import (
 from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
     _EPISODE_PG_ENUM,
     BaseEpisodeStore,
+    Episode,
     SqlAlchemyEpisodeStore,
 )
 from memmachine_server.common.errors import ConfigurationError
@@ -71,6 +72,7 @@ def _make_pg_engine() -> tuple[MagicMock, MagicMock, MagicMock]:
     engine = MagicMock()
 
     conn = MagicMock()
+    conn.execute = AsyncMock()
     conn.dialect = MagicMock()
     conn.dialect.name = "postgresql"
 
@@ -119,6 +121,13 @@ async def test_startup_wraps_socket_gaierror():
         await store.startup()
 
     assert isinstance(exc_info.value.__cause__, socket.gaierror)
+
+
+def test_episode_primary_key_is_uuid_and_not_autoincremented():
+    uid_column = Episode.__table__.c.uid
+
+    assert isinstance(uid_column.type, Uuid)
+    assert uid_column.autoincrement is False
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +227,7 @@ async def test_startup_skips_enum_creation_on_non_postgresql():
     engine = MagicMock()
 
     conn = MagicMock()
+    conn.execute = AsyncMock()
     conn.dialect = MagicMock()
     conn.dialect.name = "sqlite"
 

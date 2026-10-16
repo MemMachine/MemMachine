@@ -178,6 +178,43 @@ def test_memory_subcommands_use_env_project_context(
     assert capsys.readouterr().out
 
 
+def test_delete_episodic_cli_with_ids_only(monkeypatch, capsys):
+    """Batch-only CLI deletion should omit the single episodic ID."""
+    monkeypatch.setenv("MEMMACHINE_ORG_ID", "env-org")
+    monkeypatch.setenv("MEMMACHINE_PROJECT_ID", "env-project")
+    client = Mock()
+    memory = client.get_project.return_value.memory.return_value
+    memory.delete_episodic.return_value = True
+    episode_id = "550e8400-e29b-41d4-a716-446655440001"
+    args = cli.build_parser().parse_args(
+        ["memory", "delete-episodic", "--ids", episode_id]
+    )
+
+    assert cli.run_command(client, args) == 0
+    memory.delete_episodic.assert_called_once_with(
+        episodic_id=None, episodic_ids=[episode_id], timeout=None
+    )
+    assert capsys.readouterr().out
+
+
+def test_delete_semantic_cli_with_ids_only(monkeypatch, capsys):
+    """The semantic command should retain its empty single-ID default."""
+    monkeypatch.setenv("MEMMACHINE_ORG_ID", "env-org")
+    monkeypatch.setenv("MEMMACHINE_PROJECT_ID", "env-project")
+    client = Mock()
+    memory = client.get_project.return_value.memory.return_value
+    memory.delete_semantic.return_value = True
+    args = cli.build_parser().parse_args(
+        ["memory", "delete-semantic", "--ids", "semantic-1"]
+    )
+
+    assert cli.run_command(client, args) == 0
+    memory.delete_semantic.assert_called_once_with(
+        semantic_id="", semantic_ids=["semantic-1"], timeout=None
+    )
+    assert capsys.readouterr().out
+
+
 def test_projects_create_uses_env_project_context(monkeypatch, capsys):
     """Project create should accept project context from the environment."""
     monkeypatch.setenv("MEMMACHINE_ORG_ID", "env-org")
@@ -212,6 +249,16 @@ def test_projects_create_uses_env_project_context(monkeypatch, capsys):
         '  "project_id": "env-project"\n'
         "}\n"
     )
+
+
+def test_projects_list_passes_organization_to_client(capsys):
+    client = Mock()
+    client.list_projects.return_value = []
+    args = cli.build_parser().parse_args(["projects", "list", "--org-id", "org1"])
+
+    assert cli.run_command(client, args) == 0
+    client.list_projects.assert_called_once_with("org1", timeout=None)
+    assert capsys.readouterr().out == "[]\n"
 
 
 @patch("memmachine_client.cli.MemMachineClient")

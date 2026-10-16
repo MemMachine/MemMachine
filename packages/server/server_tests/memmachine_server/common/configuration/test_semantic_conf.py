@@ -1,6 +1,9 @@
 from datetime import timedelta
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from memmachine_server.common.configuration import SemanticMemoryConf
 
 
@@ -56,3 +59,14 @@ def test_semantic_config_stays_enabled_when_complete():
         embedding_model="embedding",
     )
     assert conf.enabled is True
+
+
+def test_semantic_config_sets_missing_episode_grace_period():
+    conf = SemanticMemoryConf(
+        enabled=False,
+        missing_episode_grace_period_sec=45,
+    )
+    assert conf.missing_episode_grace_period_sec == 45
+
+    with pytest.raises(ValidationError):
+        SemanticMemoryConf(enabled=False, missing_episode_grace_period_sec=-1)

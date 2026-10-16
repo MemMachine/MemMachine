@@ -4,11 +4,11 @@ from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequen
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, Protocol, runtime_checkable
+from uuid import UUID
 
 from pydantic import BaseModel, InstanceOf, field_validator
 
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import EpisodeIdT
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.semantic_memory.util import semantic_prompt_template
 
@@ -73,7 +73,7 @@ class SemanticFeature(BaseModel):
     class Metadata(BaseModel):
         """Storage metadata for a semantic feature, including id and citations."""
 
-        citations: Sequence[EpisodeIdT] | None = None
+        citations: Sequence[UUID] | None = None
         id: FeatureIdT | None = None
         other: Mapping[str, Any] | None = None
 

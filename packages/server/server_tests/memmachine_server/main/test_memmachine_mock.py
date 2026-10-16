@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.configuration import (
     Configuration,
@@ -26,11 +28,18 @@ from memmachine_server.common.episode_store import (
     EpisodeEntry,
     EpisodeResponse,
 )
-from memmachine_server.common.errors import SessionNotFoundError
+from memmachine_server.common.errors import (
+    ResourceNotFoundError,
+    SessionNotFoundError,
+)
 from memmachine_server.common.filter.filter_parser import And as FilterAnd
 from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
+)
+from memmachine_server.common.sql_lease_lock import (
+    LockAcquireTimeoutError,
+    SQLLeaseLockService,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
 from memmachine_server.main.memmachine import MemMachine, MemoryType
@@ -155,9 +164,13 @@ def patched_resource_manager(monkeypatch):
     return fake_manager
 
 
-def _make_episode(uid: str, session_key: str) -> Episode:
+def _uid(value: str | UUID) -> UUID:
+    return value if isinstance(value, UUID) else uuid5(NAMESPACE_URL, value)
+
+
+def _make_episode(uid: str | UUID, session_key: str) -> Episode:
     return Episode(
-        uid=uid,
+        uid=_uid(uid),
         content="content",
         session_key=session_key,
         created_at=datetime.now(UTC),
@@ -495,9 +508,11 @@ async def test_query_episodic_with_retrieval_agent_searches_long_then_short(
     )
 
     assert response is not None
-    assert [episode.uid for episode in response.long_term_memory.episodes] == ["long-1"]
+    assert [episode.uid for episode in response.long_term_memory.episodes] == [
+        _uid("long-1")
+    ]
     assert [episode.uid for episode in response.short_term_memory.episodes] == [
-        "short-1"
+        _uid("short-1")
     ]
     assert response.short_term_memory.episode_summary == ["short-summary"]
     assert episodic_session.query_memory.await_count == 2
@@ -571,7 +586,9 @@ async def test_query_episodic_with_retrieval_agent_skips_short_term_when_disable
     )
 
     assert response is not None
-    assert [episode.uid for episode in response.long_term_memory.episodes] == ["long-2"]
+    assert [episode.uid for episode in response.long_term_memory.episodes] == [
+        _uid("long-2")
+    ]
     assert response.short_term_memory.episodes == []
     assert episodic_session.query_memory.await_count == 1
     await_args = episodic_session.query_memory.await_args
@@ -632,22 +649,37 @@ async def test_query_search_skips_unrequested_memories(
 
 
 @pytest.mark.asyncio
-async def test_add_episodes_dispatches_to_all_memories(
-    minimal_conf, patched_resource_manager
+async def test_add_episodes_dispatches_same_id_to_all_backends(
+    minimal_conf, patched_resource_manager, monkeypatch
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    minted_uid = _uid("minted")
+    monkeypatch.setattr("memmachine_server.main.memmachine.uuid4", lambda: minted_uid)
     session = DummySessionData("session-42")
+    created_at = datetime(2026, 1, 2, tzinfo=UTC)
 
     entries = [
-        EpisodeEntry(content="hello", producer_id="user", producer_role="assistant"),
+        EpisodeEntry(
+            uid=_uid("e1"),
+            content="hello",
+            producer_id="user",
+            producer_role="assistant",
+            created_at=created_at,
+        ),
     ]
-    stored_episodes = [
-        _make_episode("e1", session.session_key),
-        _make_episode("e2", session.session_key),
+    episodes = [
+        Episode(
+            uid=_uid("e1"),
+            content="hello",
+            session_key=session.session_key,
+            created_at=created_at,
+            producer_id="user",
+            producer_role="assistant",
+        )
     ]
 
     episode_storage = MagicMock()
-    episode_storage.add_episodes = AsyncMock(return_value=stored_episodes)
+    episode_storage.add_episodes = AsyncMock(return_value=episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
     )
@@ -677,12 +709,268 @@ async def test_add_episodes_dispatches_to_all_memories(
 
     await memmachine.add_episodes(session, entries)
 
-    episode_storage.add_episodes.assert_awaited_once_with(session.session_key, entries)
-    episodic_session.add_memory_episodes.assert_awaited_once_with(stored_episodes)
+    store_call = episode_storage.add_episodes.await_args
+    assert store_call is not None
+    assert store_call.args[0] == session.session_key
+    assert [entry.uid for entry in store_call.args[1]] == [minted_uid]
+    expected_episodes = [episodes[0].model_copy(update={"uid": minted_uid})]
+    episodic_session.add_memory_episodes.assert_awaited_once_with(expected_episodes)
     semantic_manager.add_message.assert_awaited_once_with(
-        episodes=stored_episodes,
+        episodes=expected_episodes,
         session_data=session,
     )
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_single_entry_replaces_supplied_uid(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    supplied_uid = _uid("supplied")
+    minted_uid = _uid("minted")
+    monkeypatch.setattr("memmachine_server.main.memmachine.uuid4", lambda: minted_uid)
+
+    result = await memmachine.add_episodes(
+        DummySessionData("single"),
+        [
+            EpisodeEntry(
+                uid=supplied_uid,
+                content="hello",
+                producer_id="user",
+                producer_role="user",
+            )
+        ],
+        target_memories=[],
+    )
+
+    store_call = episode_storage.add_episodes.await_args
+    assert store_call is not None
+    stored_entries = store_call.args[1]
+    assert result == [minted_uid]
+    assert stored_entries[0].uid == minted_uid
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_batch_assigns_sorted_uuids_in_input_order(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    entries = [
+        EpisodeEntry(content=str(index), producer_id="user", producer_role="user")
+        for index in range(3)
+    ]
+    generated_ids = [
+        UUID(f"{prefix}0000000-0000-4000-8000-000000000000") for prefix in "fa1"
+    ]
+    generated = iter(generated_ids)
+    monkeypatch.setattr(
+        "memmachine_server.main.memmachine.uuid4", lambda: next(generated)
+    )
+    result = await memmachine.add_episodes(
+        DummySessionData("batch"), entries, target_memories=[]
+    )
+
+    store_call = episode_storage.add_episodes.await_args
+    assert store_call is not None
+    stored = store_call.args[1]
+    assert [entry.content for entry in stored] == ["0", "1", "2"]
+    assert result == [entry.uid for entry in stored]
+    assert result == sorted(generated_ids)
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_writes_to_all_backends_concurrently(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("parallel-writes")
+    entries = [
+        EpisodeEntry(
+            content="hello",
+            producer_id="user",
+            producer_role="assistant",
+            metadata={},
+        )
+    ]
+    stored_episodes = [_make_episode(entries[0].uid, session.session_key)]
+    started: set[str] = set()
+    stored_entries: list[EpisodeEntry] = []
+    episodic_episodes: list[Episode] = []
+    semantic_episodes: list[Episode] = []
+    all_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold_write(name: str, result=None):
+        started.add(name)
+        if len(started) == 3:
+            all_started.set()
+        await release.wait()
+        return result
+
+    async def hold_store(
+        _session_key: str,
+        normalized_entries: list[EpisodeEntry],
+    ):
+        stored_entries.extend(normalized_entries)
+        return await hold_write("store", stored_episodes)
+
+    async def hold_episodic(episodes: list[Episode]):
+        episodic_episodes.extend(episodes)
+        await hold_write("episodic")
+
+    async def hold_semantic(
+        *,
+        episodes: list[Episode],
+        session_data: DummySessionData,
+    ):
+        assert session_data is session
+        semantic_episodes.extend(episodes)
+        await hold_write("semantic")
+
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock(side_effect=hold_store)
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    episodic_session = MagicMock()
+    episodic_session.add_memory_episodes = AsyncMock(side_effect=hold_episodic)
+    episodic_manager = MagicMock()
+    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
+        episodic_session
+    )
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    semantic_manager = MagicMock()
+    semantic_manager.add_message = AsyncMock(side_effect=hold_semantic)
+    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+        return_value=semantic_manager
+    )
+
+    add_task = asyncio.create_task(memmachine.add_episodes(session, entries))
+    try:
+        await asyncio.wait_for(all_started.wait(), timeout=5)
+        assert started == {"store", "episodic", "semantic"}
+    finally:
+        release.set()
+        episode_ids = await add_task
+
+    assert episode_ids == [stored_entries[0].uid]
+    assert stored_entries[0].created_at is not None
+    assert stored_entries[0].created_at == episodic_episodes[0].created_at
+    assert stored_entries[0].created_at == semantic_episodes[0].created_at
+    assert episodic_episodes[0].uid == episode_ids[0]
+    assert semantic_episodes[0].uid == episode_ids[0]
+    assert episodic_episodes[0].metadata is None
+    assert semantic_episodes[0].metadata is None
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_waits_for_started_writes_before_raising(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    session = DummySessionData("failed-parallel-write")
+    entries = [
+        EpisodeEntry(
+            content="hello",
+            producer_id="user",
+            producer_role="assistant",
+        )
+    ]
+    episodic_started = asyncio.Event()
+    episodic_release = asyncio.Event()
+    episodic_finished = asyncio.Event()
+
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock(
+        side_effect=RuntimeError("store write failed")
+    )
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    async def hold_episodic_write(*_args):
+        episodic_started.set()
+        await episodic_release.wait()
+        episodic_finished.set()
+
+    episodic_session = MagicMock()
+    episodic_session.add_memory_episodes = AsyncMock(side_effect=hold_episodic_write)
+    episodic_manager = MagicMock()
+    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
+        episodic_session
+    )
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    add_task = asyncio.create_task(
+        memmachine.add_episodes(
+            session,
+            entries,
+            target_memories=[MemoryType.Episodic],
+        )
+    )
+    await asyncio.wait_for(episodic_started.wait(), timeout=5)
+    await asyncio.sleep(0)
+
+    try:
+        assert not add_task.done()
+    finally:
+        episodic_release.set()
+
+    with pytest.raises(RuntimeError, match="store write failed"):
+        await add_task
+    assert episodic_finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_reports_every_failed_write(
+    minimal_conf, patched_resource_manager, caplog, monkeypatch
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    minted_uid = _uid("minted")
+    monkeypatch.setattr("memmachine_server.main.memmachine.uuid4", lambda: minted_uid)
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock(side_effect=RuntimeError("store failed"))
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    episodic_session = MagicMock()
+    episodic_session.add_memory_episodes = AsyncMock(
+        side_effect=ValueError("episodic failed")
+    )
+    episodic_manager = MagicMock()
+    episodic_manager.open_or_create_episodic_memory.return_value = _async_cm(
+        episodic_session
+    )
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    entry = EpisodeEntry(content="hello", producer_id="user", producer_role="user")
+    with pytest.raises(RuntimeError, match="store failed"):
+        await memmachine.add_episodes(
+            DummySessionData("failed-writes"),
+            [entry],
+            target_memories=[MemoryType.Episodic],
+        )
+
+    assert "episodic failed" in caplog.text
+    assert str(minted_uid) in caplog.text
 
 
 @pytest.mark.asyncio
@@ -694,7 +982,7 @@ async def test_add_episodes_finishes_episodic_write_before_closing(
     memory = _ClosingEpisodicSession()
     episode_storage = MagicMock()
     episode_storage.add_episodes = AsyncMock(
-        return_value=[_make_episode("ep1", session.session_key)]
+        return_value=[_make_episode(_uid("ep1"), session.session_key)]
     )
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -726,7 +1014,7 @@ async def test_add_episodes_skips_memories_not_requested(
     entries = [
         EpisodeEntry(content="hello", producer_id="user", producer_role="assistant"),
     ]
-    stored_episodes = [_make_episode("e1", session.session_key)]
+    stored_episodes = [_make_episode(_uid("e1"), session.session_key)]
 
     episode_storage = MagicMock()
     episode_storage.add_episodes = AsyncMock(return_value=stored_episodes)
@@ -764,7 +1052,7 @@ async def test_list_search_fetches_episode_history(
     session = DummySessionData("session-list")
 
     episode_storage = MagicMock()
-    episodes = [_make_episode("e1", session.session_key)]
+    episodes = [_make_episode(_uid("e1"), session.session_key)]
     episode_storage.get_episode_messages = AsyncMock(return_value=episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -846,6 +1134,96 @@ async def test_count_episodes_combines_search_filter(
 
 
 @pytest.mark.asyncio
+async def test_delete_episodes_cleans_missing_store_id(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    episode_storage = MagicMock()
+    episode_storage.get_episodes = AsyncMock(return_value=[])
+    episode_storage.delete_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    episodic_manager = MagicMock()
+    episodic_manager.open_episodic_memory.return_value = _async_cm(AsyncMock())
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    await memmachine.delete_episodes(
+        [_uid("missing-episode")], session_data=DummySessionData("session")
+    )
+
+    episode_storage.get_episodes.assert_awaited_once_with([_uid("missing-episode")])
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("missing-episode")])
+
+
+@pytest.mark.asyncio
+async def test_delete_episodes_rejects_ids_from_another_session_before_deleting(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    requested_session = DummySessionData("requested-session")
+    own_id = _uid("own-episode")
+    other_id = _uid("other-episode")
+
+    episode_storage = MagicMock()
+    episode_storage.get_episodes = AsyncMock(
+        return_value=[
+            _make_episode(own_id, requested_session.session_key),
+            _make_episode(other_id, "other-session"),
+        ]
+    )
+    episode_storage.delete_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    episodic_manager = MagicMock()
+    episodic_manager.open_episodic_memory.return_value = _async_cm(AsyncMock())
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    with pytest.raises(ResourceNotFoundError):
+        await memmachine.delete_episodes(
+            [own_id, other_id], session_data=requested_session
+        )
+
+    episode_storage.delete_episodes.assert_not_awaited()
+    patched_resource_manager.get_episodic_memory_manager.assert_not_awaited()
+    patched_resource_manager.get_semantic_service.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_missing_episode_without_episodic_session(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    episode_storage = MagicMock()
+    episode_storage.get_episodes = AsyncMock(return_value=[])
+    episode_storage.delete_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+
+    @asynccontextmanager
+    async def missing_session():
+        raise SessionNotFoundError("missing")
+        yield
+
+    episodic_manager = MagicMock()
+    episodic_manager.open_episodic_memory.return_value = missing_session()
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
+
+    uid = _uid("missing-episode")
+    await memmachine.delete_episodes([uid], session_data=DummySessionData("missing"))
+
+    episode_storage.delete_episodes.assert_awaited_once_with([uid])
+
+
+@pytest.mark.asyncio
 async def test_delete_episodes_forwards_to_storage_and_memories(
     minimal_conf, patched_resource_manager
 ):
@@ -853,6 +1231,12 @@ async def test_delete_episodes_forwards_to_storage_and_memories(
     session = DummySessionData("session-del")
 
     episode_storage = MagicMock()
+    episode_storage.get_episodes = AsyncMock(
+        return_value=[
+            _make_episode("ep1", session.session_key),
+            _make_episode("ep2", session.session_key),
+        ]
+    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -865,10 +1249,12 @@ async def test_delete_episodes_forwards_to_storage_and_memories(
         return_value=episodic_manager
     )
 
-    await memmachine.delete_episodes(["ep1", "ep2"], session_data=session)
+    await memmachine.delete_episodes([_uid("ep1"), _uid("ep2")], session_data=session)
 
-    episode_storage.delete_episodes.assert_awaited_once_with(["ep1", "ep2"])
-    episodic_session.delete_episodes.assert_awaited_once_with(["ep1", "ep2"])
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("ep1"), _uid("ep2")])
+    episodic_session.delete_episodes.assert_awaited_once_with(
+        [_uid("ep1"), _uid("ep2")]
+    )
 
 
 @pytest.mark.asyncio
@@ -879,6 +1265,9 @@ async def test_delete_episodes_finishes_episodic_write_before_closing(
     session = DummySessionData("session-delete-close")
     memory = _ClosingEpisodicSession()
     episode_storage = MagicMock()
+    episode_storage.get_episodes = AsyncMock(
+        return_value=[_make_episode("ep1", session.session_key)]
+    )
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -896,33 +1285,33 @@ async def test_delete_episodes_finishes_episodic_write_before_closing(
         return_value=episodic_manager
     )
 
-    await memmachine.delete_episodes(["ep1"], session_data=session)
+    await memmachine.delete_episodes([_uid("ep1")], session_data=session)
 
     assert memory.operations == ["delete", "close"]
 
 
 @pytest.mark.asyncio
-async def test_delete_episodes_without_session_only_hits_storage(
+async def test_delete_episodes_requires_session_data(
     minimal_conf, patched_resource_manager
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
-    episode_storage = MagicMock()
-    episode_storage.delete_episodes = AsyncMock()
-    patched_resource_manager.get_episode_storage = AsyncMock(
-        return_value=episode_storage
-    )
+    with pytest.raises(TypeError, match="session_data"):
+        await memmachine.delete_episodes([_uid("ep1")])  # ty: ignore[missing-argument]
 
-    episodic_manager = MagicMock()
-    episodic_manager.open_episodic_memory.return_value = _async_cm(MagicMock())
-    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
-        return_value=episodic_manager
-    )
+    patched_resource_manager.get_episode_storage.assert_not_awaited()
 
-    await memmachine.delete_episodes(["ep1"], session_data=None)
 
-    episode_storage.delete_episodes.assert_awaited_once_with(["ep1"])
-    episodic_manager.open_episodic_memory.assert_not_called()
+@pytest.mark.asyncio
+async def test_delete_episodes_rejects_none_session_data(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    with pytest.raises(ValueError, match="session_data is required"):
+        await memmachine.delete_episodes([_uid("ep1")], session_data=None)  # ty: ignore[invalid-argument-type]
+
+    patched_resource_manager.get_episode_storage.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -965,6 +1354,9 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
     # Mock SessionDataManager
     session_manager = MagicMock()
     session_manager.get_sessions_by_status = AsyncMock(return_value=[session_key])
+    session_manager.get_session_info = AsyncMock(
+        return_value=MagicMock(status=SessionDataManager.SessionStatus.Deleted)
+    )
     session_manager.delete_session = AsyncMock()
     patched_resource_manager.get_session_data_manager = AsyncMock(
         return_value=session_manager
@@ -1002,11 +1394,17 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
 
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
+    @asynccontextmanager
+    async def lock(*args, **kwargs):
+        yield
+
+    patched_resource_manager.get_sql_lock_service.return_value.lock = lock
+
     await memmachine.start(test_key_to_session)
     await asyncio.sleep(1)
     await memmachine.stop()
 
-    session_manager.get_sessions_by_status.assert_awaited_once_with(
+    session_manager.get_sessions_by_status.assert_any_await(
         SessionDataManager.SessionStatus.Deleted
     )
 
@@ -1029,8 +1427,380 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
 
 
 @pytest.mark.asyncio
-async def test_add_episodes_skips_semantic_memory_when_disabled(
+async def test_deletion_rechecks_status_under_shared_lease(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """Only a pending session is deleted, and one instance owns it at a time."""
+    lease = asyncio.Lock()
+
+    class SharedLockService:
+        @asynccontextmanager
+        async def lock(self, *args, **kwargs):
+            if lease.locked():
+                raise LockAcquireTimeoutError("held")
+            async with lease:
+                yield
+
+    lease_service = SharedLockService()
+    patched_resource_manager.get_sql_lock_service = AsyncMock(
+        return_value=lease_service
+    )
+    status = SessionDataManager.SessionStatus.Deleted
+    manager = MagicMock()
+    manager.get_session_info = AsyncMock(side_effect=lambda _: MagicMock(status=status))
+    manager.delete_session = AsyncMock()
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+
+    first = MemMachine(minimal_conf, patched_resource_manager)
+    second = MemMachine(minimal_conf, patched_resource_manager)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    deleted: list[str] = []
+
+    async def slow_delete(key: str) -> None:
+        deleted.append(key)
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(first, "_delete_session_episode_store", slow_delete)
+    monkeypatch.setattr(second, "_delete_session_episode_store", slow_delete)
+    session = DummySessionData("pending")
+    try:
+        owner = asyncio.create_task(first._delete_queued_session(session))
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(second._delete_queued_session(session), 2)
+        assert deleted == ["pending"]
+        release.set()
+        await owner
+
+        status = SessionDataManager.SessionStatus.Active
+        await second._delete_queued_session(session)
+        assert deleted == ["pending"]
+        manager.delete_session.assert_awaited_once_with(session_key="pending")
+    finally:
+        release.set()
+        if "owner" in locals():
+            await asyncio.wait_for(owner, 2)
+
+
+@pytest.mark.asyncio
+async def test_two_machines_share_sql_deletion_lease(
+    minimal_conf, tmp_path, monkeypatch
+):
+    """Only one MemMachine may delete a pending session using real SQL leases."""
+    minimal_conf.episodic_memory.enabled = False
+    minimal_conf.semantic_memory.enabled = False
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'deletion-leases.db'}"
+    first_engine = create_async_engine(database_url)
+    second_engine = create_async_engine(database_url)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    deletions: list[str] = []
+    status = SessionDataManager.SessionStatus.Deleted
+
+    async def delete_episode_store(key: str) -> None:
+        deletions.append(key)
+        entered.set()
+        await release.wait()
+
+    async def delete_session(*, session_key: str) -> None:
+        nonlocal status
+        status = SessionDataManager.SessionStatus.Active
+
+    manager = AsyncMock()
+    manager.get_session_info.side_effect = lambda _key: MagicMock(status=status)
+    manager.delete_session.side_effect = delete_session
+
+    try:
+        first_lease = SQLLeaseLockService(first_engine)
+        second_lease = SQLLeaseLockService(second_engine)
+        await first_lease.startup()
+
+        first_resources = AsyncMock()
+        first_resources.get_sql_lock_service.return_value = first_lease
+        first_resources.get_session_data_manager.return_value = manager
+        second_resources = AsyncMock()
+        second_resources.get_sql_lock_service.return_value = second_lease
+        second_resources.get_session_data_manager.return_value = manager
+        first = MemMachine(minimal_conf, first_resources)
+        second = MemMachine(minimal_conf, second_resources)
+        monkeypatch.setattr(
+            first, "_delete_session_episode_store", delete_episode_store
+        )
+        monkeypatch.setattr(
+            second, "_delete_session_episode_store", delete_episode_store
+        )
+        session = DummySessionData("pending")
+
+        owner = asyncio.create_task(first._delete_queued_session(session))
+        await asyncio.wait_for(entered.wait(), 2)
+        await asyncio.wait_for(second._delete_queued_session(session), 2)
+        assert deletions == ["pending"]
+
+        release.set()
+        await asyncio.wait_for(owner, 2)
+        await second._delete_queued_session(session)
+        assert deletions == ["pending"]
+        manager.delete_session.assert_awaited_once_with(session_key="pending")
+    finally:
+        release.set()
+        if "owner" in locals():
+            await asyncio.wait_for(owner, 2)
+        await first_engine.dispose()
+        await second_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_failed_delete_finishes_sibling_before_releasing_lease(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """A failed store delete cannot leave another delete running outside the lease."""
+    minimal_conf.episodic_memory.enabled = True
+    minimal_conf.semantic_memory.enabled = False
+    sibling_started = asyncio.Event()
+    sibling_finished = asyncio.Event()
+    release_sibling = asyncio.Event()
+    lease_released = asyncio.Event()
+
+    async def slow_delete(_key: str) -> None:
+        sibling_started.set()
+        try:
+            await release_sibling.wait()
+        finally:
+            sibling_finished.set()
+
+    async def failed_delete(_key: str) -> None:
+        await sibling_started.wait()
+        raise RuntimeError("delete failed")
+
+    @asynccontextmanager
+    async def lock(*args, **kwargs):
+        try:
+            yield
+        finally:
+            assert sibling_finished.is_set()
+            lease_released.set()
+
+    patched_resource_manager.get_sql_lock_service.return_value.lock = lock
+    manager = AsyncMock()
+    manager.get_session_info.return_value.status = (
+        SessionDataManager.SessionStatus.Deleted
+    )
+    patched_resource_manager.get_session_data_manager.return_value = manager
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    monkeypatch.setattr(machine, "_delete_session_episode_store", slow_delete)
+    monkeypatch.setattr(machine, "_delete_session_episodic_memory", failed_delete)
+
+    try:
+        with pytest.raises(ExceptionGroup) as failure:
+            await asyncio.wait_for(
+                machine._delete_queued_session(DummySessionData("pending")), 2
+            )
+        assert any(str(error) == "delete failed" for error in failure.value.exceptions)
+        assert lease_released.is_set()
+        manager.delete_session.assert_not_awaited()
+    finally:
+        release_sibling.set()
+
+
+@pytest.mark.asyncio
+async def test_delete_episode_store_cleans_semantic_history_for_each_batch(
     minimal_conf, patched_resource_manager
+):
+    """Semantic history must be cleared before each episode batch is removed."""
+    first_batch = [_uid("history-1"), _uid("history-2")]
+    second_batch = [_uid("history-3")]
+    events: list[str] = []
+    episode_store = AsyncMock()
+    episode_store.get_episode_ids.side_effect = [first_batch, second_batch, []]
+
+    async def delete_history(_ids: list[UUID]) -> None:
+        events.append("history")
+
+    async def delete_episodes(_ids: list[UUID]) -> None:
+        events.append("episodes")
+
+    semantic_service = AsyncMock()
+    semantic_service.delete_history.side_effect = delete_history
+    episode_store.delete_episodes.side_effect = delete_episodes
+    minimal_conf.semantic_memory.enabled = True
+    patched_resource_manager.get_episode_storage.return_value = episode_store
+    patched_resource_manager.get_semantic_service.return_value = semantic_service
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+
+    await machine._delete_session_episode_store("test-session")
+
+    assert events == ["history", "episodes", "history", "episodes"]
+    assert semantic_service.delete_history.await_args_list == [
+        call(first_batch),
+        call(second_batch),
+    ]
+    assert episode_store.delete_episodes.await_args_list == [
+        call(first_batch),
+        call(second_batch),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_idle_worker_recovers_pending_deletion(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """An idle worker finds deletion requests left in the database."""
+    monkeypatch.setattr("memmachine_server.main.memmachine.DELETION_IDLE_SECONDS", 0.01)
+    manager = MagicMock()
+    pending = {"orphan"}
+    deleted = asyncio.Event()
+    scans = 0
+
+    def pending_after_start(_: str) -> list[str]:
+        nonlocal scans
+        scans += 1
+        return [] if scans == 1 else list(pending)
+
+    manager.get_sessions_by_status = AsyncMock(side_effect=pending_after_start)
+    manager.get_session_info = AsyncMock(
+        side_effect=lambda key: MagicMock(status="delete") if key in pending else None
+    )
+
+    async def delete(session_key: str) -> None:
+        pending.remove(session_key)
+        deleted.set()
+
+    manager.delete_session = AsyncMock(side_effect=delete)
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+    patched_resource_manager.get_episode_storage.return_value.get_episode_ids = (
+        AsyncMock(return_value=[])
+    )
+
+    @asynccontextmanager
+    async def lock(*args, **kwargs):
+        yield
+
+    patched_resource_manager.get_sql_lock_service.return_value.lock = lock
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    await machine.start(lambda key: DummySessionData(key))
+    try:
+        await asyncio.wait_for(deleted.wait(), 2)
+        assert pending == set()
+    finally:
+        await machine.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_active_deletion_without_processing_queued_deletion(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """Shutdown leaves active and queued deletions for later recovery."""
+    manager = MagicMock()
+    manager.get_sessions_by_status = AsyncMock(return_value=[])
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    await machine.start(lambda key: DummySessionData(key))
+
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+    processed: list[str] = []
+
+    async def slow_delete(session: MemMachine.SessionData) -> None:
+        processed.append(session.session_key)
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    monkeypatch.setattr(machine, "_delete_queued_session", slow_delete)
+    machine._deletion_queue.put_nowait(DummySessionData("active"))
+    await asyncio.wait_for(entered.wait(), 2)
+    machine._deletion_queue.put_nowait(DummySessionData("pending"))
+
+    await asyncio.wait_for(machine.stop(), 1)
+
+    assert cancelled.is_set()
+    assert processed == ["active"]
+    await asyncio.wait_for(machine._deletion_queue.join(), 1)
+    patched_resource_manager.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stop_finishes_when_idle_scan_finds_pending_deletion(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    """Stopping during a scan must not strand work behind the stop sentinel."""
+    monkeypatch.setattr("memmachine_server.main.memmachine.DELETION_IDLE_SECONDS", 0.01)
+    scan_started = asyncio.Event()
+    finish_scan = asyncio.Event()
+    scans = 0
+
+    async def pending_after_start(_: str) -> list[str]:
+        nonlocal scans
+        scans += 1
+        if scans == 1:
+            return []
+        scan_started.set()
+        await finish_scan.wait()
+        return ["pending"]
+
+    manager = MagicMock()
+    manager.get_sessions_by_status = AsyncMock(side_effect=pending_after_start)
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    await machine.start(lambda key: DummySessionData(key))
+
+    try:
+        await asyncio.wait_for(scan_started.wait(), 2)
+        stopping = asyncio.create_task(machine.stop())
+        await asyncio.sleep(0)
+        assert not machine._started
+        finish_scan.set()
+        await asyncio.wait_for(stopping, 1)
+        patched_resource_manager.close.assert_awaited_once()
+    finally:
+        finish_scan.set()
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_enqueue_delete_that_finishes_after_shutdown(
+    minimal_conf, patched_resource_manager
+):
+    """A deletion marked during shutdown stays pending for a later worker."""
+    update_started = asyncio.Event()
+    finish_update = asyncio.Event()
+    status_value = SessionDataManager.SessionStatus.Active
+
+    async def update_status(*, session_key: str, status: str) -> None:
+        nonlocal status_value
+        update_started.set()
+        await finish_update.wait()
+        status_value = status
+
+    manager = MagicMock()
+    manager.get_sessions_by_status = AsyncMock(return_value=[])
+    manager.get_session_info = AsyncMock(
+        side_effect=lambda _: MagicMock(status=status_value)
+    )
+    manager.update_session_status = AsyncMock(side_effect=update_status)
+    patched_resource_manager.get_session_data_manager = AsyncMock(return_value=manager)
+    machine = MemMachine(minimal_conf, patched_resource_manager)
+    await machine.start(lambda key: DummySessionData(key))
+
+    deleting = asyncio.create_task(machine.delete_session(DummySessionData("pending")))
+    try:
+        await asyncio.wait_for(update_started.wait(), 2)
+        await asyncio.wait_for(machine.stop(), 1)
+        finish_update.set()
+        await asyncio.wait_for(deleting, 2)
+        await asyncio.wait_for(machine._deletion_queue.join(), 1)
+        assert status_value == SessionDataManager.SessionStatus.Deleted
+        patched_resource_manager.close.assert_awaited_once()
+    finally:
+        finish_update.set()
+
+
+@pytest.mark.asyncio
+async def test_add_episodes_skips_semantic_memory_when_disabled(
+    minimal_conf, patched_resource_manager, monkeypatch
 ):
     """A write must not reach semantic memory while it is disabled.
 
@@ -1041,15 +1811,33 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
     """
     minimal_conf.semantic_memory.enabled = False
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    minted_uid = _uid("minted")
+    monkeypatch.setattr("memmachine_server.main.memmachine.uuid4", lambda: minted_uid)
     session = DummySessionData("disabled-write")
+    created_at = datetime(2026, 1, 2, tzinfo=UTC)
 
     entries = [
-        EpisodeEntry(content="hello", producer_id="user", producer_role="assistant"),
+        EpisodeEntry(
+            uid=_uid("e1"),
+            content="hello",
+            producer_id="user",
+            producer_role="assistant",
+            created_at=created_at,
+        ),
     ]
-    stored_episodes = [_make_episode("e1", session.session_key)]
+    episodes = [
+        Episode(
+            uid=_uid("e1"),
+            content="hello",
+            session_key=session.session_key,
+            created_at=created_at,
+            producer_id="user",
+            producer_role="assistant",
+        )
+    ]
 
     episode_storage = MagicMock()
-    episode_storage.add_episodes = AsyncMock(return_value=stored_episodes)
+    episode_storage.add_episodes = AsyncMock(return_value=episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
     )
@@ -1068,8 +1856,9 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
     episode_ids = await memmachine.add_episodes(session, entries)
 
     patched_resource_manager.get_semantic_session_manager.assert_not_called()
-    episodic_session.add_memory_episodes.assert_awaited_once_with(stored_episodes)
-    assert episode_ids == [episode.uid for episode in stored_episodes]
+    expected_episodes = [episodes[0].model_copy(update={"uid": minted_uid})]
+    episodic_session.add_memory_episodes.assert_awaited_once_with(expected_episodes)
+    assert episode_ids == [minted_uid]
 
 
 @pytest.mark.asyncio
@@ -1169,7 +1958,7 @@ async def test_list_search_skips_semantic_memory_when_disabled(
     session = DummySessionData("disabled-list")
 
     episode_storage = MagicMock()
-    episodes = [_make_episode("e1", session.session_key)]
+    episodes = [_make_episode(_uid("e1"), session.session_key)]
     episode_storage.get_episode_messages = AsyncMock(return_value=episodes)
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1243,16 +2032,24 @@ async def test_delete_episodes_skips_semantic_memory_when_disabled(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
+    episode_storage.get_episodes = AsyncMock(return_value=[])
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
     )
     patched_resource_manager.get_semantic_service = AsyncMock()
+    episodic_manager = MagicMock()
+    episodic_manager.open_episodic_memory.return_value = _async_cm(AsyncMock())
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
 
-    await memmachine.delete_episodes(["e1"])
+    await memmachine.delete_episodes(
+        [_uid("e1")], session_data=DummySessionData("session")
+    )
 
     patched_resource_manager.get_semantic_service.assert_not_called()
-    episode_storage.delete_episodes.assert_awaited_once_with(["e1"])
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("e1")])
 
 
 @pytest.mark.asyncio
@@ -1264,6 +2061,7 @@ async def test_delete_episodes_uses_semantic_memory_when_enabled(
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     episode_storage = MagicMock()
+    episode_storage.get_episodes = AsyncMock(return_value=[])
     episode_storage.delete_episodes = AsyncMock()
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
@@ -1274,8 +2072,15 @@ async def test_delete_episodes_uses_semantic_memory_when_enabled(
     patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_service
     )
+    episodic_manager = MagicMock()
+    episodic_manager.open_episodic_memory.return_value = _async_cm(AsyncMock())
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock(
+        return_value=episodic_manager
+    )
 
-    await memmachine.delete_episodes(["e1"])
+    await memmachine.delete_episodes(
+        [_uid("e1")], session_data=DummySessionData("session")
+    )
 
-    semantic_service.delete_history.assert_awaited_once_with(["e1"])
-    episode_storage.delete_episodes.assert_awaited_once_with(["e1"])
+    semantic_service.delete_history.assert_awaited_once_with([_uid("e1")])
+    episode_storage.delete_episodes.assert_awaited_once_with([_uid("e1")])

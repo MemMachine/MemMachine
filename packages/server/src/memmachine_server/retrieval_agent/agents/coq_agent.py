@@ -205,7 +205,7 @@ class ChainOfQueryAgent(AgentToolBase):
         evidence = set(retrived_evidence)
         episodes = sorted(
             set(retrieved_episodes).union(retrived_evidence),
-            key=lambda e: (e.created_at is None, e.created_at),
+            key=lambda e: (e.created_at is None, e.created_at, e.uid),
         )
         for idx, episode in enumerate(episodes):
             context += f"[{idx}] {episodes_to_string([episode])}"
@@ -248,7 +248,7 @@ class ChainOfQueryAgent(AgentToolBase):
 
         final_episodes = set(evidence).union(retrieved_episodes)
         final_episodes = sorted(
-            final_episodes, key=lambda e: (e.created_at is None, e.created_at)
+            final_episodes, key=lambda e: (e.created_at is None, e.created_at, e.uid)
         )
         return {
             "is_sufficient": response.get("is_sufficient", False),

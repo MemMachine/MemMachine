@@ -5,6 +5,7 @@ These tests require a live Neo4j or NebulaGraph instance and are marked
 """
 
 from datetime import UTC, datetime, timedelta
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 import pytest_asyncio
@@ -26,6 +27,10 @@ from server_tests.memmachine_server.conftest import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+def _uid(label: str) -> UUID:
+    return uuid5(NAMESPACE_URL, label)
 
 
 @pytest.fixture(scope="module")
@@ -183,28 +188,26 @@ async def test_add_episodes(long_term_memory):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             content="The mitochondria is the powerhouse of the cell.",
             session_key="session1",
             created_at=now,
             producer_id="biology textbook",
             producer_role="document",
-            sequence_num=123,
             filterable_metadata={"project": "science", "length": "short"},
             metadata={"chapter": 5, "page": 42},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             content="Who was the first president of the United States?",
             session_key="session2",
             created_at=now,
             producer_id="Alice",
             producer_role="user",
-            sequence_num=0,
             filterable_metadata={"project": "history", "category": "question"},
         ),
         Episode(
-            uid="episode3",
+            uid=_uid("episode3"),
             content="George Washington was the first president of the United States.",
             session_key="session2",
             created_at=now + timedelta(seconds=10),
@@ -222,7 +225,7 @@ async def test_add_episodes(long_term_memory):
         num_episodes_limit=10,
     )
     returned_uids = {episode.uid for _, episode in scored}
-    assert "episode2" in returned_uids or "episode3" in returned_uids
+    assert _uid("episode2") in returned_uids or _uid("episode3") in returned_uids
 
 
 @requires_sentence_transformers
@@ -231,28 +234,26 @@ async def test_delete_episodes(long_term_memory):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             content="The mitochondria is the powerhouse of the cell.",
             session_key="session1",
             created_at=now,
             producer_id="biology textbook",
             producer_role="document",
-            sequence_num=123,
             filterable_metadata={"project": "science", "length": "short"},
             metadata={"chapter": 5, "page": 42},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             content="Who was the first president of the United States?",
             session_key="session2",
             created_at=now,
             producer_id="Alice",
             producer_role="user",
-            sequence_num=0,
             filterable_metadata={"project": "history", "category": "question"},
         ),
         Episode(
-            uid="episode3",
+            uid=_uid("episode3"),
             content="George Washington was the first president of the United States.",
             session_key="session2",
             created_at=now + timedelta(seconds=10),
@@ -266,7 +267,7 @@ async def test_delete_episodes(long_term_memory):
     await long_term_memory.add_episodes(episodes)
 
     await long_term_memory.delete_episodes(
-        ["episode1", "episode3", "nonexistent_episode"],
+        [_uid("episode1"), _uid("episode3"), _uid("nonexistent_episode")],
     )
 
     scored = await long_term_memory.search_scored(
@@ -274,8 +275,8 @@ async def test_delete_episodes(long_term_memory):
         num_episodes_limit=10,
     )
     returned_uids = {episode.uid for _, episode in scored}
-    assert "episode1" not in returned_uids
-    assert "episode3" not in returned_uids
+    assert _uid("episode1") not in returned_uids
+    assert _uid("episode3") not in returned_uids
 
 
 @requires_sentence_transformers
@@ -284,23 +285,21 @@ async def test_drop_session_partition(long_term_memory):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
-            uid="episode1",
+            uid=_uid("episode1"),
             content="The mitochondria is the powerhouse of the cell.",
             session_key="session1",
             created_at=now,
             producer_id="biology textbook",
             producer_role="document",
-            sequence_num=123,
             filterable_metadata={"project": "science"},
         ),
         Episode(
-            uid="episode2",
+            uid=_uid("episode2"),
             content="Who was the first president of the United States?",
             session_key="session2",
             created_at=now,
             producer_id="Alice",
             producer_role="user",
-            sequence_num=0,
             filterable_metadata={"project": "history"},
         ),
     ]

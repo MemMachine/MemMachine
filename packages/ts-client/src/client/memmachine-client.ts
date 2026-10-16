@@ -40,7 +40,7 @@ function hasProxyEnv(): boolean {
  *   const memory = project.memory()
  *   console.log(memory.getContext())
  *
- *   const projects = await client.getProjects()
+ *   const projects = await client.getProjects('your_org_id')
  *   console.dir(projects, { depth: null })
  *
  *   const metrics = await client.getMetrics()
@@ -99,14 +99,15 @@ export class MemMachineClient {
   }
 
   /**
-   * Retrieves a list of all projects accessible to the client.
+   * Retrieves projects belonging to an organization.
    *
+   * @param orgId - Organization whose projects to list.
    * @returns A promise that resolves to an array of Project objects.
    * @throws {@link MemMachineAPIError} if the request fails.
    */
-  async getProjects(): Promise<Project[]> {
+  async getProjects(orgId: string): Promise<Project[]> {
     try {
-      const response = await this.client.post('/projects/list')
+      const response = await this.client.post('/projects/list', { org_id: orgId })
       return response.data
     } catch (error: unknown) {
       handleAPIError(error, 'Failed to get projects')

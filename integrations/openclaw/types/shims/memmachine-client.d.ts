@@ -25,7 +25,6 @@ declare module "@memmachine/client" {
     producer_id: string;
     producer_role: string;
     produced_for_id?: string | null;
-    sequence_num?: number;
     episode_type?: string;
     content_type?: string;
     filterable_metadata?: Record<string, unknown> | null;

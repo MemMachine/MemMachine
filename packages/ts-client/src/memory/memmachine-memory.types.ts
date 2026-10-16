@@ -48,7 +48,7 @@ export interface EpisodicMemory {
  * Represents an episodic memory entry returned by list.
  *
  * Unlike {@link EpisodicMemory} (the search-response shape), list
- * responses include storage fields like `session_key` and `sequence_num`
+ * responses include storage fields like `session_key`
  * but do not carry a relevance `score`.
  *
  * @property uid - Unique identifier for the memory entry.
@@ -58,7 +58,6 @@ export interface EpisodicMemory {
  * @property producer_id - ID of the entity that produced the memory entry.
  * @property producer_role - Role of the producer.
  * @property produced_for_id - ID of the entity for whom the memory was produced.
- * @property sequence_num - Monotonic ordering within the session.
  * @property episode_type - Type of episode associated with the memory entry.
  * @property content_type - Storage content type (e.g. "string").
  * @property filterable_metadata - Indexed metadata usable as filters.
@@ -74,7 +73,6 @@ export interface ListEpisodicMemory {
   producer_role: string
   produced_for_id?: string | null
 
-  sequence_num?: number
   episode_type?: string
   content_type?: string
   filterable_metadata?: Record<string, unknown> | null

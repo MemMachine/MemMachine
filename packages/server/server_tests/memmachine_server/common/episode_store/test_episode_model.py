@@ -2,11 +2,12 @@
 
 import json
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from memmachine_common.api import EpisodeType
 
-from memmachine_server.common.episode_store import Episode
+from memmachine_server.common.episode_store import Episode, EpisodeEntry
 from memmachine_server.common.episode_store.episode_model import (
     EpisodeResponse,
     episodes_to_string,
@@ -17,7 +18,7 @@ from memmachine_server.common.episode_store.episode_model import (
 def base_episode_data():
     """Provides common data for creating Episode instances."""
     return {
-        "uid": "msg_123",
+        "uid": UUID("550e8400-e29b-41d4-a716-446655440123"),
         "content": "Hello world",
         "session_key": "session_abc",
         "created_at": datetime(2026, 1, 14, 13, 30, tzinfo=UTC),  # Wednesday
@@ -32,11 +33,37 @@ def test_episodes_to_string_empty():
     assert episodes_to_string([]) == ""
 
 
+def test_episode_entry_assigns_distinct_uuid4_ids_before_storage():
+    first = EpisodeEntry(content="first", producer_id="user", producer_role="user")
+    second = EpisodeEntry(content="second", producer_id="user", producer_role="user")
+
+    first_uuid = first.uid
+    second_uuid = second.uid
+
+    assert first_uuid.version == 4
+    assert second_uuid.version == 4
+    assert isinstance(first_uuid, UUID)
+    assert isinstance(second_uuid, UUID)
+    assert first.uid != second.uid
+
+
+def test_episode_entry_preserves_explicit_internal_id():
+    supplied_id = "550e8400-e29b-41d4-a716-446655440000"
+    entry = EpisodeEntry(
+        uid=supplied_id,
+        content="message",
+        producer_id="user",
+        producer_role="user",
+    )
+
+    assert entry.uid == UUID(supplied_id)
+
+
 def test_episodes_to_string_multiple_mixed(base_episode_data):
     """Verify that multiple episodes are concatenated with newlines."""
     ep1 = Episode(**base_episode_data)
 
-    base_episode_data["uid"] = "msg_456"
+    base_episode_data["uid"] = UUID("550e8400-e29b-41d4-a716-446655440456")
     base_episode_data["episode_type"] = EpisodeType.MESSAGE
     base_episode_data["content"] = "Brief summary"
     ep2 = Episode(**base_episode_data)

@@ -22,6 +22,7 @@ import time
 from collections.abc import Coroutine, Iterable
 from enum import StrEnum
 from typing import cast, get_args
+from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf, model_validator
 
@@ -258,7 +259,7 @@ class EpisodicMemory:
             tasks.append(self._long_term_memory.close())
         await asyncio.gather(*tasks)
 
-    async def delete_episodes(self, uids: Iterable[str]) -> None:
+    async def delete_episodes(self, uids: Iterable[UUID]) -> None:
         """Delete episodes by UID."""
         if not self._enabled:
             return
@@ -515,7 +516,7 @@ class EpisodicMemory:
         episodes = sorted(
             query_result.short_term_memory.episodes
             + query_result.long_term_memory.episodes,
-            key=lambda x: cast(datetime.datetime, x.created_at),
+            key=lambda x: (cast(datetime.datetime, x.created_at), x.uid),
         )
 
         finalized_query = ""
