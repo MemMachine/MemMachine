@@ -225,7 +225,7 @@ class TestMemMachineClient:
                 "embedder": "default",
                 "reranker": "default",
                 "vector_store": "qdrant_vs",
-                "segment_store": "sqlite_db",
+                "event_memory_store": "sqlite_db",
             },
         }
         with patch.object(
@@ -236,12 +236,12 @@ class TestMemMachineClient:
                 project_id="test_project",
                 backend="event",
                 vector_store="qdrant_vs",
-                segment_store="sqlite_db",
+                event_memory_store="sqlite_db",
             )
             cfg = mock_post.call_args[1]["json"]["config"]
             assert cfg["backend"] == "event"
             assert cfg["vector_store"] == "qdrant_vs"
-            assert cfg["segment_store"] == "sqlite_db"
+            assert cfg["event_memory_store"] == "sqlite_db"
 
     def test_get_project_404_raises_http_error(self):
         """Test missing project preserves HTTPError semantics."""
