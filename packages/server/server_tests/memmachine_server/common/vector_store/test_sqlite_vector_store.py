@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from memmachine_server.common.data_types import SimilarityMetric
@@ -16,6 +16,9 @@ from memmachine_server.common.filter.filter_parser import (
     In,
     Not,
     Or,
+)
+from memmachine_server.common.resource_manager.database_manager import (
+    enable_sqlite_foreign_keys,
 )
 from memmachine_server.common.vector_store.data_types import (
     Record,
@@ -62,6 +65,7 @@ def _make_record(
 async def store(tmp_path):
     db_path = tmp_path / "test.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    enable_sqlite_foreign_keys(engine)
     params = SQLiteVectorStoreParams(
         sqlalchemy_engine=engine,
         vector_search_engine_factory=lambda ndim, metric: USearchVectorSearchEngine(
@@ -1090,6 +1094,7 @@ CONFIG = VectorStoreCollectionConfig(
 async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
     """Create a new SQLiteVectorStore against the same DB file."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    enable_sqlite_foreign_keys(engine)
     params = SQLiteVectorStoreParams(
         sqlalchemy_engine=engine,
         vector_search_engine_factory=_engine_factory,
@@ -1483,3 +1488,40 @@ class TestIndexFileDurability:
 
         await store2.shutdown()
         await engine2.dispose()
+
+
+# ── Engine per-connection state ──
+
+
+@pytest.mark.asyncio
+async def test_cascade_covers_connection_pooled_before_store_exists(tmp_path):
+    """A connection pooled before the store is built still cascades.
+
+    The pragma is registered at engine creation, so it covers every
+    connection the engine opens.
+    """
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    enable_sqlite_foreign_keys(engine)
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
+
+    store = SQLiteVectorStore(
+        SQLiteVectorStoreParams(
+            sqlalchemy_engine=engine,
+            vector_search_engine_factory=_engine_factory,
+            index_directory=str(tmp_path / "indexes"),
+        )
+    )
+    await store.startup()
+    try:
+        coll = await store.open_or_create_collection(
+            namespace=NAMESPACE, name=NAME, config=CONFIG
+        )
+        await coll.upsert(records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))])
+        assert await _pending_operation_count(engine) == 1
+
+        await store.delete_collection(namespace=NAMESPACE, name=NAME)
+        assert await _pending_operation_count(engine) == 0
+    finally:
+        await store.shutdown()
+        await engine.dispose()

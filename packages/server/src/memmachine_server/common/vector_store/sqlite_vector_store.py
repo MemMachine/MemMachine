@@ -607,7 +607,10 @@ class SQLiteVectorStoreParams(BaseModel):
 
     Attributes:
         sqlalchemy_engine (AsyncEngine):
-            Async SQLAlchemy engine (sqlite+aiosqlite).
+            Async SQLAlchemy engine (sqlite+aiosqlite). It must enforce
+            foreign keys on every connection, registered at engine
+            creation (enable_sqlite_foreign_keys): the store relies on the
+            pending-operation cascade and does not verify enforcement.
         engine_factory (Callable[[int, SimilarityMetric], VectorSearchEngine]):
             Factory for creating :class:`VectorSearchEngine` instances.
             Receives `(ndim, metric)` and returns a search engine.
@@ -622,7 +625,13 @@ class SQLiteVectorStoreParams(BaseModel):
     """
 
     sqlalchemy_engine: InstanceOf[AsyncEngine] = Field(
-        ..., description="Async SQLAlchemy engine (sqlite+aiosqlite)"
+        ...,
+        description=(
+            "Async SQLAlchemy engine (sqlite+aiosqlite). It must enforce "
+            "foreign keys on every connection, registered at engine creation "
+            "(enable_sqlite_foreign_keys): the store relies on the "
+            "pending-operation cascade and does not verify enforcement"
+        ),
     )
     vector_search_engine_factory: VectorSearchEngineFactory = Field(
         ...,
@@ -688,7 +697,9 @@ class SQLiteVectorStore(VectorStore):
             str(self._sqlalchemy_engine.url).replace("aiosqlite", "pysqlite")
         )
 
-        @event.listens_for(self._sqlalchemy_engine.sync_engine, "connect")
+        # Registered on the sync engine created just above, before it pools
+        # anything. The caller registers the same pragma on the async engine
+        # at its creation (see SQLiteVectorStoreParams.sqlalchemy_engine).
         @event.listens_for(self._sync_sqlalchemy_engine, "connect")
         def _enable_sqlite_foreign_keys(
             dbapi_connection: DBAPIConnection,

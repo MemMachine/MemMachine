@@ -810,6 +810,7 @@ class DatabaseManager:
             )
 
             engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+            enable_sqlite_foreign_keys(engine)
             self.vector_store_sql_engines[name] = engine
 
             try:
@@ -851,9 +852,11 @@ class DatabaseManager:
             from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
                 SQLiteVecVectorStore,
                 SQLiteVecVectorStoreParams,
+                load_sqlite_vec_extension,
             )
 
             engine = create_async_engine(f"sqlite+aiosqlite:///{conf.path}")
+            load_sqlite_vec_extension(engine)
             self.vector_store_sql_engines[name] = engine
 
             try:

@@ -424,17 +424,51 @@ class SQLiteVecVectorStoreCollection(VectorStoreCollection):
             )
 
 
+def load_sqlite_vec_extension(engine: AsyncEngine) -> None:
+    """Load the sqlite-vec extension on every connection of a SQLite engine.
+
+    Loadable extensions are per-connection state. Registering the loader
+    at engine creation, before any connection is pooled, is the only
+    placement that covers every connection: a listener added later
+    misses already-pooled connections, which then serve vec queries
+    without the extension, and mutating a live pool's listeners races
+    its event dispatch.
+    """
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _load_sqlite_vec(
+        dbapi_connection: DBAPIConnection,
+        _connection_record: ConnectionPoolEntry,
+    ) -> None:
+        async def _load_extension(
+            aio_connection: aiosqlite.Connection,
+        ) -> None:
+            await aio_connection.enable_load_extension(True)
+            await aio_connection.load_extension(sqlite_vec.loadable_path())
+            await aio_connection.enable_load_extension(False)
+
+        dbapi_connection.run_async(_load_extension)
+
+
 class SQLiteVecVectorStoreParams(BaseModel):
     """
     Parameters for constructing a SQLiteVecVectorStore.
 
     Attributes:
-        engine (AsyncEngine): Async SQLAlchemy engine (sqlite+aiosqlite).
+        engine (AsyncEngine):
+            Async SQLAlchemy engine (sqlite+aiosqlite). It must load the
+            sqlite-vec extension on every connection, registered at engine
+            creation (load_sqlite_vec_extension); the store does not verify
+            it.
     """
 
     engine: InstanceOf[AsyncEngine] = Field(
         ...,
-        description="Async SQLAlchemy engine (sqlite+aiosqlite)",
+        description=(
+            "Async SQLAlchemy engine (sqlite+aiosqlite). It must load the "
+            "sqlite-vec extension on every connection, registered at engine "
+            "creation (load_sqlite_vec_extension); the store does not verify it"
+        ),
     )
 
     @field_validator("engine")
@@ -470,20 +504,6 @@ class SQLiteVecVectorStore(VectorStore):
         self._engine = params.engine
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
         self._sa_metadata = MetaData()
-
-        @event.listens_for(self._engine.sync_engine, "connect")
-        def _load_sqlite_vec(
-            dbapi_connection: DBAPIConnection,
-            _connection_record: ConnectionPoolEntry,
-        ) -> None:
-            async def _load_extension(
-                aio_connection: aiosqlite.Connection,
-            ) -> None:
-                await aio_connection.enable_load_extension(True)
-                await aio_connection.load_extension(sqlite_vec.loadable_path())
-                await aio_connection.enable_load_extension(False)
-
-            dbapi_connection.run_async(_load_extension)
 
     @override
     async def startup(self) -> None:

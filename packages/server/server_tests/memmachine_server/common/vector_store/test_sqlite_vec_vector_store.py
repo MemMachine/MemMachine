@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.data_types import SimilarityMetric
@@ -27,6 +28,7 @@ from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
     SQLiteVecVectorStore,
     SQLiteVecVectorStoreCollection,
     SQLiteVecVectorStoreParams,
+    load_sqlite_vec_extension,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -61,6 +63,7 @@ def _make_record(
 async def store(tmp_path):
     db_path = tmp_path / "test.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    load_sqlite_vec_extension(engine)
     params = SQLiteVecVectorStoreParams(engine=engine)
     vector_store = SQLiteVecVectorStore(params)
     await vector_store.startup()
@@ -1011,3 +1014,40 @@ class TestFilterEdgeCases:
         assert r1.uuid in uuids
         assert r3.uuid in uuids
         assert r2.uuid not in uuids
+
+
+# ── Engine per-connection state ──
+
+
+@pytest.mark.asyncio
+async def test_extension_covers_connection_pooled_before_store_exists(tmp_path):
+    """A connection pooled before the store is built still serves vec.
+
+    The loader is registered at engine creation, so it covers every
+    connection the engine opens.
+    """
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
+    load_sqlite_vec_extension(engine)
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
+
+    store = SQLiteVecVectorStore(SQLiteVecVectorStoreParams(engine=engine))
+    await store.startup()
+    try:
+        coll = await store.open_or_create_collection(
+            namespace=NAMESPACE,
+            name=NAME,
+            config=VectorStoreCollectionConfig(
+                vector_dimensions=VECTOR_DIM,
+                similarity_metric=SimilarityMetric.COSINE,
+            ),
+        )
+        vector = _normalize([1.0, 0.0, 0.0])
+        record = _make_record(vector=vector)
+        await coll.upsert(records=[record])
+
+        results = await coll.query(query_vectors=[vector], limit=10)
+        assert [m.record.uuid for m in results[0].matches] == [record.uuid]
+    finally:
+        await store.shutdown()
+        await engine.dispose()
