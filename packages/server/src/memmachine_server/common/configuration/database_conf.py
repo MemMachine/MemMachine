@@ -229,7 +229,7 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
         return self.hosts
 
 
-# The retention floor: a write in flight when its collection is deleted lands
+# The retention floor: a write in flight when its partition is deleted lands
 # within its client's request timeout plus the server's own delay, seconds to
 # minutes, so the floor is the request timeout times this factor, plus these
 # extra seconds.
@@ -276,18 +276,18 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
     )
-    collection_registry: str = Field(
+    partition_registry: str = Field(
         ...,
         description=(
             "The relational database, a name under resources.databases, that "
-            "holds this store's collection registry."
+            "holds this store's partition registry."
         ),
     )
     tombstone_retention_seconds: int = Field(
         default=86400,
         gt=0,
         description=(
-            "Seconds a deleted collection's records are kept before its purge "
+            "Seconds a deleted partition's records are kept before its purge "
             "starts, so every write to Qdrant in flight at the deletion has landed "
             f"and is reclaimed; at least {_RETENTION_FLOOR_TIMEOUT_FACTOR} x "
             f"request_timeout_seconds + {_RETENTION_FLOOR_EXTRA_SECONDS}."
@@ -325,18 +325,18 @@ class MilvusConf(MetricsFactoryIdMixin, YamlSerializableMixin, WithValueFromEnv)
         default="",
         description="Optional Milvus database name.",
     )
-    collection_registry: str = Field(
+    partition_registry: str = Field(
         ...,
         description=(
             "The relational database, a name under resources.databases, that "
-            "holds this store's collection registry."
+            "holds this store's partition registry."
         ),
     )
     tombstone_retention_seconds: int = Field(
         default=86400,
         gt=0,
         description=(
-            "Seconds a deleted collection's records are kept before its purge "
+            "Seconds a deleted partition's records are kept before its purge "
             "starts, so every write to Milvus in flight at the deletion has landed "
             f"and is reclaimed; at least {_RETENTION_FLOOR_TIMEOUT_FACTOR} x "
             f"request_timeout_seconds + {_RETENTION_FLOOR_EXTRA_SECONDS}."
