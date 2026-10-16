@@ -68,10 +68,11 @@ class ResourceManager(Protocol):
     async def get_language_model(self, language_model_name: str) -> LanguageModel: ...
 
 
-def _with_has_set_ids(
+def with_has_set_ids(
     set_ids: Sequence[SetIdT],
     filter_expr: FilterExpr | None,
 ) -> FilterExpr:
+    """Restrict a filter to the given set ids, leaving it unchanged if none."""
     if len(set_ids) == 0:
         return filter_expr
 
@@ -148,6 +149,11 @@ class SemanticService:
         self._shutdown_event = asyncio.Event()
         self._debug_fail_loudly = params.debug_fail_loudly
 
+    @property
+    def semantic_storage(self) -> SemanticStorage:
+        """The storage this service reads and writes."""
+        return self._semantic_storage
+
     async def start(self) -> None:
         logger.info("Starting semantic memory services")
 
@@ -179,7 +185,7 @@ class SemanticService:
         load_citations: bool = False,
         filter_expr: FilterExpr | None = None,
     ) -> AsyncIterator[SemanticFeature]:
-        filter_expr = _with_has_set_ids(
+        filter_expr = with_has_set_ids(
             set_ids=[set_id],
             filter_expr=filter_expr,
         )
@@ -365,7 +371,7 @@ class SemanticService:
         logger.debug("Getting features for set ids %s", set_ids)
 
         async for feature in self._semantic_storage.get_feature_set(
-            filter_expr=_with_has_set_ids(
+            filter_expr=with_has_set_ids(
                 set_ids=set_ids,
                 filter_expr=filter_expr,
             ),
@@ -444,7 +450,7 @@ class SemanticService:
         logger.debug("Deleting filter feature set ids %s", set_ids)
 
         await self._semantic_storage.delete_feature_set(
-            filter_expr=_with_has_set_ids(
+            filter_expr=with_has_set_ids(
                 set_ids=set_ids,
                 filter_expr=filter_expr,
             ),
@@ -573,7 +579,7 @@ class SemanticService:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(
                 self._semantic_storage.delete_feature_set(
-                    filter_expr=_with_has_set_ids(set_ids=set_ids, filter_expr=None),
+                    filter_expr=with_has_set_ids(set_ids=set_ids, filter_expr=None),
                 )
             )
             tg.create_task(self._semantic_storage.reset_set_ids(set_ids=set_ids))

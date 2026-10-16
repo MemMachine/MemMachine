@@ -28,6 +28,7 @@ from memmachine_server.common.resource_manager.language_model_manager import (
 from memmachine_server.common.resource_manager.reranker_manager import RerankerManager
 from memmachine_server.common.resource_manager.semantic_manager import (
     SemanticResourceManager,
+    build_semantic_deletion_storage,
 )
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
@@ -52,6 +53,9 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
+)
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SemanticDeletionStorage,
 )
 
 logger = logging.getLogger(__name__)
@@ -357,6 +361,19 @@ class ResourceManagerImpl:
         """Return the semantic session manager."""
         semantic_manager = await self.get_semantic_manager()
         return await semantic_manager.get_semantic_session_manager()
+
+    async def get_semantic_deletion_storage(self) -> SemanticDeletionStorage | None:
+        """Return semantic storage for deletes only; None if never initialized.
+
+        A built semantic service's storage wins over the configuration: the
+        config API can change storage settings without rebuilding the service,
+        and deletion must follow the storage the process writes to.
+        """
+        if self._semantic_manager is not None:
+            storage = self._semantic_manager.built_semantic_storage()
+            if storage is not None:
+                return storage
+        return await build_semantic_deletion_storage(self._conf.semantic_memory, self)
 
     @staticmethod
     async def get_metrics_factory(name: str) -> MetricsFactory:

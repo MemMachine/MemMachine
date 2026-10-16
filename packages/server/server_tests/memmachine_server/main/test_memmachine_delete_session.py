@@ -13,6 +13,9 @@ import pytest
 
 from memmachine_server.common.episode_store import EpisodeEntry
 from memmachine_server.main.memmachine import EPISODE_DELETE_BATCH_SIZE, MemMachine
+from memmachine_server.semantic_memory.semantic_session_manager import (
+    SemanticSessionManager,
+)
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 
 pytestmark = pytest.mark.integration
@@ -42,8 +45,10 @@ async def _wait_for_history(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("semantic_enabled", [True, False])
 async def test_delete_session_clears_semantic_history_and_citations(
     memmachine: MemMachine,
+    semantic_enabled: bool,
 ) -> None:
     session_key = f"session-{uuid4()}"
     session_data = _SessionData(
@@ -83,6 +88,19 @@ async def test_delete_session_clears_semantic_history_and_citations(
         )
         await semantic_storage.add_citations(feature_id, [episode_id])
 
+        project_set_id = SemanticSessionManager.project_deletion_set_ids(
+            org_id=session_data.org_id, project_id=session_data.project_id
+        )[-1]
+        project_feature_id = await semantic_storage.add_feature(
+            set_id=project_set_id,
+            category_name="profile",
+            feature="topic",
+            value="pasta",
+            tag="facts",
+            embedding=np.array([1.0, 1.0]),
+        )
+        await semantic_storage.add_citations(project_feature_id, [episode_id])
+
         before_feature = await semantic_storage.get_feature(
             feature_id,
             load_citations=True,
@@ -91,6 +109,7 @@ async def test_delete_session_clears_semantic_history_and_citations(
         before_citations = before_feature.metadata.citations or []
         assert episode_id in before_citations
 
+        memmachine._conf.semantic_memory.enabled = semantic_enabled
         await memmachine.delete_session(session_data)
         await memmachine._deletion_queue.join()
         deleted = True
@@ -107,7 +126,9 @@ async def test_delete_session_clears_semantic_history_and_citations(
         assert after_feature is not None
         after_citations = after_feature.metadata.citations or []
         assert episode_id not in after_citations
+        assert await semantic_storage.get_feature(project_feature_id) is None
     finally:
+        memmachine._conf.semantic_memory.enabled = True
         if not deleted:
             remaining = await memmachine.get_session(session_key)
             if remaining is not None:
@@ -145,6 +166,7 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     conf = MagicMock()
     conf.episodic_memory.enabled = False
     conf.semantic_memory.enabled = False
+    conf.semantic_memory.storage_configured.return_value = False
 
     resources = MagicMock()
     resources.close = AsyncMock()
@@ -161,8 +183,8 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     session_manager.delete_session = AsyncMock()
     resources.get_episode_storage = AsyncMock(return_value=episode_store)
     resources.get_session_data_manager = AsyncMock(return_value=session_manager)
-    resources.get_semantic_service = AsyncMock(
-        side_effect=AssertionError("semantic service must stay unused")
+    resources.get_semantic_deletion_storage = AsyncMock(
+        side_effect=AssertionError("semantic storage must stay unused")
     )
 
     @asynccontextmanager
@@ -186,4 +208,4 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     # delete_episodes called once per non-empty batch
     assert delete_episodes_mock.call_count == 3
     session_manager.delete_session.assert_awaited_once_with(session_key="test-session")
-    resources.get_semantic_service.assert_not_awaited()
+    resources.get_semantic_deletion_storage.assert_not_awaited()

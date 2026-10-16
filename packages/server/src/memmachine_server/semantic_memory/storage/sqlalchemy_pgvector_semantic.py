@@ -1,5 +1,6 @@
 """SQLAlchemy-backed semantic storage implementation using pgvector."""
 
+import functools
 import logging
 from collections.abc import AsyncIterator, Mapping, MutableMapping, Sequence
 from datetime import UTC, datetime
@@ -10,6 +11,8 @@ from uuid import UUID
 import numpy as np
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from pgvector.sqlalchemy import Vector
 from pydantic import AwareDatetime, InstanceOf, TypeAdapter, ValidationError
 from sqlalchemy import (
@@ -24,6 +27,7 @@ from sqlalchemy import (
     Table,
     delete,
     insert,
+    inspect,
     select,
     text,
     union,
@@ -172,26 +176,65 @@ class SetIngestedHistory(BaseSemanticStorage):
     )
 
 
+_ALEMBIC_SCRIPT_LOCATION = Path(__file__).parent / "alembic_pg"
+
+
+def _alembic_config() -> Config:
+    config = Config()
+    config.set_main_option("script_location", str(_ALEMBIC_SCRIPT_LOCATION.resolve()))
+    config.set_main_option(
+        "version_locations", str((_ALEMBIC_SCRIPT_LOCATION / "versions").resolve())
+    )
+    config.set_main_option("path_separator", "os")
+    return config
+
+
 async def apply_alembic_migrations(engine: AsyncEngine) -> None:
     """Run Alembic migrations for the semantic storage tables."""
-    script_location = Path(__file__).parent / "alembic_pg"
-    versions_location = script_location / "versions"
-
     async with engine.begin() as conn:
         await conn.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS vector")
 
         def run_migrations(sync_conn: Connection) -> None:
-            config = Config()
-            script_path = str(script_location.resolve())
-            versions_path = str(versions_location.resolve())
-            config.set_main_option("script_location", script_path)
-            config.set_main_option("version_locations", versions_path)
-            config.set_main_option("path_separator", "os")
+            config = _alembic_config()
             config.set_main_option("sqlalchemy.url", str(sync_conn.engine.url))
             config.attributes["connection"] = sync_conn
             command.upgrade(config, "head")
 
         await conn.run_sync(run_migrations)
+
+
+# The last migration that moves existing semantic data. Deletion refuses stores
+# not yet past it, since its queries would miss data still in the old place.
+# Raise it whenever a new migration moves data.
+_LAST_DATA_MIGRATION = "b65f7f4a9d2c"
+
+
+@functools.cache
+def _revisions_safe_to_delete_from() -> frozenset[str]:
+    script = ScriptDirectory.from_config(_alembic_config())
+    return frozenset(
+        rev.revision for rev in script.iterate_revisions("heads", _LAST_DATA_MIGRATION)
+    ) | {_LAST_DATA_MIGRATION}
+
+
+async def semantic_schema_supports_deletion(engine: AsyncEngine) -> bool | None:
+    """Whether the semantic tables can be deleted from; None if there are none.
+
+    Reads only, never migrates. A store whose data migrations have not run may
+    hold data under the legacy `prof` table or legacy set ids, which queries
+    written for the current schema would silently miss. A revision this code
+    does not know comes from a newer version, whose schema it cannot vouch for.
+    """
+    safe = _revisions_safe_to_delete_from()
+
+    def read(sync_conn: Connection) -> bool | None:
+        inspector = inspect(sync_conn)
+        if not (inspector.has_table("feature") or inspector.has_table("prof")):
+            return None
+        return MigrationContext.configure(sync_conn).get_current_revision() in safe
+
+    async with engine.connect() as conn:
+        return await conn.run_sync(read)
 
 
 class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):

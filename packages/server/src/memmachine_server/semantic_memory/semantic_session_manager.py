@@ -769,6 +769,23 @@ class SemanticSessionManager:
                 tags=[],
             )
 
+    @classmethod
+    def project_deletion_set_ids(
+        cls,
+        *,
+        org_id: str,
+        project_id: str,
+    ) -> list[SetIdT]:
+        """Set ids a project deletion removes, computed from the ids alone."""
+        return [
+            default.id
+            for default in cls._generate_default_sets(
+                org_id=org_id,
+                project_id=project_id,
+                producer_id=None,
+            )
+        ]
+
     async def disable_category(
         self,
         *,
