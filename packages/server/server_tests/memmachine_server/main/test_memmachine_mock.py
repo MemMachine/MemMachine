@@ -32,8 +32,10 @@ from memmachine_server.common.errors import (
     ResourceNotFoundError,
     SessionNotFoundError,
 )
-from memmachine_server.common.filter.filter_parser import And as FilterAnd
-from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -1104,11 +1106,7 @@ async def test_count_episodes_filters_by_session_only(
 
     assert result == 7
     episode_storage.get_episode_messages_count.assert_awaited_once_with(
-        filter_expr=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        )
+        filter_expr=Equals(field="session_key", value=session.session_key)
     )
 
 
@@ -1118,7 +1116,7 @@ async def test_count_episodes_combines_search_filter(
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("session-with-filter")
-    custom_filter = FilterComparison(field="topic", op="=", value="alpha")
+    custom_filter = Equals(field="topic", value="alpha")
     parsed_specs: list[str] = []
 
     def _fake_parse(spec: str | None):
@@ -1141,13 +1139,8 @@ async def test_count_episodes_combines_search_filter(
     await_args = episode_storage.get_episode_messages_count.await_args
     assert await_args is not None
     combined_filter = await_args.kwargs["filter_expr"]
-    assert combined_filter == FilterAnd(
-        left=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        ),
-        right=custom_filter,
+    assert combined_filter == And(
+        (Equals(field="session_key", value=session.session_key), custom_filter)
     )
 
 

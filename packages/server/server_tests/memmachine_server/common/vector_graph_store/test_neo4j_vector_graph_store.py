@@ -8,24 +8,14 @@ import pytest_asyncio
 from neo4j import AsyncGraphDatabase
 from testcontainers.neo4j import Neo4jContainer
 
-from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
 )
 from memmachine_server.common.metrics_factory.prometheus_metrics_factory import (
     PrometheusMetricsFactory,
@@ -163,10 +153,7 @@ async def test_add_nodes(neo4j_driver, vector_graph_store):
                 "none_value": None,
             },
             embeddings={
-                "embedding_name": (
-                    [0.1, 0.2, 0.3],
-                    SimilarityMetric.COSINE,
-                ),
+                "embedding_name": [0.1, 0.2, 0.3],
             },
         ),
     ]
@@ -200,10 +187,7 @@ async def test_add_edges(neo4j_driver, vector_graph_store):
                 "none_value": None,
             },
             embeddings={
-                "embedding_name": (
-                    [0.1, 0.2, 0.3],
-                    SimilarityMetric.COSINE,
-                ),
+                "embedding_name": [0.1, 0.2, 0.3],
             },
         ),
     ]
@@ -243,10 +227,7 @@ async def test_add_edges(neo4j_driver, vector_graph_store):
             target_uid=node3_uid,
             properties={"description": "Node1 to Node3"},
             embeddings={
-                "embedding_name": (
-                    [0.4, 0.5, 0.6],
-                    SimilarityMetric.DOT,
-                ),
+                "embedding_name": [0.4, 0.5, 0.6],
             },
         ),
     ]
@@ -291,15 +272,12 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
             properties={
                 "name": "Node1",
             },
+            # embedding2 deliberately disagrees with embedding1 about which
+            # node the query below is nearest, so searching by name has to
+            # pick the right one to get the right answer.
             embeddings={
-                "embedding1": (
-                    [1000.0, 0.0],
-                    SimilarityMetric.COSINE,
-                ),
-                "embedding2": (
-                    [1000.0, 0.0],
-                    SimilarityMetric.EUCLIDEAN,
-                ),
+                "embedding1": [1000.0, 0.0],
+                "embedding2": [10.0, 10.0],
             },
         ),
         Node(
@@ -309,14 +287,8 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
                 "include?": "yes",
             },
             embeddings={
-                "embedding1": (
-                    [10.0, 10.0],
-                    SimilarityMetric.COSINE,
-                ),
-                "embedding2": (
-                    [10.0, 10.0],
-                    SimilarityMetric.EUCLIDEAN,
-                ),
+                "embedding1": [10.0, 10.0],
+                "embedding2": [1000.0, 0.0],
             },
         ),
         Node(
@@ -326,14 +298,8 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
                 "include?": "no",
             },
             embeddings={
-                "embedding1": (
-                    [-100.0, 0.0],
-                    SimilarityMetric.COSINE,
-                ),
-                "embedding2": (
-                    [-100.0, 0.0],
-                    SimilarityMetric.EUCLIDEAN,
-                ),
+                "embedding1": [-100.0, 0.0],
+                "embedding2": [-100.0, 0.0],
             },
         ),
         Node(
@@ -343,14 +309,8 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
                 "include?": "no",
             },
             embeddings={
-                "embedding1": (
-                    [-100.0, -1.0],
-                    SimilarityMetric.COSINE,
-                ),
-                "embedding2": (
-                    [-100.0, -1.0],
-                    SimilarityMetric.EUCLIDEAN,
-                ),
+                "embedding1": [-100.0, -1.0],
+                "embedding2": [-100.0, -1.0],
             },
         ),
         Node(
@@ -360,14 +320,8 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
                 "include?": "no",
             },
             embeddings={
-                "embedding1": (
-                    [-100.0, -2.0],
-                    SimilarityMetric.COSINE,
-                ),
-                "embedding2": (
-                    [-100.0, -2.0],
-                    SimilarityMetric.EUCLIDEAN,
-                ),
+                "embedding1": [-100.0, -2.0],
+                "embedding2": [-100.0, -2.0],
             },
         ),
         Node(
@@ -377,14 +331,8 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
                 "include?": "no",
             },
             embeddings={
-                "embedding1": (
-                    [-100.0, -3.0],
-                    SimilarityMetric.COSINE,
-                ),
-                "embedding2": (
-                    [-100.0, -3.0],
-                    SimilarityMetric.EUCLIDEAN,
-                ),
+                "embedding1": [-100.0, -3.0],
+                "embedding2": [-100.0, -3.0],
             },
         ),
     ]
@@ -395,7 +343,6 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         collection="Entity",
         query_embedding=[1.0, 0.0],
         embedding_name="embedding1",
-        similarity_metric=SimilarityMetric.COSINE,
         limit=5,
     )
     assert 0 < len(results) <= 5
@@ -404,7 +351,6 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         collection="Entity",
         query_embedding=[1.0, 0.0],
         embedding_name="embedding1",
-        similarity_metric=SimilarityMetric.COSINE,
         limit=5,
     )
     assert len(results) == 5
@@ -414,13 +360,8 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         collection="Entity",
         query_embedding=[1.0, 0.0],
         embedding_name="embedding1",
-        similarity_metric=SimilarityMetric.COSINE,
         limit=5,
-        property_filter=FilterComparison(
-            field="include?",
-            op="=",
-            value="yes",
-        ),
+        property_filter=Equals(field="include?", value="yes"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Node2"
@@ -429,17 +370,14 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         collection="Entity",
         query_embedding=[1.0, 0.0],
         embedding_name="embedding1",
-        similarity_metric=SimilarityMetric.COSINE,
         limit=5,
-        property_filter=FilterOr(
-            left=FilterComparison(
-                field="include?",
-                op="=",
-                value="yes",
-            ),
-            right=FilterIsNull(
-                field="include?",
-            ),
+        property_filter=Or(
+            (
+                Equals(field="include?", value="yes"),
+                IsNull(
+                    field="include?",
+                ),
+            )
         ),
     )
     assert len(results) == 2
@@ -449,7 +387,6 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         collection="Entity",
         query_embedding=[1.0, 0.0],
         embedding_name="embedding2",
-        similarity_metric=SimilarityMetric.EUCLIDEAN,
         limit=5,
     )
     assert len(results) == 5
@@ -459,13 +396,8 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         collection="Entity",
         query_embedding=[1.0, 0.0],
         embedding_name="embedding2",
-        similarity_metric=SimilarityMetric.EUCLIDEAN,
         limit=5,
-        property_filter=FilterComparison(
-            field="include?",
-            op="=",
-            value="yes",
-        ),
+        property_filter=Equals(field="include?", value="yes"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Node2"
@@ -474,7 +406,6 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         collection="Entity",
         query_embedding=[1.0, 0.0],
         embedding_name="embedding1",
-        similarity_metric=SimilarityMetric.COSINE,
         limit=5,
     )
     assert 0 < len(results) <= 5
@@ -483,7 +414,6 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         collection="Entity",
         query_embedding=[1.0, 0.0],
         embedding_name="embedding2",
-        similarity_metric=SimilarityMetric.EUCLIDEAN,
         limit=5,
     )
     assert 0 < len(results) <= 5
@@ -599,11 +529,7 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node1_uid,
-        node_property_filter=FilterComparison(
-            field="extra!",
-            op="=",
-            value="something",
-        ),
+        node_property_filter=Equals(field="extra!", value="something"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Node2"
@@ -635,11 +561,7 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node3_uid,
-        node_property_filter=FilterComparison(
-            field="marker?",
-            op="=",
-            value="A",
-        ),
+        node_property_filter=Equals(field="marker?", value="A"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Node3"
@@ -649,15 +571,13 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node3_uid,
-        node_property_filter=FilterOr(
-            left=FilterComparison(
-                field="marker?",
-                op="=",
-                value="A",
-            ),
-            right=FilterIsNull(
-                field="marker?",
-            ),
+        node_property_filter=Or(
+            (
+                Equals(field="marker?", value="A"),
+                IsNull(
+                    field="marker?",
+                ),
+            )
         ),
     )
     assert len(results) == 2
@@ -667,11 +587,7 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node3_uid,
-        edge_property_filter=FilterComparison(
-            field="extra",
-            op="=",
-            value=1,
-        ),
+        edge_property_filter=Equals(field="extra", value=1),
     )
     assert len(results) == 1
 
@@ -680,15 +596,13 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node3_uid,
-        edge_property_filter=FilterOr(
-            left=FilterComparison(
-                field="extra",
-                op="=",
-                value=1,
-            ),
-            right=FilterIsNull(
-                field="extra",
-            ),
+        edge_property_filter=Or(
+            (
+                Equals(field="extra", value=1),
+                IsNull(
+                    field="extra",
+                ),
+            )
         ),
     )
     assert len(results) == 2
@@ -779,11 +693,7 @@ async def test_search_directional_nodes(vector_graph_store):
         order_ascending=[True],
         include_equal_start=True,
         limit=2,
-        property_filter=FilterComparison(
-            field="include?",
-            op="=",
-            value="yes",
-        ),
+        property_filter=Equals(field="include?", value="yes"),
     )
     assert len(results) == 2
     assert results[0].properties["name"] == "Event2"
@@ -1153,7 +1063,7 @@ async def test_search_matching_nodes(vector_graph_store):
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Robot",
-        property_filter=FilterIsNull(
+        property_filter=IsNull(
             field="none_value",
         ),
     )
@@ -1161,79 +1071,53 @@ async def test_search_matching_nodes(vector_graph_store):
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Robot",
-        property_filter=FilterComparison(
-            field="none_value",
-            op="=",
-            value="something",
-        ),
+        property_filter=Equals(field="none_value", value="something"),
     )
     assert len(results) == 0
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="city",
-            op="=",
-            value="New York",
-        ),
+        property_filter=Equals(field="city", value="New York"),
     )
     assert len(results) == 2
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterAnd(
-            left=FilterComparison(
-                field="city",
-                op="=",
-                value="San Francisco",
-            ),
-            right=FilterComparison(
-                field="age!with$pecialchars",
-                op="=",
-                value=20,
-            ),
+        property_filter=And(
+            (
+                Equals(field="city", value="San Francisco"),
+                Equals(field="age!with$pecialchars", value=20),
+            )
         ),
     )
     assert len(results) == 0
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterAnd(
-            left=FilterComparison(
-                field="city",
-                op="=",
-                value="New York",
-            ),
-            right=FilterComparison(
-                field="age!with$pecialchars",
-                op="=",
-                value=30,
-            ),
+        property_filter=And(
+            (
+                Equals(field="city", value="New York"),
+                Equals(field="age!with$pecialchars", value=30),
+            )
         ),
     )
     assert len(results) == 1
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age!with$pecialchars",
-            op="=",
-            value=30,
-        ),
+        property_filter=Equals(field="age!with$pecialchars", value=30),
     )
     assert len(results) == 2
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterOr(
-            left=FilterComparison(
-                field="age!with$pecialchars",
-                op="=",
-                value=30,
-            ),
-            right=FilterIsNull(
-                field="age!with$pecialchars",
-            ),
+        property_filter=Or(
+            (
+                Equals(field="age!with$pecialchars", value=30),
+                IsNull(
+                    field="age!with$pecialchars",
+                ),
+            )
         ),
     )
     assert len(results) == 3
@@ -1241,26 +1125,20 @@ async def test_search_matching_nodes(vector_graph_store):
     # Should only include Alice.
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="title",
-            op="=",
-            value="Engineer",
-        ),
+        property_filter=Equals(field="title", value="Engineer"),
     )
     assert len(results) == 1
 
     # Should include Alice and all Person nodes without the "title" property.
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterOr(
-            left=FilterComparison(
-                field="title",
-                op="=",
-                value="Engineer",
-            ),
-            right=FilterIsNull(
-                field="title",
-            ),
+        property_filter=Or(
+            (
+                Equals(field="title", value="Engineer"),
+                IsNull(
+                    field="title",
+                ),
+            )
         ),
     )
     assert len(results) == 3
@@ -1307,64 +1185,44 @@ async def test_search_matching_nodes_extended_filters(vector_graph_store):
     # != on city
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="city",
-            op="!=",
-            value="New York",
-        ),
+        property_filter=Not(Equals(field="city", value="New York")),
     )
     assert len(results) == 2
 
     # > on age
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age",
-            op=">",
-            value=25,
-        ),
+        property_filter=Ordering(field="age", op=">", value=25),
     )
     assert len(results) == 2
 
     # < on age
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age",
-            op="<",
-            value=30,
-        ),
+        property_filter=Ordering(field="age", op="<", value=30),
     )
     assert len(results) == 1
 
     # >= on age
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age",
-            op=">=",
-            value=30,
-        ),
+        property_filter=Ordering(field="age", op=">=", value=30),
     )
     assert len(results) == 2
 
     # <= on age
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age",
-            op="<=",
-            value=25,
-        ),
+        property_filter=Ordering(field="age", op="<=", value=25),
     )
     assert len(results) == 1
 
     # In on city
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterIn(
+        property_filter=In(
             field="city",
-            values=["San Francisco", "Los Angeles"],
+            values=("San Francisco", "Los Angeles"),
         ),
     )
     assert len(results) == 2
@@ -1372,13 +1230,7 @@ async def test_search_matching_nodes_extended_filters(vector_graph_store):
     # Not
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterNot(
-            expr=FilterComparison(
-                field="city",
-                op="=",
-                value="New York",
-            )
-        ),
+        property_filter=Not(Equals(field="city", value="New York")),
     )
     assert len(results) == 2
 
@@ -1635,60 +1487,51 @@ async def test__create_vector_index_if_not_exists(
                 Neo4jVectorGraphStore._sanitize_name(collection_or_relation_name),
                 Neo4jVectorGraphStore._sanitize_name(property_name),
                 dimensions=dimensions,
-                similarity_metric=similarity_metric,
             ),
             vector_graph_store_indexing._create_vector_index_if_not_exists(
                 EntityType.NODE,
                 Neo4jVectorGraphStore._sanitize_name(collection_or_relation_name),
                 Neo4jVectorGraphStore._sanitize_name(other_property_name),
                 dimensions=dimensions,
-                similarity_metric=similarity_metric,
             ),
             vector_graph_store_indexing._create_vector_index_if_not_exists(
                 EntityType.NODE,
                 Neo4jVectorGraphStore._sanitize_name(other_collection_or_relation_name),
                 Neo4jVectorGraphStore._sanitize_name(property_name),
                 dimensions=dimensions,
-                similarity_metric=similarity_metric,
             ),
             vector_graph_store_indexing._create_vector_index_if_not_exists(
                 EntityType.NODE,
                 Neo4jVectorGraphStore._sanitize_name(other_collection_or_relation_name),
                 Neo4jVectorGraphStore._sanitize_name(other_property_name),
                 dimensions=dimensions,
-                similarity_metric=similarity_metric,
             ),
             vector_graph_store_indexing._create_vector_index_if_not_exists(
                 EntityType.EDGE,
                 Neo4jVectorGraphStore._sanitize_name(collection_or_relation_name),
                 Neo4jVectorGraphStore._sanitize_name(property_name),
                 dimensions=dimensions,
-                similarity_metric=similarity_metric,
             ),
             vector_graph_store_indexing._create_vector_index_if_not_exists(
                 EntityType.EDGE,
                 Neo4jVectorGraphStore._sanitize_name(collection_or_relation_name),
                 Neo4jVectorGraphStore._sanitize_name(other_property_name),
                 dimensions=dimensions,
-                similarity_metric=similarity_metric,
             ),
             vector_graph_store_indexing._create_vector_index_if_not_exists(
                 EntityType.EDGE,
                 Neo4jVectorGraphStore._sanitize_name(other_collection_or_relation_name),
                 Neo4jVectorGraphStore._sanitize_name(property_name),
                 dimensions=dimensions,
-                similarity_metric=similarity_metric,
             ),
             vector_graph_store_indexing._create_vector_index_if_not_exists(
                 EntityType.EDGE,
                 Neo4jVectorGraphStore._sanitize_name(other_collection_or_relation_name),
                 Neo4jVectorGraphStore._sanitize_name(other_property_name),
                 dimensions=dimensions,
-                similarity_metric=similarity_metric,
             ),
         ]
         for dimensions in [1, 10]
-        for similarity_metric in [SimilarityMetric.COSINE, SimilarityMetric.EUCLIDEAN]
         for _ in range(2000)
     ]
 
@@ -1805,10 +1648,7 @@ async def test__nodes_from_neo4j_nodes(neo4j_driver, vector_graph_store):
             uid=str(uuid4()),
             properties={"name": "Node3", "time": datetime.now(tz=UTC)},
             embeddings={
-                "embedding_name": (
-                    [0.1, 0.2, 0.3],
-                    SimilarityMetric.COSINE,
-                ),
+                "embedding_name": [0.1, 0.2, 0.3],
             },
         ),
     ]
