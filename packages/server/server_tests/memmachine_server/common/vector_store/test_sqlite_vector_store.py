@@ -524,17 +524,53 @@ class TestFilters:
         assert len(uuids) == 1
 
     @pytest.mark.asyncio
-    async def test_datetime_timezone_roundtrip(self, collection):
+    @pytest.mark.parametrize(
+        "key", ["created_at", "seen"], ids=["declared", "undeclared"]
+    )
+    async def test_datetime_timezone_roundtrip(self, collection, key):
         """Original timezone is preserved through storage."""
         v1 = _normalize([1.0, 0.0, 0.0])
         est = timezone(timedelta(hours=-5))
         dt = datetime(2024, 6, 15, 7, 0, 0, tzinfo=est)
-        r1 = _make_record(vector=v1, properties={"name": "tz", "created_at": dt})
+        r1 = _make_record(vector=v1, properties={"name": "tz", key: dt})
         await collection.upsert(records=[r1])
 
-        got = (await _stored(collection))[r1.uuid]["created_at"]
+        got = (await _stored(collection))[r1.uuid][key]
         assert got == dt
         assert got.utcoffset() == timedelta(hours=-5)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "key", ["created_at", "seen"], ids=["declared", "undeclared"]
+    )
+    async def test_a_datetime_matches_a_filter_at_another_offset_by_its_instant(
+        self, collection, key
+    ):
+        """Equality and ordering compare instants, whatever either offset."""
+        written = datetime(
+            2024, 6, 15, 17, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))
+        )
+        record = _make_record(
+            vector=_normalize([1.0, 0.0, 0.0]), properties={key: written}
+        )
+        await collection.upsert(records=[record])
+
+        minus8 = timezone(timedelta(hours=-8))
+        same_instant = written.astimezone(minus8)
+        # A later instant whose wall-clock time is earlier, and an earlier
+        # instant whose wall-clock time is later.
+        later = datetime(2024, 6, 15, 9, 0, tzinfo=minus8)
+        earlier = datetime(2024, 6, 15, 20, 0, tzinfo=timezone(timedelta(hours=14)))
+        for op, value in [
+            ("=", same_instant),
+            ("<=", same_instant),
+            (">=", same_instant),
+            ("<", later),
+            (">", earlier),
+        ]:
+            assert await self._query(collection, record.vector, key, op, value) == {
+                record.uuid
+            }, op
 
     # ── In / And / Or / Not ──
 
@@ -890,6 +926,31 @@ class TestInputValidation:
             await collection.upsert(records=[_make_record(vector=vector)])
         with pytest.raises(ValueError, match="dimensions"):
             await collection.query(query_vectors=[vector], limit=1)
+
+    @pytest.mark.asyncio
+    async def test_a_batch_repeating_a_record_uuid_is_refused(self, collection):
+        other = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        first = _make_record(vector=_normalize([1.0, 0.1, 0.0]), properties={"age": 1})
+        repeated = _make_record(
+            uuid=first.uuid, vector=_normalize([1.0, 0.2, 0.0]), properties={"age": 2}
+        )
+        with pytest.raises(ValueError, match=str(first.uuid)):
+            await collection.upsert(records=[other, first, repeated])
+        assert await _stored(collection) == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("key", ["score", "rating"], ids=["declared", "undeclared"])
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    async def test_a_property_value_that_is_not_finite_is_refused(
+        self, collection, key, value
+    ):
+        finite = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={key: 1.0})
+        not_finite = _make_record(
+            vector=_normalize([1.0, 0.1, 0.0]), properties={key: value}
+        )
+        with pytest.raises(ValueError, match=f"{key!r} is not finite"):
+            await collection.upsert(records=[finite, not_finite])
+        assert await _stored(collection) == {}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("coordinate", [math.nan, math.inf], ids=["nan", "inf"])

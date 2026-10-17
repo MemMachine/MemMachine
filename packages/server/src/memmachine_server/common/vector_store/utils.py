@@ -2,7 +2,8 @@
 
 import math
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from uuid import UUID
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
@@ -67,6 +68,22 @@ def require_declared_types(
                 f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared_type]}, "
                 f"got {type(value).__name__} {value!r}."
             )
+
+
+def require_finite_properties(properties: Mapping[str, PropertyValue]) -> None:
+    """Raise ValueError if a float property value is not finite."""
+    for key, value in properties.items():
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(f"Property {key!r} is not finite: {value}")
+
+
+def require_distinct_record_uuids(record_uuids: Iterable[UUID]) -> None:
+    """Raise ValueError if a record UUID occurs more than once."""
+    seen: set[UUID] = set()
+    for record_uuid in record_uuids:
+        if record_uuid in seen:
+            raise ValueError(f"Record UUID {record_uuid} occurs more than once")
+        seen.add(record_uuid)
 
 
 def require_valid_query_vector(query_vector: Sequence[float], dimensions: int) -> None:

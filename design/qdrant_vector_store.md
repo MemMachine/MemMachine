@@ -24,6 +24,11 @@ registry](vector_store_collection_registry.md),
   handle's deletes name its points' ids instead (see [Point ids](#point-ids)).
 - **Declared properties:** a payload index per property of the collection's
   schema, typed by the property's type.
+- **Datetimes:** a datetime property's key holds its instant, written in UTC:
+  a filter compares only instants, a search answers with record UUIDs and
+  scores, and a datetime written to Qdrant keeps its offset only to the
+  minute, over REST and gRPC alike (measured on 1.19.1), which would move one
+  written at an offset with a seconds component.
 - **Creation converges:** the collection and each payload index are created
   under separate already-exists guards, so a creation that failed between them
   is completed by the next.
