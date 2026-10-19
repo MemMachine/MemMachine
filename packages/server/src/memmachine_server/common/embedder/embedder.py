@@ -4,8 +4,6 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any
 
-from memmachine_server.common.data_types import SimilarityMetric
-
 
 class Embedder(ABC):
     """Abstract base class for an embedder."""
@@ -84,10 +82,4 @@ class Embedder(ABC):
     @abstractmethod
     def dimensions(self) -> int:
         """Return the embedding dimensionality."""
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def similarity_metric(self) -> SimilarityMetric:
-        """Return the similarity metric used by this embedder."""
         raise NotImplementedError

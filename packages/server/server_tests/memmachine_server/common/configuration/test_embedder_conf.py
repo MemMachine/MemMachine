@@ -9,7 +9,6 @@ from memmachine_server.common.configuration.embedder_conf import (
     AmazonBedrockEmbedderConf,
     OpenAIEmbedderConf,
 )
-from memmachine_server.common.data_types import SimilarityMetric
 
 
 @pytest.fixture
@@ -32,7 +31,6 @@ def aws_embedder_conf() -> dict[str, Any]:
             "aws_access_key_id": "key-id",
             "aws_secret_access_key": "secret-key",
             "model_id": "amazon.titan-embed-text-v2:0",
-            "similarity_metric": "cosine",
         },
     }
 
@@ -77,7 +75,6 @@ def test_valid_aws_bedrock_embedder_config(aws_embedder_conf):
     assert conf.aws_access_key_id == SecretStr("key-id")
     assert conf.aws_secret_access_key == SecretStr("secret-key")
     assert conf.model_id == "amazon.titan-embed-text-v2:0"
-    assert conf.similarity_metric == SimilarityMetric.COSINE
 
 
 def test_valid_ollama_embedder_config(ollama_embedder_conf):
