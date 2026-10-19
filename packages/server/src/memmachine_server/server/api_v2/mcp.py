@@ -271,7 +271,7 @@ class ParamsContextMiddleware:
         self._user_header_name = user_header_name
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Extract the org_id, proj_id and user id from the request headers and stash in context."""
+        """Extract the org_id, proj_id, and user id from the request headers and stash in context."""
         org_id: str = ""
         proj_id: str = ""
         user_id: str = ""

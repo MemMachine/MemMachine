@@ -6,7 +6,7 @@ fully instrumented but never given a factory therefore looks identical to one
 that was never instrumented at all, and the only way to notice is to go looking
 for a metric that should exist.
 
-That is not hypothetical: the Neo4j store, the episode store and the session
+That is not hypothetical: the Neo4j store, the episode store, and the session
 store each shipped instrumented and unwired, which is why database latency
 appeared to be unmeasurable. These tests pin the wiring for the components that
 cannot be reached from a default deployment — the event backend's segment store
