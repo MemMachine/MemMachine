@@ -2,8 +2,10 @@
 
 import math
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from uuid import UUID, uuid4
 
+import psutil
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select, update
@@ -1483,3 +1485,40 @@ class TestIndexFileDurability:
 
         await store2.shutdown()
         await engine2.dispose()
+
+
+# ── Shutdown ──
+
+
+class TestShutdown:
+    """Shutdown releases every connection the store opened."""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_closes_filter_connections(self, tmp_path):
+        """No connection stays open on the database file after shutdown.
+
+        Filtered queries check candidates on a connection the store opens
+        itself, which disposing the caller's engine does not close.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine = await _fresh_store(db_path, tmp_path)
+
+        coll = await store.open_or_create_collection(
+            namespace=NAMESPACE, name=NAME, config=CONFIG
+        )
+        record = _make_record(
+            vector=_normalize([1.0, 0.0, 0.0]), properties={"name": "alice"}
+        )
+        await coll.upsert(records=[record])
+        results = await coll.query(
+            query_vectors=[_normalize([1.0, 0.0, 0.0])],
+            limit=10,
+            property_filter=Comparison(field="name", op="=", value="alice"),
+        )
+        assert [m.record.uuid for m in results[0].matches] == [record.uuid]
+
+        await store.shutdown()
+        await engine.dispose()
+
+        open_paths = {Path(f.path) for f in psutil.Process().open_files()}
+        assert db_path not in open_paths

@@ -787,6 +787,7 @@ class SQLiteVectorStore(VectorStore):
     @override
     async def shutdown(self) -> None:
         self._require_started()
+        self._sync_sqlalchemy_engine.dispose()
         if self._index_directory is not None:
             for (namespace, name), search_engine in self._search_engines.items():
                 path = self._index_path(namespace, name)
