@@ -111,7 +111,7 @@
             "type": "object"
           }
         ],
-        "description": "Specification model for creating a new project.\n\nThe project ID must be unique for the authenticated user.\n",
+        "description": "Specification model for creating a new project.\n\nA project ID names one project for the authenticated user. Creating an\nexisting one again succeeds only when the configuration matches, as\ncreate_project describes.\n",
         "title": "CreateProjectSpec"
       },
       "DeleteEpisodicMemorySpec": {
@@ -122,10 +122,10 @@
           {
             "properties": {
               "episodic_ids": {
-                "description": "A list of unique IDs of episodic memories to delete.\n",
+                "description": "A list of unique IDs of episodic memories to delete.\nEpisodic memory IDs are UUIDs. An all-digit ID issued before the\nswitch to UUIDs is still accepted and mapped to the UUID that\nmemory now has.\n",
                 "example": [
-                  "123",
-                  "345"
+                  "6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e",
+                  "0b8e7a52-91d4-4f3a-a6c2-5d9e1f7b3c08"
                 ],
                 "items": {
                   "type": "string"
@@ -232,6 +232,12 @@
             "description": "Role of the producer (e.g., user/assistant/system).",
             "title": "Producer Role",
             "type": "string"
+          },
+          "sequence_num": {
+            "default": 0,
+            "description": "Sequence number within the session.",
+            "title": "Sequence Num",
+            "type": "integer"
           },
           "session_key": {
             "description": "Session key associated with the episode.",
@@ -1060,36 +1066,9 @@
         }
       }
     },
-    "/v2/metrics": {
-      "get": {
-        "description": "Expose Prometheus metrics.",
-        "operationId": "Metrics",
-        "responses": {
-          "200": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Prometheus metrics"
-          },
-          "default": {
-            "$ref": "#/components/responses/UnexpectedError"
-          }
-        },
-        "security": [],
-        "summary": "Metrics",
-        "tags": [
-          "Metrics"
-        ],
-        "x-internal": true
-      }
-    },
     "/v2/projects": {
       "post": {
-        "description": "Create a new project.\n\nThis endpoint creates a new project with the given identifier and\nconfiguration. The `project_id` follows the rules: no slashes; only\nletters, numbers, underscores, hyphens, colon, and Unicode characters.\n\nEach project acts as an isolated memory namespace. All memories (episodes)\ninserted into a project belong exclusively to that project. Queries,\nlistings, and any background operations such as memory summarization or\nknowledge extraction only access data within the same project. No\ncross-project memory access is allowed.\n\nIf a project with the same ID already exists, the request will fail\nwith an error.\n\nReturns the fully resolved project record, including configuration defaults\napplied by the system.\n",
+        "description": "Create a new project.\n\nThis endpoint creates a new project with the given identifier and\nconfiguration. The `project_id` follows the rules: no slashes; only\nletters, numbers, underscores, hyphens, colon, and Unicode characters.\n\nEach project acts as an isolated memory namespace. All memories (episodes)\ninserted into a project belong exclusively to that project. Queries,\nlistings, and any background operations such as memory summarization or\nknowledge extraction only access data within the same project. No\ncross-project memory access is allowed.\n\nIf a project with the same ID already exists, the request succeeds when\nits configuration matches the existing project's. That project is left\nunchanged, its description included, although the response repeats the\ndescription the request sent. Otherwise the request fails with an error.\nCreating an ID again while that project's deletion is still pending can\nfail with a server error (MemMachine/MemMachine#1769); a deletion can stay\npending until the memory service restarts (MemMachine/MemMachine#1577).\n\nReturns the fully resolved project record, including configuration defaults\napplied by the system.\n",
         "operationId": "CreateProject",
         "requestBody": {
           "content": {
