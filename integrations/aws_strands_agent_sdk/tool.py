@@ -155,7 +155,9 @@ class MemMachineTools:
             query: Search query string
             user_id: User ID override (uses instance user_id if not provided)
             limit: Maximum number of results (default: 5, max: 20)
-            score_threshold: Minimum score to include in results
+            score_threshold: Score cutoff for results, applied in the direction
+                of the similarity metric (a floor for higher-is-better metrics,
+                a ceiling for distances)
 
         Returns:
             Dictionary with status, results, and summary fields

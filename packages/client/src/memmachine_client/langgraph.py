@@ -233,7 +233,9 @@ class MemMachineTools:
             group_id: Group ID (overrides default, stored in metadata)
             session_id: Session ID (overrides default, stored in metadata)
             limit: Maximum number of results to return (default: 20)
-            score_threshold: Minimum score to include in results
+            score_threshold: Score cutoff for results, applied in the direction
+                of the similarity metric (a floor for higher-is-better metrics,
+                a ceiling for distances)
             filter_dict: Additional metadata filters for the search. User metadata keys must be prefixed with `m.` / `metadata.`. Unknown or misspelled fields return a 400 error.
             filter: Optional raw filter string passed through to the Python client
 

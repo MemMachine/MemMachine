@@ -61,7 +61,7 @@ results = client.memories.search(
 | `query`       | `str`    | **Required** | The natural language search query.                           |
 | `limit`       | `int`    | `10`         | Maximum number of results to return.                         |
 | `expand_context` | `int` | `0`          | Number of neighboring episodic entries to include around each long-term match. |
-| `score_threshold` | `float` | `None`     | Minimum episodic retrieval score to keep. Not supported when `agent_mode=True`. |
+| `score_threshold` | `float` | `None`     | Episodic retrieval score cutoff, applied in the direction of the similarity metric (a floor for higher-is-better metrics, a ceiling for distances). Not supported when `agent_mode=True`. |
 | `agent_mode`  | `bool`   | `False`      | Whether to use retrieval-agent search orchestration.         |
 | `filter_dict` | `dict`   | `None`       | Metadata filters to apply to the search. User metadata keys must be prefixed with `m.` / `metadata.` (for example `{"m.source": "chat_v3"}`). Unknown or misspelled fields return a 400 error. |
 | `timeout`     | `int`    | `None`       | Request timeout in seconds. Uses client default if omitted.  |
