@@ -23,7 +23,9 @@ jobs:
           fetch-depth: 0  # Full history needed for setuptools-scm versioning
 
       - name: Setup Python and uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          prune-cache: true
 
       - name: Install project
         run: uv sync --frozen

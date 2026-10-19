@@ -35,7 +35,9 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          prune-cache: true
 
       - name: Regenerate lockfile
         if: github.actor == 'dependabot[bot]'

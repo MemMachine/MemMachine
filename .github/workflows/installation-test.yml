@@ -268,8 +268,9 @@ jobs:
           echo "Server is fully ready!"
 
       - name: Install uv
-        shell: bash
-        run: pip install uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          prune-cache: true
 
       - name: Create uv virtual environment
         shell: bash
