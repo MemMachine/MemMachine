@@ -153,7 +153,8 @@ export interface AddMemoryResult {
  * @property top_k - Maximum number of results to return (optional).
  * @property filter - Filter criteria for the search (optional).
  * @property expand_context - Number of extra episodes to include for context (optional).
- * @property score_threshold - Minimum score threshold for search results (optional).
+ * @property score_threshold - Score cutoff for results, applied in the direction of the
+ *   similarity metric: a floor for higher-is-better metrics, a ceiling for distances (optional).
  * @property types - Types of memory to search (optional).
  * @property agent_mode - Whether to enable top-level retrieval-agent orchestration (optional).
  */

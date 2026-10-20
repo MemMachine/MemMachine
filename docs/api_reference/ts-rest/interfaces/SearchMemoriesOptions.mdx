@@ -18,7 +18,7 @@ All properties in this interface are optional.
 | Property | Type | Description |
 | :--- | :--- | :--- |
 | `top_k` | `number` | The maximum number of relevant memories to return. |
-| `score_threshold` | `number` | The minimum similarity score required for a memory to be included in results. |
+| `score_threshold` | `number` | Score cutoff for a memory to be included in results, applied in the direction of the similarity metric (a floor for higher-is-better metrics, a ceiling for distances). |
 | `filter` | `string` | A metadata-based filter string to narrow the search scope. User metadata fields must be prefixed with `m.` / `metadata.` (for example `m.user_id = '123'`). String literals must be single-quoted. Unknown or misspelled user metadata fields return a 400 error. |
 | `expand_context` | `number` | The number of surrounding chronological episodes to retrieve for each hit. |
 | `types` | [`MemoryType[]`](../types/MemoryType) | Restricts the search to specific memory classifications (e.g., `semantic`). |

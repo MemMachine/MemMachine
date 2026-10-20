@@ -16,7 +16,7 @@ import math
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, override
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
@@ -31,9 +31,14 @@ from memmachine_server.common.episode_store import (
 from memmachine_server.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.common.vector_store.data_types import (
     VectorStoreCollectionConfig,
+)
+from memmachine_server.episodic_memory.episodic_memory import (
+    EpisodicMemory,
+    EpisodicMemoryParams,
 )
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
@@ -942,3 +947,55 @@ def test_episode_uid_context_dedup_and_nucleus():
     nucleus, context = LongTermMemory._episode_uid_context(_Ctx())
     assert nucleus == _uid("e2")
     assert context == [_uid("e1"), _uid("e2"), _uid("e3")]
+
+
+async def test_score_threshold_neg_inf_sentinel_drops_all_under_euclidean():
+    """Upper layers historically passed `-inf` to mean "no threshold". Under
+    euclidean (lower-is-better) that sentinel becomes `score <= -inf` and drops
+    every hit. Callers must pass `None` instead.
+    """
+    episodes = [_episode("only", "abc")]
+    ltm = _make_ltm(
+        FakeEmbedder(similarity_metric=SimilarityMetric.EUCLIDEAN), episodes
+    )
+    await ltm.add_episodes(episodes)
+
+    scored = await ltm.search_scored(
+        "abc",
+        num_episodes_limit=10,
+        score_threshold=-float("inf"),
+    )
+    assert scored == []
+
+
+async def test_episodic_query_memory_default_keeps_euclidean_results():
+    """Default score_threshold on EpisodicMemory.query_memory must mean
+    "no threshold" under euclidean event-backed LTM. Injecting `-inf` empties
+    long-term results even when matches exist.
+    """
+    episodes = [_episode("only", "abc")]
+    ltm = _make_ltm(
+        FakeEmbedder(similarity_metric=SimilarityMetric.EUCLIDEAN), episodes
+    )
+    await ltm.add_episodes(episodes)
+
+    metrics = MagicMock(spec=MetricsFactory)
+    metrics.get_summary.return_value = MagicMock()
+    metrics.get_counter.return_value = MagicMock()
+
+    memory = EpisodicMemory(
+        EpisodicMemoryParams(
+            session_key="sess1",
+            metrics_factory=metrics,
+            short_term_memory=None,
+            long_term_memory=ltm,
+            enabled=True,
+        )
+    )
+
+    response = await memory.query_memory(
+        "abc",
+        mode=EpisodicMemory.QueryMode.LONG_TERM_ONLY,
+    )
+    assert response is not None
+    assert [ep.uid for ep in response.long_term_memory.episodes] == [_uid("only")]

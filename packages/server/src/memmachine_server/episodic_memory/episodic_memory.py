@@ -335,7 +335,7 @@ class EpisodicMemory:
         query: str,
         limit: int,
         expand_context: int,
-        score_threshold: float,
+        score_threshold: float | None,
         property_filter: FilterExpr | None,
     ) -> list[tuple[float, Episode]]:
         """Query long-term memory or return an empty result if unavailable."""
@@ -356,7 +356,7 @@ class EpisodicMemory:
         *,
         limit: int | None = None,
         expand_context: int = 0,
-        score_threshold: float = -float("inf"),
+        score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
         mode: QueryMode = QueryMode.BOTH,
     ) -> QueryResponse | None:
@@ -374,7 +374,11 @@ class EpisodicMemory:
                    value is 20.
             expand_context: The number of additional episodes to include
                             around each matched episode from long term memory.
-            score_threshold: Minimum score to consider a match.
+            score_threshold: Score cutoff for a match, applied in the
+                direction of the similarity metric (a floor for
+                higher-is-better metrics, a ceiling for distances). ``None``
+                (default) means no threshold. Do not pass ``-inf``: under
+                lower-is-better metrics that sentinel drops every hit.
             property_filter: Properties to filter declarative memory searches.
             mode: Which memory backends to query.
 
@@ -481,7 +485,7 @@ class EpisodicMemory:
         query: str,
         limit: int | None = None,
         expand_context: int = 0,
-        score_threshold: float = -float("inf"),
+        score_threshold: float | None = None,
         property_filter: FilterExpr | None = None,
     ) -> str:
         """
@@ -495,7 +499,9 @@ class EpisodicMemory:
             limit: The maximum number of episodes to include in the context.
             expand_context: The number of additional episodes to include
                             around each matched episode from long term memory.
-            score_threshold: Minimum score to include in the context.
+            score_threshold: Score cutoff for including an episode in the
+                context, applied in the direction of the similarity metric.
+                ``None`` means no threshold.
             property_filter: Properties to filter the search.
 
         Returns:
