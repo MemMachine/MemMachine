@@ -478,6 +478,15 @@ class MemMachine:
         if self._started:
             return
         self._key_to_session = key_to_session
+        long_term_memory = self._conf.episodic_memory.long_term_memory
+        if (
+            self._conf.episodic_memory.enabled
+            and long_term_memory is not None
+            and long_term_memory.segment_store is not None
+        ):
+            # Its background work finishes what a stopped process left,
+            # whether or not a session is opened.
+            await self._resources.get_event_memory()
         await self._queue_pending_session_deletions()
         self._delete_worker = asyncio.create_task(self._delete_session_worker())
         self._started = True

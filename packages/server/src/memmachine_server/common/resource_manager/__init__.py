@@ -1,10 +1,13 @@
 """Protocols for accessing shared MemMachine resources."""
 
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from memmachine_server.common.configuration import Configuration
+from memmachine_server.common.data_types import PropertyType, SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.language_model import LanguageModel
@@ -16,6 +19,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
 from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
 )
@@ -45,12 +49,24 @@ class CommonResourceManager(Protocol):
         """Return the vector graph store by name."""
         raise NotImplementedError
 
-    async def get_vector_store(self, name: str) -> VectorStore:
-        """Return the vector store by name."""
+    async def get_vector_store(
+        self,
+        backend: str,
+        *,
+        vector_store_name: str,
+        vector_dimensions: int,
+        similarity_metric: SimilarityMetric,
+        indexed_properties: Mapping[str, PropertyType],
+    ) -> VectorStore:
+        """Return the store of one name on a configured backend."""
         raise NotImplementedError
 
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return the segment store by name."""
+        raise NotImplementedError
+
+    async def get_event_memory(self) -> EventMemory:
+        """Return the deployment's EventMemory, its background work running."""
         raise NotImplementedError
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
@@ -81,4 +97,9 @@ class CommonResourceManager(Protocol):
 
     async def get_episode_storage(self) -> EpisodeStorage:
         """Return the episode storage instance."""
+        raise NotImplementedError
+
+    @property
+    def config(self) -> Configuration:
+        """Return the configuration instance."""
         raise NotImplementedError
