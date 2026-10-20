@@ -162,7 +162,7 @@ get_ltm_backend() {
 
 # Wire episodic_memory.long_term_memory for the backend. The samples are written
 # for declarative, with the event lines commented out beneath; for event, comment
-# out vector_graph_store and activate backend/vector_store/segment_store.
+# out vector_graph_store and activate backend/vector_store/event_memory_store.
 set_ltm_backend() {
     local backend="$1"
     if [ "$backend" != "event" ]; then
@@ -172,7 +172,7 @@ set_ltm_backend() {
 /^  long_term_memory:/ { in_ltm = 1; print; next }
 in_ltm && (/^  [^ #]/ || /^[^ ]/) { in_ltm = 0 }
 in_ltm && /^    vector_graph_store:/ { sub(/^    /, "    # "); print; next }
-in_ltm && /^    # (backend: event|vector_store:|segment_store:)/ {
+in_ltm && /^    # (backend: event|vector_store:|event_memory_store:)/ {
   sub(/^    # /, "    ")
   sub(/[ \t]+#.*$/, "")
   print

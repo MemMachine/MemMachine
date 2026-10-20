@@ -176,7 +176,7 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
             "backend": "event",
             "embedder": "openai",
             "vector_store": "vstore",
-            "segment_store": "pgengine",
+            "event_memory_store": "pgengine",
         },
     }
 
@@ -185,7 +185,7 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
         session_id="test_org/test_proj",
         embedder="openai",
         vector_store="vstore",
-        segment_store="pgengine",
+        event_memory_store="pgengine",
     )
     mock_memmachine.create_session.return_value = mock_session
 
@@ -194,14 +194,14 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
     body = response.json()
     assert body["config"]["backend"] == "event"
     assert body["config"]["vector_store"] == "vstore"
-    assert body["config"]["segment_store"] == "pgengine"
+    assert body["config"]["event_memory_store"] == "pgengine"
 
     # Server forwards the event-shaped partial to create_session unchanged.
     mock_memmachine.create_session.assert_awaited_once()
     user_conf = mock_memmachine.create_session.call_args[1]["user_conf"]
     assert user_conf.long_term_memory.backend == "event"
     assert user_conf.long_term_memory.vector_store == "vstore"
-    assert user_conf.long_term_memory.segment_store == "pgengine"
+    assert user_conf.long_term_memory.event_memory_store == "pgengine"
 
 
 def test_create_project_without_backend_passes_none_through(client, mock_memmachine):
