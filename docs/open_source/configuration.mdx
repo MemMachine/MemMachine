@@ -48,14 +48,14 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
   <Tab title="Parameter">
     ```yaml
     episode_store:
-      database: profile_storage
+      database: relational_db
       with_count_cache: true
     ```
   </Tab>
   <Tab title="With Comment">
     ```yaml
     episode_store:
-      database: profile_storage # ID of the database from 'resources.databases'
+      database: relational_db # ID of the database from 'resources.databases'
       with_count_cache: true # Enable in-memory episode count caching
     ```
   </Tab>
@@ -79,7 +79,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           backend: event
           session_id: user-session-id
           vector_store: my-vector-store
-          segment_store: profile_storage
+          segment_store: relational_db
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
           properties_schema:
@@ -104,7 +104,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           backend: event # Use VectorStore + SegmentStore. Use declarative for VectorGraphStore.
           session_id: user-session-id # Reuses parent session_key
           vector_store: my-vector-store # ID of the VectorStore from 'resources.databases'
-          segment_store: profile_storage # ID of the SQL database used by SegmentStore
+          segment_store: relational_db # ID of the SQL database used by SegmentStore
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
           properties_schema: # Optional filterable event-memory properties
@@ -182,7 +182,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         llm_model: my-semantic-llm
         embedding_model: my-openai-embedder
         database: my-postgres-db
-        config_database: profile_storage
+        config_database: relational_db
         with_config_cache: true
         ingestion_trigger_messages: 5
         ingestion_trigger_age: 00:05:00
@@ -196,7 +196,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         llm_model: my-semantic-llm # ID of the Language Model from 'resources.language_models'
         embedding_model: my-openai-embedder # ID of the Embedder from 'resources.embedders'
         database: my-postgres-db # ID of the database from 'resources.databases'
-        config_database: profile_storage # ID of the database to store semantic configs
+        config_database: relational_db # ID of the database to store semantic configs
         with_config_cache: true # Whether to use in-memory semantic config caching
         ingestion_trigger_messages: 5 # Number of un-ingested messages before ingestion runs
         ingestion_trigger_age: 00:05:00 # Time (HH:MM:SS) before ingestion runs when messages are pending
@@ -225,13 +225,13 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     <Tab title="Parameter">
       ```yaml
       session_manager:
-        database: profile_storage
+        database: relational_db
       ```
     </Tab>
     <Tab title="With Comment">
       ```yaml
       session_manager:
-        database: profile_storage # ID of the database from 'resources.databases'
+        database: relational_db # ID of the database from 'resources.databases'
       ```
     </Tab>
     </Tabs>
@@ -317,12 +317,19 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     databases store structured memory data; VectorStore providers such as
     Qdrant, Milvus, SQLiteVectorStore, and SQLiteVec back event-memory and
     vector-backed semantic-memory indexes.
+
+    Each key under `resources.databases` is an ID of your choosing that other
+    sections reference. The examples name the relational database
+    `relational_db`; earlier versions of these docs and sample configurations
+    called it `profile_storage`. An existing `cfg.yml` that still uses
+    `profile_storage` keeps working, as long as every reference uses the same
+    ID.
     <Tabs>
     <Tab title="Parameters">
       ```yaml
       resources:
         databases:
-          profile_storage:
+          relational_db:
             provider: postgres
             config:
               host: localhost
@@ -354,7 +361,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     ```yaml
     resources:
         databases:
-          profile_storage:
+          relational_db:
             provider: postgres # Relational database provider
             config: # A dictionary containing provider-specific configuration
               host: localhost # Hostname for the database

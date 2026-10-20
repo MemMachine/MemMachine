@@ -348,7 +348,7 @@ def test_enable_semantic_memory_without_config_database_is_auto_disabled():
     spec = UpdateSemanticMemorySpec.model_validate(
         {
             "enabled": True,
-            "database": "profile_storage",
+            "database": "relational_db",
             "llm_model": "openai_model",
             "embedding_model": "openai_embedder",
         }
