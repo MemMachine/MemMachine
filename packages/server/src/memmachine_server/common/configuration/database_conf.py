@@ -229,7 +229,7 @@ class NebulaGraphConf(YamlSerializableMixin, PasswordMixin):
         return self.hosts
 
 
-# The retention floor: a write in flight when its collection is deleted lands
+# The retention floor: a write in flight when its partition is deleted lands
 # within its client's request timeout plus the server's own delay, seconds to
 # minutes, so the floor is the request timeout times this factor, plus these
 # extra seconds.
@@ -237,7 +237,7 @@ _RETENTION_FLOOR_TIMEOUT_FACTOR = 10
 _RETENTION_FLOOR_EXTRA_SECONDS = 300
 
 
-def _require_retention_floor(
+def _validate_tombstone_retention(
     tombstone_retention_seconds: int, request_timeout_seconds: int
 ) -> None:
     """Raise unless the tombstone retention reaches the retention floor."""
@@ -276,18 +276,18 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
         default=False,
         description="Whether to use HTTPS/TLS for Qdrant communication",
     )
-    collection_registry: str = Field(
+    partition_registry: str = Field(
         ...,
         description=(
             "The relational database, a name under resources.databases, that "
-            "holds this store's collection registry."
+            "holds the partition registries of the stores on this backend."
         ),
     )
     tombstone_retention_seconds: int = Field(
         default=86400,
         gt=0,
         description=(
-            "Seconds a deleted collection's records are kept before its purge "
+            "Seconds a deleted partition's records are kept before its purge "
             "starts, so every write to Qdrant in flight at the deletion has landed "
             f"and is reclaimed; at least {_RETENTION_FLOOR_TIMEOUT_FACTOR} x "
             f"request_timeout_seconds + {_RETENTION_FLOOR_EXTRA_SECONDS}."
@@ -298,10 +298,42 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
         gt=0,
         description="Seconds a request to Qdrant may take before the client gives up.",
     )
+    # The following mirror qdrant_client.models config objects as plain mappings
+    # (their natural serialized form) so qdrant-client stays an optional
+    # dependency here. They are validated against the real qdrant models when
+    # passed to QdrantVectorStoreParams. All apply to the store's one
+    # collection; the partition registry is relational tables, not a collection.
+    hnsw_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "HNSW index tuning for the store's collection, mirroring "
+            "qdrant_client.models.HnswConfigDiff (e.g. ef_construct, payload_m). "
+            "'m' must be 0 or omitted because the collection holds every "
+            "partition and relies on per-partition payload indexing."
+        ),
+    )
+    optimizers_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optimizer tuning for the store's collection, mirroring "
+            "qdrant_client.models.OptimizersConfigDiff "
+            "(e.g. indexing_threshold, default_segment_number)."
+        ),
+    )
+    quantization_config: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Quantization for the store's collection, mirroring "
+            "qdrant_client.models.QuantizationConfig. Provide a single-key map "
+            "selecting the method, e.g. "
+            "{'turbo': {'always_ram': true, 'bits': 'bits2'}} for TurboQuant, "
+            "or a 'scalar' / 'product' / 'binary' map."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_retention(self) -> Self:
-        _require_retention_floor(
+        _validate_tombstone_retention(
             self.tombstone_retention_seconds, self.request_timeout_seconds
         )
         return self
@@ -325,18 +357,18 @@ class MilvusConf(MetricsFactoryIdMixin, YamlSerializableMixin, WithValueFromEnv)
         default="",
         description="Optional Milvus database name.",
     )
-    collection_registry: str = Field(
+    partition_registry: str = Field(
         ...,
         description=(
             "The relational database, a name under resources.databases, that "
-            "holds this store's collection registry."
+            "holds the partition registries of the stores on this backend."
         ),
     )
     tombstone_retention_seconds: int = Field(
         default=86400,
         gt=0,
         description=(
-            "Seconds a deleted collection's records are kept before its purge "
+            "Seconds a deleted partition's records are kept before its purge "
             "starts, so every write to Milvus in flight at the deletion has landed "
             f"and is reclaimed; at least {_RETENTION_FLOOR_TIMEOUT_FACTOR} x "
             f"request_timeout_seconds + {_RETENTION_FLOOR_EXTRA_SECONDS}."
@@ -405,7 +437,7 @@ class MilvusConf(MetricsFactoryIdMixin, YamlSerializableMixin, WithValueFromEnv)
         """Validate Milvus configuration."""
         if not self.uri:
             raise ValueError("MilvusConf requires a non-empty 'uri'")
-        _require_retention_floor(
+        _validate_tombstone_retention(
             self.tombstone_retention_seconds, self.request_timeout_seconds
         )
         return self
@@ -432,7 +464,7 @@ class SQLiteVectorStoreConf(YamlSerializableMixin):
     index_directory: str | None = Field(
         default=None,
         description=(
-            "Directory used to persist per-collection ANN index files. "
+            "Directory used to persist each partition's ANN index file. "
             "If None, indexes are kept in-memory only and are lost on restart."
         ),
     )
