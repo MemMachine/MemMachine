@@ -1,27 +1,27 @@
-# Vector store: isolation between collections, and record UUIDs
+# Vector store: isolation between partitions, and record UUIDs
 
 Part of [vector store horizontal scaling](vector_store_horizontal_scaling.md).
 
 ## Problem
 
-A record is addressed by its UUID within its collection, and an upsert
-replaces a whole record. On a backend where the collections of a store share
-one id space, one collection's upsert of a UUID another collection already
-holds would replace that other collection's record. Qdrant was such a backend
-as MemMachine laid it out: many collections share a native collection, and a
-point's id was its record's UUID. The contract guarded against it with a rule
+A record is addressed by its UUID within its partition, and an upsert
+replaces a whole record. On a backend where the partitions of a store share
+one id space, one partition's upsert of a UUID another partition already
+holds would replace that other partition's record. Qdrant is such a backend
+as MemMachine lays it out: a store's partitions share its native collection,
+and a point's id was its record's UUID. The contract guarded against it with a rule
 on callers, that a record's UUID is minted by the service and never a value a
 caller supplied, which held only as long as every ingestion path honored it.
-This document answers what keeps collections apart, what happens when a UUID
-is reused (across collections, across lives of one collection, or by a caller
+This document answers what keeps partitions apart, what happens when a UUID
+is reused (across partitions, across lives of one partition, or by a caller
 that chose it), and what the contract can promise, given that every backend
 has to be able to keep the promise.
 
-## Collection lives
+## Partition lives
 
 - An incarnation is a random UUID (version 4) minted by the registry when a
-  collection's name is reserved, one per collection life (see [collection
-  registry](vector_store_collection_registry.md)). Every read, write, and
+  partition's key is reserved, one per partition life (see [partition
+  registry](vector_store_partition_registry.md)). Every read, write, and
   delete of a handle is scoped to it.
 - An incarnation is never re-minted while it is registered, pending or live,
   or its tombstone is queued, so a new life starts empty: no dead life's
@@ -30,24 +30,24 @@ has to be able to keep the promise.
 
 ## The guarantee
 
-`VectorStoreCollection` states:
+`VectorStorePartition` states:
 
-> All data operations are scoped to this logical collection: a record's
-> UUID names it in this collection only, and the same UUID in another
-> collection names another record.
+> All data operations are scoped to the partition: a record's UUID names it
+> in this partition only, and the same UUID in another partition names
+> another record.
 
 A record UUID may come from anywhere, a caller included: reusing one in
-another collection stores another record, and no operation on one collection
+another partition stores another record, and no operation on one partition
 reads, replaces, or deletes another's.
 
-| Store | How ids are scoped to a collection |
+| Store | How ids are scoped to a partition |
 |---|---|
-| SQLite, sqlite-vec | a records table per collection |
+| SQLite, sqlite-vec | a records table per partition |
 | Milvus | the incarnation in the primary key, `"{incarnation}:{record_uuid}"` (see [Milvus](milvus_vector_store.md)) |
 | Qdrant | the point id is a UUIDv5 of the record UUID under the incarnation, with the record UUID kept in the payload (see [Qdrant](qdrant_vector_store.md)) |
 
 A UUIDv5 carries 122 bits, and deriving one from a random incarnation and any
-record UUID gives a caller no way to aim at another collection's point: a
+record UUID gives a caller no way to aim at another partition's point: a
 SHA-1 collision needs control of both inputs.
 
 ### Other backends
@@ -77,16 +77,16 @@ backends was run). Every one can, almost always by scoping the id.
   ingestion path honors it, and a slip replaces another tenant's record, a
   security failure far from its cause.
 - **A conditional upsert on Qdrant** (`update_filter` on the writer's
-  incarnation, first write wins). It keeps collections from replacing each
+  incarnation, first write wins). It keeps partitions from replacing each
   other's points, but a reused UUID's record is dropped without an error, the
   contract has to keep a uniqueness rule for callers, and single-point writes
   ran 46% slower. It is Qdrant-specific, where scoping the id is what nearly
   every backend does.
 - **Check before writing** (read the id, then write if it is absent or the
-  writer's). Not atomic: another collection's write can land between the read
+  writer's). Not atomic: another partition's write can land between the read
   and the write.
 - **Bare or reversible point ids on Qdrant.** A bare record UUID as the point
-  id lets one collection's upsert replace another's point; a reversible
+  id lets one partition's upsert replace another's point; a reversible
   derivation lets anyone who learns two incarnations compute a colliding UUID.
   The [Qdrant](qdrant_vector_store.md) document has the analysis and the cost
   of reading the record UUID from the payload.
