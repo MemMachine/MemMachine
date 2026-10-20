@@ -19,6 +19,7 @@ from memmachine_server.common.vector_store import (
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
+    EvictionOptions,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
@@ -58,16 +59,24 @@ pytestmark = pytest.mark.asyncio
 _T0 = datetime.datetime(2025, 6, 1, tzinfo=UTC)
 
 
-def _event(text: str) -> Event:
-    return Event(uuid=uuid4(), timestamp=_T0, blocks=[TextBlock(text=text)])
+def _event(text: str, *, minutes: int = 0) -> Event:
+    return Event(
+        uuid=uuid4(),
+        timestamp=_T0 + timedelta(minutes=minutes),
+        blocks=[TextBlock(text=text)],
+    )
 
 
 class _FailingVectorStorePartition(InMemoryVectorStorePartition):
-    """A vector store partition whose upserts or deletes raise while told to."""
+    """A vector store partition whose upserts or deletes raise while told to.
+
+    An upsert told to fail after writing writes its records, then raises.
+    """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.fail_upserts = False
+        self.fail_upserts_after_writing = False
         self.fail_deletes = False
         self.upsert_delay_seconds = 0.0
         self.upserting = asyncio.Event()
@@ -82,6 +91,8 @@ class _FailingVectorStorePartition(InMemoryVectorStorePartition):
         if self.fail_upserts:
             raise ConnectionError("upsert failed")
         await super().upsert(records=records)
+        if self.fail_upserts_after_writing:
+            raise ConnectionError("upsert failed after writing")
 
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         await self.deletes_released.wait()
@@ -649,6 +660,118 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
 
     assert vector_store_partition.records == {}
     assert not await event_memory._finish_pending_write()
+
+
+@pytest_asyncio.fixture
+async def evicting_event_memory(
+    event_memory_store: SQLAlchemyEventMemoryStore,
+    vector_store_partition: _FailingVectorStorePartition,
+    store_schema: VectorStoreSchema,
+    fake_embedder,
+) -> EventMemory:
+    """An EventMemory that keeps five derivatives of a near-duplicate cluster.
+
+    The FakeEmbedder maps every text onto one direction, so every
+    derivative is in one cluster.
+    """
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.store_schema = store_schema
+    vector_store.open_or_create_partition.return_value = vector_store_partition
+    vector_store.open_partition.return_value = vector_store_partition
+    return EventMemory(
+        EventMemoryParams(
+            event_memory_store=event_memory_store,
+            vector_store=vector_store,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=fake_embedder,
+            eviction=EvictionOptions(
+                score_threshold=0.5, search_limit=100, target_size=5
+            ),
+        )
+    )
+
+
+def _stored_minutes(vector_store_partition: _FailingVectorStorePartition) -> list[int]:
+    """The minute, after _T0, of every record in the vector store."""
+    minutes = []
+    for record in vector_store_partition.records.values():
+        timestamp = record.properties[EVENT_TIMESTAMP_KEY]
+        assert isinstance(timestamp, datetime.datetime)
+        minutes.append(int((timestamp - _T0).total_seconds() // 60))
+    return sorted(minutes)
+
+
+async def _encode_one_per_minute(
+    partition: EventMemoryPartition, minutes: Iterable[int]
+) -> None:
+    for minute in minutes:
+        await partition.encode_events([_event(f"at {minute}", minutes=minute)])
+
+
+async def test_background_work_displaces_what_the_stranded_encode_would_have(
+    evicting_event_memory: EventMemory,
+    vector_store_partition: _FailingVectorStorePartition,
+    sqlalchemy_sqlite_engine: AsyncEngine,
+):
+    """Writing a stranded batch evicts as its encode would have, once its records are written."""
+    partition = await evicting_event_memory.open_or_create_partition("partition")
+    await _encode_one_per_minute(partition, range(5))
+    vector_store_partition.fail_upserts = True
+    with pytest.raises(ConnectionError):
+        await partition.encode_events([_event("at 5", minutes=5)])
+    vector_store_partition.fail_upserts = False
+    assert _stored_minutes(vector_store_partition) == [0, 1, 2, 3, 4]
+
+    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    assert await evicting_event_memory._finish_pending_write()
+
+    assert _stored_minutes(vector_store_partition) == [0, 1, 3, 4, 5]
+
+
+async def test_background_work_does_not_count_the_stranded_writes_records_as_neighbors(
+    evicting_event_memory: EventMemory,
+    vector_store_partition: _FailingVectorStorePartition,
+    sqlalchemy_sqlite_engine: AsyncEngine,
+):
+    """A record the stranded write stored is the derivative itself, not a near-duplicate of it."""
+    partition = await evicting_event_memory.open_or_create_partition("partition")
+    await _encode_one_per_minute(partition, range(4))
+    vector_store_partition.fail_upserts_after_writing = True
+    with pytest.raises(ConnectionError):
+        await partition.encode_events([_event("at 4", minutes=4)])
+    vector_store_partition.fail_upserts_after_writing = False
+    assert _stored_minutes(vector_store_partition) == [0, 1, 2, 3, 4]
+
+    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    assert await evicting_event_memory._finish_pending_write()
+
+    assert _stored_minutes(vector_store_partition) == [0, 1, 2, 3, 4]
+
+
+async def test_background_work_skips_a_derivative_now_in_its_clusters_middle(
+    evicting_event_memory: EventMemory,
+    vector_store_partition: _FailingVectorStorePartition,
+    sqlalchemy_sqlite_engine: AsyncEngine,
+):
+    """A stranded derivative that later ingests put in the temporal middle is not written, and the stranded write's record of it leaves."""
+    partition = await evicting_event_memory.open_or_create_partition("partition")
+    await _encode_one_per_minute(partition, [0, 1, 8, 9])
+    vector_store_partition.fail_upserts_after_writing = True
+    with pytest.raises(ConnectionError):
+        await partition.encode_events([_event("at 5", minutes=5)])
+    vector_store_partition.fail_upserts_after_writing = False
+    # The later encode displaces the stranded record, but its delete fails.
+    vector_store_partition.fail_deletes = True
+    await partition.encode_events([_event("at 10", minutes=10)])
+    vector_store_partition.fail_deletes = False
+    assert _stored_minutes(vector_store_partition) == [0, 1, 5, 8, 9, 10]
+
+    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    assert await evicting_event_memory._finish_pending_write()
+
+    assert _stored_minutes(vector_store_partition) == [0, 1, 8, 9, 10]
+    assert not await evicting_event_memory._finish_pending_write()
 
 
 async def test_startup_runs_the_background_work_until_shutdown(

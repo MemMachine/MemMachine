@@ -76,6 +76,18 @@ runs whether or not any session is opened.
 vector deleted once, best effort and without the search waiting for it;
 the next search that finds it tries again.
 
+**Eviction.** With eviction configured, an ingest decides it after
+embedding and before its transaction. A batch derivative the decision
+skips is left out of the pending derivatives, so it is never linked or
+written. A stored derivative it displaces keeps its link and segment, and
+its vector is deleted after the pending derivatives, best effort. Eviction
+changes nothing in SQL, so a forget still finds a displaced derivative by
+its link. The background work decides again when it writes pending
+derivatives, against what is stored then, not counting the record's own
+derivatives a stranded write may have stored. It leaves the ones it skips
+unwritten, and once the claim is finished deletes their vectors and the
+displaced ones', best effort.
+
 **Partition deletion.** The event memory store's partition goes first, so its
 text is gone at once and no write starts on it; the vector store's
 partition deletion then removes every vector, with its own retention for
