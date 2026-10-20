@@ -1,21 +1,23 @@
 """Manager for semantic memory resources and services."""
 
 import asyncio
-from typing import cast
+from collections.abc import Mapping
+from typing import TypedDict, cast
 
 from pydantic import InstanceOf
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration import (
     PromptConf,
     SemanticMemoryConf,
     SemanticMemoryStorageBackend,
 )
+from memmachine_server.common.data_types import PropertyType, SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
-from memmachine_server.common.errors import ResourceNotReadyError
+from memmachine_server.common.errors import ResourceNotReadyError, SchemaMismatchError
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -47,8 +49,21 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
     VectorStoreSemanticStorage,
 )
 
-_VECTOR_STORE_NAMESPACE = "semantic_memory"
-_VECTOR_STORE_COLLECTION_NAME = "semantic_memory"
+_VECTOR_STORE_NAME = "semantic_memory"
+"""The name of semantic memory's one vector store, whatever its embedder.
+
+Fixed, because the name locates the store's data.
+"""
+_VECTOR_STORE_PARTITION_KEY = "semantic_memory"
+
+
+class _VectorStoreSpec(TypedDict):
+    """The name and shape of semantic memory's vector store."""
+
+    vector_store_name: str
+    vector_dimensions: int
+    similarity_metric: SimilarityMetric
+    indexed_properties: Mapping[str, PropertyType]
 
 
 class SemanticResourceManager:
@@ -80,10 +95,26 @@ class SemanticResourceManager:
 
         await asyncio.gather(*tasks)
 
+    async def migrate(self) -> None:
+        """
+        Create semantic memory's durable resources, or bring them up to date.
+
+        Run it with no server using them, before semantic memory starts.
+        """
+        if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+            await self._migrate_vector_store_semantic_storage()
+        else:
+            await (await self._build_semantic_storage()).migrate()
+        await (await self._build_semantic_config_storage()).migrate()
+
     async def get_semantic_storage(self) -> SemanticStorage:
         if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
             return await self._get_vector_store_semantic_storage()
+        storage = await self._build_semantic_storage()
+        await storage.startup()
+        return storage
 
+    async def _build_semantic_storage(self) -> SemanticStorage:
         database = self._conf.database
 
         if not database:
@@ -95,35 +126,58 @@ class SemanticResourceManager:
             sql_engine = await self._resource_manager.get_sql_engine(
                 database, validate=True
             )
-            storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
-            await storage.startup()
-            return storage
+            return SqlAlchemyPgVectorSemanticStorage(sql_engine)
 
         if self._conf.storage_backend == SemanticMemoryStorageBackend.NEO4J:
             neo4j_engine = await self._resource_manager.get_neo4j_driver(
                 database, validate=True
             )
-            storage = Neo4jSemanticStorage(neo4j_engine)
-            await storage.startup()
-            return storage
+            return Neo4jSemanticStorage(neo4j_engine)
 
-        storage: SemanticStorage
         try:
             sql_engine = await self._resource_manager.get_sql_engine(
                 database, validate=True
             )
-            storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
+            return SqlAlchemyPgVectorSemanticStorage(sql_engine)
         except ValueError:
             # try graph store
             neo4j_engine = await self._resource_manager.get_neo4j_driver(
                 database, validate=True
             )
-            storage = Neo4jSemanticStorage(neo4j_engine)
+            return Neo4jSemanticStorage(neo4j_engine)
 
+    async def _migrate_vector_store_semantic_storage(self) -> None:
+        sql_engine, backend, store_spec = await self._vector_store_semantic_resources()
+        await self._resource_manager.migrate_vector_store(backend, **store_spec)
+        vector_store = await self._resource_manager.get_vector_store(
+            backend, **store_spec
+        )
+        vector_partition = await vector_store.open_or_create_partition(
+            _VECTOR_STORE_PARTITION_KEY
+        )
+        await VectorStoreSemanticStorage(sql_engine, vector_partition).migrate()
+
+    async def _get_vector_store_semantic_storage(self) -> SemanticStorage:
+        sql_engine, backend, store_spec = await self._vector_store_semantic_resources()
+        vector_store = await self._resource_manager.get_vector_store(
+            backend, **store_spec
+        )
+        vector_partition = await vector_store.open_partition(
+            _VECTOR_STORE_PARTITION_KEY
+        )
+        if vector_partition is None:
+            raise SchemaMismatchError(
+                f"Semantic memory's vector store partition on '{backend}' is "
+                "missing. Run `memmachine-server migrate`."
+            )
+        storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()
         return storage
 
-    async def _get_vector_store_semantic_storage(self) -> SemanticStorage:
+    async def _vector_store_semantic_resources(
+        self,
+    ) -> tuple[AsyncEngine, str, _VectorStoreSpec]:
+        """The feature store's engine, the vector store backend, and the store semantic memory keeps on it."""
         feature_store_name = self._conf.feature_store
         if not feature_store_name:
             raise ResourceNotReadyError(
@@ -131,8 +185,8 @@ class SemanticResourceManager:
                 "semantic_memory",
             )
 
-        vector_store_name = self._conf.vector_collection
-        if not vector_store_name:
+        backend = self._conf.vector_collection
+        if not backend:
             raise ResourceNotReadyError(
                 "No vector_collection configured for vector-backed semantic storage.",
                 "semantic_memory",
@@ -142,24 +196,23 @@ class SemanticResourceManager:
             feature_store_name,
             validate=True,
         )
-        vector_store = await self._resource_manager.get_vector_store(vector_store_name)
         vector_dimensions = self._conf.vector_dimensions
         if vector_dimensions is None:
             vector_dimensions = (await self._get_default_embedder()).dimensions
+        store_spec: _VectorStoreSpec = {
+            "vector_store_name": _VECTOR_STORE_NAME,
+            "vector_dimensions": vector_dimensions,
+            "similarity_metric": self._conf.vector_similarity_metric,
+            "indexed_properties": {},
+        }
+        return sql_engine, backend, store_spec
 
-        collection = await vector_store.open_or_create_collection(
-            namespace=_VECTOR_STORE_NAMESPACE,
-            name=_VECTOR_STORE_COLLECTION_NAME,
-            config=VectorStoreCollectionConfig(
-                vector_dimensions=vector_dimensions,
-                similarity_metric=self._conf.vector_similarity_metric,
-            ),
-        )
-        storage = VectorStoreSemanticStorage(sql_engine, collection)
+    async def get_semantic_config_storage(self) -> SemanticConfigStorage:
+        storage = await self._build_semantic_config_storage()
         await storage.startup()
         return storage
 
-    async def get_semantic_config_storage(self) -> SemanticConfigStorage:
+    async def _build_semantic_config_storage(self) -> SemanticConfigStorage:
         database = self._conf.config_database
 
         if not database:
@@ -169,15 +222,12 @@ class SemanticResourceManager:
             )
 
         sql_engine = await self._resource_manager.get_sql_engine(database)
-        storage = SemanticConfigStorageSqlAlchemy(sql_engine)
+        storage: SemanticConfigStorage = SemanticConfigStorageSqlAlchemy(sql_engine)
 
         if self._conf.with_config_cache:
             storage = CachingSemanticConfigStorage(
                 wrapped=storage,
             )
-
-        await storage.startup()
-
         return storage
 
     def _get_default_embedder_name(self) -> str:

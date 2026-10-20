@@ -13,6 +13,7 @@ from memmachine_server.common.configuration.episodic_config import (
     ShortTermMemoryConf,
 )
 from memmachine_server.common.errors import (
+    SchemaMismatchError,
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
@@ -85,17 +86,21 @@ def episodic_memory_conf():
 async def session_manager(sqlalchemy_engine: AsyncEngine):
     """Fixture for SessionDataManagerImpl, with tables created."""
     manager = SessionDataManagerSQL(engine=sqlalchemy_engine)
-    await manager.create_tables()
+    await manager.migrate()
+    await manager.startup()
     yield manager
     await manager.drop_tables()
     await manager.close()
 
 
 @pytest.mark.asyncio
-async def test_create_tables(sqlalchemy_engine: AsyncEngine):
-    """Test that create_tables creates the expected tables."""
+async def test_startup_refuses_an_unmigrated_database(sqlalchemy_engine: AsyncEngine):
     manager = SessionDataManagerSQL(engine=sqlalchemy_engine)
-    await manager.create_tables()
+    with pytest.raises(SchemaMismatchError, match="memmachine-server migrate"):
+        await manager.startup()
+
+    await manager.migrate()
+    await manager.startup()
 
 
 @pytest.mark.asyncio

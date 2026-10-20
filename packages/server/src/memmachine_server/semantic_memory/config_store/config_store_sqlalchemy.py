@@ -28,6 +28,7 @@ from sqlalchemy.orm import (
 from sqlalchemy.sql.sqltypes import Boolean, String
 
 from memmachine_server.common.errors import ResourceNotFoundError
+from memmachine_server.common.schema_migration import check_tables
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )
@@ -233,9 +234,16 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
 
-    async def startup(self) -> None:
+    async def migrate(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseSemanticConfigStore.metadata.create_all)
+
+    async def startup(self) -> None:
+        await check_tables(
+            self._engine,
+            BaseSemanticConfigStore.metadata,
+            name="semantic memory config",
+        )
 
     async def delete_all(self) -> None:
         async with self._create_session() as session:

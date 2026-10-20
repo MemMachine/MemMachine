@@ -9,6 +9,8 @@ from memmachine_server.common.configuration import (
     SemanticMemoryConf,
     SemanticMemoryStorageBackend,
 )
+from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.errors import SchemaMismatchError
 from memmachine_server.common.resource_manager.semantic_manager import (
     SemanticResourceManager,
 )
@@ -17,15 +19,13 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
 )
 
 
-@pytest.mark.asyncio
-async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_engine):
-    vector_store = MagicMock()
-    vector_collection = MagicMock()
-    vector_store.open_or_create_collection = AsyncMock(return_value=vector_collection)
-
+def _manager(
+    sqlalchemy_sqlite_engine, vector_store
+) -> tuple[SemanticResourceManager, MagicMock]:
     resource_manager = MagicMock()
     resource_manager.get_sql_engine = AsyncMock(return_value=sqlalchemy_sqlite_engine)
     resource_manager.get_vector_store = AsyncMock(return_value=vector_store)
+    resource_manager.migrate_vector_store = AsyncMock()
 
     manager = SemanticResourceManager(
         semantic_conf=SemanticMemoryConf(
@@ -41,14 +41,48 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
         resource_manager=resource_manager,
         episode_storage=MagicMock(),
     )
+    return manager, resource_manager
 
+
+@pytest.mark.asyncio
+async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_engine):
+    vector_store = MagicMock()
+    vector_collection = MagicMock()
+    vector_store.open_or_create_partition = AsyncMock(return_value=vector_collection)
+    vector_store.open_partition = AsyncMock(return_value=vector_collection)
+    manager, resource_manager = _manager(sqlalchemy_sqlite_engine, vector_store)
+
+    await manager.migrate()
     storage = await manager.get_semantic_storage()
 
     assert isinstance(storage, VectorStoreSemanticStorage)
-    resource_manager.get_sql_engine.assert_awaited_once_with(
-        "semantic_db", validate=True
+    resource_manager.get_sql_engine.assert_any_await("semantic_db", validate=True)
+    # The store is semantic memory's one store, whatever its embedder,
+    # built with the keys the storage writes; the partition is the manager's
+    # own, created by the migration and opened by the server.
+    store_spec = {
+        "vector_store_name": "semantic_memory",
+        "vector_dimensions": 2,
+        "similarity_metric": SimilarityMetric.COSINE,
+        "indexed_properties": {},
+    }
+    resource_manager.migrate_vector_store.assert_awaited_once_with(
+        "semantic_vectors", **store_spec
     )
-    resource_manager.get_vector_store.assert_awaited_once_with("semantic_vectors")
-    vector_store.open_or_create_collection.assert_awaited_once()
+    resource_manager.get_vector_store.assert_awaited_with(
+        "semantic_vectors", **store_spec
+    )
+    vector_store.open_or_create_partition.assert_awaited_once_with("semantic_memory")
+    vector_store.open_partition.assert_awaited_once_with("semantic_memory")
 
     await storage.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_semantic_storage_refuses_a_missing_partition(sqlalchemy_sqlite_engine):
+    vector_store = MagicMock()
+    vector_store.open_partition = AsyncMock(return_value=None)
+    manager, _ = _manager(sqlalchemy_sqlite_engine, vector_store)
+
+    with pytest.raises(SchemaMismatchError, match="memmachine-server migrate"):
+        await manager.get_semantic_storage()
