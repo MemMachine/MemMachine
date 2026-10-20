@@ -658,7 +658,7 @@ async def test_contexts_filter_by_context_producer(
     """`context.producer` is not a stored property; the filter just matches nothing.
 
     Bare names that aren't `timestamp` are looked up as `_<name>` in the JSON
-    properties (matching EventMemory's `_to_vector_record_property` convention
+    properties (matching EventMemoryPartition's `_to_vector_record_property` convention
     for system fields). `context.producer` becomes `_context.producer`, which
     isn't a stored key on any segment, so the filter returns no contexts.
     """

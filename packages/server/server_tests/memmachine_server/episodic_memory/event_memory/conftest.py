@@ -3,21 +3,24 @@
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import override
+from unittest.mock import create_autospec
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 
+from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
     demangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.vector_store.data_types import (
-    VectorStoreCollectionConfig,
-)
+from memmachine_server.common.vector_store import VectorStore, VectorStorePartition
 from memmachine_server.episodic_memory.event_memory.data_types import Segment
+from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
     WholeTextDeriver,
@@ -25,19 +28,22 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
+    EventMemoryPartition,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStore,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
 )
+from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
 from server_tests.memmachine_server.common.reranker.fake_embedder import (
     FakeEmbedder,
 )
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
-    InMemoryVectorStoreCollection,
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    InMemoryVectorStorePartition,
     evaluate_filter,
 )
 
@@ -196,6 +202,35 @@ class FakeReranker(Reranker):
         return [float(len(c)) for c in candidates]
 
 
+async def open_event_memory_partition(
+    *,
+    segment_store_partition: SegmentStorePartition,
+    vector_store_partition: VectorStorePartition,
+    segmenter: Segmenter,
+    deriver: Deriver,
+    embedder: Embedder,
+    reranker: Reranker | None = None,
+    metrics_factory: MetricsFactory | None = None,
+) -> EventMemoryPartition:
+    """Open a partition of an EventMemory whose stores hand out the given partitions."""
+    segment_store = create_autospec(SegmentStore, instance=True)
+    segment_store.open_or_create_partition.return_value = segment_store_partition
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.open_or_create_partition.return_value = vector_store_partition
+    event_memory = EventMemory(
+        EventMemoryParams(
+            segment_store=segment_store,
+            vector_store=vector_store,
+            segmenter=segmenter,
+            deriver=deriver,
+            embedder=embedder,
+            reranker=reranker,
+            metrics_factory=metrics_factory,
+        )
+    )
+    return await event_memory.open_or_create_partition("partition")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -212,65 +247,57 @@ def fake_segment_store_partition():
 
 
 @pytest.fixture
-def fake_vector_store_collection(fake_embedder):
-    config = VectorStoreCollectionConfig(
-        vector_dimensions=fake_embedder.dimensions,
+def fake_vector_store_partition(fake_embedder):
+    return InMemoryVectorStorePartition(
         similarity_metric=fake_embedder.similarity_metric,
-        indexed_properties_schema={
+        indexed_properties={
             **EventMemory.expected_vector_store_collection_schema(),
             "_episode_uid": str,
         },
     )
-    return InMemoryVectorStoreCollection(config)
 
 
-@pytest.fixture
-def event_memory(
-    fake_vector_store_collection,
+@pytest_asyncio.fixture
+async def event_memory_partition(
+    fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
-            embedder=fake_embedder,
-        )
+    return await open_event_memory_partition(
+        segment_store_partition=fake_segment_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=TextSegmenter(),
+        deriver=WholeTextDeriver(),
+        embedder=fake_embedder,
     )
 
 
-@pytest.fixture
-def event_memory_with_reranker(
-    fake_vector_store_collection,
+@pytest_asyncio.fixture
+async def event_memory_partition_with_reranker(
+    fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
-            embedder=fake_embedder,
-            reranker=FakeReranker(),
-        )
+    return await open_event_memory_partition(
+        segment_store_partition=fake_segment_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=TextSegmenter(),
+        deriver=WholeTextDeriver(),
+        embedder=fake_embedder,
+        reranker=FakeReranker(),
     )
 
 
-@pytest.fixture
-def event_memory_with_sentences(
-    fake_vector_store_collection,
+@pytest_asyncio.fixture
+async def event_memory_partition_with_sentences(
+    fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
-            segmenter=TextSegmenter(),
-            deriver=SentenceTextDeriver(),
-            embedder=fake_embedder,
-        )
+    return await open_event_memory_partition(
+        segment_store_partition=fake_segment_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=TextSegmenter(),
+        deriver=SentenceTextDeriver(),
+        embedder=fake_embedder,
     )
