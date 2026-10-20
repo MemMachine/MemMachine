@@ -793,6 +793,49 @@ class TestUpsertAndQuery:
         ) == sorted(record.uuid for record in records)
 
     @pytest.mark.asyncio
+    async def test_a_cancelled_upsert_sends_no_request_after_the_cancellation(
+        self, store, monkeypatch
+    ):
+        """Cancelled while its first request is in flight, the upsert sends
+        no further request, pymilvus's retries included; the server may still
+        apply the first."""
+        records = _alike_records(9)
+        sizer = _partition_on(store._client)
+        entity = sizer._build_entity(records[0])
+        cancelled = await _started_store(
+            store._client,
+            store._partition_registry._engine,
+            max_request_bytes=sizer._envelope_size(entity)
+            + 3 * sizer._entity_size(entity),
+        )
+        await cancelled.create_partition("cancelled")
+        partition = await cancelled.open_partition("cancelled")
+        assert partition is not None
+        stub = (await store._client._get_connection())._async_stub
+        in_flight = asyncio.Event()
+        sent: list[int] = []
+        send = stub.Upsert
+
+        def send_and_signal(request, **kwargs):
+            sent.append(request.num_rows)
+            in_flight.set()
+            return send(request, **kwargs)
+
+        monkeypatch.setattr(stub, "Upsert", send_and_signal)
+        upsert = asyncio.create_task(partition.upsert(records=records))
+        await in_flight.wait()
+
+        upsert.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await upsert
+        assert sent == [3]
+        assert set(await _stored(partition, [record.uuid for record in records])) <= {
+            record.uuid for record in records[:3]
+        }
+        await cancelled.delete_partition("cancelled")
+
+    @pytest.mark.asyncio
     async def test_a_request_over_the_servers_limit_raises_a_configuration_error(
         self, store
     ):
@@ -1755,17 +1798,18 @@ class _CurrentRegistration(Registration):
 
 
 def _partition_on(
-    client: AsyncMilvusClient, *, max_request_bytes: int = MAX_REQUEST_BYTES
+    client: AsyncMilvusClient,
+    *,
+    max_request_bytes: int = MAX_REQUEST_BYTES,
+    registration: Registration | None = None,
 ) -> MilvusVectorStorePartition:
-    """A handle on a given client, bound to a live incarnation."""
+    """A handle on a given client, bound to a registration, by default a live one."""
     return MilvusVectorStorePartition(
         client=client,
         collection_name=f"sys_{VECTOR_STORE_NAME}",
         vector_store_name=VECTOR_STORE_NAME,
-        registration=_CurrentRegistration(
-            partition_key=NAME,
-            incarnation=uuid4(),
-        ),
+        registration=registration
+        or _CurrentRegistration(partition_key=NAME, incarnation=uuid4()),
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
@@ -1917,6 +1961,38 @@ async def test_an_upsert_that_fails_otherwise_is_not_sent_again(error: Exception
         await partition.upsert(records=records)
 
     client.upsert.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_upsert_sends_no_request_after_the_cancellation():
+    """Cancelled while a request is in flight, the upsert sends no further
+    request and does not check the registration again."""
+    in_flight = asyncio.Event()
+
+    async def hold(**kwargs) -> None:
+        in_flight.set()
+        await asyncio.Event().wait()
+
+    client = MagicMock(spec=AsyncMilvusClient)
+    client.upsert = AsyncMock(side_effect=hold)
+    registration = MagicMock(spec=Registration, partition_key=NAME, incarnation=uuid4())
+    registration.require_current = AsyncMock()
+    sizer = _partition_on(client)
+    entity = sizer._build_entity(_alike_records(1)[0])
+    partition = _partition_on(
+        client,
+        max_request_bytes=sizer._envelope_size(entity) + sizer._entity_size(entity),
+        registration=registration,
+    )
+    upsert = asyncio.create_task(partition.upsert(records=_alike_records(3)))
+    await in_flight.wait()
+
+    upsert.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await upsert
+    client.upsert.assert_awaited_once()
+    registration.require_current.assert_awaited_once()
 
 
 @pytest.mark.asyncio

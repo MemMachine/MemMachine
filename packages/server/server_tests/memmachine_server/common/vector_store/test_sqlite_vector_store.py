@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
-from sqlalchemy import func, inspect, select, update
+from sqlalchemy import event, func, inspect, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from memmachine_server.common.data_types import PropertyType, SimilarityMetric
@@ -1305,6 +1305,79 @@ class TestConcurrentAsync:
                     else None
                 ),
             )
+
+
+# ── Cancellation ──
+
+
+class TestCancellation:
+    @pytest.mark.asyncio
+    async def test_a_cancelled_upsert_executes_no_statement_after_the_cancellation(
+        self, store, partition
+    ):
+        """Cancelled as its first statement goes out, the upsert executes no
+        further statement, and the partition stays usable."""
+        records = [
+            _make_record(vector=_normalize([1.0, float(i), 0.0])) for i in range(3)
+        ]
+        executed: list[str] = []
+        upsert = asyncio.create_task(partition.upsert(records=records))
+
+        def cancel_the_upsert(
+            _connection, _cursor, statement, _parameters, _context, _executemany
+        ) -> None:
+            executed.append(statement)
+            upsert.cancel()
+
+        sync_engine = store._sqlalchemy_engine.sync_engine
+        event.listen(sync_engine, "before_cursor_execute", cancel_the_upsert)
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await upsert
+        finally:
+            event.remove(sync_engine, "before_cursor_execute", cancel_the_upsert)
+
+        assert len(executed) == 1
+        await partition.upsert(records=records)
+        assert set(await _stored(partition)) == {record.uuid for record in records}
+
+    @pytest.mark.asyncio
+    async def test_an_upsert_cancelled_while_the_search_engine_applies_it_executes_no_statement_after(
+        self, store, partition, monkeypatch
+    ):
+        """Cancelled while the search engine applies its committed records,
+        the upsert executes no further statement, and their operations stay
+        pending for replay."""
+        applying = asyncio.Event()
+
+        async def hold(vectors) -> None:
+            applying.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(partition._search_engine, "add", hold)
+        records = [
+            _make_record(vector=_normalize([1.0, float(i), 0.0])) for i in range(3)
+        ]
+        upsert = asyncio.create_task(partition.upsert(records=records))
+        await applying.wait()
+        executed: list[str] = []
+
+        def record_statement(
+            _connection, _cursor, statement, _parameters, _context, _executemany
+        ) -> None:
+            executed.append(statement)
+
+        sync_engine = store._sqlalchemy_engine.sync_engine
+        event.listen(sync_engine, "before_cursor_execute", record_statement)
+        try:
+            upsert.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await upsert
+        finally:
+            event.remove(sync_engine, "before_cursor_execute", record_statement)
+
+        assert executed == []
+        assert await _pending_operation_count(store._sqlalchemy_engine) == len(records)
 
 
 # ── Crash recovery & pending operations ──

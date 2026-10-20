@@ -480,15 +480,14 @@ def _partition_on(
     max_request_bytes: int = QdrantVectorStoreParams.model_fields[
         "max_request_bytes"
     ].default,
+    registration: Registration | None = None,
 ) -> QdrantVectorStorePartition:
-    """A handle on a given client, bound to a live incarnation."""
+    """A handle on a given client, bound to a registration, by default a live one."""
     return QdrantVectorStorePartition(
         client=client,
         vector_store_name=VECTOR_STORE_NAME,
-        registration=_CurrentRegistration(
-            partition_key=NAME,
-            incarnation=uuid4(),
-        ),
+        registration=registration
+        or _CurrentRegistration(partition_key=NAME, incarnation=uuid4()),
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
@@ -684,6 +683,38 @@ async def test_an_upsert_that_fails_otherwise_is_not_sent_again(error: Exception
     client.upsert.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_a_cancelled_upsert_sends_no_request_after_the_cancellation():
+    """Cancelled while a request is in flight, the upsert sends no further
+    request and does not check the registration again."""
+    in_flight = asyncio.Event()
+
+    async def hold(**kwargs) -> None:
+        in_flight.set()
+        await asyncio.Event().wait()
+
+    client = MagicMock(spec=AsyncQdrantClient)
+    client.init_options = {"prefer_grpc": False}
+    client.upsert = AsyncMock(side_effect=hold)
+    registration = MagicMock(spec=Registration, partition_key=NAME, incarnation=uuid4())
+    registration.require_current = AsyncMock()
+    records = _alike_records(3)
+    sizer = _partition_on(client)
+    envelope_bytes, sizes = sizer._request_sizes([sizer._build_point(records[0])])
+    partition = _partition_on(
+        client, max_request_bytes=envelope_bytes + sizes[0], registration=registration
+    )
+    upsert = asyncio.create_task(partition.upsert(records=records))
+    await in_flight.wait()
+
+    upsert.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await upsert
+    client.upsert.assert_awaited_once()
+    registration.require_current.assert_awaited_once()
+
+
 @pytest.mark.integration
 class TestUpsertRequests:
     """Upserts packed into requests, against the server."""
@@ -748,6 +779,49 @@ class TestUpsertRequests:
         upsert.assert_not_called()
         assert await _stored_uuids(partition) == set()
         await store.delete_partition("oversized")
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_upsert_sends_no_request_after_the_cancellation(
+        self, any_qdrant_client, registry_engine, monkeypatch
+    ):
+        """Cancelled while its first request is in flight, the upsert sends
+        no further request; the server may still apply the first."""
+        records = _alike_records(9)
+        sizer = _partition_on(any_qdrant_client)
+        envelope_bytes, sizes = sizer._request_sizes(
+            [sizer._build_point(record) for record in records]
+        )
+        store = QdrantVectorStore(
+            await _params(
+                any_qdrant_client,
+                registry_engine,
+                max_request_bytes=envelope_bytes + 3 * sizes[0],
+            )
+        )
+        await store.startup()
+        await store.create_partition("cancelled")
+        partition = await store.open_partition("cancelled")
+        assert partition is not None
+        in_flight = asyncio.Event()
+        sent: list[list[models.PointStruct]] = []
+        send = any_qdrant_client.upsert
+
+        async def send_and_signal(**kwargs):
+            sent.append(kwargs["points"])
+            in_flight.set()
+            return await send(**kwargs)
+
+        monkeypatch.setattr(any_qdrant_client, "upsert", send_and_signal)
+        upsert = asyncio.create_task(partition.upsert(records=records))
+        await in_flight.wait()
+
+        upsert.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await upsert
+        assert len(sent) == 1
+        assert await _stored_uuids(partition) <= {record.uuid for record in records[:3]}
+        await store.delete_partition("cancelled")
 
     @pytest.mark.asyncio
     async def test_a_request_over_the_servers_limit_raises_a_configuration_error(
