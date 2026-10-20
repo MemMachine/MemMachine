@@ -325,6 +325,36 @@ def test_with_default_long_conf_enable_status(
 
 
 @pytest.mark.asyncio
+async def test_start_starts_the_event_memory_of_a_deployment_naming_a_segment_store(
+    minimal_conf, patched_resource_manager
+):
+    """The EventMemory's background work runs from startup, whether or not a session opens."""
+    minimal_conf.semantic_memory.enabled = False
+    long_term_memory = minimal_conf.episodic_memory.long_term_memory
+    assert long_term_memory is not None
+    long_term_memory.segment_store = "segment-store"
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    await memmachine.start()
+
+    patched_resource_manager.get_event_memory.assert_awaited_once_with()
+    await memmachine.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_builds_no_event_memory_for_a_deployment_naming_no_segment_store(
+    minimal_conf, patched_resource_manager
+):
+    minimal_conf.semantic_memory.enabled = False
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    await memmachine.start()
+
+    patched_resource_manager.get_event_memory.assert_not_awaited()
+    await memmachine.stop()
+
+
+@pytest.mark.asyncio
 async def test_create_session_passes_generated_config(
     minimal_conf, patched_resource_manager
 ):
@@ -737,6 +767,42 @@ async def test_add_episodes_dispatches_same_id_to_all_backends(
         episodes=expected_episodes,
         session_data=session,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["userId", "user-id", "memmachine_mine"])
+async def test_add_episodes_refuses_an_illegal_metadata_key_before_any_write(
+    minimal_conf, patched_resource_manager, key
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+    episode_storage = MagicMock()
+    episode_storage.add_episodes = AsyncMock()
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    patched_resource_manager.get_episodic_memory_manager = AsyncMock()
+    patched_resource_manager.get_semantic_session_manager = AsyncMock()
+    entries = [
+        EpisodeEntry(
+            content="hello",
+            producer_id="user",
+            producer_role="user",
+            metadata={"color": "red"},
+        ),
+        EpisodeEntry(
+            content="world",
+            producer_id="user",
+            producer_role="user",
+            metadata={key: "v"},
+        ),
+    ]
+
+    with pytest.raises(ValueError, match=key):
+        await memmachine.add_episodes(DummySessionData("session-42"), entries)
+
+    episode_storage.add_episodes.assert_not_awaited()
+    patched_resource_manager.get_episodic_memory_manager.assert_not_awaited()
+    patched_resource_manager.get_semantic_session_manager.assert_not_awaited()
 
 
 @pytest.mark.asyncio

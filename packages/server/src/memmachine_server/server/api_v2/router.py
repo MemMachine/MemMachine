@@ -295,9 +295,12 @@ async def add_memories(
     """Add memories to a project."""
     # Use types from spec if provided, otherwise use all memory types
     target_memories = spec.types or ALL_MEMORY_TYPES
-    results = await _add_messages_to(
-        target_memories=target_memories, spec=spec, memmachine=memmachine
-    )
+    try:
+        results = await _add_messages_to(
+            target_memories=target_memories, spec=spec, memmachine=memmachine
+        )
+    except ValueError as e:
+        raise RestError(code=422, message="invalid argument", ex=e) from e
     return AddMemoriesResponse(results=results)
 
 

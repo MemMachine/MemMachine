@@ -384,6 +384,23 @@ def test_add_memories(client, mock_memmachine):
         assert call_args["target_memories"] == [MemoryType.Semantic]
 
 
+def test_add_memories_refuses_an_invalid_argument_with_422(client, mock_memmachine):
+    payload = {
+        "org_id": "test_org",
+        "project_id": "test_proj",
+        "messages": [{"role": "user", "content": "hello", "metadata": {"userId": "u"}}],
+    }
+    mock_memmachine.add_episodes.side_effect = ValueError(
+        "Property key 'userId' must match [a-z0-9_] and be at most 32 bytes."
+    )
+
+    response = client.post("/api/v2/memories", json=payload)
+
+    assert response.status_code == 422
+    assert "invalid argument" in response.json()["detail"]["message"]
+    assert "userId" in response.json()["detail"]["internal_error"]
+
+
 def test_add_memories_episode_type_forwarded(client, mock_memmachine):
     payload = {
         "org_id": "test_org",
