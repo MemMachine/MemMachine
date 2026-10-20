@@ -200,9 +200,9 @@ class DeclarativeLongTermMemoryConf(BaseModel):
 
 class EventLongTermMemoryConf(BaseModel):
     """
-    A session's event-backend long-term memory (VectorStore + SegmentStore).
+    A session's event-backend long-term memory (VectorStore + EventMemoryStore).
 
-    Its vector store, segment store, embedder, segmenter, deriver, and
+    Its vector store, event memory store, embedder, segmenter, deriver, and
     reranker are the deployment's.
     """
 
@@ -234,7 +234,7 @@ class LongTermMemoryConfPartial(BaseModel):
         description=(
             "Long-term memory backend. None or 'declarative' uses the legacy "
             "VectorGraphStore-backed declarative memory. 'event' uses the "
-            "VectorStore + SegmentStore event memory."
+            "VectorStore + EventMemoryStore event memory."
         ),
     )
     session_id: str | None = Field(
@@ -257,9 +257,9 @@ class LongTermMemoryConfPartial(BaseModel):
         default=None,
         description="ID of the VectorStore (event backend only)",
     )
-    segment_store: str | None = Field(
+    event_memory_store: str | None = Field(
         default=None,
-        description="ID of the SQL engine resource for the segment store (event backend only)",
+        description="ID of the SQL engine resource for the event memory store (event backend only)",
     )
     segmenter: SegmenterConf | None = Field(
         default=None,

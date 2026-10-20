@@ -218,10 +218,10 @@ class MemMachineClient:
                      server's event memory reranker.
             backend: Long-term-memory backend selector. ``None`` (default)
                 lets the server pick its configured default. Set to ``"event"``
-                for the VectorStore + SegmentStore event backend or
+                for the VectorStore + EventMemoryStore event backend or
                 ``"declarative"`` for the legacy VectorGraphStore backend.
                 An event-backed project uses the server's event memory: its
-                vector store, segment store, embedder, and reranker.
+                vector store, event memory store, embedder, and reranker.
             vector_graph_store: VectorGraphStore resource id (declarative
                 backend only). Use ``""`` to let the server pick its default.
             timeout: Request timeout in seconds (uses client default if not provided)
