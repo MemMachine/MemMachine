@@ -208,11 +208,11 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
 
-    async def _initialize_db(self) -> None:
+    async def migrate(self) -> None:
         await apply_alembic_migrations(self._engine)
 
     async def startup(self) -> None:
-        await self._initialize_db()
+        await self.migrate()
 
     async def cleanup(self) -> None:
         await self._engine.dispose()

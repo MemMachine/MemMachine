@@ -173,6 +173,10 @@ class SQLLeaseLockService:
         """Use an existing asynchronous SQLAlchemy engine."""
         self._store = SQLLeaseStore(engine)
 
+    async def migrate(self) -> None:
+        """Create the service's SQL tables, or bring them up to date, before `startup`."""
+        await self._store.migrate()
+
     async def startup(self) -> None:
         """Create the service's SQL tables."""
         await self._store.startup()

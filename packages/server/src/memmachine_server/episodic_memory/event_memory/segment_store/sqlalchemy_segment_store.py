@@ -6,6 +6,7 @@ import sqlite3
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
 from typing import override
 from uuid import UUID, uuid4
 
@@ -79,6 +80,7 @@ from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
 )
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.utils import ensure_tz_aware, utc_offset_seconds
 from memmachine_server.episodic_memory.event_memory.data_types import (
     NullContext,
@@ -243,6 +245,13 @@ class PurgeQueueRow(BaseSegmentStore):
     purged_through: MappedColumn[UUID | None] = mapped_column(Uuid, nullable=True)
 
     __table_args__ = (Index("segment_store_gc__ea", "enqueued_at"),)
+
+
+SEGMENT_STORE_LINEAGE = Lineage(
+    name="segment_store",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BaseSegmentStore.metadata,
+)
 
 
 class SQLAlchemySegmentStorePartition(SegmentStorePartition):
@@ -1022,6 +1031,11 @@ class SQLAlchemySegmentStore(SegmentStore):
         self._is_sqlite = self._engine.dialect.name == "sqlite"
 
     # Lifecycle
+
+    @override
+    async def migrate(self) -> None:
+        async with self._tracker("migrate"):
+            await upgrade_lineage(self._engine, SEGMENT_STORE_LINEAGE)
 
     @override
     async def startup(self) -> None:

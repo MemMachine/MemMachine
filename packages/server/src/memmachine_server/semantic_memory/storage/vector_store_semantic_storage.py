@@ -1,4 +1,4 @@
-"""Semantic storage backed by relational metadata and a VectorStore collection."""
+"""Semantic storage backed by relational metadata and a VectorStore partition."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ from memmachine_server.common.filter.sql_filter_util import (
     compile_sql_filter,
 )
 from memmachine_server.common.utils import ensure_tz_aware
-from memmachine_server.common.vector_store import Record, VectorStoreCollection
+from memmachine_server.common.vector_store import Record, VectorStorePartition
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
     FeatureIdT,
@@ -181,11 +181,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
     def __init__(
         self,
         sqlalchemy_engine: AsyncEngine,
-        vector_collection: VectorStoreCollection,
+        vector_partition: VectorStorePartition,
     ) -> None:
-        """Initialize storage with an async SQLAlchemy engine and vector collection."""
+        """Initialize storage with an async SQLAlchemy engine and a vector store partition."""
         self._engine = sqlalchemy_engine
-        self._vector_collection = vector_collection
+        self._vector_partition = vector_partition
         self._session_factory = async_sessionmaker(
             bind=self._engine,
             expire_on_commit=False,
@@ -194,9 +194,12 @@ class VectorStoreSemanticStorage(SemanticStorage):
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
 
-    async def startup(self) -> None:
+    async def migrate(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseVectorSemanticStorage.metadata.create_all)
+
+    async def startup(self) -> None:
+        await self.migrate()
 
     async def cleanup(self) -> None:
         await self._engine.dispose()
@@ -216,7 +219,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
                 ).scalars()
             )
             await session.commit()
-        await self._vector_collection.delete(record_uuids=vector_uuids)
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def reset_set_ids(self, set_ids: Sequence[SetIdT]) -> None:
         del set_ids
@@ -252,7 +255,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             await session.commit()
             feature_id = FeatureIdT(str(result.scalar_one()))
 
-        await self._vector_collection.upsert(
+        await self._vector_partition.upsert(
             records=[Record(uuid=vector_uuid, vector=embedding.tolist())]
         )
         return feature_id
@@ -301,7 +304,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
 
         # The vector store holds the embedding; the row above holds the rest.
         if embedding is not None:
-            await self._vector_collection.upsert(
+            await self._vector_partition.upsert(
                 records=[Record(uuid=row.vector_uuid, vector=embedding.tolist())]
             )
 
@@ -381,7 +384,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             )
             await session.commit()
 
-        await self._vector_collection.delete(record_uuids=vector_uuids)
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def delete_feature_set(
         self,
@@ -398,7 +401,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
         async with self._create_session() as session:
             vector_uuids = list((await session.execute(stmt)).scalars())
             await session.commit()
-        await self._vector_collection.delete(record_uuids=vector_uuids)
+        await self._vector_partition.delete(record_uuids=vector_uuids)
 
     async def add_citations(
         self,
@@ -651,7 +654,7 @@ class VectorStoreSemanticStorage(SemanticStorage):
             _DEFAULT_VECTOR_QUERY_LIMIT,
             offset + page_size if page_size is not None else 0,
         )
-        [query_result] = await self._vector_collection.query(
+        [query_result] = await self._vector_partition.query(
             query_vectors=[vector_search_opts.query_embedding.tolist()],
             limit=limit,
             score_threshold=vector_search_opts.min_distance,
