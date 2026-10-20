@@ -79,7 +79,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           backend: event
           session_id: user-session-id
           vector_store: my-vector-store
-          segment_store: profile_storage
+          event_memory_store: profile_storage
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
         short_term_memory:
@@ -99,10 +99,10 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
         session_key: user-session-id # Unique session identifier
         metrics_factory_id: prometheus # Metrics exporter ID
         long_term_memory: # Configuration for long-term memory
-          backend: event # Use VectorStore + SegmentStore. Use declarative for VectorGraphStore.
+          backend: event # Use VectorStore + EventMemoryStore. Use declarative for VectorGraphStore.
           session_id: user-session-id # Reuses parent session_key
           vector_store: my-vector-store # ID of the VectorStore from 'resources.databases'
-          segment_store: profile_storage # ID of the SQL database used by SegmentStore
+          event_memory_store: profile_storage # ID of the SQL database used by EventMemoryStore
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
         short_term_memory: # Configuration for short-term memory
@@ -126,9 +126,9 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory_enabled`      | Whether long-term episodic memory is enabled.                              | `true`       |
     | `short_term_memory_enabled`     | Whether short-term episodic memory is enabled.                             | `true`       |
     | `enabled`                       | Whether episodic memory as a whole is enabled.                             | `true`       |
-    | `long_term_memory.backend`      | Long-term memory backend. Use `event` for VectorStore + SegmentStore, or `declarative` for VectorGraphStore. | `declarative` when omitted |
+    | `long_term_memory.backend`      | Long-term memory backend. Use `event` for VectorStore + EventMemoryStore, or `declarative` for VectorGraphStore. | `declarative` when omitted |
     | `long_term_memory.vector_store` | Event backend only: ID of a VectorStore defined in `resources.databases`. | *Required for event backend* |
-    | `long_term_memory.segment_store` | Event backend only: ID of a SQL database defined in `resources.databases`. | *Required for event backend* |
+    | `long_term_memory.event_memory_store` | Event backend only: ID of a SQL database defined in `resources.databases`. | *Required for event backend* |
     | `long_term_memory.vector_graph_store` | Declarative backend only: ID of a VectorGraphStore defined in `resources.databases`. | *Required for declarative backend* |
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. Event backend can omit it to use embedding scores directly. | Depends on backend |

@@ -29,11 +29,11 @@ from memmachine_server.episodic_memory.declarative_memory.data_types import (
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemoryPartition,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStore,
-    SegmentStorePartition,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+from memmachine_server.episodic_memory.event_memory.event_memory_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
@@ -121,7 +121,7 @@ async def test_every_backend_and_embedder_name_the_one_event_store():
             LongTermMemoryConfPartial(
                 backend="event",
                 vector_store=vector_store,
-                segment_store="ss",
+                event_memory_store="ss",
                 embedder=embedder_id,
             )
         )
@@ -155,11 +155,11 @@ def _deployment_resource_manager(
         long_term_memory=deployment
     )
     resource_manager.get_vector_store.return_value = vector_store
-    resource_manager.get_segment_store.return_value = create_autospec(
-        SegmentStore, instance=True
+    resource_manager.get_event_memory_store.return_value = create_autospec(
+        EventMemoryStore, instance=True
     )
-    resource_manager.get_segment_store.return_value.open_or_create_partition.return_value = create_autospec(
-        SegmentStorePartition, instance=True
+    resource_manager.get_event_memory_store.return_value.open_or_create_partition.return_value = create_autospec(
+        EventMemoryStorePartition, instance=True
     )
     resource_manager.get_embedder.return_value = embedder
     resource_manager.get_reranker.return_value = create_autospec(
@@ -173,7 +173,7 @@ def _deployment_resource_manager(
 
 
 _DEPLOYMENT = LongTermMemoryConfPartial(
-    backend="event", vector_store="vs", segment_store="ss", embedder="e"
+    backend="event", vector_store="vs", event_memory_store="ss", embedder="e"
 )
 
 
@@ -221,7 +221,7 @@ async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session
         {
             "session_id": "s",
             "vector_store": "other_vs",
-            "segment_store": "other_ss",
+            "event_memory_store": "other_ss",
             "embedder": "other_e",
         }
     )
@@ -229,7 +229,7 @@ async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session
     await long_term_memory_from_config(config, resource_manager)
 
     assert resource_manager.get_vector_store.await_args.args == ("vs",)
-    resource_manager.get_segment_store.assert_awaited_once_with("ss")
+    resource_manager.get_event_memory_store.assert_awaited_once_with("ss")
     assert {call.args[0] for call in resource_manager.get_embedder.await_args_list} == {
         "e"
     }
@@ -263,15 +263,15 @@ async def test_event_params_serves_a_session_with_the_deployments_reranker():
         LongTermMemoryConfPartial(
             backend="declarative", vector_graph_store="g", embedder="e"
         ),
-        LongTermMemoryConfPartial(segment_store="ss", embedder="e"),
+        LongTermMemoryConfPartial(event_memory_store="ss", embedder="e"),
         LongTermMemoryConfPartial(vector_store="vs", embedder="e"),
-        LongTermMemoryConfPartial(vector_store="vs", segment_store="ss"),
+        LongTermMemoryConfPartial(vector_store="vs", event_memory_store="ss"),
     ],
     ids=[
         "no_long_term_memory",
         "declarative_memory",
         "no_vector_store",
-        "no_segment_store",
+        "no_event_memory_store",
         "no_embedder",
     ],
 )
@@ -284,7 +284,7 @@ async def test_event_memory_from_config_refuses_a_deployment_without_event_memor
         await event_memory_from_config(resource_manager)
 
     resource_manager.get_vector_store.assert_not_awaited()
-    resource_manager.get_segment_store.assert_not_awaited()
+    resource_manager.get_event_memory_store.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -299,13 +299,13 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without
     await delete_long_term_memory_storage(config, resource_manager)
 
     vector_store = resource_manager.get_vector_store.return_value
-    segment_store = resource_manager.get_segment_store.return_value
+    event_memory_store = resource_manager.get_event_memory_store.return_value
     vector_store.delete_partition.assert_awaited_once_with("s")
-    segment_store.delete_partition.assert_awaited_once_with("s")
+    event_memory_store.delete_partition.assert_awaited_once_with("s")
     vector_store.open_or_create_partition.assert_not_awaited()
-    segment_store.open_or_create_partition.assert_not_awaited()
+    event_memory_store.open_or_create_partition.assert_not_awaited()
     # Reclamation is the sweeper's; the delete path never purges.
-    segment_store.purge_deleted_partitions.assert_not_awaited()
+    event_memory_store.purge_deleted_partitions.assert_not_awaited()
 
 
 @pytest.mark.asyncio

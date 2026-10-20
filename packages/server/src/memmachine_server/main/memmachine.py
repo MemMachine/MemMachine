@@ -221,20 +221,20 @@ class MemMachine:
                 except Exception:
                     ltm.reranker = None
 
-            # vector_store + segment_store are required to materialize an
+            # vector_store + event_memory_store are required to materialize an
             # event-backed long-term memory. If either is missing, disable.
             missing = [
                 name
                 for name, value in (
                     ("vector_store", ltm.vector_store),
-                    ("segment_store", ltm.segment_store),
+                    ("event_memory_store", ltm.event_memory_store),
                 )
                 if value is None
             ]
             if missing:
                 self._disable_long_term_memory(
                     "Event-backed long-term memory requires both vector_store "
-                    f"and segment_store; missing: {', '.join(missing)}. "
+                    f"and event_memory_store; missing: {', '.join(missing)}. "
                     "Disabling long-term episodic memory."
                 )
 
@@ -520,7 +520,7 @@ class MemMachine:
         if (
             self._conf.episodic_memory.enabled
             and long_term_memory is not None
-            and long_term_memory.segment_store is not None
+            and long_term_memory.event_memory_store is not None
         ):
             # Its background work finishes what a stopped process left,
             # whether or not a session is opened.

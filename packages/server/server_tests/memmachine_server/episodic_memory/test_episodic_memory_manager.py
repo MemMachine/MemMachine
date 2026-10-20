@@ -37,7 +37,9 @@ from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+)
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     event_backend_indexed_properties,
     event_memory_from_config,
@@ -633,7 +635,7 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
     mock_resource_manager.config = create_autospec(Configuration, instance=True)
     mock_resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(
         long_term_memory=LongTermMemoryConfPartial(
-            backend="event", vector_store="vs", segment_store="ss", embedder="e"
+            backend="event", vector_store="vs", event_memory_store="ss", embedder="e"
         )
     )
     vector_store = create_autospec(VectorStore, instance=True)
@@ -642,12 +644,12 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
         similarity_metric=SimilarityMetric.COSINE,
         indexed_properties=event_backend_indexed_properties(),
     )
-    segment_store = create_autospec(SegmentStore, instance=True)
+    event_memory_store = create_autospec(EventMemoryStore, instance=True)
     embedder = create_autospec(Embedder, instance=True)
     embedder.dimensions = 3
     embedder.similarity_metric = SimilarityMetric.COSINE
     mock_resource_manager.get_vector_store.return_value = vector_store
-    mock_resource_manager.get_segment_store.return_value = segment_store
+    mock_resource_manager.get_event_memory_store.return_value = event_memory_store
     mock_resource_manager.get_embedder.return_value = embedder
     mock_resource_manager.get_event_memory.return_value = (
         await event_memory_from_config(mock_resource_manager)
@@ -666,9 +668,9 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
     await manager.delete_episodic_session(session_key)
 
     vector_store.delete_partition.assert_awaited_once_with(session_key)
-    segment_store.delete_partition.assert_awaited_once_with(session_key)
+    event_memory_store.delete_partition.assert_awaited_once_with(session_key)
     vector_store.open_or_create_partition.assert_not_awaited()
-    segment_store.open_or_create_partition.assert_not_awaited()
+    event_memory_store.open_or_create_partition.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 
 Builds a LongTermMemory over an EventMemoryPartition using:
 - the in-memory vector store partition from event_memory tests
-- the in-memory segment_store partition from event_memory tests
+- the in-memory event_memory_store partition from event_memory tests
 - an EventMemory whose store stand-ins hand out those two partitions
 - a fake embedder
 - a fake EpisodeStorage that satisfies the get_episode(uid) lookup used during
@@ -58,8 +58,8 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStore,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
     PassthroughSegmenter,
@@ -79,7 +79,7 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_p
     InMemoryVectorStorePartition,
 )
 from server_tests.memmachine_server.episodic_memory.event_memory.conftest import (
-    InMemorySegmentStorePartition,
+    InMemoryEventMemoryStorePartition,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -199,34 +199,36 @@ def vector_store_partition(store_schema):
 
 
 @pytest.fixture
-def segment_store():
-    """Stand-in for the parent SegmentStore lifecycle methods."""
-    store = create_autospec(SegmentStore, instance=True)
+def event_memory_store():
+    """Stand-in for the parent EventMemoryStore lifecycle methods."""
+    store = create_autospec(EventMemoryStore, instance=True)
     store.purge_deleted_partitions.return_value = False
     return store
 
 
 @pytest.fixture
-def segment_store_partition() -> InMemorySegmentStorePartition:
-    return InMemorySegmentStorePartition()
+def event_memory_store_partition() -> InMemoryEventMemoryStorePartition:
+    return InMemoryEventMemoryStorePartition()
 
 
 async def _event_long_term_memory(
     *,
     vector_store: NonCallableMagicMock,
     vector_store_partition: InMemoryVectorStorePartition,
-    segment_store: NonCallableMagicMock,
-    segment_store_partition: InMemorySegmentStorePartition,
+    event_memory_store: NonCallableMagicMock,
+    event_memory_store_partition: InMemoryEventMemoryStorePartition,
     episode_storage: EpisodeStorage,
     embedder: Embedder,
     segmenter: Segmenter,
 ) -> LongTermMemory:
     """A LongTermMemory on session `sess1`'s partition, which the given stores hand out."""
     vector_store.open_or_create_partition.return_value = vector_store_partition
-    segment_store.open_or_create_partition.return_value = segment_store_partition
+    event_memory_store.open_or_create_partition.return_value = (
+        event_memory_store_partition
+    )
     event_memory = EventMemory(
         EventMemoryParams(
-            segment_store=segment_store,
+            event_memory_store=event_memory_store,
             vector_store=vector_store,
             segmenter=segmenter,
             deriver=WholeTextDeriver(),
@@ -244,15 +246,15 @@ async def long_term_memory(
     fake_embedder,
     vector_store,
     vector_store_partition,
-    segment_store,
-    segment_store_partition,
+    event_memory_store,
+    event_memory_store_partition,
     fake_episode_storage,
 ) -> LongTermMemory:
     return await _event_long_term_memory(
         vector_store=vector_store,
         vector_store_partition=vector_store_partition,
-        segment_store=segment_store,
-        segment_store_partition=segment_store_partition,
+        event_memory_store=event_memory_store,
+        event_memory_store_partition=event_memory_store_partition,
         episode_storage=fake_episode_storage,
         embedder=fake_embedder,
         segmenter=PassthroughSegmenter(),
@@ -335,22 +337,22 @@ async def test_search_warns_on_index_storage_drift(
 
 async def test_delete_episodes_removes_from_event_memory(
     long_term_memory,
-    segment_store_partition,
+    event_memory_store_partition,
     episodes,
 ):
     await long_term_memory.add_episodes(episodes)
     # Sanity: 3 events, each with 1 segment under PassthroughSegmenter.
-    assert len(segment_store_partition.segments) == 3
+    assert len(event_memory_store_partition.segments) == 3
 
     await long_term_memory.delete_episodes([_uid("ep-1")])
 
     # ep-1's segment should be gone; the others should remain.
-    assert len(segment_store_partition.segments) == 2
+    assert len(event_memory_store_partition.segments) == 2
     # Map back: ep-1's event_uuid is uuid5(NS, "ep-1"); easier to assert by
     # checking the episode uid property on remaining segments.
     remaining_episode_uids = {
         s.properties[_EPISODE_UID_KEY]
-        for s in segment_store_partition.segments.values()
+        for s in event_memory_store_partition.segments.values()
     }
     assert str(_uid("ep-1")) not in remaining_episode_uids
 
@@ -400,7 +402,7 @@ async def test_system_field_filter_round_trips(
 ):
     """A bare client-API field (`producer_role`) names the adapter's reserved key.
 
-    Both the vector store and the segment store filter on that key, so a
+    Both the vector store and the event memory store filter on that key, so a
     system-field filter actually narrows results.
     """
     episodes = [
@@ -463,7 +465,7 @@ async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
 async def test_unknown_bare_filter_field_raises(long_term_memory):
     """Typo'd bare system field surfaces as ValueError, not silent empty.
 
-    Without this guard, segment store / vector store would treat the unknown
+    Without this guard, event memory store / vector store would treat the unknown
     name as an exact JSON property lookup and silently return zero results.
     """
     with pytest.raises(ValueError, match="Unknown filter field 'producre_id'"):
@@ -488,7 +490,7 @@ async def test_any_user_metadata_field_is_accepted(long_term_memory):
 
 
 async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
-    """`timestamp` is a valid bare filter field (segment store has it as a column)."""
+    """`timestamp` is a valid bare filter field (event memory store has it as a column)."""
     await long_term_memory.add_episodes(episodes)
     # Doesn't raise; whether anything matches depends on the embedder/score path.
     await long_term_memory.query(
@@ -558,7 +560,7 @@ def test_producer_conjuncts_are_lifted_into_source_ids():
 async def test_a_producer_filter_reaches_the_vector_stage(
     long_term_memory, fake_episode_storage, vector_store_partition, monkeypatch
 ):
-    """The vector store gets the source predicate; the segment store gets no tree."""
+    """The vector store gets the source predicate; the event memory store gets no tree."""
     episodes = [
         Episode(
             uid=_uid("p-1"),
@@ -625,8 +627,8 @@ async def _make_ltm(
     return await _event_long_term_memory(
         vector_store=vector_store,
         vector_store_partition=InMemoryVectorStorePartition(store_schema=store_schema),
-        segment_store=create_autospec(SegmentStore, instance=True),
-        segment_store_partition=InMemorySegmentStorePartition(),
+        event_memory_store=create_autospec(EventMemoryStore, instance=True),
+        event_memory_store_partition=InMemoryEventMemoryStorePartition(),
         episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),
         embedder=embedder,
         segmenter=segmenter if segmenter is not None else PassthroughSegmenter(),
@@ -809,8 +811,8 @@ def timeline_storage(timeline_episodes) -> FakeEpisodeStorage:
 async def timeline_long_term_memory(
     vector_store,
     vector_store_partition,
-    segment_store,
-    segment_store_partition,
+    event_memory_store,
+    event_memory_store_partition,
     timeline_storage,
 ) -> LongTermMemory:
     # `RankedEmbedder` shares FakeEmbedder's dimensions and similarity metric,
@@ -818,8 +820,8 @@ async def timeline_long_term_memory(
     return await _event_long_term_memory(
         vector_store=vector_store,
         vector_store_partition=vector_store_partition,
-        segment_store=segment_store,
-        segment_store_partition=segment_store_partition,
+        event_memory_store=event_memory_store,
+        event_memory_store_partition=event_memory_store_partition,
         episode_storage=timeline_storage,
         embedder=RankedEmbedder(),
         segmenter=PassthroughSegmenter(),
@@ -880,21 +882,21 @@ async def test_expand_context_zero_returns_matches_in_score_order(
 async def test_expand_context_window_stays_within_the_episode_limit(
     timeline_long_term_memory,
     timeline_episodes,
-    segment_store_partition,
+    event_memory_store_partition,
     monkeypatch,
 ):
-    """The window asked of the segment store is clamped to [0, limit - 1].
+    """The window asked of the event memory store is clamped to [0, limit - 1].
 
     Asserted on the store call rather than on which episodes come back, so it
     holds however the window is split between the two directions and however
     results are ranked. The lower bound matters on its own: a negative
     `expand_context` would make the window negative, which is outside the
-    SegmentStorePartition contract.
+    EventMemoryStorePartition contract.
     """
     await timeline_long_term_memory.add_episodes(timeline_episodes)
 
     walks: list[tuple[int, int]] = []
-    get_segment_neighborhoods = segment_store_partition.get_segment_neighborhoods
+    get_segment_neighborhoods = event_memory_store_partition.get_segment_neighborhoods
 
     async def recording_get_segment_neighborhoods(seed_uuids, **kwargs):
         walks.append(
@@ -906,7 +908,7 @@ async def test_expand_context_window_stays_within_the_episode_limit(
         return await get_segment_neighborhoods(seed_uuids, **kwargs)
 
     monkeypatch.setattr(
-        segment_store_partition,
+        event_memory_store_partition,
         "get_segment_neighborhoods",
         recording_get_segment_neighborhoods,
     )
@@ -953,7 +955,7 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
 ):
     """`expand_context` is a window of segments; it reaches their episodes.
 
-    EventMemory and the segment store know segments, not episodes. Under
+    EventMemory and the event memory store know segments, not episodes. Under
     PassthroughSegmenter one segment is one episode, so a window of
     `expand_context` segments is `expand_context` neighbour episodes, the
     declarative backend's unit. A splitting segmenter puts several segments

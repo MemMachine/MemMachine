@@ -273,7 +273,7 @@ def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
             "backend": "event",
             "session_id": "s",
             "vector_store": "vstore",
-            "segment_store": "pg_engine",
+            "event_memory_store": "pg_engine",
             "embedder": "openai_embedder",
             "reranker": "cohere_reranker",
             "segmenter": {"type": "text"},
@@ -327,7 +327,7 @@ def test_partial_merge_with_event_backend_resolves_to_event():
         session_id="s",
         embedder="e",
         vector_store="v",
-        segment_store="seg",
+        event_memory_store="seg",
     )
     override = LongTermMemoryConfPartial()
 
@@ -354,7 +354,7 @@ def test_partial_merge_primary_backend_wins_over_fallback():
         session_id="s",
         embedder="e",
         vector_store="v",
-        segment_store="seg",
+        event_memory_store="seg",
     )
     fallback = LongTermMemoryConfPartial(
         backend="declarative",
