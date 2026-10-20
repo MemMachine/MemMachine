@@ -23,7 +23,7 @@ logging:
   level: info                             # debug | info | error
 
 episode_store:
-  database: profile_storage
+  database: relational_db
 
 episodic_memory:
   long_term_memory:
@@ -31,7 +31,7 @@ episodic_memory:
     embedder: openai_embedder
     reranker: my_reranker_id          # optional; omit to order by embedding score
     vector_store: event_vector_store  # Qdrant, below
-    segment_store: profile_storage    # a relational DB; the segment store is built from it
+    segment_store: relational_db      # a relational DB; the segment store is built from it
     # properties_schema:              # optional — user-defined filterable properties
     #   source_role: str
     # segmenter:                      # optional — defaults to passthrough
@@ -49,11 +49,11 @@ retrieval_agent:
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
-  database: profile_storage
-  config_database: profile_storage
+  database: relational_db
+  config_database: relational_db
 
 session_manager:
-  database: profile_storage
+  database: relational_db
   instance_cache_size: 0  # Set above 0 to retain idle episodic memory instances.
 
 prompt:
@@ -64,7 +64,7 @@ resources:
   databases:
     # Relational store: episodes, sessions, semantic memory, and the segment
     # store for the event backend. `postgres` is the compose service name.
-    profile_storage:
+    relational_db:
       provider: postgres
       config:
         host: postgres

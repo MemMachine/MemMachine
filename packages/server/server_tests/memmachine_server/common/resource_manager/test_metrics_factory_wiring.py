@@ -99,7 +99,7 @@ def test_get_segment_store_supplies_a_factory(monkeypatch, mock_metrics_factory)
 
     monkeypatch.setattr(rm.ResourceManagerImpl, "get_sql_engine", fake_engine)
 
-    asyncio.run(manager.get_segment_store("profile_storage"))
+    asyncio.run(manager.get_segment_store("relational_db"))
 
     assert captured["params"].metrics_factory is not None, (
         "get_segment_store built the store without a metrics factory, so its "
