@@ -1,6 +1,8 @@
 """Tests for SQLiteVectorStore."""
 
 import asyncio
+import contextlib
+import logging
 import math
 import threading
 from datetime import UTC, datetime, timedelta, timezone
@@ -43,6 +45,7 @@ from memmachine_server.common.vector_store.sqlite_vector_store import (
     SQLiteVectorStore,
     SQLiteVectorStoreParams,
     SQLiteVectorStorePartition,
+    _finish_despite_cancellation,
     _PartitionRow,
     _PendingOperationRow,
 )
@@ -1442,6 +1445,566 @@ class TestEngineAccess:
             await engine.dispose()
 
 
+# ── Cancellation ──
+
+
+class TestCancellation:
+    """A cancelled call keeps the engine lock until its engine work has finished.
+
+    Engines do their work in a thread, which a cancellation of the awaiting
+    task leaves running. The call holds the lock until that work ends, so no
+    other engine call overlaps it, and then raises `CancelledError`. Once a
+    write has committed, its whole engine update runs, the wait for the lock
+    included.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cancellations", [1, 2])
+    async def test_a_rewrite_cancelled_in_its_remove_still_adds(
+        self, tmp_path, cancellations
+    ):
+        """The rewrite holds the lock through its remove and its add, then raises.
+
+        A cancellation arriving while the rewrite already waits for its thread
+        changes nothing. A query issued while the remove's thread is parked
+        waits for both calls and finds the new version.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _ThreadParkedEngine
+        )
+        try:
+            partition = await store.open_or_create_partition(NAME)
+            (parked_engine,) = wrapped
+            record_uuid = uuid4()
+            await partition.upsert(
+                records=[
+                    _make_record(uuid=record_uuid, vector=_normalize([1.0, 0.0, 0.0]))
+                ]
+            )
+
+            parked_engine.park = "remove"
+            rewrite_task = asyncio.create_task(
+                partition.upsert(
+                    records=[
+                        _make_record(
+                            uuid=record_uuid, vector=_normalize([0.0, 1.0, 0.0])
+                        )
+                    ]
+                )
+            )
+            await parked_engine.parked.wait()
+            for _ in range(cancellations):
+                await _cancel_and_expect_the_lock_kept(rewrite_task, store)
+            query_task = asyncio.create_task(
+                partition.query(query_vectors=[_normalize([0.0, 1.0, 0.0])], limit=1)
+            )
+
+            parked_engine.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await rewrite_task
+            assert rewrite_task.cancelling() == cancellations
+            [result] = await query_task
+            assert [m.record_uuid for m in result.matches] == [record_uuid]
+        finally:
+            for wrapped_engine in wrapped:
+                wrapped_engine.release.set()
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_deadline_expiring_in_a_rewrite_raises_timeout_error_after_it(
+        self, tmp_path
+    ):
+        """`asyncio.timeout` reads the cancellation as its own.
+
+        The rewrite finishes its engine step, the deadline raises
+        `TimeoutError`, and the task is left with no cancellation pending.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _ThreadParkedEngine
+        )
+        try:
+            partition = await store.open_or_create_partition(NAME)
+            (parked_engine,) = wrapped
+            record_uuid = uuid4()
+            await partition.upsert(
+                records=[
+                    _make_record(uuid=record_uuid, vector=_normalize([1.0, 0.0, 0.0]))
+                ]
+            )
+
+            parked_engine.park = "remove"
+            deadlines: list[asyncio.Timeout] = []
+
+            async def rewrite_under_deadline() -> None:
+                async with asyncio.timeout(None) as deadline:
+                    deadlines.append(deadline)
+                    await partition.upsert(
+                        records=[
+                            _make_record(
+                                uuid=record_uuid, vector=_normalize([0.0, 1.0, 0.0])
+                            )
+                        ]
+                    )
+
+            rewrite_task = asyncio.create_task(rewrite_under_deadline())
+            await parked_engine.parked.wait()
+            [deadline] = deadlines
+            # A deadline already past expires at the loop's next turn.
+            deadline.reschedule(asyncio.get_running_loop().time())
+            await asyncio.sleep(0)
+            assert deadline.expired()
+
+            parked_engine.release.set()
+            with pytest.raises(TimeoutError):
+                await rewrite_task
+            assert rewrite_task.cancelling() == 0
+            [result] = await partition.query(
+                query_vectors=[_normalize([0.0, 1.0, 0.0])], limit=1
+            )
+            assert [m.record_uuid for m in result.matches] == [record_uuid]
+        finally:
+            for wrapped_engine in wrapped:
+                wrapped_engine.release.set()
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_an_upsert_cancelled_waiting_for_the_engine_lock_still_applies(
+        self, tmp_path, monkeypatch
+    ):
+        """Once its row commits, an upsert reaches the engine however it ends.
+
+        The upsert commits and waits for the engine lock behind a parked
+        search. Cancelled there, it still applies once the search ends, and
+        then raises.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _ThreadParkedEngine
+        )
+        try:
+            partition = await store.open_or_create_partition(NAME)
+            (parked_engine,) = wrapped
+
+            parked_engine.park = "search"
+            query_task = asyncio.create_task(
+                partition.query(query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1)
+            )
+            await parked_engine.parked.wait()
+            writer_waits = _signal_write_waits(monkeypatch, partition._engine_lock)
+            record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            upsert_task = asyncio.create_task(partition.upsert(records=[record]))
+            await writer_waits.wait()
+
+            upsert_task.cancel()
+            # A cancellation lands at the task's next turn, before this one resumes.
+            await asyncio.sleep(0)
+            assert not upsert_task.done(), "the upsert gave up its engine update"
+
+            parked_engine.release.set()
+            await query_task
+            with pytest.raises(asyncio.CancelledError):
+                await upsert_task
+            assert await _present_uuids(partition, [record.uuid]) == [record.uuid]
+        finally:
+            for wrapped_engine in wrapped:
+                wrapped_engine.release.set()
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_delete_cancelled_waiting_for_the_engine_lock_still_applies(
+        self, tmp_path, monkeypatch
+    ):
+        """Once its row is gone, a delete reaches the engine however it ends.
+
+        The delete commits and waits for the engine lock behind a parked
+        search. Cancelled there, it still removes the vector once the search
+        ends, and then raises.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _ThreadParkedEngine
+        )
+        try:
+            partition = await store.open_or_create_partition(NAME)
+            (parked_engine,) = wrapped
+            deleted = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            decoy = _make_record(vector=_normalize([1.0, 1.0, 0.0]))
+            await partition.upsert(records=[deleted, decoy])
+
+            parked_engine.park = "search"
+            query_task = asyncio.create_task(
+                partition.query(query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1)
+            )
+            await parked_engine.parked.wait()
+            writer_waits = _signal_write_waits(monkeypatch, partition._engine_lock)
+            delete_task = asyncio.create_task(
+                partition.delete(record_uuids=[deleted.uuid])
+            )
+            await writer_waits.wait()
+
+            delete_task.cancel()
+            # A cancellation lands at the task's next turn, before this one resumes.
+            await asyncio.sleep(0)
+            assert not delete_task.done(), "the delete gave up its engine update"
+
+            parked_engine.release.set()
+            await query_task
+            with pytest.raises(asyncio.CancelledError):
+                await delete_task
+            # The deleted vector scores 1.0 here, so if it is still in the
+            # engine it takes the only slot and resolves to nothing.
+            [result] = await partition.query(
+                query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1
+            )
+            assert [m.record_uuid for m in result.matches] == [decoy.uuid]
+        finally:
+            for wrapped_engine in wrapped:
+                wrapped_engine.release.set()
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_query_cancelled_in_its_search_holds_the_lock(self, tmp_path):
+        """The search keeps the read side until its thread ends; the query raises."""
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _ThreadParkedEngine
+        )
+        try:
+            partition = await store.open_or_create_partition(NAME)
+            (parked_engine,) = wrapped
+            record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            await partition.upsert(records=[record])
+
+            parked_engine.park = "search"
+            query_task = asyncio.create_task(
+                partition.query(query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1)
+            )
+            await parked_engine.parked.wait()
+            await _cancel_and_expect_the_lock_kept(query_task, store)
+
+            parked_engine.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await query_task
+            assert await _present_uuids(partition, [record.uuid]) == [record.uuid]
+        finally:
+            for wrapped_engine in wrapped:
+                wrapped_engine.release.set()
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_delete_cancelled_in_its_remove_still_removes(self, tmp_path):
+        """The delete keeps the lock until its remove's thread ends, then raises."""
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _ThreadParkedEngine
+        )
+        try:
+            partition = await store.open_or_create_partition(NAME)
+            (parked_engine,) = wrapped
+            deleted = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            decoy = _make_record(vector=_normalize([1.0, 1.0, 0.0]))
+            await partition.upsert(records=[deleted, decoy])
+
+            parked_engine.park = "remove"
+            delete_task = asyncio.create_task(
+                partition.delete(record_uuids=[deleted.uuid])
+            )
+            await parked_engine.parked.wait()
+            await _cancel_and_expect_the_lock_kept(delete_task, store)
+
+            parked_engine.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await delete_task
+            # The deleted vector scores 1.0 here, so if it is still in the
+            # engine it takes the only slot and resolves to nothing.
+            [result] = await partition.query(
+                query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1
+            )
+            assert [m.record_uuid for m in result.matches] == [decoy.uuid]
+        finally:
+            for wrapped_engine in wrapped:
+                wrapped_engine.release.set()
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_shutdown_cancelled_in_its_save_finishes_it_and_skips_the_trim(
+        self, tmp_path
+    ):
+        """The save keeps the lock until the index is written, then raises.
+
+        The index is published, and the trim that follows the save never runs.
+        """
+        db_path = tmp_path / "test.db"
+        store, engine, wrapped = await _wrapped_engine_store(
+            db_path, tmp_path, _ThreadParkedEngine
+        )
+        try:
+            partition = await store.open_or_create_partition(NAME)
+            (parked_engine,) = wrapped
+            await partition.upsert(
+                records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
+            )
+
+            parked_engine.park = "save"
+            shutdown_task = asyncio.create_task(store.shutdown())
+            await parked_engine.parked.wait()
+            await _cancel_and_expect_the_lock_kept(shutdown_task, store)
+
+            parked_engine.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown_task
+            index_path = store._index_path(partition._incarnation)
+            assert index_path is not None
+            assert index_path.exists()
+            assert await _pending_operation_count(engine) == 1
+        finally:
+            for wrapped_engine in wrapped:
+                wrapped_engine.release.set()
+            await store.shutdown()
+            await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_an_open_cancelled_in_its_load_holds_the_lock(self, tmp_path):
+        """The load keeps the lock until its thread ends, then the open raises.
+
+        The engine it loaded is not kept, and the next open loads another.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        partition1 = await store1.open_or_create_partition(NAME)
+        record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await partition1.upsert(records=[record])
+        await store1.shutdown()
+        await engine1.dispose()
+
+        factory, parked_engine = _first_engine_parks("load")
+        engine2 = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        enable_sqlite_explicit_begin(engine2)
+        enable_sqlite_foreign_keys(engine2)
+        store2 = SQLiteVectorStore(
+            _params(
+                engine2,
+                vector_search_engine_factory=factory,
+                index_directory=str(tmp_path / "indexes"),
+            )
+        )
+        await store2.startup()
+        try:
+            open_task = asyncio.create_task(store2.open_partition(NAME))
+            await parked_engine.parked.wait()
+            await _cancel_and_expect_the_lock_kept(open_task, store2)
+
+            parked_engine.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await open_task
+            partition2 = await store2.open_partition(NAME)
+            assert isinstance(partition2, SQLiteVectorStorePartition)
+            assert partition2._search_engine is not parked_engine
+            assert await _present_uuids(partition2, [record.uuid]) == [record.uuid]
+        finally:
+            parked_engine.release.set()
+            await store2.shutdown()
+            await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_startup_cancelled_in_its_replay_holds_the_lock(self, tmp_path):
+        """The replay keeps the lock until its thread ends, then startup raises.
+
+        Startup run again replays the log once more, and the record is found.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        partition1 = await store1.open_or_create_partition(NAME)
+        record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await partition1.upsert(records=[record])
+        # Crash, leaving the upsert in the log.
+        await engine1.dispose()
+
+        factory, parked_engine = _first_engine_parks("remove")
+        engine2 = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        enable_sqlite_explicit_begin(engine2)
+        enable_sqlite_foreign_keys(engine2)
+        store2 = SQLiteVectorStore(
+            _params(
+                engine2,
+                vector_search_engine_factory=factory,
+                index_directory=str(tmp_path / "indexes"),
+            )
+        )
+        try:
+            startup_task = asyncio.create_task(store2.startup())
+            await parked_engine.parked.wait()
+            await _cancel_and_expect_the_lock_kept(startup_task, store2)
+
+            parked_engine.release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await startup_task
+
+            await store2.startup()
+            partition2 = await store2.open_partition(NAME)
+            assert partition2 is not None
+            assert await _present_uuids(partition2, [record.uuid]) == [record.uuid]
+            await store2.shutdown()
+        finally:
+            parked_engine.release.set()
+            await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_failure_after_a_cancellation_is_logged_and_not_raised(
+        self, caplog
+    ):
+        """The caller raises its cancellation; the failure goes to the log."""
+        release = asyncio.Event()
+
+        async def fail_once_released() -> None:
+            await release.wait()
+            raise OSError("no space left on device")
+
+        task = asyncio.create_task(_finish_despite_cancellation(fail_once_released()))
+        # Let the call start its work before it is cancelled.
+        await asyncio.sleep(0)
+        task.cancel()
+        release.set()
+        with caplog.at_level(logging.ERROR), pytest.raises(asyncio.CancelledError):
+            await task
+        [failure_log] = caplog.records
+        assert failure_log.exc_info is not None
+        assert isinstance(failure_log.exc_info[1], OSError)
+
+
+async def _cancel_and_expect_the_lock_kept(task, store) -> None:
+    """Cancel `task` while an engine thread works for it, and check what holds.
+
+    The thread is still inside the operation, so the task must still be
+    waiting for it, and the partition's engine lock must still be held.
+    """
+    task.cancel()
+    # A cancellation lands at the task's next turn, before this one resumes.
+    await asyncio.sleep(0)
+    assert not task.done(), "the call ended while its thread ran"
+    assert await _engine_lock_is_held(store, NAME), (
+        "the engine lock was released while its thread ran"
+    )
+
+
+async def _engine_lock_is_held(store, partition_key) -> bool:
+    """Whether the write side of a partition's engine lock cannot be taken now.
+
+    A probe gets one turn of the loop to take it: a free lock is taken and
+    released within that turn, and a held one leaves the probe waiting, which
+    is then cancelled. Nothing else may be waiting for the lock.
+    """
+    async with store._create_session() as session:
+        incarnation = await store._partition_incarnation(session, partition_key)
+    lock = store._engine_lock_for(incarnation)
+
+    async def take_and_release() -> None:
+        async with lock.write_lock():
+            pass
+
+    probe = asyncio.create_task(take_and_release())
+    await asyncio.sleep(0)
+    if probe.done():
+        return False
+    probe.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await probe
+    return True
+
+
+def _signal_write_waits(monkeypatch, lock) -> asyncio.Event:
+    """An event set when a writer asks for the write side of `lock`.
+
+    While the lock is held, the writer parks in the turn it asks, so a task
+    the event wakes finds it waiting for the lock.
+    """
+    waiting = asyncio.Event()
+    acquire_write = lock.acquire_write
+
+    async def signaling_acquire_write() -> None:
+        waiting.set()
+        await acquire_write()
+
+    monkeypatch.setattr(lock, "acquire_write", signaling_acquire_write)
+    return waiting
+
+
+def _first_engine_parks(operation: str):
+    """An engine factory whose first partition's engine parks `operation`, and that engine.
+
+    The store builds one engine at construction, to refuse what no engine of
+    the factory can serve; it runs free, as do engines made after the parked
+    one.
+    """
+    parked_engine = _ThreadParkedEngine(
+        _engine_factory(VECTOR_DIM, SimilarityMetric.COSINE), park=operation
+    )
+    queued: list[_ThreadParkedEngine | None] = [parked_engine, None]
+
+    def factory(ndim, metric):
+        engine = queued.pop() if queued else None
+        return engine if engine is not None else _engine_factory(ndim, metric)
+
+    return factory, parked_engine
+
+
+class _ThreadParkedEngine(VectorSearchEngine):
+    """Delegates to a real engine; the next call named by `park` parks in a thread.
+
+    That call first runs a step in a worker thread, as the real engines' calls
+    do, which sets `parked` and blocks on `release`, a `threading.Event`, before
+    the call delegates. A test can then cancel the caller while the thread is
+    inside the operation. Each test sets `release` before it ends: a thread
+    left blocked holds an executor worker for good.
+    """
+
+    def __init__(self, inner: VectorSearchEngine, park: str | None = None) -> None:
+        self.inner = inner
+        self.park = park
+        self.parked = asyncio.Event()
+        self.release = threading.Event()
+
+    async def add(self, vectors):
+        await self._maybe_park("add")
+        await self.inner.add(vectors)
+
+    async def remove(self, keys):
+        await self._maybe_park("remove")
+        await self.inner.remove(keys)
+
+    async def search(self, vectors, *, limit, allowed_keys=None):
+        await self._maybe_park("search")
+        return await self.inner.search(vectors, limit=limit, allowed_keys=allowed_keys)
+
+    async def save(self, path):
+        await self._maybe_park("save")
+        await self.inner.save(path)
+
+    async def load(self, path):
+        await self._maybe_park("load")
+        await self.inner.load(path)
+
+    async def _maybe_park(self, operation: str) -> None:
+        if self.park != operation:
+            return
+        self.park = None
+        loop = asyncio.get_running_loop()
+
+        def wait_for_release() -> None:
+            loop.call_soon_threadsafe(self.parked.set)
+            self.release.wait()
+
+        await asyncio.to_thread(wait_for_release)
+
+
 # ── row_id reuse (issue #1468) ──
 
 
@@ -1807,6 +2370,41 @@ class TestPendingLogStates:
         # And the superseded vector is not still indexed under a second key.
         stale = await coll2.query(query_vectors=[first], limit=5)
         assert [m.record_uuid for m in stale[0].matches] == [record_uuid]
+
+        await store2.shutdown()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_replaying_a_rewrite_the_saved_index_holds_is_harmless(
+        self, tmp_path
+    ):
+        """Replay over an index that already holds the operations changes nothing.
+
+        A rewrite whose engine step ran but whose log rows stayed unapplied, as
+        when the write marking them fails, is published by the next save and
+        kept in the log. Startup replays it, and the record is found once, at
+        its new version.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path)
+        coll = await store1.open_or_create_partition(NAME)
+        first = _normalize([1.0, 0.0, 0.0])
+        second = _normalize([0.0, 1.0, 0.0])
+        record_uuid = uuid4()
+        await coll.upsert(records=[_make_record(uuid=record_uuid, vector=first)])
+        await coll.upsert(records=[_make_record(uuid=record_uuid, vector=second)])
+        await _set_all_pending_operations_unapplied(engine1)
+        await store1.shutdown()
+        # The delete of the old row id and the upsert of the new one.
+        assert await _pending_operation_count(engine1) == 2
+        await engine1.dispose()
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        coll2 = await store2.open_partition(NAME)
+        assert coll2 is not None
+        results = await coll2.query(query_vectors=[second], limit=5)
+        assert [m.record_uuid for m in results[0].matches] == [record_uuid]
+        assert results[0].matches[0].score == pytest.approx(1.0, abs=0.01)
 
         await store2.shutdown()
         await engine2.dispose()
@@ -2357,8 +2955,9 @@ class _GatedSaveEngine(VectorSearchEngine):
     widens the window in which another write can apply to the engine: too late
     for the file, early enough for the trim to delete its log row.
 
-    Later saves park before writing, so a test can reach its crash without a
-    save publishing what it is trying to observe.
+    Later saves park before writing and fail once `blocked_save_release` is
+    set, so a test can reach its crash without a save publishing what it is
+    trying to observe.
     """
 
     def __init__(self, inner: VectorSearchEngine) -> None:
@@ -2367,6 +2966,7 @@ class _GatedSaveEngine(VectorSearchEngine):
         self.gate_reached = asyncio.Event()
         self.saves_blocked = False
         self.blocked_save_reached = asyncio.Event()
+        self.blocked_save_release = asyncio.Event()
 
     async def add(self, vectors):
         await self.inner.add(vectors)
@@ -2381,7 +2981,8 @@ class _GatedSaveEngine(VectorSearchEngine):
         if self.gate is None:
             if self.saves_blocked:
                 self.blocked_save_reached.set()
-                await asyncio.Event().wait()
+                await self.blocked_save_release.wait()
+                raise RuntimeError("crashed before writing the index")
             await self.inner.save(path)
             return
 
@@ -2606,8 +3207,9 @@ class TestConcurrentWriteOrdering:
         async with asyncio.timeout(_RACE_WINDOW_SECONDS):
             await gated_engine.blocked_save_reached.wait()
 
-        # Crash.
-        behind_task.cancel()
+        # Crash. A cancellation would wait for the parked save, so the save
+        # fails instead, publishing nothing.
+        gated_engine.blocked_save_release.set()
         await asyncio.gather(behind_task, return_exceptions=True)
         await engine.dispose()
 
