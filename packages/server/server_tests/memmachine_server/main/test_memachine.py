@@ -7,7 +7,9 @@ import pytest
 
 from memmachine_server import MemMachine
 from memmachine_server.common.episode_store import EpisodeEntry
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )

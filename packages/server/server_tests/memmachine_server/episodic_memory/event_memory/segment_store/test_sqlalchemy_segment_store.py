@@ -27,14 +27,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
     IsNull,
     Not,
     Or,
+    Ordering,
+)
+from memmachine_server.common.filter.filter_parser import (
     parse_filter,
 )
 from memmachine_server.common.payload_codec.payload_codec_config import (
@@ -592,7 +595,7 @@ async def test_contexts_property_filter(
     s3 = _seg(event_uuid=ep, offset=3, ts_offset_seconds=3, properties={"tag": "a"})
     await partition.add_segments(_links(s0, s1, s2, s3))
 
-    filt = Comparison(field="m.tag", op="=", value="a")
+    filt = Equals(field="m.tag", value="a")
     result = await partition.get_segment_contexts(
         [s2.uuid],
         max_backward_segments=5,
@@ -631,7 +634,7 @@ async def test_context_comes_from_the_segments_nearest_the_seed(
         [seed.uuid],
         max_backward_segments=5,
         max_forward_segments=5,
-        property_filter=Comparison(field="m.tag", op="=", value="a"),
+        property_filter=Equals(field="m.tag", value="a"),
     )
     assert [segment.uuid for segment in filtered[seed.uuid]] == [
         backward[4].uuid,
@@ -649,6 +652,30 @@ async def test_context_comes_from_the_segments_nearest_the_seed(
         seed.uuid,
         *(forward[distance].uuid for distance in (1, 2, 3, 4)),
     ]
+
+
+@pytest.mark.asyncio
+async def test_contexts_negated_property_filter_keeps_a_segment_without_the_key(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """A negated filter is the complement, so a segment holding no tag is kept."""
+    ep = uuid4()
+    s0 = _seg(event_uuid=ep, offset=0, ts_offset_seconds=0, properties={"tag": "a"})
+    s1 = _seg(event_uuid=ep, offset=1, ts_offset_seconds=1, properties={"tag": "b"})
+    s2 = _seg(event_uuid=ep, offset=2, ts_offset_seconds=2)
+    s3 = _seg(event_uuid=ep, offset=3, ts_offset_seconds=3, properties={"tag": "a"})
+    await partition.add_segments(_links(s0, s1, s2, s3))
+
+    result = await partition.get_segment_contexts(
+        [s1.uuid],
+        max_backward_segments=5,
+        max_forward_segments=5,
+        property_filter=Not(Equals(field="m.tag", value="a")),
+    )
+    ctx = result[s1.uuid]
+    uuids = [s.uuid for s in ctx]
+    # s0 and s3 excluded (tag=a); s1 seed, s2 forward and holds no tag at all
+    assert uuids == [s1.uuid, s2.uuid]
 
 
 @pytest.mark.asyncio
@@ -683,7 +710,7 @@ async def test_contexts_filter_by_context_producer(
     )
     await partition.add_segments(_links(s0, s1, s2))
 
-    filt = Comparison(field="context.producer", op="=", value="Alice")
+    filt = Equals(field="context.producer", value="Alice")
     contexts = await partition.get_segment_contexts(
         [s0.uuid],
         max_backward_segments=5,
@@ -719,7 +746,7 @@ async def test_contexts_filter_by_context_type(
     )
     await partition.add_segments(_links(s0, s1, s2))
 
-    filt = Comparison(field="context.context_type", op="=", value="producer")
+    filt = Equals(field="context.context_type", value="producer")
     contexts = await partition.get_segment_contexts(
         [s0.uuid],
         max_backward_segments=5,
@@ -844,15 +871,17 @@ async def test_random_context_reads_agree_with_a_model(
 
     filters: list[FilterExpr | None] = [
         None,
-        Comparison(field="m.tag", op="=", value="a"),
-        In(field="m.tag", values=["a", "b"]),
-        Not(Comparison(field="m.opt", op="=", value="x")),
+        Equals(field="m.tag", value="a"),
+        In(field="m.tag", values=("a", "b")),
+        Not(Equals(field="m.opt", value="x")),
         And(
-            Comparison(field="m.tag", op="=", value="b"),
-            Comparison(field="m.role", op="=", value="user"),
+            (
+                Equals(field="m.tag", value="b"),
+                Equals(field="m.role", value="user"),
+            )
         ),
-        Or(Comparison(field="m.tag", op="=", value="c"), IsNull(field="m.opt")),
-        Comparison(field="timestamp", op=">=", value=BASE_TIME + timedelta(seconds=8)),
+        Or((Equals(field="m.tag", value="c"), IsNull(field="m.opt"))),
+        Ordering(field="timestamp", op=">=", value=BASE_TIME + timedelta(seconds=8)),
     ]
     for _ in range(40):
         seeds = rng.sample(segments, rng.randint(1, 5))
@@ -919,7 +948,7 @@ def _model_context_uuids(
     """
 
     def matches(segment: Segment) -> bool:
-        return property_filter is None or _sql_truth(segment, property_filter) is True
+        return property_filter is None or _truth(segment, property_filter)
 
     contexts: dict[UUID, list[UUID]] = {}
     for seed in seeds:
@@ -937,27 +966,22 @@ def _model_context_uuids(
     return contexts
 
 
-def _sql_truth(segment: Segment, expr: FilterExpr) -> bool | None:
-    """`expr`'s value for `segment` in SQL's logic: None where SQL has NULL."""
-    if isinstance(expr, And):
-        left, right = _sql_truth(segment, expr.left), _sql_truth(segment, expr.right)
-        if left is False or right is False:
-            return False
-        return None if left is None or right is None else True
-    if isinstance(expr, Or):
-        left, right = _sql_truth(segment, expr.left), _sql_truth(segment, expr.right)
-        if left is True or right is True:
-            return True
-        return None if left is None or right is None else False
-    if isinstance(expr, Not):
-        inner = _sql_truth(segment, expr.expr)
-        return None if inner is None else not inner
-    assert isinstance(expr, Comparison | In | IsNull)
-    return _sql_leaf_truth(segment, expr)
+def _truth(segment: Segment, expr: FilterExpr) -> bool:
+    """`expr`'s value for `segment`: a condition on a missing property is false,
+    and a negation is the complement."""
+    match expr:
+        case And(operands):
+            return all(_truth(segment, operand) for operand in operands)
+        case Or(operands):
+            return any(_truth(segment, operand) for operand in operands)
+        case Not(operand):
+            return not _truth(segment, operand)
+        case Equals() | Ordering() | In() | IsNull():
+            return _leaf_truth(segment, expr)
 
 
-def _sql_leaf_truth(segment: Segment, expr: Comparison | In | IsNull) -> bool | None:
-    """A leaf's value for `segment`: a missing property compares as NULL."""
+def _leaf_truth(segment: Segment, expr: Equals | Ordering | In | IsNull) -> bool:
+    """A leaf's value for `segment`."""
     if expr.field == "timestamp":
         actual = segment.timestamp
     else:
@@ -965,12 +989,16 @@ def _sql_leaf_truth(segment: Segment, expr: Comparison | In | IsNull) -> bool | 
         if isinstance(expr, IsNull):
             return key not in segment.properties
         if key not in segment.properties:
-            return None
+            return False
         actual = segment.properties[key]
-    if isinstance(expr, In):
-        return actual in expr.values
-    assert isinstance(expr, Comparison)
-    return {"=": operator.eq, ">=": operator.ge}[expr.op](actual, expr.value)
+    match expr:
+        case In(values=values):
+            return actual in values
+        case Equals(value=value):
+            return actual == value
+        case Ordering(op=">=", value=value):
+            return operator.ge(actual, value)
+    raise AssertionError(f"the model does not evaluate {expr!r}")
 
 
 # ===================================================================

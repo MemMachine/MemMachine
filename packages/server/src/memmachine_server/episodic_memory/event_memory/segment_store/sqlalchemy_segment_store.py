@@ -53,8 +53,8 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import StaticPool
 
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
     demangle_user_metadata_key,
     normalize_filter_field,
 )
