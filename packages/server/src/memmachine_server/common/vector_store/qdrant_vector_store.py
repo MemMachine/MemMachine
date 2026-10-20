@@ -1,7 +1,7 @@
 """Qdrant-based vector store implementation."""
 
-import hashlib
 import math
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, ClassVar, override
 from uuid import UUID, uuid5
@@ -11,13 +11,18 @@ import grpc.aio
 import numpy as np
 from pydantic import Field, InstanceOf
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.conversions.conversion import RestToGrpc
+from qdrant_client.grpc import UpsertPoints
+from qdrant_client.http.api.points_api import jsonable_encoder
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 from memmachine_server.common.data_types import (
     OrderedValue,
+    PropertyType,
     PropertyValue,
     SimilarityMetric,
 )
+from memmachine_server.common.errors import QdrantConfigurationError
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -42,27 +47,27 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.utils import ensure_tz_aware
 
-from .collection_registry import Registration
 from .data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionConfig,
 )
+from .partition_registry import Registration
 from .registry_backed_vector_store import (
     RegistryBackedVectorStore,
-    RegistryBackedVectorStoreCollection,
     RegistryBackedVectorStoreParams,
+    RegistryBackedVectorStorePartition,
 )
+from .utils import pack_requests
 
 # Point payload keys (stored on every Qdrant point).
 # System keys start with _SYSTEM_KEY_PREFIX, whose hyphen no property key may
 # contain (Record requires identifiers), so the two never collide.
 _SYSTEM_KEY_PREFIX = "sys-"
 _PAYLOAD_INCARNATION = f"{_SYSTEM_KEY_PREFIX}incarnation"
-"""The payload key holding the incarnation of the collection a point belongs to.
+"""The payload key holding the incarnation of the partition a point belongs to.
 
-A collection created again under a deleted one's name gets a fresh
+A partition created again under a deleted one's key gets a fresh
 incarnation, so it holds only the points written under that incarnation.
 """
 _PAYLOAD_RECORD_UUID = f"{_SYSTEM_KEY_PREFIX}record_uuid"
@@ -74,7 +79,7 @@ so a query reads the record UUID from here.
 
 
 def _incarnation_filter(incarnation: UUID) -> models.Filter:
-    """Build a Qdrant filter that matches the points of one collection incarnation."""
+    """Build a Qdrant filter that matches the points of one partition incarnation."""
     return models.Filter(
         must=[
             models.FieldCondition(
@@ -85,8 +90,12 @@ def _incarnation_filter(incarnation: UUID) -> models.Filter:
     )
 
 
-class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
-    """A collection backed by Qdrant."""
+class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
+    """A partition backed by Qdrant: one payload value inside the store's collection."""
+
+    _SUPPORTED_FILTER_NODES: ClassVar[frozenset[type]] = frozenset(
+        {FilterComparison, FilterIn, FilterIsNull, FilterAnd, FilterOr, FilterNot}
+    )
 
     _RANGE_OPERATORS: ClassVar[dict[str, str]] = {
         ">": "gt",
@@ -95,27 +104,49 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
         "<=": "lte",
     }
 
+    # A filter no point satisfies. A leaf whose value is of another type
+    # than its key declares matches nothing, as on every backend; sent as
+    # is, the server would refuse it for the field's index (strict mode)
+    # rather than scan for it.
+    _NO_MATCH: ClassVar[models.Filter] = models.Filter(
+        must=[models.HasIdCondition(has_id=[])]
+    )
+
     @staticmethod
-    def _build_qdrant_filter(expr: FilterExpr) -> models.Filter:
-        """Convert a FilterExpr tree into a Qdrant Filter."""
+    def _build_qdrant_filter(
+        expr: FilterExpr, indexed_properties: Mapping[str, PropertyType]
+    ) -> models.Filter:
+        """Convert a FilterExpr tree into a Qdrant Filter over the declared keys."""
+        build = QdrantVectorStorePartition._build_qdrant_filter
         if isinstance(expr, FilterComparison):
-            return QdrantVectorStoreCollection._build_qdrant_comparison(expr)
+            if type(expr.value) is not indexed_properties[expr.field]:
+                return QdrantVectorStorePartition._NO_MATCH
+            return QdrantVectorStorePartition._build_qdrant_comparison(expr)
         if isinstance(expr, FilterIn):
-            return QdrantVectorStoreCollection._in_filter(expr.field, expr.values)
+            if (
+                expr.values
+                and type(expr.values[0]) is not indexed_properties[expr.field]
+            ):
+                return QdrantVectorStorePartition._NO_MATCH
+            return QdrantVectorStorePartition._in_filter(expr.field, expr.values)
         if isinstance(expr, FilterIsNull):
-            return QdrantVectorStoreCollection._null_filter(expr.field, negate=False)
+            return QdrantVectorStorePartition._null_filter(expr.field, negate=False)
         if isinstance(expr, FilterNot):
-            return models.Filter(
-                must_not=[QdrantVectorStoreCollection._build_qdrant_filter(expr.expr)]
-            )
+            return models.Filter(must_not=[build(expr.expr, indexed_properties)])
         if isinstance(expr, FilterAnd):
-            left = QdrantVectorStoreCollection._build_qdrant_filter(expr.left)
-            right = QdrantVectorStoreCollection._build_qdrant_filter(expr.right)
-            return models.Filter(must=[left, right])
+            return models.Filter(
+                must=[
+                    build(expr.left, indexed_properties),
+                    build(expr.right, indexed_properties),
+                ]
+            )
         if isinstance(expr, FilterOr):
-            left = QdrantVectorStoreCollection._build_qdrant_filter(expr.left)
-            right = QdrantVectorStoreCollection._build_qdrant_filter(expr.right)
-            return models.Filter(should=[left, right])
+            return models.Filter(
+                should=[
+                    build(expr.left, indexed_properties),
+                    build(expr.right, indexed_properties),
+                ]
+            )
         message = f"Unsupported filter expression type: {type(expr)}"
         raise TypeError(message)
 
@@ -129,25 +160,23 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
         if operator in ("=", "!="):
             negate = operator == "!="
             if isinstance(value, float):
-                return QdrantVectorStoreCollection._float_eq_filter(
+                return QdrantVectorStorePartition._float_eq_filter(
                     field, value, negate=negate
                 )
             if isinstance(value, datetime):
-                return QdrantVectorStoreCollection._datetime_eq_filter(
+                return QdrantVectorStorePartition._datetime_eq_filter(
                     field, value, negate=negate
                 )
-            return QdrantVectorStoreCollection._match_filter(
-                field, value, negate=negate
-            )
-        if operator in QdrantVectorStoreCollection._RANGE_OPERATORS:
+            return QdrantVectorStorePartition._match_filter(field, value, negate=negate)
+        if operator in QdrantVectorStorePartition._RANGE_OPERATORS:
             if not isinstance(value, OrderedValue):
                 message = (
                     f"Range filter on '{field}' requires a numeric or datetime value, "
                     f"got {type(value).__name__}"
                 )
                 raise TypeError(message)
-            return QdrantVectorStoreCollection._range_filter(
-                field, value, QdrantVectorStoreCollection._RANGE_OPERATORS[operator]
+            return QdrantVectorStorePartition._range_filter(
+                field, value, QdrantVectorStorePartition._RANGE_OPERATORS[operator]
             )
 
         message = f"Unsupported filter operator: {operator}"
@@ -243,20 +272,36 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
         self,
         *,
         client: AsyncQdrantClient,
-        native_collection_name: str,
+        vector_store_name: str,
         registration: Registration,
+        vector_dimensions: int,
+        similarity_metric: SimilarityMetric,
+        indexed_properties: Mapping[str, PropertyType],
         tracker: OperationTracker,
+        max_request_bytes: int,
     ) -> None:
         """Initialize with a Qdrant client and the registration the handle is bound to."""
-        super().__init__(registration=registration, tracker=tracker)
+        super().__init__(
+            vector_store_name=vector_store_name,
+            registration=registration,
+            vector_dimensions=vector_dimensions,
+            similarity_metric=similarity_metric,
+            indexed_properties=indexed_properties,
+            tracker=tracker,
+        )
         self._client = client
-        self._native_collection_name = native_collection_name
+        self._max_request_bytes = max_request_bytes
+
+    @property
+    @override
+    def supported_filter_nodes(self) -> frozenset[type]:
+        return QdrantVectorStorePartition._SUPPORTED_FILTER_NODES
 
     def _point_id(self, record_uuid: UUID) -> UUID:
         """The point id of a record: a UUIDv5 of the record UUID under the incarnation.
 
-        Point ids are distinct across the collections sharing a native
-        collection and across a name's incarnations.
+        Point ids are distinct across the partitions of the store's collection
+        and across a key's incarnations.
         """
         return uuid5(self._incarnation, str(record_uuid))
 
@@ -277,32 +322,64 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
 
     @override
     async def _upsert(self, records: list[Record]) -> None:
-        await self._upsert_points([self._build_point(record) for record in records])
+        points = [self._build_point(record) for record in records]
+        envelope_bytes, sizes = self._request_sizes(points)
+        for batch in pack_requests(
+            points,
+            sizes,
+            envelope_bytes=envelope_bytes,
+            max_request_bytes=self._max_request_bytes,
+        ):
+            await self._upsert_points(batch)
+
+    def _request_sizes(self, points: list[models.PointStruct]) -> tuple[int, list[int]]:
+        """The bytes an upsert request takes besides its points, and those each point adds.
+
+        Each is measured as the client sends it: as protobuf over gRPC, and
+        as the JSON body over REST.
+        """
+        if self._client.init_options["prefer_grpc"]:
+            envelope = UpsertPoints(collection_name=self._vector_store_name, wait=True)
+            # A point adds its message, with its field tag and length.
+            return envelope.ByteSize(), [
+                UpsertPoints(points=[RestToGrpc.convert_point_struct(point)]).ByteSize()
+                for point in points
+            ]
+        # The body's points are comma-separated: each adds its JSON and a
+        # comma, but the first adds no comma.
+        envelope_json = jsonable_encoder(models.PointsList(points=[]))
+        return len(envelope_json.encode()) - 1, [
+            len(jsonable_encoder(point).encode()) + 1 for point in points
+        ]
 
     async def _upsert_points(self, points: list[models.PointStruct]) -> None:
-        """Upsert points, halving a batch refused as sent.
+        """Upsert points in one request.
 
         Qdrant's REST API refuses a request over its max_request_size_mb with
         a 400, the status of any request it finds invalid, and a proxy in
-        front of it may refuse one with a 413. A batch refused with either is
-        halved until the halves fit or a single point is refused. Any other
-        error raises at once.
+        front of it may refuse one with a 413. A request takes at most
+        max_request_bytes, so either refusal raises as the setting exceeding
+        the server's limit, unless the response names another fault. Any
+        other error raises as is.
         """
         try:
             # Waiting for Qdrant to apply the write keeps the writes it has
             # accepted but not applied to those in flight, whose callers see
             # the wait as latency, and reports a failure to apply.
             await self._client.upsert(
-                collection_name=self._native_collection_name,
+                collection_name=self._vector_store_name,
                 points=points,
                 wait=True,
             )
         except UnexpectedResponse as err:
-            if err.status_code not in (400, 413) or len(points) <= 1:
+            if err.status_code not in (400, 413):
                 raise
-            mid = len(points) // 2
-            await self._upsert_points(points[:mid])
-            await self._upsert_points(points[mid:])
+            raise QdrantConfigurationError(
+                f"Qdrant refused an upsert request with HTTP {err.status_code}: "
+                f"max_request_bytes ({self._max_request_bytes}) exceeds the "
+                "server's request size limit, service.max_request_size_mb, "
+                "unless the response names another fault"
+            ) from err
 
     @override
     async def _query(
@@ -318,14 +395,16 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
             qdrant_filter = models.Filter(
                 must=[
                     qdrant_filter,
-                    QdrantVectorStoreCollection._build_qdrant_filter(property_filter),
+                    QdrantVectorStorePartition._build_qdrant_filter(
+                        property_filter, self.indexed_properties
+                    ),
                 ]
             )
 
         # Qdrant keeps only scores strictly better than its threshold, compared
         # in single precision, so send the next single-precision value on the
         # worse side; the check below applies the caller's threshold exactly.
-        higher_is_better = self.config.similarity_metric.higher_is_better
+        higher_is_better = self.similarity_metric.higher_is_better
         qdrant_score_threshold = None
         if score_threshold is not None:
             worse = np.float32(-np.inf if higher_is_better else np.inf)
@@ -347,7 +426,7 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
         ]
 
         batch_results = await self._client.query_batch_points(
-            collection_name=self._native_collection_name,
+            collection_name=self._vector_store_name,
             requests=requests,
         )
 
@@ -373,7 +452,7 @@ class QdrantVectorStoreCollection(RegistryBackedVectorStoreCollection):
     @override
     async def _delete(self, record_uuids: list[UUID]) -> None:
         await self._client.delete(
-            collection_name=self._native_collection_name,
+            collection_name=self._vector_store_name,
             points_selector=models.PointIdsList(
                 points=[str(self._point_id(uuid)) for uuid in record_uuids]
             ),
@@ -385,21 +464,38 @@ class QdrantVectorStoreParams(RegistryBackedVectorStoreParams):
     """
     Parameters for QdrantVectorStore.
 
+    The native Qdrant collection is named `vector_store_name`, and each
+    declared property gets a payload index of its declared type.
+
     Attributes:
         client (AsyncQdrantClient):
             Async Qdrant client instance.
+        max_request_bytes (int):
+            Bytes one upsert request may take as the client serializes it, at
+            most the server's REST limit, service.max_request_size_mb; a
+            record that alone exceeds it is refused (default: 33554432).
     """
 
     client: InstanceOf[AsyncQdrantClient] = Field(
         ...,
         description="Async Qdrant client instance",
     )
+    max_request_bytes: int = Field(
+        32 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Bytes one upsert request may take as the client serializes it, at "
+            "most the server's REST limit, service.max_request_size_mb; a record "
+            "that alone exceeds it is refused"
+        ),
+    )
 
 
-class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
+class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
     """Asynchronous Qdrant-based implementation of VectorStore.
 
-    A logical collection is the points carrying its incarnation in their
+    The store is one native Qdrant collection, named at construction, in
+    which a partition is the points carrying its incarnation in their
     payload.
     """
 
@@ -411,6 +507,15 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
         SimilarityMetric.EUCLIDEAN: models.Distance.EUCLID,
         SimilarityMetric.MANHATTAN: models.Distance.MANHATTAN,
     }
+
+    # Every key a filter may name is indexed (the declared keys and the
+    # incarnation), so the server may refuse a filter on an unindexed one
+    # instead of scanning the collection for it.
+    _STRICT_MODE: ClassVar[models.StrictModeConfig] = models.StrictModeConfig(
+        enabled=True,
+        unindexed_filtering_retrieve=False,
+        unindexed_filtering_update=False,
+    )
 
     _PROPERTY_TYPE_TO_INDEX_TYPE: ClassVar[
         dict[type[PropertyValue], models.PayloadSchemaType]
@@ -440,65 +545,33 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
             return error.code() == grpc.StatusCode.NOT_FOUND
         return False
 
-    @staticmethod
-    def _build_native_collection_name(
-        namespace: str, config: VectorStoreCollectionConfig
-    ) -> str:
-        """Build a deterministic native collection name from namespace and config."""
-        digest = hashlib.sha256(config.model_dump_json().encode()).hexdigest()
-        return f"{namespace}__{digest}"
-
     def __init__(self, params: QdrantVectorStoreParams) -> None:
         """Initialize the vector store with the provided parameters."""
         super().__init__(params, metrics_prefix="vector_store_qdrant")
         self._client: AsyncQdrantClient = params.client
+        self._max_request_bytes = params.max_request_bytes
 
         self._hnsw_m = 16
 
     @override
-    def _build_collection_handle(
-        self, registration: Registration
-    ) -> QdrantVectorStoreCollection:
-        return QdrantVectorStoreCollection(
-            client=self._client,
-            native_collection_name=QdrantVectorStore._build_native_collection_name(
-                registration.namespace, registration.config
-            ),
-            registration=registration,
-            tracker=self._tracker,
-        )
-
-    @override
-    async def _prepare_storage(
-        self,
-        namespace: str,
-        config: VectorStoreCollectionConfig,
-        incarnation: UUID,
-    ) -> None:
-        native_collection_name = QdrantVectorStore._build_native_collection_name(
-            namespace, config
-        )
+    async def _prepare_storage(self) -> None:
         distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
-            config.similarity_metric
+            self._similarity_metric
         ]
         # The collection and each payload index are created under their own
         # already-exists guard, so a creation that finds the collection there
         # still creates the indexes it lacks.
         try:
             await self._client.create_collection(
-                collection_name=native_collection_name,
+                collection_name=self._vector_store_name,
                 vectors_config=models.VectorParams(
-                    size=config.vector_dimensions, distance=distance
+                    size=self._vector_dimensions, distance=distance
                 ),
                 hnsw_config=models.HnswConfigDiff(
                     m=0,
                     payload_m=self._hnsw_m,
                 ),
-                # A filter may name a property without a payload index, which
-                # the server scans for. Strict mode refuses such a filter
-                # instead, and a server may turn it on for new collections by
-                # default, so it is turned off here.
-                strict_mode_config=models.StrictModeConfig(enabled=False),
+                strict_mode_config=QdrantVectorStore._STRICT_MODE,
             )
         except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
             if not QdrantVectorStore._is_already_exists_error(e):
@@ -513,7 +586,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
                 ),
             )
         ]
-        for prop_name, prop_type in config.indexed_properties_schema.items():
+        for prop_name, prop_type in self._indexed_properties.items():
             index_type = QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE.get(prop_type)
             if index_type is not None:
                 indexes.append((prop_name, index_type))
@@ -521,7 +594,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
         for field_name, field_schema in indexes:
             try:
                 await self._client.create_payload_index(
-                    collection_name=native_collection_name,
+                    collection_name=self._vector_store_name,
                     field_name=field_name,
                     field_schema=field_schema,
                 )
@@ -530,17 +603,36 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
                     raise
 
     @override
-    async def _purge_round(
-        self, namespace: str, config: VectorStoreCollectionConfig, incarnation: UUID
-    ) -> bool:
+    async def _prepare_partition_storage(
+        self, partition_key: str, incarnation: UUID
+    ) -> None:
+        # A partition is the points carrying its incarnation in the
+        # store's one native collection, which startup prepared; it has no
+        # storage of its own.
+        pass
+
+    @override
+    def _partition_handle(
+        self, registration: Registration
+    ) -> QdrantVectorStorePartition:
+        return QdrantVectorStorePartition(
+            client=self._client,
+            vector_store_name=self._vector_store_name,
+            registration=registration,
+            vector_dimensions=self._vector_dimensions,
+            similarity_metric=self._similarity_metric,
+            indexed_properties=self._indexed_properties,
+            tracker=self._tracker,
+            max_request_bytes=self._max_request_bytes,
+        )
+
+    @override
+    async def _purge_round(self, incarnation: UUID) -> bool:
         # If a point remains under the incarnation, one filter-delete removes
         # them all.
-        native_collection_name = QdrantVectorStore._build_native_collection_name(
-            namespace, config
-        )
         try:
             points, _ = await self._client.scroll(
-                collection_name=native_collection_name,
+                collection_name=self._vector_store_name,
                 scroll_filter=_incarnation_filter(incarnation),
                 limit=1,
                 with_payload=False,
@@ -553,7 +645,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStoreCollection]):
             points = []
         if points:
             await self._client.delete(
-                collection_name=native_collection_name,
+                collection_name=self._vector_store_name,
                 points_selector=models.FilterSelector(
                     filter=_incarnation_filter(incarnation),
                 ),
