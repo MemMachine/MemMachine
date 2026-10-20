@@ -1,7 +1,7 @@
-# Segment store: shared tables with incarnation-scoped tenant keys
+# Event memory store: shared tables with incarnation-scoped tenant keys
 
 Status: accepted 2026-08-31. Supersedes the per-tenant partitioned layout of
-the SQLAlchemy segment store on all dialects.
+the SQLAlchemy event memory store on all dialects.
 
 ## Problem
 
@@ -38,23 +38,29 @@ tenant may hold tens of thousands to tens of millions of rows.
 
 One physical schema on every dialect; the ORM models are the tables.
 
-- `segment_store_pt`, the tenant registry: one row per live tenant, holding
+- `event_memory_store_pt`, the tenant registry: one row per live tenant, holding
   the logical partition key (primary key), an `incarnation` (a random UUID
   minted at creation, unique-constrained), and the payload codec config.
-- `segment_store_sg` and `segment_store_dv_ln`, the segment and
-  derivative-link tables, shared by all tenants and not partitioned. Rows
-  carry no logical key; they are keyed by the incarnation alone, so a data
-  query cannot be built without resolving the registry first, and
-  addressing the wrong tenant is structurally impossible rather than
-  guarded against. A 16-byte UUID also keeps index entries narrower than a
-  composite string key, and random UUIDs are unique across nodes without
-  coordination, so a tenant's rows move between databases verbatim.
-- `segment_store_gc`, the purge queue: one row per dead incarnation, with
-  the purge's cursor, the last segment key purged. An entry holds only what
-  the purge reads.
+- `event_memory_store_ev`, `event_memory_store_sg` and `event_memory_store_dv_ln`, the
+  event, segment and derivative-link tables, shared by all tenants and not
+  partitioned. Rows carry no logical key; they are keyed by the incarnation
+  alone, so a data query cannot be built without resolving the registry
+  first, and addressing the wrong tenant is structurally impossible rather
+  than guarded against. A 16-byte UUID also keeps index entries narrower
+  than a composite string key, and random UUIDs are unique across nodes
+  without coordination, so a tenant's rows move between databases
+  verbatim.
+- `event_memory_store_pd` and `event_memory_store_pd_dv`, pending derivatives, and
+  `event_memory_store_tb` and `event_memory_store_tb_dv`, tombstones: the work a
+  derived index of the derivatives leaves behind
+  (`event_memory_ingest_and_deletion.md`).
+- `event_memory_store_gc`, the purge queue: one row per dead incarnation, with a
+  cursor per table the purge reclaims, the last key purged. An entry holds
+  only what the purge reads.
 
-The link table keeps its foreign key to the segment table (`ON DELETE
-CASCADE`), both sides keyed by incarnation. The segment table has no
+The link table keeps its foreign key to the segment table, and the segment
+and pending derivatives tables theirs to the event table (`ON DELETE
+CASCADE`), all keyed by incarnation. The segment table has no
 foreign key to the registry: registry rows and data rows are decoupled so
 that registry deletion is O(1), and the rows left behind are exactly what
 the purge queue tracks.
@@ -82,7 +88,7 @@ on random-UUID collision resistance.
   partition-exists error. Any other integrity rejection, or a minted
   incarnation found in the purge queue, is retried with a fresh incarnation
   up to `_MAX_MINT_ATTEMPTS`; a persistent failure raises
-  `SegmentStoreAttemptsExhaustedError` with the database error chained.
+  `EventMemoryStoreAttemptsExhaustedError` with the database error chained.
 - **Open**: read the registry row. The handle captures the logical key, the
   incarnation, and the codec.
 - **Delete**: one transaction: lock the registry row (`SELECT ... FOR
@@ -93,7 +99,7 @@ on random-UUID collision resistance.
 - **Re-create**: a new registry row with a fresh incarnation, safe at any
   time; the old incarnation's rows are invisible to the successor even
   while the purger is still sweeping them.
-- **Purge**: `purge_deleted_partitions() -> bool` on the `SegmentStore`
+- **Purge**: `purge_deleted_partitions() -> bool` on the `EventMemoryStore`
   ABC, the sweeper: it claims the oldest entry across all keys, returns
   True while more work may remain, and the caller's whole protocol is
   "call until False"; how much one call does is implementation policy. The caller is promised only that a call
@@ -103,11 +109,12 @@ on random-UUID collision resistance.
 
   - One transaction per call, committing its progress or nothing, so
     committed progress survives interruption.
-  - Segment rows are deleted in batches of up to
-    `SQLAlchemySegmentStoreParams.purge_max_segments` per call. A batch
-    continues from the entry's cursor: it reads the next keys after
-    `purged_through` in primary-key order, deletes that key range, and
-    records its last key in the same transaction. No batch reads a row an
+  - Rows are deleted in batches of up to
+    `SQLAlchemyEventMemoryStoreParams.purge_max_segments` per call, shared by
+    the segment, event and tombstone tables in that order. A batch
+    continues from its table's cursor: it reads the next keys after the
+    cursor in primary-key order, deletes that key range, and records its
+    last key in the same transaction. No batch reads a row an
     earlier batch deleted; PostgreSQL keeps deleted rows in the table and
     its indexes until vacuum, and a batch that started from the
     incarnation's first key would step over all of them, making each
@@ -120,9 +127,14 @@ on random-UUID collision resistance.
     saturates around 3M link rows/s as density grows (380k segments/s at
     one link per segment, 46k at 64), so heavily linked partitions still
     purge in sub-second calls. Link fan-out is set by the deriver, not
-    something the store can reject after derivation.
+    something the store can reject after derivation. Pending derivatives
+    follow their events by cascade, with the same fan-out. A tombstone
+    counts as the derivatives it names, which follow it by cascade and
+    number as many as its forget chose, so a tombstone naming more than
+    the bound is purged alone, in a transaction no larger than its
+    forget's.
   - Queue entries carry their own bound,
-    `SQLAlchemySegmentStoreParams.purge_max_partitions`, because their cost
+    `SQLAlchemyEventMemoryStoreParams.purge_max_partitions`, because their cost
     is round trips rather than rows: empty partitions are cheap to create
     and delete, and a backlog of them must not turn one call into an
     unbounded transaction. Both bounds are set once at construction; the
@@ -167,7 +179,7 @@ on random-UUID collision resistance.
     session drop; a deployment must run the sweeper somewhere, and the
     ABC says so.
   - The sweeper's pacing, not deletion speed, bounds how fast a backlog
-    drains: a call deletes at most `purge_max_segments` segment rows and
+    drains: a call deletes at most `purge_max_segments` rows and
     the resource manager pauses between busy calls, so one process
     drains fewer than `purge_max_segments` rows per pause (under 10,000
     rows per second at the defaults, so upwards of 17 minutes for a
@@ -248,7 +260,7 @@ requirement excludes.
   tuning is needed.
 - One architecture on every dialect. The remaining dialect splits are the
   LATERAL-vs-loop read strategy, the PostgreSQL-only ordered row locks in
-  `delete_segments` (SQLAlchemy drops locking clauses on SQLite), and
+  `forget_events` (SQLAlchemy drops locking clauses on SQLite), and
   SQLite's foreign-key pragma. The pragma is per-connection state that the
   engine's owner registers at engine creation. The store requires it and
   does not verify it, which is the reference practice for SQLite foreign
