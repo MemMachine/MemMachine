@@ -1,6 +1,7 @@
 """Tests for QdrantVectorStore."""
 
 import asyncio
+import json
 import math
 import operator
 import random
@@ -11,10 +12,13 @@ from typing import Any, override
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+import grpc
+import grpc.aio
 import httpx
 import pytest
 import pytest_asyncio
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client import grpc as qdrant_grpc
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -24,6 +28,7 @@ from memmachine_server.common.data_types import (
     PropertyValue,
     SimilarityMetric,
 )
+from memmachine_server.common.errors import QdrantConfigurationError
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -469,7 +474,13 @@ class _CurrentRegistration(Registration):
         return None
 
 
-def _partition_on(client: AsyncQdrantClient) -> QdrantVectorStorePartition:
+def _partition_on(
+    client: AsyncQdrantClient,
+    *,
+    max_request_bytes: int = QdrantVectorStoreParams.model_fields[
+        "max_request_bytes"
+    ].default,
+) -> QdrantVectorStorePartition:
     """A handle on a given client, bound to a live incarnation."""
     return QdrantVectorStorePartition(
         client=client,
@@ -481,61 +492,173 @@ def _partition_on(client: AsyncQdrantClient) -> QdrantVectorStorePartition:
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties={},
+            indexed_properties=INDEXED_PROPERTIES,
         ),
         tracker=OperationTracker(None, prefix="test"),
+        max_request_bytes=max_request_bytes,
     )
 
 
+# Qdrant's REST answer to an applied upsert.
+_UPSERTED = {"result": {"operation_id": 0, "status": "completed"}, "status": "ok"}
+
+
+@pytest_asyncio.fixture(params=["rest", "grpc"])
+async def recording_client(request):
+    """A client of either transport whose upserts reach a fake server, and the
+    requests it sent: each one's bytes on the wire and point ids."""
+    sent: list[tuple[int, list[str]]] = []
+    if request.param == "rest":
+
+        def answer_rest(http_request: httpx.Request) -> httpx.Response:
+            body = http_request.content
+            point_ids = [point["id"] for point in json.loads(body)["points"]]
+            sent.append((len(body), point_ids))
+            return httpx.Response(200, json=_UPSERTED)
+
+        client = AsyncQdrantClient(
+            check_compatibility=False, transport=httpx.MockTransport(answer_rest)
+        )
+        yield client, sent
+        await client.close()
+        return
+
+    async def answer_grpc(
+        upsert: qdrant_grpc.UpsertPoints, context: grpc.aio.ServicerContext
+    ) -> qdrant_grpc.PointsOperationResponse:
+        sent.append((upsert.ByteSize(), [point.id.uuid for point in upsert.points]))
+        return qdrant_grpc.PointsOperationResponse(
+            result=qdrant_grpc.UpdateResult(
+                operation_id=0, status=qdrant_grpc.UpdateStatus.Completed
+            )
+        )
+
+    server = grpc.aio.server()
+    server.add_generic_rpc_handlers(
+        (
+            grpc.method_handlers_generic_handler(
+                "qdrant.Points",
+                {
+                    "Upsert": grpc.unary_unary_rpc_method_handler(
+                        answer_grpc,
+                        request_deserializer=qdrant_grpc.UpsertPoints.FromString,
+                        response_serializer=qdrant_grpc.PointsOperationResponse.SerializeToString,
+                    )
+                },
+            ),
+        )
+    )
+    port = server.add_insecure_port("127.0.0.1:0")
+    await server.start()
+    client = AsyncQdrantClient(
+        host="127.0.0.1", grpc_port=port, prefer_grpc=True, check_compatibility=False
+    )
+    yield client, sent
+    await client.close()
+    await server.stop(None)
+
+
+def _alike_records(count: int) -> list[Record]:
+    """Records that each take the same bytes in a request."""
+    return [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(count)]
+
+
+async def _request_bytes(
+    client: AsyncQdrantClient, sent: list[tuple[int, list[str]]], records: list[Record]
+) -> int:
+    """The bytes on the wire of one request holding the records."""
+    await _partition_on(client).upsert(records=records)
+    [(request_bytes, _)] = sent
+    sent.clear()
+    return request_bytes
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status_code", [400, 413])
-async def test_a_batch_refused_as_sent_is_halved_until_it_fits(status_code: int):
-    """Qdrant's REST API refuses a request over its size limit with a 400, and
-    a proxy in front of it may with a 413."""
-    upserted: list[list[str]] = []
-
-    async def refuse_more_than_two(
-        *, collection_name: str, points: list[models.PointStruct], wait: bool
-    ) -> None:
-        if len(points) > 2:
-            raise UnexpectedResponse(status_code, "", b"", httpx.Headers())
-        upserted.append([str(point.id) for point in points])
-
-    client = MagicMock(spec=AsyncQdrantClient)
-    client.upsert = AsyncMock(side_effect=refuse_more_than_two)
-    partition = _partition_on(client)
-    records = [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(5)]
+@pytest.mark.parametrize(
+    ("records_per_request", "short_by", "expected"),
+    [
+        (5, 0, [5]),
+        (5, 1, [4, 1]),
+        (2, 0, [2, 2, 1]),
+        (2, 1, [1, 1, 1, 1, 1]),
+        (1, 0, [1, 1, 1, 1, 1]),
+    ],
+    ids=[
+        "an_exact_fit",
+        "a_byte_short_of_a_fit",
+        "two_per_request",
+        "a_byte_short_of_two",
+        "one_per_request",
+    ],
+)
+async def test_records_are_packed_in_order_into_the_fewest_requests_that_fit(
+    recording_client, records_per_request: int, short_by: int, expected: list[int]
+):
+    """A request fits a max_request_bytes of exactly its bytes on the wire,
+    and each is sent once."""
+    client, sent = recording_client
+    one = await _request_bytes(client, sent, _alike_records(1))
+    record_bytes = await _request_bytes(client, sent, _alike_records(2)) - one
+    envelope_bytes = one - record_bytes
+    max_request_bytes = envelope_bytes + records_per_request * record_bytes - short_by
+    partition = _partition_on(client, max_request_bytes=max_request_bytes)
+    records = _alike_records(5)
 
     await partition.upsert(records=records)
 
-    assert sorted(len(batch) for batch in upserted) == [1, 2, 2]
-    assert {point_id for batch in upserted for point_id in batch} == {
+    assert [len(point_ids) for _, point_ids in sent] == expected
+    assert [request_bytes for request_bytes, _ in sent] == [
+        envelope_bytes + count * record_bytes for count in expected
+    ]
+    assert all(request_bytes <= max_request_bytes for request_bytes, _ in sent)
+    assert [point_id for _, point_ids in sent for point_id in point_ids] == [
         str(partition._point_id(record.uuid)) for record in records
-    }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_record_too_large_for_a_request_alone_is_refused_before_any_is_sent(
+    recording_client,
+):
+    client, sent = recording_client
+    partition = _partition_on(
+        client, max_request_bytes=await _request_bytes(client, sent, _alike_records(1))
+    )
+    records = _alike_records(4)
+    records.insert(
+        2, _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"name": "x"})
+    )
+
+    with pytest.raises(ValueError, match="max_request_bytes"):
+        await partition.upsert(records=records)
+
+    assert sent == []
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code", [400, 413])
-async def test_an_upsert_with_a_point_refused_alone_raises(status_code: int):
-    """Halving stops at a single point: a point refused on its own fails the
-    upsert, which does not report it accepted."""
-    refused = _make_record(vector=[0.0, 0.0, 1.0])
+async def test_a_request_refused_as_too_large_raises_a_configuration_error(
+    status_code: int,
+):
+    """Qdrant's REST API refuses a request over its size limit with a 400, and
+    a proxy in front of it may with a 413; the request was within
+    max_request_bytes, so the setting exceeds the server's limit."""
+    sent: list[httpx.Request] = []
 
-    async def refuse_the_refused_point(
-        *, collection_name: str, points: list[models.PointStruct], wait: bool
-    ) -> None:
-        if any(point.vector == refused.vector for point in points):
-            raise UnexpectedResponse(status_code, "", b"", httpx.Headers())
+    def refuse(http_request: httpx.Request) -> httpx.Response:
+        sent.append(http_request)
+        return httpx.Response(status_code, json={"status": {"error": "too large"}})
 
-    client = MagicMock(spec=AsyncQdrantClient)
-    client.upsert = AsyncMock(side_effect=refuse_the_refused_point)
+    client = AsyncQdrantClient(
+        check_compatibility=False, transport=httpx.MockTransport(refuse)
+    )
     partition = _partition_on(client)
-    records = [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(4)]
-    records.insert(3, refused)
 
-    with pytest.raises(UnexpectedResponse) as raised:
-        await partition.upsert(records=records)
-    assert raised.value.status_code == status_code
+    with pytest.raises(QdrantConfigurationError, match="max_request_bytes"):
+        await partition.upsert(records=_alike_records(4))
+
+    assert len(sent) == 1
+    await client.close()
 
 
 @pytest.mark.asyncio
@@ -550,14 +673,108 @@ async def test_an_upsert_with_a_point_refused_alone_raises(status_code: int):
 async def test_an_upsert_that_fails_otherwise_is_not_sent_again(error: Exception):
     """A timed-out request may still be applied, so it is not resent."""
     client = MagicMock(spec=AsyncQdrantClient)
+    client.init_options = {"prefer_grpc": False}
     client.upsert = AsyncMock(side_effect=error)
     partition = _partition_on(client)
-    records = [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(4)]
+    records = _alike_records(4)
 
     with pytest.raises(type(error)):
         await partition.upsert(records=records)
 
     client.upsert.assert_awaited_once()
+
+
+@pytest.mark.integration
+class TestUpsertRequests:
+    """Upserts packed into requests, against the server."""
+
+    @pytest.mark.asyncio
+    async def test_an_upsert_packed_into_requests_stores_every_record(
+        self, any_qdrant_client, registry_engine, monkeypatch
+    ):
+        records = _alike_records(10)
+        sizer = _partition_on(any_qdrant_client)
+        envelope_bytes, sizes = sizer._request_sizes(
+            [sizer._build_point(record) for record in records]
+        )
+        store = QdrantVectorStore(
+            await _params(
+                any_qdrant_client,
+                registry_engine,
+                max_request_bytes=envelope_bytes + 3 * sizes[0],
+            )
+        )
+        await store.startup()
+        await store.create_partition("packed")
+        partition = await store.open_partition("packed")
+        assert partition is not None
+        upsert = MagicMock(wraps=any_qdrant_client.upsert)
+        monkeypatch.setattr(any_qdrant_client, "upsert", upsert)
+
+        await partition.upsert(records=records)
+
+        assert [len(call.kwargs["points"]) for call in upsert.call_args_list] == [
+            3,
+            3,
+            3,
+            1,
+        ]
+        assert await _stored_uuids(partition) == {record.uuid for record in records}
+        await store.delete_partition("packed")
+
+    @pytest.mark.asyncio
+    async def test_a_record_too_large_for_a_request_alone_is_refused_before_any_is_sent(
+        self, any_qdrant_client, registry_engine, monkeypatch
+    ):
+        store = QdrantVectorStore(
+            await _params(any_qdrant_client, registry_engine, max_request_bytes=1024)
+        )
+        await store.startup()
+        await store.create_partition("oversized")
+        partition = await store.open_partition("oversized")
+        assert partition is not None
+        upsert = MagicMock(wraps=any_qdrant_client.upsert)
+        monkeypatch.setattr(any_qdrant_client, "upsert", upsert)
+        records = _alike_records(2)
+        records.append(
+            _make_record(
+                vector=_normalize([1.0, 0.0, 0.0]), properties={"name": "x" * 1024}
+            )
+        )
+
+        with pytest.raises(ValueError, match="max_request_bytes"):
+            await partition.upsert(records=records)
+
+        upsert.assert_not_called()
+        assert await _stored_uuids(partition) == set()
+        await store.delete_partition("oversized")
+
+    @pytest.mark.asyncio
+    async def test_a_request_over_the_servers_limit_raises_a_configuration_error(
+        self, qdrant_client, registry_engine
+    ):
+        """Qdrant refuses a REST request over its service.max_request_size_mb
+        (32 MiB unless configured) before writing any of it."""
+        store = QdrantVectorStore(
+            await _params(
+                qdrant_client, registry_engine, max_request_bytes=64 * 1024 * 1024
+            )
+        )
+        await store.startup()
+        await store.create_partition("refused")
+        partition = await store.open_partition("refused")
+        assert partition is not None
+        name = "x" * (1024 * 1024)
+        records = [
+            _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"name": name})
+            for _ in range(40)
+        ]
+
+        with pytest.raises(QdrantConfigurationError, match="max_request_bytes"):
+            await partition.upsert(records=records)
+
+        assert await _stored_uuids(partition) == set()
+        await store.delete_partition("refused")
 
 
 # ── Filters ──

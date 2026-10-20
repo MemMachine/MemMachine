@@ -721,6 +721,7 @@ class DatabaseManager:
                 partition_registry=partition_registry,
                 vector_store_name=vector_store_name,
                 store_schema=store_schema,
+                max_request_bytes=conf.max_request_bytes,
                 metrics_factory=conf.get_metrics_factory(),
             )
         )
@@ -825,6 +826,7 @@ class DatabaseManager:
                 request_timeout_seconds=conf.request_timeout_seconds,
                 max_varchar_length=conf.max_varchar_length,
                 purge_batch_size=conf.purge_batch_size,
+                max_request_bytes=conf.max_request_bytes,
                 metrics_factory=conf.get_metrics_factory(),
             )
         )

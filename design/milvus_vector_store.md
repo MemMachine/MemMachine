@@ -59,13 +59,23 @@ registry](vector_store_partition_registry.md),
   primary keys a delete accepts, present or not (milvus-io/milvus#51566), and
   pymilvus's async client returns that count for a delete Milvus rejected, so
   the store compares it with the keys it sent.
-- **Oversized upserts are halved.** Milvus refuses a request over
-  `proxy.grpc.serverMaxRecvSize` (64 MiB unless configured) with gRPC's
-  RESOURCE_EXHAUSTED status before writing any of it, and pymilvus raises that
-  status as it is (measured on 2.6.24). An upsert refused so is halved until
-  its halves fit or a single entity is refused, as on Qdrant. Any other error
-  raises at once: a timed-out request may still be applied, and sending it
-  again adds load to a server already too slow.
+- **Upserts are packed by serialized size.** Entities are packed, in order,
+  into the fewest requests of at most `max_request_bytes`, and each request
+  is sent once. pymilvus sends a request's fields as columns, so an entity's
+  size is what its values add to them on the wire: each value an element of
+  its field's column, and each declared field, being nullable, a validity
+  flag besides. The rest of a request, its own fields and each field's
+  framing, is counted as an upper bound per field, since the lengths in it
+  grow with the request. The default, 64 MiB, is
+  `proxy.grpc.serverMaxRecvSize` in the server's default configuration
+  (`configs/milvus.yaml` at v2.6.24). Milvus refuses a request over it with
+  gRPC's RESOURCE_EXHAUSTED status before writing any of it, and pymilvus
+  raises that status as it is (measured on 2.6.24). A refused request was
+  within `max_request_bytes`, so the refusal raises
+  `MilvusConfigurationError`: the setting exceeds the server's limit. An
+  entity too large for a request alone raises `ValueError` before anything
+  is sent. Any other error raises at once: a timed-out request may still be
+  applied, and sending it again adds load to a server already too slow.
 - **Milvus Lite is not supported.** It is a separate embedded engine that
   scores, indexes, and enforces collection properties differently; a URI
   ending in `.db`, which pymilvus serves with Lite, is refused. Every call the

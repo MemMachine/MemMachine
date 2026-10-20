@@ -11,6 +11,9 @@ import grpc.aio
 import numpy as np
 from pydantic import Field, InstanceOf
 from qdrant_client import AsyncQdrantClient, models
+from qdrant_client.conversions.conversion import RestToGrpc
+from qdrant_client.grpc import UpsertPoints
+from qdrant_client.http.api.points_api import jsonable_encoder
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 from memmachine_server.common.data_types import (
@@ -19,6 +22,7 @@ from memmachine_server.common.data_types import (
     PropertyValue,
     SimilarityMetric,
 )
+from memmachine_server.common.errors import QdrantConfigurationError
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -55,6 +59,7 @@ from .registry_backed_vector_store import (
     RegistryBackedVectorStoreParams,
     RegistryBackedVectorStorePartition,
 )
+from .utils import pack_requests
 
 # Point payload keys (stored on every Qdrant point).
 # System keys start with _SYSTEM_KEY_PREFIX, whose hyphen no property key may
@@ -268,6 +273,7 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
         registration: Registration,
         store_schema: VectorStoreSchema,
         tracker: OperationTracker,
+        max_request_bytes: int,
     ) -> None:
         """Initialize with a Qdrant client and the registration the handle is bound to."""
         super().__init__(
@@ -277,6 +283,7 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
             tracker=tracker,
         )
         self._client = client
+        self._max_request_bytes = max_request_bytes
 
     def _point_id(self, record_uuid: UUID) -> UUID:
         """The point id of a record: a UUIDv5 of the record UUID under the incarnation.
@@ -303,16 +310,45 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
 
     @override
     async def _upsert(self, records: list[Record]) -> None:
-        await self._upsert_points([self._build_point(record) for record in records])
+        points = [self._build_point(record) for record in records]
+        envelope_bytes, sizes = self._request_sizes(points)
+        for batch in pack_requests(
+            points,
+            sizes,
+            envelope_bytes=envelope_bytes,
+            max_request_bytes=self._max_request_bytes,
+        ):
+            await self._upsert_points(batch)
+
+    def _request_sizes(self, points: list[models.PointStruct]) -> tuple[int, list[int]]:
+        """The bytes an upsert request takes besides its points, and those each point adds.
+
+        Each is measured as the client sends it: as protobuf over gRPC, and
+        as the JSON body over REST.
+        """
+        if self._client.init_options["prefer_grpc"]:
+            envelope = UpsertPoints(collection_name=self._vector_store_name, wait=True)
+            # A point adds its message, with its field tag and length.
+            return envelope.ByteSize(), [
+                UpsertPoints(points=[RestToGrpc.convert_point_struct(point)]).ByteSize()
+                for point in points
+            ]
+        # The body's points are comma-separated: each adds its JSON and a
+        # comma, but the first adds no comma.
+        envelope_json = jsonable_encoder(models.PointsList(points=[]))
+        return len(envelope_json.encode()) - 1, [
+            len(jsonable_encoder(point).encode()) + 1 for point in points
+        ]
 
     async def _upsert_points(self, points: list[models.PointStruct]) -> None:
-        """Upsert points, halving a batch refused as sent.
+        """Upsert points in one request.
 
         Qdrant's REST API refuses a request over its max_request_size_mb with
         a 400, the status of any request it finds invalid, and a proxy in
-        front of it may refuse one with a 413. A batch refused with either is
-        halved until the halves fit or a single point is refused. Any other
-        error raises at once.
+        front of it may refuse one with a 413. A request takes at most
+        max_request_bytes, so either refusal raises as the setting exceeding
+        the server's limit, unless the response names another fault. Any
+        other error raises as is.
         """
         try:
             # Waiting for Qdrant to apply the write keeps the writes it has
@@ -324,11 +360,14 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
                 wait=True,
             )
         except UnexpectedResponse as err:
-            if err.status_code not in (400, 413) or len(points) <= 1:
+            if err.status_code not in (400, 413):
                 raise
-            mid = len(points) // 2
-            await self._upsert_points(points[:mid])
-            await self._upsert_points(points[mid:])
+            raise QdrantConfigurationError(
+                f"Qdrant refused an upsert request with HTTP {err.status_code}: "
+                f"max_request_bytes ({self._max_request_bytes}) exceeds the "
+                "server's request size limit, service.max_request_size_mb, "
+                "unless the response names another fault"
+            ) from err
 
     @override
     async def _query(
@@ -417,11 +456,24 @@ class QdrantVectorStoreParams(RegistryBackedVectorStoreParams):
         client (AsyncQdrantClient):
             Async Qdrant client instance, which stores of different names
             may share.
+        max_request_bytes (int):
+            Bytes one upsert request may take as the client serializes it, at
+            most the server's REST limit, service.max_request_size_mb; a
+            record that alone exceeds it is refused (default: 33554432).
     """
 
     client: InstanceOf[AsyncQdrantClient] = Field(
         ...,
         description="Async Qdrant client instance, which stores of different names may share",
+    )
+    max_request_bytes: int = Field(
+        32 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Bytes one upsert request may take as the client serializes it, at "
+            "most the server's REST limit, service.max_request_size_mb; a record "
+            "that alone exceeds it is refused"
+        ),
     )
 
 
@@ -484,6 +536,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
         """Initialize the vector store with the provided parameters."""
         super().__init__(params, metrics_prefix="vector_store_qdrant")
         self._client: AsyncQdrantClient = params.client
+        self._max_request_bytes = params.max_request_bytes
 
         self._hnsw_m = 16
 
@@ -556,6 +609,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
             registration=registration,
             store_schema=self._store_schema,
             tracker=self._tracker,
+            max_request_bytes=self._max_request_bytes,
         )
 
     @override

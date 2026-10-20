@@ -35,17 +35,27 @@ registry](vector_store_partition_registry.md),
   between them is completed by the next.
 - **Client:** `AsyncQdrantClient`, with `request_timeout_seconds` as its
   timeout.
-- **Oversized upserts are halved.** Qdrant's REST API refuses a request over
-  `service.max_request_size_mb` (32 unless configured) with a 400 (measured on
-  1.19.1; the status is not documented), and a proxy in front of it may
-  refuse one with a 413. An upsert refused with either is halved until its
-  halves fit or a single point is refused. A malformed batch is halved too,
-  since only the message, which the store does not parse, tells the two 400s
-  apart. Sizing requests beforehand would mean reproducing qdrant-client's
-  undocumented serialization. gRPC has no such limit: Qdrant's server and
-  qdrant-client set none, and a 140 MB upsert went through. Any other error
-  raises at once: a timed-out request may still be applied, and sending it
-  again adds load to a server already too slow.
+- **Upserts are packed by serialized size.** Points are packed, in order,
+  into the fewest requests of at most `max_request_bytes`, and each request
+  is sent once. A point's size is what the client sends for it, measured
+  with qdrant-client's own serializers: its JSON in the REST body, or its
+  protobuf message over gRPC; the rest of the request is counted once. The
+  default, 32 MiB, is Qdrant's REST limit, `service.max_request_size_mb` (32
+  unless configured). gRPC has no such limit: Qdrant's server sets none
+  (`src/tonic/mod.rs` at v1.19.1), nor does qdrant-client, and a 140 MB
+  upsert went through; there the setting only bounds a request's size.
+  Qdrant refuses a REST request over its limit with a 400
+  (`src/actix/mod.rs` at v1.19.1), and a proxy in front of it may refuse one
+  with a 413. A refused request was within `max_request_bytes`, so either
+  status raises `QdrantConfigurationError`: the setting exceeds the server's
+  limit. A malformed request's 400 raises the same, since only the message,
+  which the store does not parse, tells the two 400s apart; the error chains
+  the response. A point too large for a request alone raises `ValueError`
+  before anything is sent. The alternative, halving a refused batch until
+  its halves fit, sends a refused batch's bytes again at each halving, and
+  halves a malformed batch down to single points. Any other error raises at
+  once: a timed-out request may still be applied, and sending it again adds
+  load to a server already too slow.
 
 ## Point ids
 

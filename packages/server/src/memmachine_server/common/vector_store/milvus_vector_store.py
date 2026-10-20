@@ -17,6 +17,7 @@ from memmachine_server.common.data_types import (
     PropertyValue,
     SimilarityMetric,
 )
+from memmachine_server.common.errors import MilvusConfigurationError
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -53,6 +54,7 @@ from .registry_backed_vector_store import (
     RegistryBackedVectorStoreParams,
     RegistryBackedVectorStorePartition,
 )
+from .utils import pack_requests
 
 _COLLECTION_NAME_PREFIX = "sys_"
 """The prefix of the native collection's name, before the vector store name.
@@ -79,6 +81,16 @@ _PRIMARY_ID_LENGTH = 2 * _UUID_LENGTH + 1
 """The length of a primary key, `"{incarnation}:{record_uuid}"`."""
 _FALSE_EXPR = f"{_ID_FIELD} in []"
 """A Milvus expression no entity satisfies; Milvus refuses a bare `false`."""
+
+_REQUEST_FRAMING_BYTES = 64
+"""An upper bound on the bytes an upsert request's own fields take, its collection name's aside."""
+_FIELD_FRAMING_BYTES = 64
+"""An upper bound on the bytes a field adds to an upsert request, its name's and values' aside.
+
+That is its type, its vector dimensions, and the tag and length of each
+message and packed array nesting its values; a length takes at most five
+bytes, since protobuf caps a message below 2 GiB.
+"""
 
 _DECLARED_DATA_TYPES: dict[type[PropertyValue], DataType] = {
     bool: DataType.BOOL,
@@ -233,6 +245,7 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
         store_schema: VectorStoreSchema,
         tracker: OperationTracker,
         request_timeout_seconds: int,
+        max_request_bytes: int,
     ) -> None:
         """Initialize with a Milvus client and the registration the handle is bound to."""
         super().__init__(
@@ -244,6 +257,7 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
         self._client = client
         self._collection_name = collection_name
         self._request_timeout_seconds = request_timeout_seconds
+        self._max_request_bytes = max_request_bytes
 
     def _primary_id(self, record_uuid: UUID) -> str:
         """The primary key of a record: the incarnation and the record UUID.
@@ -286,15 +300,67 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
 
     @override
     async def _upsert(self, records: list[Record]) -> None:
-        await self._upsert_entities([self._build_entity(record) for record in records])
+        entities = [self._build_entity(record) for record in records]
+        for batch in pack_requests(
+            entities,
+            [self._entity_size(entity) for entity in entities],
+            envelope_bytes=self._envelope_size(entities[0]),
+            max_request_bytes=self._max_request_bytes,
+        ):
+            await self._upsert_entities(batch)
+
+    def _entity_size(self, entity: Mapping[str, Any]) -> int:
+        """The bytes an entity adds to an upsert request, which holds each field as a column.
+
+        Each value is an element of its field's column, and each declared
+        field, being nullable, takes a validity flag besides.
+        """
+        return len(self._store_schema.indexed_properties) + sum(
+            MilvusVectorStorePartition._element_size(value) for value in entity.values()
+        )
+
+    @staticmethod
+    def _element_size(value: str | bool | float | list[float] | None) -> int:
+        """The bytes a value adds to its column: a string with its tag and length, or a packed element."""
+        if value is None:
+            return 0
+        if isinstance(value, str):
+            length = len(value.encode())
+            return 1 + MilvusVectorStorePartition._varint_size(length) + length
+        if isinstance(value, bool):
+            return 1
+        if isinstance(value, int):
+            return MilvusVectorStorePartition._varint_size(value)
+        if isinstance(value, float):
+            return 8
+        # A vector's single-precision coordinates.
+        return 4 * len(value)
+
+    @staticmethod
+    def _varint_size(value: int) -> int:
+        """The bytes of an integer as a protobuf varint, ten for a negative one."""
+        if value < 0:
+            return 10
+        return max(1, (value.bit_length() + 6) // 7)
+
+    def _envelope_size(self, entity: Mapping[str, Any]) -> int:
+        """An upper bound on the bytes an upsert request takes besides its entities' values.
+
+        Every entity of the request holds every field, as this one does.
+        """
+        return (
+            _REQUEST_FRAMING_BYTES
+            + len(self._collection_name)
+            + sum(_FIELD_FRAMING_BYTES + len(field) for field in entity)
+        )
 
     async def _upsert_entities(self, entities: list[dict[str, Any]]) -> None:
-        """Upsert entities, halving a batch refused as too large.
+        """Upsert entities in one request.
 
         Milvus refuses a request over its proxy's gRPC receive limit with
-        RESOURCE_EXHAUSTED, before writing any of it. A batch refused so is
-        halved until the halves fit or a single entity is refused. Any other
-        error raises at once.
+        RESOURCE_EXHAUSTED, before writing any of it. A request takes at most
+        max_request_bytes, so the refusal raises as the setting exceeding the
+        server's limit. Any other error raises as is.
         """
         try:
             await self._client.upsert(
@@ -303,11 +369,13 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
                 timeout=self._request_timeout_seconds,
             )
         except grpc.aio.AioRpcError as err:
-            if err.code() != grpc.StatusCode.RESOURCE_EXHAUSTED or len(entities) <= 1:
+            if err.code() != grpc.StatusCode.RESOURCE_EXHAUSTED:
                 raise
-            mid = len(entities) // 2
-            await self._upsert_entities(entities[:mid])
-            await self._upsert_entities(entities[mid:])
+            raise MilvusConfigurationError(
+                "Milvus refused an upsert request as larger than its gRPC receive "
+                f"limit: max_request_bytes ({self._max_request_bytes}) exceeds the "
+                "server's proxy.grpc.serverMaxRecvSize"
+            ) from err
 
     @override
     async def _query(
@@ -391,6 +459,10 @@ class MilvusVectorStoreParams(RegistryBackedVectorStoreParams):
             The most entities one purge round lists and deletes, at most the
             server's quotaAndLimits.limits.maxQueryResultWindow (default:
             10000).
+        max_request_bytes (int):
+            Bytes one upsert request may take as gRPC serializes it, at most
+            the server's proxy.grpc.serverMaxRecvSize; a record that alone
+            exceeds it is refused (default: 67108864).
     """
 
     client: InstanceOf[AsyncMilvusClient] = Field(
@@ -414,6 +486,15 @@ class MilvusVectorStoreParams(RegistryBackedVectorStoreParams):
         description=(
             "The most entities one purge round lists and deletes, at most the "
             "server's quotaAndLimits.limits.maxQueryResultWindow"
+        ),
+    )
+    max_request_bytes: int = Field(
+        64 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Bytes one upsert request may take as gRPC serializes it, at most "
+            "the server's proxy.grpc.serverMaxRecvSize; a record that alone "
+            "exceeds it is refused"
         ),
     )
 
@@ -460,6 +541,7 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
         self._request_timeout_seconds = params.request_timeout_seconds
         self._max_varchar_length = params.max_varchar_length
         self._purge_batch_size = params.purge_batch_size
+        self._max_request_bytes = params.max_request_bytes
 
     @override
     async def _prepare_storage(self) -> None:
@@ -586,6 +668,7 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
             store_schema=self._store_schema,
             tracker=self._tracker,
             request_timeout_seconds=self._request_timeout_seconds,
+            max_request_bytes=self._max_request_bytes,
         )
 
     @override

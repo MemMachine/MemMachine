@@ -95,3 +95,41 @@ def validate_supported_filter(
     undeclared = filter_fields(property_filter) - indexed_properties.keys()
     if undeclared:
         raise UndeclaredPropertyKeyError(undeclared, indexed_properties.keys())
+
+
+def pack_requests[T](
+    records: Sequence[T],
+    sizes: Sequence[int],
+    *,
+    envelope_bytes: int,
+    max_request_bytes: int,
+) -> list[list[T]]:
+    """
+    Split records, in order, into the fewest consecutive runs that each fit a request.
+
+    A request takes `envelope_bytes` besides its records and each record its
+    size in `sizes`, and fits when they sum to at most `max_request_bytes`.
+
+    Raises:
+        ValueError: If a record does not fit a request alone.
+    """
+    capacity = max_request_bytes - envelope_bytes
+    runs: list[list[T]] = []
+    run: list[T] = []
+    run_bytes = 0
+    for record, size in zip(records, sizes, strict=True):
+        if size > capacity:
+            raise ValueError(
+                f"A record takes {size} bytes of a request, which takes "
+                f"{envelope_bytes} more, so a request of it alone exceeds "
+                f"max_request_bytes ({max_request_bytes})"
+            )
+        if run and run_bytes + size > capacity:
+            runs.append(run)
+            run = []
+            run_bytes = 0
+        run.append(record)
+        run_bytes += size
+    if run:
+        runs.append(run)
+    return runs
