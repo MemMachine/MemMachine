@@ -6,12 +6,16 @@ import json
 import logging
 import time
 from collections.abc import Iterable, Sequence
-from typing import ClassVar, Final, cast
+from typing import Final, cast
 from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine_server.common.data_types import PropertyType, PropertyValue
+from memmachine_server.common.data_types import (
+    PropertyType,
+    PropertyValue,
+    SimilarityMetric,
+)
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -31,6 +35,7 @@ from memmachine_server.common.property_keys import (
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import (
     Record,
+    VectorStore,
     VectorStorePartition,
 )
 from memmachine_server.common.vector_store.data_types import is_valid_identifier
@@ -49,7 +54,11 @@ from .data_types import (
 )
 from .deriver import Deriver
 from .formatting import format_timestamp
-from .segment_store import SegmentStorePartition
+from .segment_store import (
+    SegmentStore,
+    SegmentStorePartition,
+    SegmentStorePartitionConfig,
+)
 from .segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
@@ -61,16 +70,18 @@ EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
     _EVENT_MEMORY_SYSTEM, "timestamp"
 )
 
+_BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY})
+
 
 class EventMemoryParams(BaseModel):
     """
     Parameters for EventMemory.
 
     Attributes:
-        segment_store_partition (SegmentStorePartition):
-            Segment store partition.
-        vector_store_partition (VectorStorePartition):
-            Vector store partition.
+        segment_store (SegmentStore):
+            Segment store holding the events' segments.
+        vector_store (VectorStore):
+            Vector store holding the derivatives' vectors.
         segmenter (Segmenter):
             Segmenter that segments events into segments.
         deriver (Deriver):
@@ -86,13 +97,13 @@ class EventMemoryParams(BaseModel):
             (default: None).
     """
 
-    segment_store_partition: InstanceOf[SegmentStorePartition] = Field(
+    segment_store: InstanceOf[SegmentStore] = Field(
         ...,
-        description="Segment store partition",
+        description="Segment store holding the events' segments",
     )
-    vector_store_partition: InstanceOf[VectorStorePartition] = Field(
+    vector_store: InstanceOf[VectorStore] = Field(
         ...,
-        description="Vector store partition",
+        description="Vector store holding the derivatives' vectors",
     )
     segmenter: InstanceOf[Segmenter] = Field(
         ...,
@@ -118,11 +129,12 @@ class EventMemoryParams(BaseModel):
 
 
 class EventMemory:
-    """Event memory system."""
+    """
+    Event memory over a segment store and a vector store.
 
-    _BASE_EVENT_MEMORY_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {EVENT_TIMESTAMP_KEY}
-    )
+    A partition key names one partition in each store, and must be valid
+    in both. Handles on a partition read and write that pair only.
+    """
 
     @classmethod
     def expected_vector_store_indexed_properties(cls) -> dict[str, PropertyType]:
@@ -146,8 +158,309 @@ class EventMemory:
                 Parameters for the EventMemory.
 
         """
-        self._segment_store_partition = params.segment_store_partition
-        self._vector_store_partition = params.vector_store_partition
+        self._params = params
+
+    async def open_or_create_partition(
+        self, partition_key: str
+    ) -> "EventMemoryPartition":
+        """
+        Open the partition if it exists, or create it if it does not.
+
+        The vector store's partition is created before the segment store's,
+        so a segment store partition always has its vector store partition.
+
+        Args:
+            partition_key (str):
+                The key of the partition.
+
+        Returns:
+            EventMemoryPartition:
+                A handle on the partition.
+
+        Raises:
+            ValueError:
+                If the vector store schema is missing fields required by
+                EventMemory.
+        """
+        vector_store_partition = (
+            await self._params.vector_store.open_or_create_partition(partition_key)
+        )
+        segment_store_partition = (
+            await self._params.segment_store.open_or_create_partition(
+                partition_key,
+                SegmentStorePartitionConfig(),
+            )
+        )
+        return EventMemoryPartition(
+            self._params,
+            segment_store_partition=segment_store_partition,
+            vector_store_partition=vector_store_partition,
+        )
+
+    async def delete_partition(self, partition_key: str) -> None:
+        """
+        Delete the partition from both stores. Idempotent.
+
+        Args:
+            partition_key (str):
+                The key of the partition to delete.
+        """
+        await self._params.vector_store.delete_partition(partition_key)
+        await self._params.segment_store.delete_partition(partition_key)
+
+    @staticmethod
+    def string_from_segment_context(
+        segment_context: Iterable[Segment],
+        *,
+        format_options: FormatOptions | None = None,
+    ) -> str:
+        """Format segment context as a string."""
+        if format_options is None:
+            format_options = FormatOptions(time_style="short")
+
+        context_string = ""
+        last_segment: Segment | None = None
+        accumulated_text = ""
+        first = True
+
+        for segment in segment_context:
+            is_continuation = (
+                last_segment is not None
+                and segment.event_uuid == last_segment.event_uuid
+                and segment.index == last_segment.index
+            )
+
+            if not is_continuation:
+                if not first:
+                    context_string += (
+                        json.dumps(accumulated_text, ensure_ascii=False) + "\n"
+                    )
+                first = False
+                accumulated_text = ""
+                context_string += EventMemory._segment_header(segment, format_options)
+
+            text = _extract_text(segment.block)
+            if text is not None:
+                accumulated_text += text
+            elif not is_continuation:
+                context_string += f"[{segment.block.block_type}]\n"
+
+            last_segment = segment
+
+        if not first:
+            context_string += json.dumps(accumulated_text, ensure_ascii=False) + "\n"
+
+        return context_string.strip()
+
+    @staticmethod
+    def string_from_segment_contexts(
+        segment_contexts: Iterable[Iterable[Segment]],
+        *,
+        format_options: FormatOptions | None = None,
+    ) -> str:
+        """Format multiple segment contexts as a string, separating disconnected components."""
+        segment_contexts = [list(context) for context in segment_contexts]
+
+        # Deduplicate segments and build union-find over their UUIDs in one pass.
+        segments_by_uuid: dict[UUID, Segment] = {}
+        component_parent: dict[UUID, UUID] = {}
+
+        def find(uuid: UUID) -> UUID:
+            component_parent.setdefault(uuid, uuid)
+            root = uuid
+            while component_parent[root] != root:
+                root = component_parent[root]
+            while component_parent[uuid] != root:
+                parent = component_parent[uuid]
+                component_parent[uuid] = root
+                uuid = parent
+            return root
+
+        for context in segment_contexts:
+            first_segment_root: UUID | None = None
+            for segment in context:
+                segments_by_uuid.setdefault(segment.uuid, segment)
+                if first_segment_root is None:
+                    first_segment_root = find(segment.uuid)
+                else:
+                    segment_root = find(segment.uuid)
+                    component_parent[segment_root] = first_segment_root
+
+        # Group unique segments by component root.
+        segments_by_root: dict[UUID, list[Segment]] = {}
+        for segment_uuid, segment in segments_by_uuid.items():
+            segments_by_root.setdefault(find(segment_uuid), []).append(segment)
+
+        # Sort segments within each component, then order components chronologically.
+        def segment_key(segment: Segment) -> tuple:
+            return (
+                segment.timestamp,
+                segment.event_uuid,
+                segment.index,
+                segment.offset,
+            )
+
+        components = list(segments_by_root.values())
+        for component in components:
+            component.sort(key=segment_key)
+        components.sort(key=lambda segments: segment_key(segments[0]))
+
+        return "\n\n".join(
+            EventMemory.string_from_segment_context(
+                segments, format_options=format_options
+            )
+            for segments in components
+        )
+
+    @staticmethod
+    def _segment_header(segment: Segment, format_options: FormatOptions) -> str:
+        """Build the header emitted before a segment."""
+        formatted_timestamp = format_timestamp(segment.timestamp, format_options)
+        timestamp_prefix = f"[{formatted_timestamp}] " if formatted_timestamp else ""
+
+        match segment.context:
+            case ProducerContext(producer=producer):
+                return f"{timestamp_prefix}{producer}: "
+            case NullContext():
+                return timestamp_prefix
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported context type: {type(segment.context).__name__}"
+                )
+
+    @staticmethod
+    def build_query_result_context(
+        query_result: QueryResult,
+        max_num_segments: int,
+    ) -> list[Segment]:
+        """
+        Build a single segment context from the query result within the limit.
+
+        Iterates contexts in score order, accumulating segments until the limit is reached.
+        When a context would exceed the limit, segments nearest the seed are prioritized.
+        Deduplicates across segment contexts in the query result.
+
+        Args:
+            query_result (QueryResult):
+                The query result with scored anchored segment contexts.
+            max_num_segments (int):
+                The maximum number of segments to return.
+
+        Returns:
+            list[Segment]:
+                Deduplicated segments ordered chronologically.
+        """
+        unified: set[Segment] = set()
+
+        for scored_context in query_result.scored_segment_contexts:
+            context = scored_context.segments
+
+            if len(unified) >= max_num_segments:
+                break
+            if (len(unified) + len(context)) <= max_num_segments:
+                unified.update(context)
+            else:
+                # Prioritize segments near the seed segment.
+                seed_index = next(
+                    index
+                    for index, segment in enumerate(context)
+                    if segment.uuid == scored_context.seed_segment_uuid
+                )
+
+                for segment in sorted(
+                    context,
+                    key=lambda s: EventMemory._seed_proximity(s, context, seed_index),
+                ):
+                    if len(unified) >= max_num_segments:
+                        break
+                    unified.add(segment)
+
+        return sorted(
+            unified,
+            key=lambda segment: (
+                segment.timestamp,
+                segment.event_uuid,
+                segment.index,
+                segment.offset,
+            ),
+        )
+
+    @staticmethod
+    def string_from_query_result(
+        query_result: QueryResult,
+        *,
+        max_num_segments: int | None = None,
+        format_options: FormatOptions | None = None,
+    ) -> str:
+        """Format a query result as a string with breaks between disconnected contexts."""
+        contexts: list[list[Segment]] = [
+            list(scored_context.segments)
+            for scored_context in query_result.scored_segment_contexts
+        ]
+
+        if max_num_segments is not None:
+            included = {
+                segment.uuid
+                for segment in EventMemory.build_query_result_context(
+                    query_result, max_num_segments
+                )
+            }
+            contexts = [
+                [segment for segment in context if segment.uuid in included]
+                for context in contexts
+            ]
+
+        return EventMemory.string_from_segment_contexts(
+            contexts, format_options=format_options
+        )
+
+    @staticmethod
+    def _seed_proximity(
+        segment: Segment,
+        context: list[Segment],
+        seed_index: int,
+    ) -> float:
+        """Score a segment by its proximity to the seed. Lower is closer."""
+        offset = context.index(segment) - seed_index
+        if offset >= 0:
+            # Forward context is more useful than backward.
+            return (offset - 0.5) / 2
+        return -offset
+
+
+class EventMemoryPartition:
+    """
+    A handle on one partition of an EventMemory.
+
+    Reads and writes only its partition in each store. Obtained from
+    `EventMemory.open_or_create_partition`.
+    """
+
+    def __init__(
+        self,
+        params: EventMemoryParams,
+        *,
+        segment_store_partition: SegmentStorePartition,
+        vector_store_partition: VectorStorePartition,
+    ) -> None:
+        """
+        Initialize a handle on one partition of an EventMemory.
+
+        Args:
+            params (EventMemoryParams):
+                Parameters of the EventMemory.
+            segment_store_partition (SegmentStorePartition):
+                The partition's segment store partition.
+            vector_store_partition (VectorStorePartition):
+                The partition's vector store partition.
+
+        Raises:
+            ValueError:
+                If the vector store schema is missing fields required by
+                EventMemory.
+        """
+        self._segment_store_partition = segment_store_partition
+        self._vector_store_partition = vector_store_partition
         self._segmenter = params.segmenter
         self._deriver = params.deriver
         self._embedder = params.embedder
@@ -159,12 +472,10 @@ class EventMemory:
         )
 
         self._schema_fields = frozenset(
-            params.vector_store_partition.store_schema.indexed_properties
+            vector_store_partition.store_schema.indexed_properties
         )
 
-        missing_base_fields = (
-            EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES - self._schema_fields
-        )
+        missing_base_fields = _BASE_EVENT_MEMORY_FIELD_NAMES - self._schema_fields
         if missing_base_fields:
             raise ValueError(
                 f"Vector store schema missing fields required by EventMemory: "
@@ -184,6 +495,11 @@ class EventMemory:
                 "Time spent in each phase of query",
                 label_names=("phase",),
             )
+
+    @property
+    def similarity_metric(self) -> SimilarityMetric:
+        """Similarity metric by which the vector search scores matches."""
+        return self._vector_store_partition.store_schema.similarity_metric
 
     def _validate_events(self, events: Iterable[Event]) -> None:
         """
@@ -270,7 +586,7 @@ class EventMemory:
 
         derivative_texts: list[str] = []
         for derivative in derivatives:
-            text = EventMemory._extract_text(derivative.block)
+            text = _extract_text(derivative.block)
             if text is None:
                 raise NotImplementedError(
                     f"Unsupported block type: {type(derivative.block).__name__}"
@@ -574,135 +890,6 @@ class EventMemory:
         ]
         return await self._reranker.score(query, context_strings)
 
-    @staticmethod
-    def string_from_segment_context(
-        segment_context: Iterable[Segment],
-        *,
-        format_options: FormatOptions | None = None,
-    ) -> str:
-        """Format segment context as a string."""
-        if format_options is None:
-            format_options = FormatOptions(time_style="short")
-
-        context_string = ""
-        last_segment: Segment | None = None
-        accumulated_text = ""
-        first = True
-
-        for segment in segment_context:
-            is_continuation = (
-                last_segment is not None
-                and segment.event_uuid == last_segment.event_uuid
-                and segment.index == last_segment.index
-            )
-
-            if not is_continuation:
-                if not first:
-                    context_string += (
-                        json.dumps(accumulated_text, ensure_ascii=False) + "\n"
-                    )
-                first = False
-                accumulated_text = ""
-                context_string += EventMemory._segment_header(segment, format_options)
-
-            text = EventMemory._extract_text(segment.block)
-            if text is not None:
-                accumulated_text += text
-            elif not is_continuation:
-                context_string += f"[{segment.block.block_type}]\n"
-
-            last_segment = segment
-
-        if not first:
-            context_string += json.dumps(accumulated_text, ensure_ascii=False) + "\n"
-
-        return context_string.strip()
-
-    @staticmethod
-    def string_from_segment_contexts(
-        segment_contexts: Iterable[Iterable[Segment]],
-        *,
-        format_options: FormatOptions | None = None,
-    ) -> str:
-        """Format multiple segment contexts as a string, separating disconnected components."""
-        segment_contexts = [list(context) for context in segment_contexts]
-
-        # Deduplicate segments and build union-find over their UUIDs in one pass.
-        segments_by_uuid: dict[UUID, Segment] = {}
-        component_parent: dict[UUID, UUID] = {}
-
-        def find(uuid: UUID) -> UUID:
-            component_parent.setdefault(uuid, uuid)
-            root = uuid
-            while component_parent[root] != root:
-                root = component_parent[root]
-            while component_parent[uuid] != root:
-                parent = component_parent[uuid]
-                component_parent[uuid] = root
-                uuid = parent
-            return root
-
-        for context in segment_contexts:
-            first_segment_root: UUID | None = None
-            for segment in context:
-                segments_by_uuid.setdefault(segment.uuid, segment)
-                if first_segment_root is None:
-                    first_segment_root = find(segment.uuid)
-                else:
-                    segment_root = find(segment.uuid)
-                    component_parent[segment_root] = first_segment_root
-
-        # Group unique segments by component root.
-        segments_by_root: dict[UUID, list[Segment]] = {}
-        for segment_uuid, segment in segments_by_uuid.items():
-            segments_by_root.setdefault(find(segment_uuid), []).append(segment)
-
-        # Sort segments within each component, then order components chronologically.
-        def segment_key(segment: Segment) -> tuple:
-            return (
-                segment.timestamp,
-                segment.event_uuid,
-                segment.index,
-                segment.offset,
-            )
-
-        components = list(segments_by_root.values())
-        for component in components:
-            component.sort(key=segment_key)
-        components.sort(key=lambda segments: segment_key(segments[0]))
-
-        return "\n\n".join(
-            EventMemory.string_from_segment_context(
-                segments, format_options=format_options
-            )
-            for segments in components
-        )
-
-    @staticmethod
-    def _segment_header(segment: Segment, format_options: FormatOptions) -> str:
-        """Build the header emitted before a segment."""
-        formatted_timestamp = format_timestamp(segment.timestamp, format_options)
-        timestamp_prefix = f"[{formatted_timestamp}] " if formatted_timestamp else ""
-
-        match segment.context:
-            case ProducerContext(producer=producer):
-                return f"{timestamp_prefix}{producer}: "
-            case NullContext():
-                return timestamp_prefix
-            case _:
-                raise NotImplementedError(
-                    f"Unsupported context type: {type(segment.context).__name__}"
-                )
-
-    @staticmethod
-    def _extract_text(block: Block) -> str | None:
-        """Extract text from a block, if it contains text."""
-        match block:
-            case TextBlock(text=text):
-                return text
-            case _:
-                return None
-
     async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
         """Forget events by their UUIDs."""
         event_uuids = set(event_uuids)
@@ -748,101 +935,11 @@ class EventMemory:
             segment_uuids=segment_uuids,
         )
 
-    @staticmethod
-    def build_query_result_context(
-        query_result: QueryResult,
-        max_num_segments: int,
-    ) -> list[Segment]:
-        """
-        Build a single segment context from the query result within the limit.
 
-        Iterates contexts in score order, accumulating segments until the limit is reached.
-        When a context would exceed the limit, segments nearest the seed are prioritized.
-        Deduplicates across segment contexts in the query result.
-
-        Args:
-            query_result (QueryResult):
-                The query result with scored anchored segment contexts.
-            max_num_segments (int):
-                The maximum number of segments to return.
-
-        Returns:
-            list[Segment]:
-                Deduplicated segments ordered chronologically.
-        """
-        unified: set[Segment] = set()
-
-        for scored_context in query_result.scored_segment_contexts:
-            context = scored_context.segments
-
-            if len(unified) >= max_num_segments:
-                break
-            if (len(unified) + len(context)) <= max_num_segments:
-                unified.update(context)
-            else:
-                # Prioritize segments near the seed segment.
-                seed_index = next(
-                    index
-                    for index, segment in enumerate(context)
-                    if segment.uuid == scored_context.seed_segment_uuid
-                )
-
-                for segment in sorted(
-                    context,
-                    key=lambda s: EventMemory._seed_proximity(s, context, seed_index),
-                ):
-                    if len(unified) >= max_num_segments:
-                        break
-                    unified.add(segment)
-
-        return sorted(
-            unified,
-            key=lambda segment: (
-                segment.timestamp,
-                segment.event_uuid,
-                segment.index,
-                segment.offset,
-            ),
-        )
-
-    @staticmethod
-    def string_from_query_result(
-        query_result: QueryResult,
-        *,
-        max_num_segments: int | None = None,
-        format_options: FormatOptions | None = None,
-    ) -> str:
-        """Format a query result as a string with breaks between disconnected contexts."""
-        contexts: list[list[Segment]] = [
-            list(scored_context.segments)
-            for scored_context in query_result.scored_segment_contexts
-        ]
-
-        if max_num_segments is not None:
-            included = {
-                segment.uuid
-                for segment in EventMemory.build_query_result_context(
-                    query_result, max_num_segments
-                )
-            }
-            contexts = [
-                [segment for segment in context if segment.uuid in included]
-                for context in contexts
-            ]
-
-        return EventMemory.string_from_segment_contexts(
-            contexts, format_options=format_options
-        )
-
-    @staticmethod
-    def _seed_proximity(
-        segment: Segment,
-        context: list[Segment],
-        seed_index: int,
-    ) -> float:
-        """Score a segment by its proximity to the seed. Lower is closer."""
-        offset = context.index(segment) - seed_index
-        if offset >= 0:
-            # Forward context is more useful than backward.
-            return (offset - 0.5) / 2
-        return -offset
+def _extract_text(block: Block) -> str | None:
+    """Extract text from a block, if it contains text."""
+    match block:
+        case TextBlock(text=text):
+            return text
+        case _:
+            return None

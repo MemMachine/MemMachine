@@ -125,10 +125,14 @@ def _deployment_resource_manager(
     deployment: LongTermMemoryConfPartial | None,
 ) -> NonCallableMagicMock:
     """A resource manager whose deployment configures `deployment` and whose stores open autospec partitions."""
-    vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.open_or_create_partition.return_value = create_autospec(
-        VectorStorePartition, instance=True
+    vector_store_partition = create_autospec(VectorStorePartition, instance=True)
+    vector_store_partition.store_schema = VectorStoreSchema(
+        vector_dimensions=3,
+        similarity_metric=SimilarityMetric.COSINE,
+        indexed_properties=event_backend_indexed_properties(),
     )
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.open_or_create_partition.return_value = vector_store_partition
     embedder = create_autospec(Embedder, instance=True)
     embedder.dimensions = 3
     embedder.similarity_metric = SimilarityMetric.COSINE
@@ -172,10 +176,7 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     params = await _event_params(config, resource_manager)
 
     vector_store = resource_manager.get_vector_store.return_value
-    assert (
-        params.vector_store_partition
-        is vector_store.open_or_create_partition.return_value
-    )
+    assert params.event_memory_partition.similarity_metric is SimilarityMetric.COSINE
     vector_store.open_or_create_partition.assert_awaited_once_with("raced")
     resource_manager.get_vector_store.assert_awaited_once_with(
         "vs",

@@ -26,9 +26,9 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
     SentenceTextDeriver,
     WholeTextDeriver,
 )
-from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStorePartitionConfig,
+from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EventMemory,
+    EventMemoryParams,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
@@ -109,31 +109,28 @@ async def _event_params(
     )
     episode_storage = await resource_manager.get_episode_storage()
 
-    partition_key = partition_key_for_session(config.session_id)
-
-    vector_store_partition = await vector_store.open_or_create_partition(partition_key)
-
-    partition = await segment_store.open_or_create_partition(
-        partition_key,
-        SegmentStorePartitionConfig(),
+    event_memory = EventMemory(
+        EventMemoryParams(
+            segment_store=segment_store,
+            vector_store=vector_store,
+            segmenter=_build_segmenter(config.segmenter),
+            deriver=_build_deriver(config.deriver),
+            embedder=embedder,
+            reranker=reranker,
+            metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
+        )
     )
 
-    segmenter = _build_segmenter(config.segmenter)
-    deriver = _build_deriver(config.deriver)
+    partition_key = partition_key_for_session(config.session_id)
+    event_memory_partition = await event_memory.open_or_create_partition(partition_key)
 
     return EventBackendParams(
         session_id=config.session_id,
-        vector_store=vector_store,
-        vector_store_partition=vector_store_partition,
-        segment_store=segment_store,
-        segment_store_partition=partition,
+        event_memory=event_memory,
+        event_memory_partition=event_memory_partition,
         partition_key=partition_key,
         episode_storage=episode_storage,
-        embedder=embedder,
         reranker=reranker,
-        segmenter=segmenter,
-        deriver=deriver,
-        metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
     )
 
 
