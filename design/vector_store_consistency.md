@@ -4,7 +4,7 @@ Part of [vector store horizontal scaling](vector_store_horizontal_scaling.md).
 
 ## Problem
 
-Once any process may serve any collection, what a read sees of earlier writes,
+Once any process may serve any partition, what a read sees of earlier writes,
 including writes from other processes, is part of the contract, and the
 contract said nothing about it. Under that silence:
 
@@ -17,7 +17,7 @@ contract said nothing about it. Under that silence:
 
 ## The contract
 
-`VectorStoreCollection` states:
+`VectorStorePartition` states:
 
 > An `upsert` or `delete` is durable once it returns; queries may not
 > reflect it right away. A store that guarantees more states it.
@@ -85,7 +85,7 @@ with fresh properties, because `upsert` replaces a whole record.
 Returned properties were copies of what the callers' own stores hold, only as
 fresh as the store's reads, and an invitation to treat them as the record; no
 caller needs them. Each caller resolves a hit through the store that owns the
-mapping: event memory through the segment store's derivative rows, semantic
+mapping: event memory through the event memory store's derivative rows, semantic
 memory through the feature row's `vector_uuid` column. Properties are still
 stored and filtered on.
 
@@ -98,7 +98,7 @@ correct at it because the retention exceeds the delay (see
 the backend holds reads it past the store, at Strong where the backend has
 levels (the lifecycle contract's `count_stored` and
 `stored_uuids`). A test whose subject is what the store's own read returns
-first settles: `settle(collection)` returns once the store's reads reflect
+first settles: `settle(partition)` returns once the store's reads reflect
 every earlier write, a no-op on Qdrant and one Strong read on Milvus.
 
 **Clients are asynchronous.** A library's async client is used whenever one
