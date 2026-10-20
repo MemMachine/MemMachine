@@ -1,23 +1,32 @@
 """Shared fakes and fixtures for event memory tests."""
 
-from collections import defaultdict
-from collections.abc import Iterable, Mapping
-from typing import override
-from uuid import UUID
+import math
+from collections.abc import Callable, Iterable, Mapping
+from datetime import datetime
+from typing import Any, override
+from unittest.mock import create_autospec
+from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 
+from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
     demangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.vector_store.data_types import (
-    VectorStoreCollectionConfig,
+from memmachine_server.common.vector_store import VectorStore, VectorStorePartition
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    EvictionOptions,
+    Neighborhood,
+    Segment,
 )
-from memmachine_server.episodic_memory.event_memory.data_types import Segment
+from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
     WholeTextDeriver,
@@ -25,19 +34,25 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
+    EventMemoryPartition,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStorePartition,
-    SegmentStorePartitionConfig,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStoreEventAlreadyStoredError,
+    EventMemoryStorePartition,
+    EventMemoryStorePartitionConfig,
+    PendingDerivatives,
+    Tombstone,
 )
+from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
 from server_tests.memmachine_server.common.reranker.fake_embedder import (
     FakeEmbedder,
 )
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
-    InMemoryVectorStoreCollection,
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    InMemoryVectorStorePartition,
     evaluate_filter,
 )
 
@@ -46,115 +61,208 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_c
 # ---------------------------------------------------------------------------
 
 
-class InMemorySegmentStorePartition(SegmentStorePartition):
-    """Minimal in-memory segment store partition for testing."""
+def _order_key(segment: Segment) -> tuple:
+    # The store's total order.
+    return (segment.timestamp, segment.event_uuid, segment.index, segment.offset)
+
+
+class InMemoryEventMemoryStorePartition(EventMemoryStorePartition):
+    """Minimal in-memory event memory store partition for testing.
+
+    Mirrors the SQLAlchemy store's reads: one total order, a filtered
+    lookup by uuid, and a walk around a given segment that never returns
+    the segment.
+    """
 
     def __init__(
         self,
-        config: SegmentStorePartitionConfig | None = None,
+        config: EventMemoryStorePartitionConfig | None = None,
     ) -> None:
-        self._config = config or SegmentStorePartitionConfig()
+        self._config = config or EventMemoryStorePartitionConfig()
         self.segments: dict[UUID, Segment] = {}
-        self.segment_order: list[UUID] = []
-        self.event_to_segments: dict[UUID, list[UUID]] = defaultdict(list)
+        self.event_to_segments: dict[UUID, list[UUID]] = {}
         self.segment_to_derivatives: dict[UUID, list[UUID]] = {}
+        self.pending_derivatives: dict[UUID, PendingDerivatives] = {}
+        self.tombstones: dict[UUID, Tombstone] = {}
+        self.tombstones_awaiting_second_delete: set[UUID] = set()
 
     @override
     @property
-    def config(self) -> SegmentStorePartitionConfig:
+    def config(self) -> EventMemoryStorePartitionConfig:
         return self._config
 
     @override
-    async def add_segments(
+    async def add_events(
         self,
-        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
+        segments_by_event: Mapping[UUID, Iterable[Segment]],
+        pending_derivatives: Iterable[PendingDerivatives],
     ) -> None:
-        for segment, derivative_uuids in segments_to_derivative_uuids.items():
-            self.segments[segment.uuid] = segment
-            self.segment_order.append(segment.uuid)
-            self.event_to_segments[segment.event_uuid].append(segment.uuid)
-            self.segment_to_derivatives[segment.uuid] = list(derivative_uuids)
+        segments_by_event = {
+            event_uuid: list(segments)
+            for event_uuid, segments in segments_by_event.items()
+        }
+        already_stored = segments_by_event.keys() & self.event_to_segments.keys()
+        if already_stored:
+            raise EventMemoryStoreEventAlreadyStoredError(already_stored)
+        for event_uuid, segments in segments_by_event.items():
+            self.event_to_segments[event_uuid] = []
+            for segment in segments:
+                self.segments[segment.uuid] = segment
+                self.event_to_segments[event_uuid].append(segment.uuid)
+                self.segment_to_derivatives[segment.uuid] = []
+        for pending in pending_derivatives:
+            self.pending_derivatives[pending.uuid] = pending
+            for derivative in pending.derivatives:
+                self.segment_to_derivatives[derivative.segment_uuid].append(
+                    derivative.uuid
+                )
 
     @override
-    async def get_segment_contexts(
+    async def delete_pending_derivatives(
         self,
-        seed_segment_uuids: Iterable[UUID],
+        pending_derivatives_uuids: Iterable[UUID],
+    ) -> None:
+        for pending_uuid in pending_derivatives_uuids:
+            self.pending_derivatives.pop(pending_uuid, None)
+
+    def _ordered(self) -> list[Segment]:
+        return sorted(self.segments.values(), key=_order_key)
+
+    @staticmethod
+    def _passes(
+        segment: Segment,
         *,
-        max_backward_segments: int = 0,
-        max_forward_segments: int = 0,
-        property_filter: FilterExpr | None = None,
-    ) -> dict[UUID, list[Segment]]:
-        # Normalize canonical field names (e.g. "m.color" → "color") to
-        # match the raw keys stored in segment.properties.
-        normalized_filter = (
-            map_filter_fields(property_filter, self._normalize_segment_field)
-            if property_filter is not None
-            else None
-        )
-        result: dict[UUID, list[Segment]] = {}
-        for seed_uuid in seed_segment_uuids:
-            if seed_uuid not in self.segments:
-                continue
-            if normalized_filter is not None and not evaluate_filter(
-                normalized_filter, self.segments[seed_uuid].properties
-            ):
-                continue
-            try:
-                pos = self.segment_order.index(seed_uuid)
-            except ValueError:
-                continue
-            start = max(0, pos - max_backward_segments)
-            end = min(len(self.segment_order), pos + max_forward_segments + 1)
-            context = [
-                self.segments[uid]
-                for uid in self.segment_order[start:end]
-                if uid in self.segments
-                and (
-                    normalized_filter is None
-                    or evaluate_filter(normalized_filter, self.segments[uid].properties)
-                )
-            ]
-            if context:
-                result[seed_uuid] = context
-        return result
+        since: datetime | None,
+        until: datetime | None,
+        source_ids: list[str] | None,
+        block_kinds: list[str] | None,
+        normalized_filter: FilterExpr | None,
+    ) -> bool:
+        for name, bound in (("since", since), ("until", until)):
+            if bound is not None and bound.tzinfo is None:
+                raise ValueError(f"{name} must be timezone-aware: {bound!r}")
+        if since is not None and segment.timestamp < since:
+            return False
+        if until is not None and segment.timestamp >= until:
+            return False
+        if source_ids is not None and segment.source_id not in source_ids:
+            return False
+        if block_kinds is not None and segment.block.kind not in block_kinds:
+            return False
+        if normalized_filter is not None:
+            evaluated = {**segment.properties, "timestamp": segment.timestamp}
+            return evaluate_filter(normalized_filter, evaluated)
+        return True
 
     @staticmethod
     def _normalize_segment_field(field: str) -> str:
         """Translate canonical filter field names to raw segment property keys.
 
-        Mirrors SQLAlchemySegmentStorePartition._resolve_segment_field:
-        - `m.<key>` / `metadata.<key>` → user metadata, bare key.
-        - any other bare name → system field, `_<field>` (matches the
+        Mirrors SQLAlchemyEventMemoryStorePartition._resolve_segment_field:
+        - `timestamp` -> the segment's own timestamp.
+        - `m.<key>` / `metadata.<key>` -> user metadata, bare key.
+        - any other bare name -> system field, `_<field>` (matches the
           LongTermMemory event-backend property layout).
         """
+        if field == "timestamp":
+            return field
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             return demangle_user_metadata_key(internal_name)
         return f"_{field}"
 
-    @override
-    async def get_segment_uuids_by_event_uuids(
+    def _admits(
         self,
-        event_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        result: dict[UUID, list[UUID]] = {}
-        for event_uuid in event_uuids:
-            segment_uuids = self.event_to_segments.get(event_uuid)
-            if segment_uuids:
-                result[event_uuid] = list(segment_uuids)
-        return result
+        *,
+        since: datetime | None,
+        until: datetime | None,
+        source_ids: Iterable[str] | None,
+        block_kinds: Iterable[str] | None,
+        property_filter: FilterExpr | None,
+    ) -> Callable[[Segment], bool]:
+        normalized_filter = (
+            map_filter_fields(property_filter, self._normalize_segment_field)
+            if property_filter is not None
+            else None
+        )
+        listed_sources = list(source_ids) if source_ids is not None else None
+        listed_kinds = list(block_kinds) if block_kinds is not None else None
+
+        def passes(segment: Segment) -> bool:
+            return self._passes(
+                segment,
+                since=since,
+                until=until,
+                source_ids=listed_sources,
+                block_kinds=listed_kinds,
+                normalized_filter=normalized_filter,
+            )
+
+        return passes
 
     @override
-    async def get_derivative_uuids_by_segment_uuids(
+    async def get_segments(
         self,
         segment_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        result: dict[UUID, list[UUID]] = {}
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> dict[UUID, Segment]:
+        passes = self._admits(
+            since=since,
+            until=until,
+            source_ids=source_ids,
+            block_kinds=block_kinds,
+            property_filter=property_filter,
+        )
+        found: dict[UUID, Segment] = {}
         for segment_uuid in segment_uuids:
-            derivative_uuids = self.segment_to_derivatives.get(segment_uuid)
-            if derivative_uuids:
-                result[segment_uuid] = list(derivative_uuids)
-        return result
+            segment = self.segments.get(segment_uuid)
+            if segment is not None and passes(segment):
+                found[segment_uuid] = segment
+        return found
+
+    @override
+    async def get_segment_neighborhoods(
+        self,
+        seed_uuids: Iterable[UUID],
+        *,
+        before: int = 0,
+        after: int = 0,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> dict[UUID, Neighborhood]:
+        if before < 0:
+            raise ValueError(f"before must be nonnegative: {before}")
+        if after < 0:
+            raise ValueError(f"after must be nonnegative: {after}")
+        passes = self._admits(
+            since=since,
+            until=until,
+            source_ids=source_ids,
+            block_kinds=block_kinds,
+            property_filter=property_filter,
+        )
+        neighborhoods: dict[UUID, Neighborhood] = {}
+        for seed_uuid in seed_uuids:
+            seed = self.segments.get(seed_uuid)
+            if seed is None:
+                continue
+            key = _order_key(seed)
+            walk = self._ordered()
+            backward = [s for s in walk if _order_key(s) < key and passes(s)]
+            forward = [s for s in walk if _order_key(s) > key and passes(s)]
+            neighborhoods[seed.uuid] = Neighborhood(
+                before=backward[-before:] if before > 0 else [],
+                after=forward[:after],
+            )
+        return neighborhoods
 
     @override
     async def get_segment_uuids_by_derivative_uuids(
@@ -170,23 +278,33 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         }
 
     @override
-    async def delete_segments(
+    async def forget_events(
         self,
-        segment_uuids: Iterable[UUID],
-    ) -> None:
-        for segment_uuid in set(segment_uuids):
-            segment = self.segments.pop(segment_uuid, None)
-            if segment is None:
-                continue
-            self.segment_order = [
-                uid for uid in self.segment_order if uid != segment_uuid
-            ]
-            event_list = self.event_to_segments.get(segment.event_uuid)
-            if event_list is not None:
-                event_list[:] = [uid for uid in event_list if uid != segment_uuid]
-                if not event_list:
-                    del self.event_to_segments[segment.event_uuid]
-            self.segment_to_derivatives.pop(segment_uuid, None)
+        event_uuids: Iterable[UUID],
+    ) -> Tombstone | None:
+        held_event_uuids = set(event_uuids) & self.event_to_segments.keys()
+        derivative_uuids: list[UUID] = []
+        for event_uuid in held_event_uuids:
+            for segment_uuid in self.event_to_segments.pop(event_uuid):
+                self.segments.pop(segment_uuid)
+                derivative_uuids.extend(self.segment_to_derivatives.pop(segment_uuid))
+        for pending_uuid, pending in list(self.pending_derivatives.items()):
+            if pending.event_uuid in held_event_uuids:
+                del self.pending_derivatives[pending_uuid]
+        if not derivative_uuids:
+            return None
+        tombstone = Tombstone(uuid=uuid4(), derivative_uuids=derivative_uuids)
+        self.tombstones[tombstone.uuid] = tombstone
+        return tombstone
+
+    @override
+    async def record_tombstone_first_delete(self, tombstone_uuid: UUID) -> None:
+        if tombstone_uuid in self.tombstones:
+            self.tombstones_awaiting_second_delete.add(tombstone_uuid)
+
+    @override
+    async def require_current(self) -> None:
+        return
 
 
 class FakeReranker(Reranker):
@@ -196,9 +314,107 @@ class FakeReranker(Reranker):
         return [float(len(c)) for c in candidates]
 
 
+async def open_event_memory_partition(
+    *,
+    event_memory_store_partition: EventMemoryStorePartition,
+    vector_store_partition: VectorStorePartition,
+    segmenter: Segmenter,
+    deriver: Deriver,
+    embedder: Embedder,
+    eviction: EvictionOptions | None = None,
+    metrics_factory: MetricsFactory | None = None,
+) -> EventMemoryPartition:
+    """Open a partition of an EventMemory whose stores hand out the given partitions."""
+    event_memory_store = create_autospec(EventMemoryStore, instance=True)
+    event_memory_store.open_or_create_partition.return_value = (
+        event_memory_store_partition
+    )
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.open_or_create_partition.return_value = vector_store_partition
+    event_memory = EventMemory(
+        EventMemoryParams(
+            event_memory_store=event_memory_store,
+            vector_store=vector_store,
+            segmenter=segmenter,
+            deriver=deriver,
+            embedder=embedder,
+            eviction=eviction,
+            metrics_factory=metrics_factory,
+        )
+    )
+    return await event_memory.open_or_create_partition("partition")
+
+
+class AngleEmbedder(FakeEmbedder):
+    """Embeds a text on the unit circle at the angle of the first token it carries.
+
+    `FakeEmbedder` maps every text onto one direction, so under cosine every
+    score is 1.0 and an ordering assertion is vacuous. This fake gives a
+    text its own angle by a token it contains, so two texts sharing a token
+    are one cluster (cosine 1.0), texts a quarter turn apart are unrelated
+    (cosine 0.0), and a query ranks texts by angular distance. The vectors
+    are unit vectors, so every similarity metric ranks them by angle.
+    """
+
+    def __init__(
+        self,
+        token_angles: Mapping[str, float],
+        *,
+        default_angle: float = math.pi / 4,
+    ) -> None:
+        super().__init__()
+        self._token_angles = dict(token_angles)
+        self._default_angle = default_angle
+
+    def _vector(self, text: Any) -> list[float]:
+        angle = next(
+            (
+                angle
+                for token, angle in self._token_angles.items()
+                if token in str(text)
+            ),
+            self._default_angle,
+        )
+        return [math.cos(angle), math.sin(angle)]
+
+    @override
+    async def _ingest_embed(
+        self,
+        inputs: list[Any],
+        max_attempts: int = 1,
+    ) -> list[list[float]]:
+        return [self._vector(text) for text in inputs]
+
+    @override
+    async def _search_embed(
+        self,
+        queries: list[Any],
+        max_attempts: int = 1,
+    ) -> list[list[float]]:
+        return [self._vector(query) for query in queries]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+def make_partition(
+    similarity_metric: SimilarityMetric = SimilarityMetric.COSINE,
+) -> InMemoryVectorStorePartition:
+    """A partition declaring what the event backend declares, scoring by `similarity_metric`.
+
+    EventMemory's reserved keys and one of the adapter's system fields;
+    a declared property is copied into the records, and anything else,
+    a user property included, stays with the segment.
+    """
+    return InMemoryVectorStorePartition(
+        similarity_metric=similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_collection_schema(),
+            "_episode_uid": str,
+        },
+    )
 
 
 @pytest.fixture
@@ -207,70 +423,58 @@ def fake_embedder():
 
 
 @pytest.fixture
-def fake_segment_store_partition():
-    return InMemorySegmentStorePartition()
+def fake_event_memory_store_partition():
+    return InMemoryEventMemoryStorePartition()
 
 
 @pytest.fixture
-def fake_vector_store_collection(fake_embedder):
-    config = VectorStoreCollectionConfig(
-        vector_dimensions=fake_embedder.dimensions,
-        similarity_metric=fake_embedder.similarity_metric,
-        indexed_properties_schema={
-            **EventMemory.expected_vector_store_collection_schema(),
-            "_episode_uid": str,
-        },
-    )
-    return InMemoryVectorStoreCollection(config)
+def fake_vector_store_partition(fake_embedder):
+    return make_partition(fake_embedder.similarity_metric)
 
 
-@pytest.fixture
-def event_memory(
-    fake_vector_store_collection,
-    fake_segment_store_partition,
+@pytest_asyncio.fixture
+async def event_memory_partition(
+    fake_vector_store_partition,
+    fake_event_memory_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
-            embedder=fake_embedder,
-        )
+    return await open_event_memory_partition(
+        event_memory_store_partition=fake_event_memory_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=Segmenter([TextSegmenter()]),
+        deriver=Deriver([WholeTextDeriver()]),
+        embedder=fake_embedder,
     )
 
 
-@pytest.fixture
-def event_memory_with_reranker(
-    fake_vector_store_collection,
-    fake_segment_store_partition,
+@pytest_asyncio.fixture
+async def event_memory_partition_with_sentences(
+    fake_vector_store_partition,
+    fake_event_memory_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
-            embedder=fake_embedder,
-            reranker=FakeReranker(),
-        )
+    return await open_event_memory_partition(
+        event_memory_store_partition=fake_event_memory_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=Segmenter([TextSegmenter()]),
+        deriver=Deriver([SentenceTextDeriver()]),
+        embedder=fake_embedder,
     )
 
 
-@pytest.fixture
-def event_memory_with_sentences(
-    fake_vector_store_collection,
-    fake_segment_store_partition,
+@pytest_asyncio.fixture
+async def event_memory_partition_with_eviction(
+    fake_vector_store_partition,
+    fake_event_memory_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_collection=fake_vector_store_collection,
-            segmenter=TextSegmenter(),
-            deriver=SentenceTextDeriver(),
-            embedder=fake_embedder,
-        )
+    # FakeEmbedder maps every text onto one direction, so all derivatives
+    # are cosine-similar (1.0): any batch forms a single eviction cluster.
+    return await open_event_memory_partition(
+        event_memory_store_partition=fake_event_memory_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=Segmenter([TextSegmenter()]),
+        deriver=Deriver([WholeTextDeriver()]),
+        embedder=fake_embedder,
+        eviction=EvictionOptions(score_threshold=0.5, search_limit=100, target_size=5),
     )

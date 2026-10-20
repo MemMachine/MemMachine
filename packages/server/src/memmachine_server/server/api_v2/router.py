@@ -119,7 +119,7 @@ def _ltm_partial_from_project_config(
         reranker=config.reranker or None,
         vector_graph_store=config.vector_graph_store or None,
         vector_store=config.vector_store or None,
-        segment_store=config.segment_store or None,
+        event_memory_store=config.event_memory_store or None,
     )
 
 
@@ -134,7 +134,7 @@ def _project_config_from_ltm(
             reranker="",
             vector_graph_store="",
             vector_store="",
-            segment_store="",
+            event_memory_store="",
         )
     if isinstance(ltm, EventLongTermMemoryConf):
         return ProjectConfig(
@@ -143,7 +143,7 @@ def _project_config_from_ltm(
             reranker=ltm.reranker or "",
             vector_graph_store="",
             vector_store=ltm.vector_store,
-            segment_store=ltm.segment_store,
+            event_memory_store=ltm.event_memory_store,
         )
     return ProjectConfig(
         backend="declarative",
@@ -151,7 +151,7 @@ def _project_config_from_ltm(
         reranker=ltm.reranker,
         vector_graph_store=ltm.vector_graph_store,
         vector_store="",
-        segment_store="",
+        event_memory_store="",
     )
 
 
