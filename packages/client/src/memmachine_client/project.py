@@ -99,7 +99,7 @@ class Project:
                 reranker="",
                 vector_graph_store="",
                 vector_store="",
-                segment_store="",
+                event_memory_store="",
             )
         )
 
