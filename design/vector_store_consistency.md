@@ -4,7 +4,7 @@ Part of [vector store horizontal scaling](vector_store_horizontal_scaling.md).
 
 ## Problem
 
-Once any process may serve any collection, what a read sees of earlier writes,
+Once any process may serve any partition, what a read sees of earlier writes,
 including writes from other processes, is part of the contract, and the
 contract said nothing about it. Under that silence:
 
@@ -17,7 +17,7 @@ contract said nothing about it. Under that silence:
 
 ## The contract
 
-`VectorStoreCollection` states:
+`VectorStorePartition` states:
 
 > An `upsert` or `delete` is durable once it returns; queries may not
 > reflect it right away. A store that guarantees more states it.
@@ -98,7 +98,7 @@ correct at it because the retention exceeds the delay (see
 the backend holds reads it past the store, at Strong where the backend has
 levels (the lifecycle contract's `count_stored` and
 `stored_uuids`). A test whose subject is what the store's own read returns
-first settles: `settle(collection)` returns once the store's reads reflect
+first settles: `settle(partition)` returns once the store's reads reflect
 every earlier write, a no-op on Qdrant and one Strong read on Milvus.
 
 **Clients are asynchronous.** A library's async client is used whenever one

@@ -11,8 +11,10 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    delete,
     insert,
     inspect,
+    select,
 )
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -89,6 +91,74 @@ async def test_migrate_pickle_to_json(sqlalchemy_engine: AsyncEngine) -> None:
     await manager.drop_tables()
     await manager.close()
     await sqlalchemy_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_pickle_migration_leaves_the_table_as_it_was(
+    sqlalchemy_engine: AsyncEngine,
+) -> None:
+    """A migration that fails on one row changes nothing, so the next startup migrates again."""
+    metadata = MetaData()
+    sessions_table = Table(
+        "sessions",
+        metadata,
+        Column("session_key", String, primary_key=True),
+        Column("timestamp", Integer),
+        Column("configuration", JSON),
+        Column("param_data", LargeBinary),
+        Column("description", String),
+        Column("user_metadata", JSON),
+    )
+    async with sqlalchemy_engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+    pickled = pickle.dumps(EpisodicMemoryConf(session_key="good"))
+    async with sqlalchemy_engine.begin() as conn:
+        await conn.execute(
+            insert(sessions_table),
+            [
+                {
+                    "session_key": session_key,
+                    "timestamp": 0,
+                    "configuration": {},
+                    "param_data": param_data,
+                    "description": "",
+                    "user_metadata": {},
+                }
+                for session_key, param_data in (
+                    ("good", pickled),
+                    ("bad", b"not a pickle"),
+                )
+            ],
+        )
+
+    manager = SessionDataManagerSQL(sqlalchemy_engine)
+    with pytest.raises(RuntimeError, match="bad"):
+        await manager.create_tables()
+
+    def column_names(conn) -> list[str]:
+        return [column["name"] for column in inspect(conn).get_columns("sessions")]
+
+    async with sqlalchemy_engine.connect() as conn:
+        assert "param_data_blob" not in await conn.run_sync(column_names)
+        kept = (
+            await conn.execute(
+                select(sessions_table.c.param_data).where(
+                    sessions_table.c.session_key == "good"
+                )
+            )
+        ).scalar_one()
+    assert kept == pickled
+
+    async with sqlalchemy_engine.begin() as conn:
+        await conn.execute(
+            delete(sessions_table).where(sessions_table.c.session_key == "bad")
+        )
+    await manager.create_tables()
+    session_info = await manager.get_session_info("good")
+    assert session_info is not None
+    assert session_info.episode_memory_conf.session_key == "good"
+
+    await manager.drop_tables()
 
 
 @pytest.mark.asyncio

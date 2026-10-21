@@ -150,13 +150,11 @@ on random-UUID collision resistance.
     foreign-key enforcement of its engine (on SQLite, per connection) and
     does not verify it, so an engine without enforcement leaves link rows
     behind.
-  - On SQLite, which drops locking clauses and defers BEGIN to the first
-    DML, the claim is an UPDATE of the queue row, the write fence's
-    primitive: it opens the write transaction, so purgers serialize at the
-    claim and each reads the cursor its predecessor committed. With a
-    plain-read claim, a second purger could plan its batch from a cursor
-    the first has since advanced, delete nothing, and retire the entry with
-    rows left.
+  - On SQLite, which drops locking clauses, the call holds the database's
+    write lock from BEGIN, so purgers serialize and each reads the cursor
+    its predecessor committed. With a claim read before the write lock is
+    taken, a second purger could plan its batch from a cursor the first has
+    since advanced, delete nothing, and retire the entry with rows left.
   - The store never schedules purging; when and how often is the caller's
     policy, and implementations whose deletes reclaim physically return
     False. In the server, the resource manager runs one background task
@@ -185,16 +183,14 @@ no rows issues the registry check on its own to tell an empty partition
 from a stale handle. Windowed reads span several statements, each with its
 own snapshot, so they end with one registry read; a deletion committing
 between their statements raises instead of returning seeds with empty
-context.
+context. On SQLite a read's statements share one transaction, and so one
+snapshot, which a deletion cannot change.
 
-On SQLite the driver defers BEGIN until the first write, so a SELECT-only
-fence would run outside the write transaction. The proper primitive, BEGIN
-IMMEDIATE, means taking over transaction management for the whole engine in
-SQLAlchemy (`isolation_level=None` plus a begin-event hook), which the store
-cannot do to a caller-owned, possibly shared engine. The write fence is
-therefore a self-checking UPDATE of the registry row: it takes the same
-write lock, scoped to the transaction, and its match count is the staleness
-check. Deletion opens its transaction the same way, so racing deletions
+On SQLite, which drops locking clauses, every write transaction of the
+store takes the database's write lock at BEGIN (`BEGIN IMMEDIATE`, through
+the `enable_sqlite_explicit_begin` setup the store requires of its engine).
+The fence is the same read, inside a transaction that a deletion waits on
+until it commits. Deletion takes the lock the same way, so racing deletions
 serialize.
 
 A handle held across delete, or across delete and re-create, fails loudly
@@ -211,7 +207,9 @@ No table-level lock, no DDL, and no lock upgrade anywhere in the store,
 which removes the measured deadlock classes at the root: writers and
 lifecycle operations share no lockable object except one tenant's registry
 row, where blocking is the intended semantics, and reclamation touches only
-rows no other operation can reach.
+rows no other operation can reach. On SQLite, which drops locking clauses,
+the database's write lock, which every write transaction takes at BEGIN,
+stands in for all of them.
 
 ## Alternatives considered
 
@@ -249,14 +247,15 @@ requirement excludes.
 - One architecture on every dialect. The remaining dialect splits are the
   LATERAL-vs-loop read strategy, the PostgreSQL-only ordered row locks in
   `delete_segments` (SQLAlchemy drops locking clauses on SQLite), and
-  SQLite's foreign-key pragma. The pragma is per-connection state that the
-  engine's owner registers at engine creation. The store requires it and
-  does not verify it, which is the reference practice for SQLite foreign
-  keys (SQLAlchemy's dialect docs, Django's and Rails' adapters); a
-  listener added later by the store would miss connections already in the
-  pool. An engine without the pragma leaves link rows that outlive their
-  segments, and nothing reclaims them: the purge relies on the same
-  cascade.
+  SQLite's engine setup: the foreign-key pragma, and transactions begun
+  explicitly, a write transaction with `BEGIN IMMEDIATE`. Both are
+  per-connection state that the engine's owner registers at engine
+  creation. The store requires the pragma and does not verify it, which is
+  the reference practice for SQLite foreign keys (SQLAlchemy's dialect
+  docs, Django's and Rails' adapters); a listener added later by the store
+  would miss connections already in the pool. An engine without the pragma
+  leaves link rows that outlive their segments, and nothing reclaims them:
+  the purge relies on the same cascade.
 - Replication and sharding: four ordinary tables. Logical replication
   covers new tenants automatically (they are rows, not relations), and
   moving a tenant between nodes is an indexed row copy plus a registry

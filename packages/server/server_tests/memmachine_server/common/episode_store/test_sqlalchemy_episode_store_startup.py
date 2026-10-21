@@ -35,7 +35,7 @@ from memmachine_server.common.errors import ConfigurationError
 # ---------------------------------------------------------------------------
 
 
-class _FailingBeginContext:
+class _FailingConnectContext:
     def __init__(self, exc: Exception):
         self._exc = exc
 
@@ -50,12 +50,12 @@ class _FakeAsyncEngine:
     def __init__(self, exc: Exception):
         self._exc = exc
 
-    def begin(self):
-        return _FailingBeginContext(self._exc)
+    def connect(self):
+        return _FailingConnectContext(self._exc)
 
 
 class _AsyncCtxMgr:
-    """Minimal async context manager for faking begin() / begin_nested()."""
+    """Minimal async context manager for faking connect() / begin() / begin_nested()."""
 
     def __init__(self, value: object = None) -> None:
         self._value = value
@@ -83,8 +83,10 @@ def _make_pg_engine() -> tuple[MagicMock, MagicMock, MagicMock]:
         return fn(sync_conn)
 
     conn.run_sync = _run_sync
+    conn.execution_options = AsyncMock()
+    conn.begin.return_value = _AsyncCtxMgr()
     conn.begin_nested.return_value = _AsyncCtxMgr()
-    engine.begin.return_value = _AsyncCtxMgr(conn)
+    engine.connect.return_value = _AsyncCtxMgr(conn)
 
     return engine, conn, sync_conn
 
@@ -238,7 +240,9 @@ async def test_startup_skips_enum_creation_on_non_postgresql():
         return fn(sync_conn)
 
     conn.run_sync = _run_sync
-    engine.begin.return_value = _AsyncCtxMgr(conn)
+    conn.execution_options = AsyncMock()
+    conn.begin.return_value = _AsyncCtxMgr()
+    engine.connect.return_value = _AsyncCtxMgr(conn)
 
     with (
         patch.object(_EPISODE_PG_ENUM, "create") as mock_enum_create,

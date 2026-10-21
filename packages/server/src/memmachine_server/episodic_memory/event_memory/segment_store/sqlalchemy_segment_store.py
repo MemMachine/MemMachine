@@ -79,6 +79,7 @@ from memmachine_server.common.properties_json import (
     decode_properties,
     encode_properties,
 )
+from memmachine_server.common.sql import write_connection, write_session
 from memmachine_server.common.utils import ensure_tz_aware, utc_offset_seconds
 from memmachine_server.episodic_memory.event_memory.data_types import (
     NullContext,
@@ -277,34 +278,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     def config(self) -> SegmentStorePartitionConfig:
         return self._config
 
-    async def _lock_partition_for_write(self, session: AsyncSession) -> None:
-        """Pin this incarnation's registry row; raise if the handle is stale.
-
-        The shared row lock blocks concurrent deletion (which takes the
-        exclusive row lock) until the write completes; the incarnation
-        predicate fences a handle that outlived its partition. SQLite
-        drops locking clauses and its driver defers BEGIN until the first
-        data-modifying statement -- a SELECT-only fence would run outside
-        the write transaction and fence nothing. The proper primitive,
-        BEGIN IMMEDIATE, requires taking over transaction management of
-        the whole engine in SQLAlchemy (isolation_level=None plus a
-        begin-event hook), which this store cannot do to a caller-owned,
-        possibly shared engine -- so the fence is a self-checking
-        registry-row UPDATE instead: the driver emits BEGIN before DML
-        and SQLite takes the same write lock, scoped to this
-        transaction, with the match count as the staleness check.
-        """
-        if self._is_sqlite:
-            fenced = await (await session.connection()).execute(
-                update(PartitionRow)
-                .where(PartitionRow.incarnation == self._incarnation)
-                .values(incarnation=self._incarnation)
-            )
-            if fenced.rowcount == 0:
-                raise SegmentStorePartitionHandleStaleError(self._partition_key)
-            return
-        await self._ensure_partition_live(session, pin=True)
-
     def _registry_row_query(self) -> Select[tuple[str]]:
         """This incarnation's registry row: absent once the handle is stale.
 
@@ -322,9 +295,12 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         """Raise if this handle's incarnation is no longer registered.
 
         With `pin`, the row is read under a shared lock that blocks
-        deletion for the rest of the transaction. Reads call this without
-        the lock, and only when their data statement returned no rows: it
-        tells an empty partition from a stale handle.
+        deletion, which takes the exclusive row lock, for the rest of the
+        transaction. SQLite drops the locking clause; there a write
+        transaction holds the database's write lock from `BEGIN`, which
+        deletion waits on just the same. Reads call this without the lock,
+        and only when their data statement returned no rows: it tells an
+        empty partition from a stale handle.
         """
         query = self._registry_row_query()
         if pin:
@@ -345,10 +321,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
         async with (
             self._tracker("add_segments"),
-            self._create_session() as session,
-            session.begin(),
+            write_session(self._create_session) as session,
         ):
-            await self._lock_partition_for_write(session)
+            await self._ensure_partition_live(session, pin=True)
             await self._insert_segments(session, segments_to_derivative_uuids.keys())
             await self._insert_derivative_links(session, segments_to_derivative_uuids)
 
@@ -838,10 +813,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
         async with (
             self._tracker("delete_segments"),
-            self._create_session() as session,
-            session.begin(),
+            write_session(self._create_session) as session,
         ):
-            await self._lock_partition_for_write(session)
+            await self._ensure_partition_live(session, pin=True)
             if not self._is_sqlite:
                 # Lock rows in deterministic order to prevent deadlocks
                 # from concurrent deletions with overlapping UUID sets.
@@ -911,7 +885,10 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             Async SQLAlchemy engine. On SQLite it must enforce foreign
             keys on every connection, registered at engine creation
             (enable_sqlite_foreign_keys): the store relies on the
-            link-table cascade and does not verify enforcement.
+            link-table cascade and does not verify enforcement. It must
+            also begin its transactions explicitly, set up at engine
+            creation (enable_sqlite_explicit_begin): the store's write
+            transactions take SQLite's write lock at BEGIN.
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
@@ -936,7 +913,10 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             "Async SQLAlchemy engine. On SQLite it must enforce foreign keys "
             "on every connection, registered at engine creation "
             "(enable_sqlite_foreign_keys): the store relies on the "
-            "link-table cascade and does not verify enforcement"
+            "link-table cascade and does not verify enforcement. It must "
+            "also begin its transactions explicitly, set up at engine "
+            "creation (enable_sqlite_explicit_begin): the store's write "
+            "transactions take SQLite's write lock at BEGIN"
         ),
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(
@@ -1025,7 +1005,10 @@ class SQLAlchemySegmentStore(SegmentStore):
 
     @override
     async def startup(self) -> None:
-        async with self._tracker("startup"), self._engine.begin() as connection:
+        async with (
+            self._tracker("startup"),
+            write_connection(self._engine) as connection,
+        ):
             await connection.run_sync(BaseSegmentStore.metadata.create_all)
 
     @override
@@ -1095,7 +1078,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                 key being taken.
         """
         try:
-            async with self._create_session() as session, session.begin():
+            async with write_session(self._create_session) as session:
                 await session.execute(
                     insert(PartitionRow).values(
                         partition_key=partition_key,
@@ -1234,32 +1217,19 @@ class SQLAlchemySegmentStore(SegmentStore):
         validate_partition_key(partition_key)
         async with (
             self._tracker("delete_partition"),
-            self._create_session() as session,
-            session.begin(),
+            write_session(self._create_session) as session,
         ):
-            if self._is_sqlite:
-                # Same primitive as _lock_partition_for_write: the row
-                # UPDATE opens the write transaction so racing deletions
-                # serialize instead of both enqueueing the incarnation,
-                # and no matched row is the idempotent no-op case.
-                # RETURNING resolves the incarnation in the same round
-                # trip; the locking select below is PostgreSQL's path
-                # (SQLite drops its locking clause anyway).
-                pinned = await (await session.connection()).execute(
-                    update(PartitionRow)
+            # Racing deletions serialize on the exclusive row lock, or on
+            # SQLite, which drops locking clauses, on the write lock the
+            # transaction holds from BEGIN; no row is the idempotent no-op
+            # case.
+            incarnation = (
+                await session.execute(
+                    select(PartitionRow.incarnation)
                     .where(PartitionRow.partition_key == partition_key)
-                    .values(partition_key=partition_key)
-                    .returning(PartitionRow.incarnation)
+                    .with_for_update()
                 )
-                incarnation = pinned.scalar_one_or_none()
-            else:
-                incarnation = (
-                    await session.execute(
-                        select(PartitionRow.incarnation)
-                        .where(PartitionRow.partition_key == partition_key)
-                        .with_for_update()
-                    )
-                ).scalar_one_or_none()
+            ).scalar_one_or_none()
             if incarnation is None:
                 return
 
@@ -1285,9 +1255,9 @@ class SQLAlchemySegmentStore(SegmentStore):
         # contention safe to repeat, as the ABC promises: a raise rolls the
         # whole call back, cursor included. Entries are claimed one at a
         # time, so only the claiming call touches a dead incarnation's rows;
-        # on SQLite, which drops locking clauses, the claim is a write, so
-        # purgers serialize at the claim and each reads the cursor its
-        # predecessor committed. Full rationale:
+        # on SQLite, which drops locking clauses, the call holds the write
+        # lock from BEGIN, so purgers serialize and each reads the cursor
+        # its predecessor committed. Full rationale:
         # design/segment_store_shared_tables.md.
         remaining = self._purge_max_segments
         entries = 0
@@ -1296,39 +1266,19 @@ class SQLAlchemySegmentStore(SegmentStore):
         # the batch loop needs.
         async with (
             self._tracker("purge_deleted_partitions"),
-            self._engine.begin() as connection,
+            write_connection(self._engine) as connection,
         ):
             while True:
-                if self._is_sqlite:
-                    # Same primitive as _lock_partition_for_write: the row
-                    # UPDATE opens the write transaction, so a racing
-                    # purger waits here and then reads this call's
-                    # committed cursor. RETURNING resolves the entry in the
-                    # same round trip.
-                    oldest = (
-                        select(PurgeQueueRow.incarnation)
-                        .order_by(PurgeQueueRow.enqueued_at)
-                        .limit(1)
-                        .scalar_subquery()
-                    )
-                    claim = (
-                        update(PurgeQueueRow)
-                        .where(PurgeQueueRow.incarnation == oldest)
-                        .values(incarnation=PurgeQueueRow.incarnation)
-                        .returning(
-                            PurgeQueueRow.incarnation, PurgeQueueRow.purged_through
-                        )
-                    )
-                else:
-                    # Skips only OTHER transactions' locks; entries this
-                    # call has already claimed cannot come back, each
-                    # being deleted before the next claim.
-                    claim = (
-                        select(PurgeQueueRow.incarnation, PurgeQueueRow.purged_through)
-                        .order_by(PurgeQueueRow.enqueued_at)
-                        .limit(1)
-                        .with_for_update(skip_locked=True)
-                    )
+                # Skips only OTHER transactions' locks; entries this call has
+                # already claimed cannot come back, each being deleted before
+                # the next claim. SQLite drops the locking clause; there the
+                # write lock the call holds keeps other purgers out.
+                claim = (
+                    select(PurgeQueueRow.incarnation, PurgeQueueRow.purged_through)
+                    .order_by(PurgeQueueRow.enqueued_at)
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                )
                 entry = (await connection.execute(claim)).one_or_none()
                 if entry is None:
                     return False

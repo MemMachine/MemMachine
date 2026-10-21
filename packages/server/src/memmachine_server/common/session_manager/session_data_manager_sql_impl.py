@@ -47,6 +47,7 @@ from memmachine_server.common.metrics_factory import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.sql import write_connection, write_session
 
 # Base class for declarative class definitions
 
@@ -157,24 +158,29 @@ class SessionDataManagerSQL(SessionDataManager):
         if status_needed:
             await self._add_status_column()
 
-        async with self._engine.begin() as conn:
+        async with write_connection(self._engine) as conn:
             await conn.run_sync(Base.metadata.create_all)
 
     async def drop_tables(self) -> None:
         """Drop all tables from the database."""
-        async with self._engine.begin() as conn:
+        async with write_connection(self._engine) as conn:
             await conn.run_sync(Base.metadata.drop_all)
 
     async def close(self) -> None:
         """Close any underlying connections."""
 
     async def _migrate_pickle_to_json(self) -> None:
-        """Migrate param_data from pickle to JSON."""
+        """
+        Migrate param_data from pickle to JSON.
+
+        One transaction, DDL included: a migration that fails leaves the
+        table as it was, so the next startup migrates again.
+        """
         schema = self.SessionConfig.__table__.schema
         table_name = f"{schema}.sessions" if schema else "sessions"
         json_type = "JSON"
 
-        async with self._engine.begin() as conn:
+        async with write_connection(self._engine) as conn:
             await conn.execute(
                 text(
                     f"ALTER TABLE {table_name} RENAME COLUMN param_data TO param_data_blob"
@@ -222,7 +228,7 @@ class SessionDataManagerSQL(SessionDataManager):
         schema = self.SessionConfig.__table__.schema
         table_name = f"{schema}.sessions" if schema else "sessions"
 
-        async with self._engine.begin() as conn:
+        async with write_connection(self._engine) as conn:
             await conn.execute(
                 text(
                     f"ALTER TABLE {table_name} ADD COLUMN status VARCHAR DEFAULT 'active'"
@@ -242,7 +248,7 @@ class SessionDataManagerSQL(SessionDataManager):
         param_data = param.model_dump(mode="json")
 
         for _ in range(3):
-            async with self._async_session() as dbsession:
+            async with write_session(self._async_session) as dbsession:
                 query = select(self.SessionConfig).where(
                     self.SessionConfig.session_key == session_key,
                 )
@@ -268,7 +274,6 @@ class SessionDataManagerSQL(SessionDataManager):
                         )
                     ).scalar_one_or_none()
                     if inserted_key is not None:
-                        await dbsession.commit()
                         return
                     session = (await dbsession.execute(query)).scalars().first()
                     if session is None:
@@ -291,12 +296,11 @@ class SessionDataManagerSQL(SessionDataManager):
         status: str,
     ) -> None:
         """Update the status of a session."""
-        async with self._async_session() as dbsession:
+        async with write_session(self._async_session) as dbsession:
             row = await dbsession.get(self.SessionConfig, session_key)
             if row is None:
                 raise SessionNotFoundError(session_key)
             row.status = status
-            await dbsession.commit()
 
     async def get_sessions_by_status(
         self,
@@ -312,14 +316,12 @@ class SessionDataManagerSQL(SessionDataManager):
 
     async def delete_session(self, session_key: str) -> None:
         """Delete a session and its related data from the database."""
-        async with self._async_session() as dbsession:
+        async with write_session(self._async_session) as dbsession:
             # Query for an existing session with the same ID
             row = await dbsession.get(self.SessionConfig, session_key)
             if row is None:
                 raise SessionNotFoundError(session_key)
             await dbsession.delete(row)
-            await dbsession.commit()
-            return
 
     @timed("get_session_info")
     async def get_session_info(
@@ -402,7 +404,7 @@ class SessionDataManagerSQL(SessionDataManager):
         episode_num: int,
     ) -> None:
         """Save or update short-term memory data for a session."""
-        async with self._async_session() as dbsession:
+        async with write_session(self._async_session) as dbsession:
             # Query for an existing session with the same ID
             sessions = await dbsession.execute(
                 select(self.SessionConfig).where(
@@ -439,7 +441,6 @@ class SessionDataManagerSQL(SessionDataManager):
                     timestamp=int(os.times()[4]),
                 )
                 await dbsession.execute(insert_stmt)
-            await dbsession.commit()
 
     @timed("get_short_term_memory")
     async def get_short_term_memory(self, session_key: str) -> tuple[str, int, int]:
@@ -474,12 +475,14 @@ class SessionDataManagerSQL(SessionDataManager):
         short_term_memory_enabled: bool | None = None,
     ) -> None:
         """Update episodic memory configuration flags for a session."""
-        async with self._async_session() as dbsession:
-            # Query for the existing session
+        async with write_session(self._async_session) as dbsession:
+            # Read under the row lock (on SQLite, under the write lock the
+            # transaction holds), so a concurrent update of other flags waits
+            # instead of being overwritten with the flags read here.
             sessions = await dbsession.execute(
-                select(self.SessionConfig).where(
-                    self.SessionConfig.session_key == session_key,
-                ),
+                select(self.SessionConfig)
+                .where(self.SessionConfig.session_key == session_key)
+                .with_for_update(),
             )
             session = sessions.scalars().first()
             if session is None:
@@ -502,4 +505,3 @@ class SessionDataManagerSQL(SessionDataManager):
                 .values(param_data=param_data)
             )
             await dbsession.execute(update_stmt)
-            await dbsession.commit()
