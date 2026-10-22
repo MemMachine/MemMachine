@@ -4,7 +4,7 @@ import logging
 import os
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, Response
+from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from memmachine_common.api.doc import RouterDoc
 from memmachine_common.api.spec import (
     AddFeatureResponse,
@@ -85,6 +85,10 @@ from memmachine_server.common.errors import (
     ResourceNotFoundError,
     SessionAlreadyExistsError,
     SessionNotFoundError,
+)
+from memmachine_server.common.resource_manager.readiness import (
+    ComponentStatus,
+    ReadinessResult,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
 from memmachine_server.server.api_v2.config_router import config_router
@@ -1098,12 +1102,31 @@ async def metrics() -> Response:
 
 @router.get("/health", description=RouterDoc.HEALTH_CHECK, tags=["System"])
 async def health_check() -> dict[str, str]:
-    """Health check endpoint for container orchestration."""
+    """Report process liveness independently of storage dependency outages."""
     return {
         "status": "healthy",
         "service": "memmachine",
         "version": get_version().server_version,
     }
+
+
+@router.get(
+    "/ready",
+    description=RouterDoc.READINESS_CHECK,
+    tags=["System"],
+    responses={503: {"model": ReadinessResult, "description": "Not ready"}},
+)
+async def readiness_check(request: Request, response: Response) -> ReadinessResult:
+    """Admit traffic only after startup and fresh required-storage checks succeed."""
+    memmachine: MemMachine | None = getattr(request.app.state, "mem_machine", None)
+    if memmachine is None:
+        result = ReadinessResult(components={"lifecycle": ComponentStatus.STARTING})
+    else:
+        result = await memmachine.readiness()
+    response.headers["Cache-Control"] = "no-store"
+    if result.status != "ready":
+        response.status_code = 503
+    return result
 
 
 def load_v2_api_router(app: FastAPI, *, with_config_api: bool = False) -> APIRouter:

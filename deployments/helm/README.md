@@ -6,9 +6,41 @@ Deploys MemMachine with optional in-cluster PostgreSQL (pgvector), Neo4j and Qdr
 
 | Field         | Value              |
 |---------------|--------------------|
-| Chart version | 0.1.0              |
-| App version   | v0.3.0             |
+| Chart version | 0.3.0              |
+| App version   | v0.2.6             |
 | API version   | v2 (Helm 3)        |
+
+---
+
+## Readiness and image compatibility
+
+`/api/v2/health` remains process liveness: storage outages do not change its
+status or body. The chart's liveness probe keeps this path. The readiness probe
+uses `/api/v2/ready`, which returns 503 during startup/shutdown and when required
+storage is unavailable. A dependency outage removes the pod from traffic
+without making its liveness probe restart the process.
+
+The readiness route requires an application image containing that endpoint.
+Chart metadata and an independently overridden image tag do not establish this
+capability. Deploy the new application image before, or together with, the new
+probe configuration. In a staged upgrade, the new image can still use the old
+`/api/v2/health` probe until the readiness path is switched.
+
+For an older image, explicitly set
+`--set memmachine.readiness.path=/api/v2/health`. This compatibility mode only
+checks liveness and cannot detect storage outages. An old image with the new
+`/api/v2/ready` path fails with 404; the chart never silently converts it to a
+successful liveness check. Roll back the image and its matching readiness path
+as one release. `appVersion` is unchanged because this chart change does not
+publish or select a new application release.
+
+The Compose healthcheck follows the same contract. Use an image containing the
+route via `MEMMACHINE_IMAGE`; older images require the explicit
+`MEMMACHINE_READINESS_PATH=/api/v2/health` compatibility setting. Restore both
+settings together on rollback.
+
+See [storage readiness](../../docs/install_guide/readiness.mdx) for dependency
+selection, deadlines, supported backend checks, and response examples.
 
 ---
 

@@ -802,7 +802,26 @@ class RouterDoc:
     Expose Prometheus metrics."""
 
     HEALTH_CHECK = """
-    Health check endpoint to verify server is running."""
+    Process liveness endpoint. Returns 200 while the server can answer requests,
+    independently of storage dependency availability. Use `/api/v2/ready` for
+    traffic readiness; do not restart the process because a database is down.
+    """
+
+    READINESS_CHECK = """
+    Return 200 when startup is complete and required storage is reachable, or
+    503 during startup/shutdown or when a required check fails or times out.
+    Session and episode stores are required. Enabled semantic memory adds its
+    feature/vector and configuration stores. Enabled episodic long-term memory
+    requires the configured storage catalog, since projects can select alternate
+    backends. Disabled services do not require otherwise-unused resources.
+
+    Checks are read-only and do not close serving clients. Results are reused
+    for at most one second from the check's start, with a two-second per-check
+    observation deadline and a three-second response deadline. Concurrent probe
+    requests share work. Responses contain only safe component labels and
+    status codes, never connection details or backend exception messages.
+    Embedding/LLM providers and collection/index correctness are not checked.
+    """
 
     # --- Configuration API Router Docs ---
 
