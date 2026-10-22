@@ -390,7 +390,8 @@ class Config:
 
         Args:
             llm_model: Name of the language model to use for short-term memory
-            message_capacity: Maximum number of messages to keep in short-term memory
+            message_capacity: Character budget for recent episode content and
+                the saved summary, measured with Python len().
             enabled: Whether short-term memory is enabled
             timeout: Request timeout in seconds (uses client default if not provided)
 
