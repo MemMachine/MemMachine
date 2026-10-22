@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock
 
 import cohere
 import pytest
+import yaml
 from pydantic import SecretStr
 
 from memmachine_server.common.configuration.reranker_conf import (
@@ -18,6 +19,7 @@ from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.errors import InvalidRerankerError
 from memmachine_server.common.reranker.cohere_reranker import CohereReranker
+from memmachine_server.common.reranker.rrf_hybrid_reranker import RRFHybridReranker
 from memmachine_server.common.resource_manager.reranker_manager import (
     EmbedderFactory,
     RerankerManager,
@@ -236,3 +238,36 @@ async def test_build_rrf_hybrid_rerankers(reranker_manager):
     assert reranker_manager.has_reranker("my_reranker_id")
     reranker = reranker_manager.get_reranker("my_reranker_id")
     assert reranker is not None
+
+
+@pytest.mark.parametrize(
+    ("configured_k", "expected_k"), [(None, 60), (0, 0), (1, 1), (60, 60), ("0", 0)]
+)
+@pytest.mark.asyncio
+async def test_build_rrf_from_yaml_preserves_valid_k(
+    configured_k: int | str | None, expected_k: int
+) -> None:
+    hybrid_config: dict[str, object] = {"reranker_ids": ["identity"]}
+    if configured_k is not None:
+        hybrid_config["k"] = configured_k
+    document = yaml.safe_dump(
+        {
+            "rerankers": {
+                "hybrid": {"provider": "rrf-hybrid", "config": hybrid_config},
+                "identity": {"provider": "identity"},
+            }
+        }
+    )
+    conf = RerankersConf.parse(yaml.safe_load(document))
+    restored_conf = RerankersConf.parse(yaml.safe_load(conf.to_yaml()))
+    assert conf.rrf_hybrid["hybrid"].k == expected_k
+    assert restored_conf.rrf_hybrid["hybrid"].k == expected_k
+
+    manager = RerankerManager(
+        conf=restored_conf,
+        embedder_factory=cast(EmbedderFactory, FakeEmbedderFactory()),
+    )
+    reranker = await manager.get_reranker("hybrid")
+    assert isinstance(reranker, RRFHybridReranker)
+    scores = await reranker.score("query", ["first", "second"])
+    assert scores == pytest.approx([1 / (expected_k + 1), 1 / (expected_k + 2)])

@@ -14,6 +14,10 @@ from memmachine_server.common.configuration.reranker_conf import (
     RerankersConf,
     RRFHybridRerankerConf,
 )
+from memmachine_server.common.reranker.identity_reranker import IdentityReranker
+from memmachine_server.common.reranker.rrf_hybrid_reranker import (
+    RRFHybridRerankerParams,
+)
 
 
 @pytest.fixture
@@ -157,6 +161,41 @@ def test_valid_rrf_hybrid_reranker_conf(rrf_hybrid_reranker_conf):
     conf = RRFHybridRerankerConf(**rrf_hybrid_reranker_conf["config"])
     assert conf.reranker_ids == ["id_ranker_id", "bm_ranker_id"]
     assert conf.k == 60
+
+
+@pytest.mark.parametrize("k", [-1, -60])
+def test_rrf_hybrid_rejects_negative_k_consistently(k: int) -> None:
+    with pytest.raises(ValidationError) as component_error:
+        RRFHybridRerankerParams(rerankers=[IdentityReranker()], k=k)
+
+    with pytest.raises(ValidationError) as config_error:
+        RRFHybridRerankerConf(reranker_ids=["identity"], k=k)
+
+    for error in (component_error, config_error):
+        details = error.value.errors()
+        assert len(details) == 1
+        assert details[0]["loc"] == ("k",)
+        assert details[0]["type"] == "greater_than_equal"
+        assert details[0]["ctx"] == {"ge": 0}
+
+
+@pytest.mark.parametrize("yaml_k", ["-1", '"-1"'])
+def test_rrf_hybrid_rejects_negative_k_from_yaml(yaml_k: str) -> None:
+    document = f"""
+rerankers:
+  hybrid:
+    provider: rrf-hybrid
+    config:
+      reranker_ids: [identity]
+      k: {yaml_k}
+  identity:
+    provider: identity
+"""
+    with pytest.raises(ValidationError) as exc_info:
+        RerankersConf.parse(yaml.safe_load(document))
+
+    assert exc_info.value.errors()[0]["loc"] == ("k",)
+    assert exc_info.value.errors()[0]["type"] == "greater_than_equal"
 
 
 def test_full_reranker_conf(full_reranker_input):
