@@ -136,7 +136,7 @@ episodic_memory:
     partition_registry: db_postgres  # references resources.databases.db_postgres
   short_term_memory:
     llm_model: default_model       # references resources.language_models.default_model
-    message_capacity: 500
+    message_capacity: 64000 # Characters, including the saved summary
 
 semantic_memory:
   llm_model: default_model
