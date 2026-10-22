@@ -69,6 +69,29 @@ Platform-specific behavior:
 - **macOS**: Installs Java and Neo4j via `brew`.
 - **Linux**: Downloads and extracts the tar.gz distributions of Java and Neo4j.
 
+## Qdrant Endpoint
+
+When you select Qdrant, the wizard asks for its host and REST port, defaulting to
+`localhost` and `6333`. Enter a hostname or IP address without a URL scheme, port,
+path, or credentials; enter IPv6 addresses without brackets. The REST port must
+be an integer from `1` to `65535`.
+
+The wizard displays the effective endpoint and the destination `cfg.yml` path,
+then asks you to confirm that you want to use this already-running external
+server. Review the endpoint carefully: MemMachine deployments pointed at the
+same Qdrant server may share storage. Confirmation defaults to **no**. Declining
+cancels configuration without creating or overwriting `cfg.yml`.
+
+The wizard does not install, start, or contact Qdrant, and does not inspect or
+modify its collections. Start the Qdrant server separately before starting
+MemMachine. The generated configuration uses HTTP and REST by default; edit
+`resources.databases.qdrant_vector_store.config` in `cfg.yml` to set `https`,
+`grpc_port`, `prefer_grpc`, or `api_key` when your server requires them.
+
+When invoking `ConfigurationWizard` programmatically with `prompt=False`, the
+wizard keeps the default endpoint and logs it with the configuration path. It
+adds no Qdrant prompts; existing required credential prompts are unchanged.
+
 ## Completing the Setup
 Once all prompts are answered, the wizard will generate a `cfg.yml` file in
 `<HOME>/.config/memmachine/cfg.yml` by default.
