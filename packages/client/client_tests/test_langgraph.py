@@ -1,14 +1,207 @@
 """Unit tests for MemMachineTools and factory functions."""
 
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
 from unittest.mock import Mock, patch
 
+import pytest
 from memmachine_common.api import EpisodeType
+from memmachine_common.api.spec import (
+    GetProjectSpec,
+    ProjectResponse,
+    SearchMemoriesSpec,
+    SearchResult,
+)
 
+from memmachine_client import MemMachineClient
 from memmachine_client.langgraph import (
     MemMachineTools,
     create_add_memory_tool,
     create_search_memory_tool,
 )
+
+
+def _real_search_result(long_term=(), short_term=(), summaries=(), *, semantic=False):
+    def episode(content, number):
+        return {
+            "uid": f"00000000-0000-4000-8000-{number:012d}",
+            "content": content,
+            "producer_id": "agent",
+            "producer_role": "assistant",
+            "created_at": "2026-10-22T08:00:00Z",
+        }
+
+    return SearchResult.model_validate(
+        {
+            "content": {
+                "episodic_memory": {
+                    "long_term_memory": {
+                        "episodes": [
+                            episode(text, i) for i, text in enumerate(long_term, 1)
+                        ]
+                    },
+                    "short_term_memory": {
+                        "episodes": [
+                            episode(text, i) for i, text in enumerate(short_term, 101)
+                        ],
+                        "episode_summary": list(summaries),
+                    },
+                },
+                "semantic_memory": [
+                    {
+                        "category": "preferences",
+                        "tag": "format",
+                        "feature_name": "language",
+                        "value": "Chinese",
+                    }
+                ]
+                if semantic
+                else [],
+            }
+        }
+    )
+
+
+@pytest.fixture
+def search_http_client():
+    responses = {}
+    requests_seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+            pass
+
+        def do_POST(self):
+            data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests_seen.append((self.path, data))
+            status = 200
+            if self.path == "/api/v2/projects/get":
+                spec = GetProjectSpec.model_validate(data)
+                body = ProjectResponse(
+                    org_id=spec.org_id, project_id=spec.project_id
+                ).model_dump(mode="json")
+            elif self.path == "/api/v2/memories/search":
+                spec = SearchMemoriesSpec.model_validate(data)
+                response = responses[spec.query]
+                if response is None:
+                    status, body = 500, {"detail": "controlled failure"}
+                else:
+                    body = response.model_dump(mode="json")
+            else:
+                status, body = 404, {"detail": "unexpected path"}
+            encoded = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with MemMachineClient(
+            base_url=f"http://127.0.0.1:{server.server_port}", max_retries=0
+        ) as client:
+            client._session.trust_env = False
+            yield client, responses, requests_seen
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+@pytest.mark.parametrize(
+    ("long_term", "short_term", "semantic", "expected"),
+    [
+        (
+            ["Release is Friday"],
+            [],
+            False,
+            "Found 1 episodic memories:\n  1. Release is Friday...",
+        ),
+        (
+            [],
+            ["Review is at noon"],
+            False,
+            "Found 1 episodic memories:\n  1. Review is at noon...",
+        ),
+        (
+            ["Release is Friday"],
+            ["Review is at noon"],
+            False,
+            "Found 2 episodic memories:\n  1. Release is Friday...\n  2. Review is at noon...",
+        ),
+        (
+            ["First", "Second"],
+            ["Third", "Fourth"],
+            True,
+            "Found 4 episodic memories:\n  1. First...\n  2. Second...\n  3. Third...\nFound 1 semantic memories",
+        ),
+        ([], [], False, "No relevant memories found."),
+        ([], [], True, "Found 1 semantic memories"),
+    ],
+    ids=[
+        "long_only",
+        "short_only",
+        "both_stores",
+        "preview_limit",
+        "empty",
+        "semantic",
+    ],
+)
+def test_search_tool_real_api_summary(
+    search_http_client, long_term, short_term, semantic, expected
+):
+    client, responses, requests_seen = search_http_client
+    response = _real_search_result(long_term, short_term, semantic=semantic)
+    before = response.model_dump()
+    responses["schedule"] = response
+    search = create_search_memory_tool(MemMachineTools(client=client))
+
+    result = search("schedule", None, 5)
+
+    assert result["status"] == "success"
+    assert result["results"] == {
+        "query": "schedule",
+        "episodic_memory": before["content"]["episodic_memory"],
+        "semantic_memory": before["content"]["semantic_memory"],
+    }
+    assert response.model_dump() == before
+    assert [path for path, _ in requests_seen] == [
+        "/api/v2/projects/get",
+        "/api/v2/memories/search",
+    ]
+    assert requests_seen[-1][1]["top_k"] == 5
+    assert result["summary"] == expected
+
+
+def test_search_tool_real_api_error(search_http_client):
+    client, responses, requests_seen = search_http_client
+    responses["failure"] = None
+    search = create_search_memory_tool(MemMachineTools(client=client))
+
+    result = search("failure", None, 5)
+
+    assert result["status"] == "error"
+    assert "500 Server Error" in result["message"]
+    assert "summary" not in result
+    assert len(requests_seen) == 2
+
+
+def test_real_api_summary_only_characterization():
+    response = _real_search_result(summaries=["A prior conversation summary"])
+    episodic = response.content.episodic_memory
+    assert episodic is not None
+    before = episodic.model_dump()
+    with MemMachineClient(base_url="http://127.0.0.1:8080") as client:
+        tools = MemMachineTools(client=client)
+        summary = tools._format_search_summary({"episodic_memory": before})
+
+    # Summary-only responses remain outside this episode-formatting fix.
+    assert summary == "No relevant memories found."
+    assert episodic.model_dump() == before
 
 
 class TestMemMachineToolsInit:
