@@ -376,8 +376,10 @@ async def global_memory_lifespan() -> AsyncGenerator[None, None]:
     These resources are cleaned up on shutdown.
     """
     await init_global_memory()
-    yield
-    await shutdown_global_memory()
+    try:
+        yield
+    finally:
+        await shutdown_global_memory()
 
 
 async def init_global_memory() -> None:
@@ -422,10 +424,12 @@ async def mcp_http_lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         try:
             yield
         finally:
+            if mem_machine is not None:
+                mem_machine.begin_shutdown()
             event_loop_lag_reporting.cancel()
             with suppress(asyncio.CancelledError):
                 await event_loop_lag_reporting
-        dump_traceback()
+            dump_traceback()
 
 
 @mcp.tool(

@@ -1,0 +1,105 @@
+---
+title: "Storage readiness"
+description: "Separate process liveness from storage availability for traffic admission."
+---
+
+## Endpoints
+
+`GET /api/v2/health` is process liveness. It preserves the existing 200 response
+and `status`, `service`, and `version` fields while the server can answer HTTP
+requests. A database outage does not make this endpoint fail.
+
+`GET /api/v2/ready` is traffic readiness. It returns 200 only after application
+startup completes and required storage checks succeed. Startup, shutdown,
+failed checks, and timeouts return 503. Responses contain component types and
+ordinals instead of configured resource names, connection URLs, credentials,
+or backend exception messages.
+
+```json
+{
+  "status": "not_ready",
+  "service": "memmachine",
+  "components": {
+    "sql_1": "ready",
+    "qdrant_1": "timeout"
+  }
+}
+```
+
+Use `/ready` for load balancer or Kubernetes readiness, and `/health` for
+liveness. An upstream storage outage should withdraw traffic without restarting
+an otherwise responsive application process.
+
+## What is required
+
+Session and episode storage are always required. Enabled semantic memory adds
+its configuration store and its configured feature/embedding stores. When
+episodic long-term memory is enabled, all configured storage backends available
+to its projects are required. Projects can select alternate vector, graph, and
+SQL segment stores, so checking only the default backend would miss failures
+on those projects. Remove obsolete alternatives from configuration if they
+should no longer participate in readiness.
+
+Disabled memory services do not require otherwise-unused resources. A local
+SQLite deployment does not require a Qdrant server. Readiness does not call an
+embedding or language-model provider, initialize collections or indexes, or
+prove that every subsequent memory operation will succeed.
+
+## Bounds and client ownership
+
+Requests share one refresh per process. Results expire one second after the
+refresh starts; there is no indefinitely cached healthy result. Each dependency
+has a two-second observation deadline, and an HTTP readiness call has a
+three-second response deadline. Concurrent checks run in at most four slots.
+Probe scheduling by your orchestrator adds its own interval and failure
+threshold to outage-detection time.
+
+A timed-out operation keeps its reservation until the actual operation ends.
+Repeated checks and cancelled HTTP requests cannot start replacement work for
+that resource. Synchronous Milvus operations use a dedicated executor with at
+most two workers and a native RPC timeout. Only shutdown stops admission of
+these jobs; the HTTP deadline does not pretend to terminate a running thread.
+
+Initialized database clients are borrowed. Failed and timed-out checks do not
+close, dispose, replace, or remove them. A cold remote backend uses a separate
+read-only probe connection, which is closed by the probe that created it.
+Readiness does not run the resource manager's construction validators or
+`build_all()`.
+
+## Backend checks
+
+| Backend | Check |
+| --- | --- |
+| PostgreSQL/asyncpg | Fresh `SELECT 1` with a bounded connection/query operation |
+| SQLite | Fresh `SELECT 1`; an uninitialized local file checks its parent directory without creating a database |
+| Qdrant | Fresh collection-list request over the configured REST or gRPC transport |
+| Neo4j | Read-only `RETURN 1 AS ok` with a transaction timeout |
+| NebulaGraph | Read-only `RETURN 1 AS ok` with an SDK request timeout |
+| Remote Milvus | Collection-list request with an SDK timeout and a retained worker reservation |
+| Initialized Milvus Lite | Collection-list request on the serving client |
+
+A cold Milvus Lite client cannot be created by readiness without starting a
+local server, so an uninitialized required Lite backend reports `unsupported`.
+A missing optional SDK or an invalid configured dependency reports unavailable.
+Unsupported required configurations never receive a fabricated healthy result.
+
+The `ready` state checks reachability and lightweight read access. It does not
+validate database migrations, write permissions on remote servers, specific
+collections/indexes, or the contents of stored memories.
+
+## Upgrades and rollback
+
+The new application remains compatible with old `/health` probes. New
+dependency-aware probes require an application image containing `/ready`.
+Deploy that image first or atomically with the probes; do not assume a floating
+image tag or chart `appVersion` proves endpoint support.
+
+The Helm readiness path defaults to `/api/v2/ready`; liveness stays on
+`/api/v2/health`. For older images, explicitly select
+`memmachine.readiness.path=/api/v2/health`. Compose uses
+`MEMMACHINE_READINESS_PATH=/api/v2/health` for the same compatibility mode.
+These settings restore liveness-only behavior and do not detect storage
+outages. An old server with the new path returns 404 and remains visibly
+unready instead of silently falling back.
+
+Roll back the application image and its matching probe configuration together.
