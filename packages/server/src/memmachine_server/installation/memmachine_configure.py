@@ -16,6 +16,7 @@ import requests
 
 from memmachine_server import setup_nltk
 from memmachine_server.installation.configuration_wizard import (
+    ConfigurationCancelledError,
     ConfigurationWizard,
 )
 from memmachine_server.installation.utilities import (
@@ -487,6 +488,9 @@ def main() -> None:
     except KeyboardInterrupt:
         logger.warning("Configuration cancelled by user.")
         sys.exit(130)  # Standard exit code for Ctrl+C
+    except ConfigurationCancelledError as exc:
+        logger.warning("%s", exc)
+        sys.exit(1)
     except RuntimeError:
         logger.exception("Configuration failed")
         sys.exit(1)

@@ -14,6 +14,7 @@ from memmachine_server.installation.memmachine_configure import (
     WINDOWS_JDK_ZIP_NAME,
     WINDOWS_NEO4J_URL,
     WINDOWS_NEO4J_ZIP_NAME,
+    ConfigurationCancelledError,
     ConfigurationWizard,
     LinuxEnvironment,
     LinuxInstaller,
@@ -22,6 +23,7 @@ from memmachine_server.installation.memmachine_configure import (
     WindowsEnvironment,
     WindowsInstaller,
     _safe_extract_zip,
+    main,
 )
 
 MOCK_GPG_KEY_CONTENT = "mocked-gpg-key-content"
@@ -32,6 +34,25 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()],
 )
 logger = logging.getLogger("MemMachineInstaller")
+
+
+@patch("memmachine_server.installation.memmachine_configure.setup_nltk")
+@patch("memmachine_server.installation.memmachine_configure.install_memmachine")
+def test_main_reports_configuration_cancellation(mock_install, mock_nltk, caplog):
+    mock_install.side_effect = ConfigurationCancelledError(
+        "Qdrant endpoint not confirmed. Configuration was not written."
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 1
+    assert (
+        "Qdrant endpoint not confirmed. Configuration was not written."
+        in caplog.messages
+    )
+    assert all(record.exc_info is None for record in caplog.records)
+    mock_nltk.assert_not_called()
 
 
 def mock_wizard_run(self):

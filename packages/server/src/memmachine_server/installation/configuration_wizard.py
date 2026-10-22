@@ -2,8 +2,10 @@
 
 import importlib.util
 import logging
+import re
 from dataclasses import dataclass
 from functools import cached_property
+from ipaddress import IPv6Address
 from pathlib import Path
 from typing import cast
 
@@ -67,6 +69,10 @@ from memmachine_server.installation.utilities import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ConfigurationCancelledError(RuntimeError):
+    """The user declined to write the configuration."""
 
 
 class ConfigurationWizard:
@@ -316,6 +322,89 @@ class ConfigurationWizard:
             self._VECTOR_STORE_SQLITE_VEC: self.SQLITE_VEC_VECTOR_STORE_ID,
         }[choice]
 
+    @staticmethod
+    def _valid_qdrant_host(host: str) -> bool:
+        if ":" in host:
+            try:
+                IPv6Address(host)
+            except ValueError:
+                return False
+            return "%" not in host
+
+        hostname = host.removesuffix(".")
+        return (
+            bool(hostname)
+            and len(hostname) <= 253
+            and all(
+                re.fullmatch(r"[a-zA-Z0-9_](?:[a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?", label)
+                for label in hostname.split(".")
+            )
+        )
+
+    def _ask_qdrant_host(self, default: str) -> str:
+        while True:
+            host = self.ask_for("Enter Qdrant host (hostname or IP address)", default)
+            if self._valid_qdrant_host(host):
+                return host
+            logger.info(
+                "Enter a hostname or IP address without a scheme, port, path, "
+                "credentials, or IPv6 brackets."
+            )
+
+    def _ask_qdrant_port(self, default: int) -> int:
+        while True:
+            raw = self.ask_for("Enter Qdrant REST port", str(default))
+            try:
+                port = int(raw)
+            except ValueError:
+                port = 0
+            if 1 <= port <= 65535:
+                return port
+            logger.info("Enter a Qdrant REST port between 1 and 65535.")
+
+    def _confirm_qdrant_endpoint(self) -> None:
+        while True:
+            answer = self.ask_for(
+                "Use this already-running external Qdrant server? (yes/no)", "no"
+            ).lower()
+            if answer in {"y", "yes"}:
+                return
+            if answer in {"n", "no"}:
+                raise ConfigurationCancelledError(
+                    "Qdrant endpoint not confirmed. Configuration was not written."
+                )
+            logger.info("Please answer yes or no.")
+
+    @cached_property
+    def qdrant_conf(self) -> QdrantConf:
+        """Select and confirm an external Qdrant endpoint without contacting it."""
+        config = QdrantConf()
+        logger.info(
+            "Qdrant requires an already-running external server. "
+            "The wizard does not start it or check the connection."
+        )
+        if self.prompt:
+            config = config.model_copy(
+                update={
+                    "host": self._ask_qdrant_host(config.host),
+                    "port": self._ask_qdrant_port(config.port),
+                }
+            )
+
+        scheme = "https" if config.https else "http"
+        host = f"[{config.host}]" if ":" in config.host else config.host
+        logger.info("Qdrant REST endpoint: %s://%s:%s.", scheme, host, config.port)
+        if config.prefer_grpc:
+            logger.info("Qdrant will use gRPC at %s:%s.", host, config.grpc_port)
+        logger.info(
+            "MemMachine deployments using the same Qdrant server may share storage. "
+            "Qdrant settings will be saved to %s.",
+            self.configuration_path,
+        )
+        if self.prompt:
+            self._confirm_qdrant_endpoint()
+        return config
+
     @cached_property
     def retrieval_agent_conf(self) -> RetrievalAgentConf:
         """Generate retrieval-agent configuration."""
@@ -492,9 +581,7 @@ class ConfigurationWizard:
         )
         match self.vector_store_id:
             case self.QDRANT_VECTOR_STORE_ID:
-                # Localhost defaults assume `docker run -p 6333:6333 qdrant/qdrant`
-                # or similar; user can edit cfg.yml to point at a remote Qdrant.
-                databases.qdrant_confs = {self.QDRANT_VECTOR_STORE_ID: QdrantConf()}
+                databases.qdrant_confs = {self.QDRANT_VECTOR_STORE_ID: self.qdrant_conf}
             case self.MILVUS_VECTOR_STORE_ID:
                 # Local file defaults use Milvus Lite. Users can edit cfg.yml
                 # to point at a Milvus server or Zilliz Cloud URI/token.
