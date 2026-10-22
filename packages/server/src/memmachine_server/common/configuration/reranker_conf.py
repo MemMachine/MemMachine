@@ -117,7 +117,7 @@ class RRFHybridRerankerConf(YamlSerializableMixin):
         description="The IDs of the rerankers to combine in the hybrid",
         examples=["bm", "cross-encoder"],
     )
-    k: int = Field(default=60, description="The k parameter for RRF scoring")
+    k: int = Field(default=60, ge=0, description="The k parameter for RRF scoring")
 
 
 class RerankersConf(BaseModel):
