@@ -29,7 +29,7 @@ episodic_memory:
     #   type: whole_text                    # or: sentence_text
   short_term_memory:
     llm_model: openai_model
-    message_capacity: 500
+    message_capacity: 64000 # Characters, including the saved summary
 
 retrieval_agent:
   llm_model: openai_model

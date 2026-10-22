@@ -114,7 +114,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           llm_model: my-summarization-llm # ID of the Language Model from 'resources.language_models'
           summary_prompt_system: episode_summary_system # System prompt for summary generation
           summary_prompt_user: episode_summary_user # User prompt for summary generation
-          message_capacity: 64000 # Maximum length of short-term memory (default: 64000)
+          message_capacity: 64000 # Characters, including the saved summary
         long_term_memory_enabled: true # Enable long-term memory
         short_term_memory_enabled: true # Enable short-term memory
         enabled: true # Enable episodic memory subsystem
@@ -142,7 +142,17 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `short_term_memory.llm_model`   | The ID of a language model defined in `resources.language_models` for summarization. | *Required* |
     | `short_term_memory.summary_prompt_system` | System prompt ID for short-term summarization. | *Required* |
     | `short_term_memory.summary_prompt_user` | User prompt ID for short-term summarization. | *Required* |
-    | `short_term_memory.message_capacity` | The maximum character capacity for short-term memory.                     | `64000`      |
+    | `short_term_memory.message_capacity` | Character budget for recent episode content and the saved summary, measured with Python `len()`. | `64000` |
+
+    The budget adds the Python `len()` of each stored episode's content to the
+    `len()` of the saved summary. This counts Unicode code points, independent
+    of tokenization and UTF-8 byte length. For example, a 1,000-character summary
+    plus 63,000 characters of recent content exactly fits the default budget.
+    Adding one more character exceeds it and triggers summarization.
+
+    Increasing the capacity retains more recent content before summarization.
+    The summarization model's context window still applies, so choose a budget
+    appropriate for that model.
   </Accordion>
 
   <Accordion title="Retrieval Agent">
