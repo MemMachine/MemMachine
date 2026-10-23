@@ -16,6 +16,7 @@ from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
     EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
@@ -50,6 +51,9 @@ from memmachine_server.common.session_manager.session_data_manager import (
 )
 from memmachine_server.common.sql_lease_lock import LockAcquireTimeoutError
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    deployment_event_memory_ids,
+)
 from memmachine_server.retrieval_agent import create_retrieval_agent
 from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
@@ -537,7 +541,8 @@ class MemMachine:
             The resolved episodic memory configuration.
 
         Raises:
-            ConfigurationError: If the merged configuration is invalid.
+            ConfigurationError: If the merged configuration is invalid, or
+                has event memory on a deployment that configures none.
 
         """
         # Get default prompts from config, with fallbacks
@@ -549,7 +554,9 @@ class MemMachine:
             user_conf.session_key = session_key
             episodic_conf = user_conf.merge(self._conf.episodic_memory)
             if episodic_conf.long_term_memory is not None:
-                if episodic_conf.long_term_memory.embedder is not None:
+                if isinstance(episodic_conf.long_term_memory, EventLongTermMemoryConf):
+                    deployment_event_memory_ids(self._conf)
+                elif episodic_conf.long_term_memory.embedder is not None:
                     self._conf.check_embedder(episodic_conf.long_term_memory.embedder)
                 if episodic_conf.long_term_memory.reranker is not None:
                     self._conf.check_reranker(episodic_conf.long_term_memory.reranker)

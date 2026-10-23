@@ -199,27 +199,16 @@ class DeclarativeLongTermMemoryConf(BaseModel):
 
 
 class EventLongTermMemoryConf(BaseModel):
-    """Event-backend long-term memory (VectorStore + SegmentStore)."""
+    """
+    A session's event-backend long-term memory (VectorStore + SegmentStore).
+
+    Its vector store, segment store, and embedder are the deployment's.
+    """
 
     backend: Literal["event"] = "event"
     session_id: str = Field(
         ...,
         description="Session identifier",
-    )
-    vector_store: str = Field(
-        ...,
-        description="ID of the VectorStore instance backing the derivative index",
-    )
-    segment_store: str = Field(
-        ...,
-        description=(
-            "ID of the SQL engine resource backing the segment store. "
-            "The SegmentStore is constructed implicitly from the engine."
-        ),
-    )
-    embedder: str = Field(
-        ...,
-        description="ID of the Embedder instance for creating embeddings",
     )
     reranker: str | None = Field(
         default=None,

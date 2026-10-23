@@ -19,6 +19,7 @@ from memmachine_server.common.configuration import (
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
     EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
@@ -29,6 +30,7 @@ from memmachine_server.common.episode_store import (
     EpisodeResponse,
 )
 from memmachine_server.common.errors import (
+    ConfigurationError,
     ResourceNotFoundError,
     SessionNotFoundError,
 )
@@ -322,6 +324,43 @@ def test_with_default_long_conf_enable_status(
     )
     assert conf.short_term_memory_enabled is False
     assert conf.long_term_memory_enabled is True
+
+
+_EVENT_PROJECT = EpisodicMemoryConfPartial(
+    long_term_memory=LongTermMemoryConfPartial(backend="event")
+)
+
+
+def test_an_event_project_takes_the_deployments_event_memory(
+    minimal_conf_factory, patched_resource_manager
+):
+    conf = minimal_conf_factory()
+    conf.episodic_memory.long_term_memory = LongTermMemoryConfPartial(
+        backend="event",
+        vector_store="vs",
+        segment_store="ss",
+        embedder="default-embedder",
+        reranker="default-reranker",
+    )
+    memmachine = MemMachine(conf, patched_resource_manager)
+
+    merged = memmachine._with_default_episodic_memory_conf(
+        session_key="s", user_conf=_EVENT_PROJECT
+    )
+
+    assert isinstance(merged.long_term_memory, EventLongTermMemoryConf)
+    assert merged.long_term_memory.reranker == "default-reranker"
+
+
+def test_a_deployment_without_event_memory_refuses_an_event_project(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    with pytest.raises(ConfigurationError, match="no event memory"):
+        memmachine._with_default_episodic_memory_conf(
+            session_key="s", user_conf=_EVENT_PROJECT
+        )
 
 
 @pytest.mark.asyncio

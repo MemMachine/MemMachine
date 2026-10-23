@@ -1,24 +1,24 @@
 """Unit tests for service_locator helpers."""
 
-from datetime import UTC, datetime
 from unittest.mock import NonCallableMagicMock, create_autospec
 
 import pytest
 
+from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.episodic_config import (
+    EpisodicMemoryConfPartial,
     EventLongTermMemoryConf,
+    LongTermMemoryConfPartial,
 )
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
+from memmachine_server.common.errors import ConfigurationError
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import (
     VectorStore,
-    VectorStoreCollection,
-    VectorStoreCollectionAlreadyExistsError,
-    VectorStoreCollectionConfig,
-    VectorStoreCollectionDeletedError,
-    VectorStoreCollectionPendingError,
+    VectorStorePartition,
+    VectorStoreSchema,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
@@ -28,10 +28,10 @@ from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
-from memmachine_server.episodic_memory.long_term_memory import service_locator
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
-    _EVENT_BACKEND_NAMESPACE,
     _event_params,
+    event_backend_indexed_properties,
+    event_backend_vector_store,
     partition_key_for_session,
 )
 
@@ -100,22 +100,43 @@ def test_partition_key_empty_string_passthrough():
     assert len(key) == PARTITION_KEY_MAX_BYTES
 
 
-_PENDING = VectorStoreCollectionPendingError(
-    _EVENT_BACKEND_NAMESPACE,
-    "raced",
-    datetime(2026, 1, 1, tzinfo=UTC),
-    VectorStoreCollectionConfig(vector_dimensions=3),
-)
-_TAKEN = VectorStoreCollectionAlreadyExistsError(_EVENT_BACKEND_NAMESPACE, "raced")
-_DELETED = VectorStoreCollectionDeletedError(_EVENT_BACKEND_NAMESPACE, "raced")
+@pytest.mark.asyncio
+async def test_every_backend_and_embedder_name_the_one_event_store():
+    """The event store's name is fixed, whatever the backend and embedder."""
+    names = set()
+    for vector_store, embedder_id in (("vs_a", "e"), ("vs_b", "e"), ("vs_a", "f")):
+        resource_manager = _deployment_resource_manager(
+            LongTermMemoryConfPartial(
+                backend="event",
+                vector_store=vector_store,
+                segment_store="ss",
+                embedder=embedder_id,
+            )
+        )
+        await event_backend_vector_store(resource_manager)
+        names.add(
+            resource_manager.get_vector_store.await_args.kwargs["vector_store_name"]
+        )
+
+    assert names == {"event_memory"}
 
 
-def _resource_manager(vector_store: NonCallableMagicMock) -> CommonResourceManager:
-    """A resource manager handing out the vector store."""
+def _deployment_resource_manager(
+    deployment: LongTermMemoryConfPartial | None,
+) -> NonCallableMagicMock:
+    """A resource manager whose deployment configures `deployment` and whose stores open autospec partitions."""
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.open_or_create_partition.return_value = create_autospec(
+        VectorStorePartition, instance=True
+    )
     embedder = create_autospec(Embedder, instance=True)
     embedder.dimensions = 3
     embedder.similarity_metric = SimilarityMetric.COSINE
     resource_manager = create_autospec(CommonResourceManager, instance=True)
+    resource_manager.config = create_autospec(Configuration, instance=True)
+    resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(
+        long_term_memory=deployment
+    )
     resource_manager.get_vector_store.return_value = vector_store
     resource_manager.get_segment_store.return_value = create_autospec(
         SegmentStore, instance=True
@@ -131,83 +152,83 @@ def _resource_manager(vector_store: NonCallableMagicMock) -> CommonResourceManag
     return resource_manager
 
 
-@pytest.mark.asyncio
-async def test_event_params_opens_the_collection_a_racing_creator_won(monkeypatch):
-    """A worker whose strict create loses to another's opens the winner's
-    collection, waiting while the winner's is pending."""
-    monkeypatch.setattr(service_locator, "_OPEN_RETRY_DELAY_SECONDS", 0)
-    config = EventLongTermMemoryConf(
-        session_id="raced", vector_store="vs", segment_store="ss", embedder="e"
-    )
-    collection = create_autospec(VectorStoreCollection, instance=True)
-    vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.open_collection.side_effect = [None, _PENDING, _PENDING, collection]
-    vector_store.create_collection.side_effect = _TAKEN
-
-    params = await _event_params(config, _resource_manager(vector_store))
-
-    assert params.vector_store_collection is collection
-    vector_store.create_collection.assert_awaited_once()
-    assert vector_store.open_collection.await_count == 4
+_DEPLOYMENT = LongTermMemoryConfPartial(
+    backend="event", vector_store="vs", segment_store="ss", embedder="e"
+)
 
 
 @pytest.mark.asyncio
-async def test_event_params_creates_the_collection_when_the_winners_creation_is_undone(
-    monkeypatch,
-):
-    """A worker whose strict create lost to a creation that then failed, and
-    was unregistered, creates the collection itself."""
-    monkeypatch.setattr(service_locator, "_OPEN_RETRY_DELAY_SECONDS", 0)
-    config = EventLongTermMemoryConf(
-        session_id="raced", vector_store="vs", segment_store="ss", embedder="e"
-    )
-    collection = create_autospec(VectorStoreCollection, instance=True)
-    vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.open_collection.side_effect = [None, None, collection]
-    vector_store.create_collection.side_effect = [_TAKEN, None]
+async def test_event_params_opens_the_session_partition_in_the_event_store():
+    """The session's partition is opened in the deployment's event store.
 
-    params = await _event_params(config, _resource_manager(vector_store))
+    Opening creates the partition when it is absent; the vector store's
+    registry arbitrates creation across processes, so a worker that loses
+    the race to another opens the winner's partition instead of failing
+    the request.
+    """
+    resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+    config = EventLongTermMemoryConf(session_id="raced")
 
-    assert params.vector_store_collection is collection
-    assert vector_store.create_collection.await_count == 2
+    params = await _event_params(config, resource_manager)
 
-
-@pytest.mark.asyncio
-async def test_event_params_creates_again_when_a_deletion_undid_its_creation(
-    monkeypatch,
-):
-    """A worker whose collection was deleted before its creation completed
-    creates the collection again."""
-    monkeypatch.setattr(service_locator, "_OPEN_RETRY_DELAY_SECONDS", 0)
-    config = EventLongTermMemoryConf(
-        session_id="raced", vector_store="vs", segment_store="ss", embedder="e"
-    )
-    collection = create_autospec(VectorStoreCollection, instance=True)
-    vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.open_collection.side_effect = [None, None, collection]
-    vector_store.create_collection.side_effect = [_DELETED, None]
-
-    params = await _event_params(config, _resource_manager(vector_store))
-
-    assert params.vector_store_collection is collection
-    assert vector_store.create_collection.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_event_params_gives_up_on_a_collection_that_stays_pending(monkeypatch):
-    monkeypatch.setattr(service_locator, "_OPEN_RETRY_DELAY_SECONDS", 0)
-    config = EventLongTermMemoryConf(
-        session_id="raced", vector_store="vs", segment_store="ss", embedder="e"
-    )
-    vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.open_collection.side_effect = _PENDING
-
-    with pytest.raises(RuntimeError, match="not live") as gave_up:
-        await _event_params(config, _resource_manager(vector_store))
-
-    # The pending error says since when, which the log needs.
-    assert gave_up.value.__cause__ is _PENDING
+    vector_store = resource_manager.get_vector_store.return_value
     assert (
-        vector_store.open_collection.await_count == service_locator._MAX_OPEN_ATTEMPTS
+        params.vector_store_partition
+        is vector_store.open_or_create_partition.return_value
     )
-    vector_store.create_collection.assert_not_awaited()
+    vector_store.open_or_create_partition.assert_awaited_once_with("raced")
+    resource_manager.get_vector_store.assert_awaited_once_with(
+        "vs",
+        vector_store_name="event_memory",
+        store_schema=VectorStoreSchema(
+            vector_dimensions=3,
+            similarity_metric=SimilarityMetric.COSINE,
+            indexed_properties=event_backend_indexed_properties(),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session_names():
+    """A session saved with its own stores and embedder is served from the deployment's."""
+    resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+    config = EventLongTermMemoryConf.model_validate(
+        {
+            "session_id": "s",
+            "vector_store": "other_vs",
+            "segment_store": "other_ss",
+            "embedder": "other_e",
+        }
+    )
+
+    await _event_params(config, resource_manager)
+
+    assert resource_manager.get_vector_store.await_args.args == ("vs",)
+    resource_manager.get_segment_store.assert_awaited_once_with("ss")
+    assert {call.args[0] for call in resource_manager.get_embedder.await_args_list} == {
+        "e"
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "deployment",
+    [
+        None,
+        LongTermMemoryConfPartial(
+            backend="declarative", vector_graph_store="g", embedder="e"
+        ),
+    ],
+    ids=["no_long_term_memory", "declarative_memory"],
+)
+async def test_event_params_refuses_a_session_of_a_deployment_without_event_memory(
+    deployment: LongTermMemoryConfPartial | None,
+):
+    resource_manager = _deployment_resource_manager(deployment)
+    config = EventLongTermMemoryConf(session_id="s")
+
+    with pytest.raises(ConfigurationError, match="no event memory"):
+        await _event_params(config, resource_manager)
+
+    resource_manager.get_vector_store.assert_not_awaited()
+    resource_manager.get_segment_store.assert_not_awaited()

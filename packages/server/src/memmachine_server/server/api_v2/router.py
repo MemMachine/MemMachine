@@ -118,8 +118,6 @@ def _ltm_partial_from_project_config(
         embedder=config.embedder or None,
         reranker=config.reranker or None,
         vector_graph_store=config.vector_graph_store or None,
-        vector_store=config.vector_store or None,
-        segment_store=config.segment_store or None,
     )
 
 
@@ -133,25 +131,19 @@ def _project_config_from_ltm(
             embedder="",
             reranker="",
             vector_graph_store="",
-            vector_store="",
-            segment_store="",
         )
     if isinstance(ltm, EventLongTermMemoryConf):
         return ProjectConfig(
             backend="event",
-            embedder=ltm.embedder,
+            embedder="",
             reranker=ltm.reranker or "",
             vector_graph_store="",
-            vector_store=ltm.vector_store,
-            segment_store=ltm.segment_store,
         )
     return ProjectConfig(
         backend="declarative",
         embedder=ltm.embedder,
         reranker=ltm.reranker,
         vector_graph_store=ltm.vector_graph_store,
-        vector_store="",
-        segment_store="",
     )
 
 

@@ -15,7 +15,7 @@ from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ResourceNotReadyError
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreCollectionConfig
+from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -47,8 +47,12 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
     VectorStoreSemanticStorage,
 )
 
-_VECTOR_STORE_NAMESPACE = "semantic_memory"
-_VECTOR_STORE_COLLECTION_NAME = "semantic_memory"
+_VECTOR_STORE_NAME = "semantic_memory"
+"""The name of semantic memory's one vector store, whatever its embedder.
+
+Fixed, because the name locates the store's data.
+"""
+_VECTOR_STORE_PARTITION_KEY = "semantic_memory"
 
 
 class SemanticResourceManager:
@@ -131,8 +135,8 @@ class SemanticResourceManager:
                 "semantic_memory",
             )
 
-        vector_store_name = self._conf.vector_collection
-        if not vector_store_name:
+        vector_store_id = self._conf.vector_collection
+        if not vector_store_id:
             raise ResourceNotReadyError(
                 "No vector_collection configured for vector-backed semantic storage.",
                 "semantic_memory",
@@ -142,20 +146,25 @@ class SemanticResourceManager:
             feature_store_name,
             validate=True,
         )
-        vector_store = await self._resource_manager.get_vector_store(vector_store_name)
         vector_dimensions = self._conf.vector_dimensions
         if vector_dimensions is None:
             vector_dimensions = (await self._get_default_embedder()).dimensions
-
-        collection = await vector_store.open_or_create_collection(
-            namespace=_VECTOR_STORE_NAMESPACE,
-            name=_VECTOR_STORE_COLLECTION_NAME,
-            config=VectorStoreCollectionConfig(
+        vector_store = await self._resource_manager.get_vector_store(
+            vector_store_id,
+            vector_store_name=_VECTOR_STORE_NAME,
+            store_schema=VectorStoreSchema(
                 vector_dimensions=vector_dimensions,
                 similarity_metric=self._conf.vector_similarity_metric,
+                indexed_properties={},
             ),
         )
-        storage = VectorStoreSemanticStorage(sql_engine, collection)
+
+        # The manager owns this partition and provisions it when the storage is
+        # built.
+        vector_partition = await vector_store.open_or_create_partition(
+            _VECTOR_STORE_PARTITION_KEY
+        )
+        storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()
         return storage
 

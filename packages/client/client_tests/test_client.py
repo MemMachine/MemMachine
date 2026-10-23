@@ -209,9 +209,8 @@ class TestMemMachineClient:
                 project_id="test_project",
             )
 
-    def test_create_project_event_backend_fields_reach_wire(self):
-        """Event-backend fields must reach the wire — without this the SDK
-        has no supported path to event-backed projects."""
+    def test_create_project_event_backend_reaches_wire(self):
+        """The event backend selector reaches the wire, naming no stores."""
         client = MemMachineClient(base_url="http://localhost:8080")
         mock_response = Mock()
         mock_response.status_code = 200
@@ -222,10 +221,8 @@ class TestMemMachineClient:
             "description": "",
             "config": {
                 "backend": "event",
-                "embedder": "default",
+                "embedder": "",
                 "reranker": "default",
-                "vector_store": "qdrant_vs",
-                "segment_store": "sqlite_db",
             },
         }
         with patch.object(
@@ -235,13 +232,11 @@ class TestMemMachineClient:
                 org_id="test_org",
                 project_id="test_project",
                 backend="event",
-                vector_store="qdrant_vs",
-                segment_store="sqlite_db",
             )
             cfg = mock_post.call_args[1]["json"]["config"]
             assert cfg["backend"] == "event"
-            assert cfg["vector_store"] == "qdrant_vs"
-            assert cfg["segment_store"] == "sqlite_db"
+            assert "vector_store" not in cfg
+            assert "segment_store" not in cfg
 
     def test_get_project_404_raises_http_error(self):
         """Test missing project preserves HTTPError semantics."""

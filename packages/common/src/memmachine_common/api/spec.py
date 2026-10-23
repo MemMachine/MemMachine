@@ -185,8 +185,8 @@ class ProjectConfig(BaseModel):
     its globally-configured defaults.
 
     Backend selection:
-    - `backend="event"` (default for new projects): uses VectorStore +
-      SegmentStore. Requires `vector_store` and `segment_store`.
+    - `backend="event"` (default for new projects): uses the server's event
+      memory, its vector store, segment store, and embedder.
     - `backend="declarative"`: uses VectorGraphStore. Requires
       `vector_graph_store`.
     - Empty/null `backend`: server falls back to its parse-time default
@@ -225,24 +225,6 @@ class ProjectConfig(BaseModel):
         Field(
             default="",
             description="VectorGraphStore resource id (declarative backend only)",
-        ),
-    ]
-
-    # Event-backend resource ids.
-    vector_store: Annotated[
-        str,
-        Field(
-            default="",
-            description="VectorStore resource id (event backend only)",
-        ),
-    ]
-    segment_store: Annotated[
-        str,
-        Field(
-            default="",
-            description=(
-                "SQL engine resource id backing the segment store (event backend only)"
-            ),
         ),
     ]
 

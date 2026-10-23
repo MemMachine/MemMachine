@@ -37,7 +37,7 @@ from memmachine_server.common.session_manager.session_data_manager_sql_impl impo
 )
 from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_graph_store import VectorGraphStore
-from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,
@@ -93,7 +93,9 @@ async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
         )
 
 
-async def _purge_deleted_collections_forever(store: VectorStore, label: str) -> None:
+async def _purge_deleted_vector_store_partitions_forever(
+    store: VectorStore, label: str
+) -> None:
     """Run the store's purge rounds for as long as the task runs.
 
     A call that ran a round is followed after a short pause, one that found
@@ -103,7 +105,7 @@ async def _purge_deleted_collections_forever(store: VectorStore, label: str) -> 
     """
     while True:
         try:
-            more = await store.purge_deleted_collections()
+            more = await store.purge_deleted_partitions()
         except Exception:
             logger.exception("%s purge failed; retrying next tick", label)
             more = False
@@ -143,8 +145,8 @@ class ResourceManagerImpl:
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
         self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
-        # One sweeper per vector store, keyed by the store's configured name.
-        self._vector_store_purge_tasks: dict[str, asyncio.Task[None]] = {}
+        # One sweeper per store, keyed by its vector store id and its name.
+        self._vector_store_purge_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
 
         self._session_data_manager_lock = Lock()
         self._sql_lock_service_lock = Lock()
@@ -205,15 +207,28 @@ class ResourceManagerImpl:
         """Return a vector graph store by name."""
         return await self._database_manager.get_vector_graph_store(name)
 
-    async def get_vector_store(self, name: str) -> VectorStore:
-        """Return a vector store by name.
+    async def get_vector_store(
+        self,
+        vector_store_id: str,
+        *,
+        vector_store_name: str,
+        store_schema: VectorStoreSchema,
+    ) -> VectorStore:
+        """Return the store of one name on a configured vector store.
 
         The first time a store is handed out, its purge sweeper starts.
         """
-        store = await self._database_manager.get_vector_store(name)
-        if name not in self._vector_store_purge_tasks:
-            self._vector_store_purge_tasks[name] = asyncio.create_task(
-                _purge_deleted_collections_forever(store, f"Vector store {name}")
+        store = await self._database_manager.get_vector_store(
+            vector_store_id,
+            vector_store_name=vector_store_name,
+            store_schema=store_schema,
+        )
+        key = (vector_store_id, vector_store_name)
+        if key not in self._vector_store_purge_tasks:
+            self._vector_store_purge_tasks[key] = asyncio.create_task(
+                _purge_deleted_vector_store_partitions_forever(
+                    store, f"Vector store {vector_store_id}/{vector_store_name}"
+                )
             )
         return store
 

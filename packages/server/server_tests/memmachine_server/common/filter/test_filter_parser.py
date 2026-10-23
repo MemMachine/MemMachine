@@ -22,7 +22,7 @@ from memmachine_server.common.filter.filter_parser import (
     parse_filter,
     to_property_filter,
 )
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
     evaluate_filter,
 )
 

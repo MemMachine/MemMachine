@@ -9,24 +9,24 @@ from sqlalchemy import insert
 
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.filter.filter_parser import parse_filter
-from memmachine_server.common.vector_store import Record, VectorStoreCollectionConfig
+from memmachine_server.common.vector_store import Record, VectorStoreSchema
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorSemanticFeature,
     VectorStoreSemanticStorage,
 )
-from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_collection import (
-    InMemoryVectorStoreCollection,
+from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
+    InMemoryVectorStorePartition,
 )
 
 
 @pytest.fixture
-def vector_collection() -> InMemoryVectorStoreCollection:
-    return InMemoryVectorStoreCollection(
-        VectorStoreCollectionConfig(
+def vector_store_partition() -> InMemoryVectorStorePartition:
+    return InMemoryVectorStorePartition(
+        store_schema=VectorStoreSchema(
             vector_dimensions=2,
             similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties_schema={
+            indexed_properties={
                 "set_id": str,
                 "category": str,
                 "tag": str,
@@ -47,7 +47,7 @@ async def _vector_uuid(storage: VectorStoreSemanticStorage, feature_id) -> UUID:
 @pytest.mark.asyncio
 async def test_older_than_compares_instants_not_wall_clocks(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_store_partition: InMemoryVectorStorePartition,
 ):
     """A non-UTC-offset bound names an instant on SQLite, not a wall clock.
 
@@ -55,7 +55,9 @@ async def test_older_than_compares_instants_not_wall_clocks(
     BEFORE the row's creation whose +08:00 wall clock lies far after it,
     so comparing wall clocks wrongly selects the row.
     """
-    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    storage = VectorStoreSemanticStorage(
+        sqlalchemy_sqlite_engine, vector_store_partition
+    )
     await storage.startup()
     try:
         await storage.add_history_to_set(
@@ -73,11 +75,13 @@ async def test_older_than_compares_instants_not_wall_clocks(
 
 
 @pytest.mark.asyncio
-async def test_add_update_delete_feature_keeps_vector_collection_in_sync(
+async def test_add_update_delete_feature_keeps_the_vector_store_partition_in_sync(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_store_partition: InMemoryVectorStorePartition,
 ):
-    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    storage = VectorStoreSemanticStorage(
+        sqlalchemy_sqlite_engine, vector_store_partition
+    )
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -90,22 +94,22 @@ async def test_add_update_delete_feature_keeps_vector_collection_in_sync(
         )
 
         record_uuid = await _vector_uuid(storage, feature_id)
-        assert record_uuid in vector_collection.records
-        assert vector_collection.records[record_uuid].vector == [1.0, 0.0]
+        assert record_uuid in vector_store_partition.records
+        assert vector_store_partition.records[record_uuid].vector == [1.0, 0.0]
 
         await storage.update_feature(
             feature_id,
             value="sushi",
             embedding=np.array([0.0, 1.0], dtype=float),
         )
-        assert vector_collection.records[record_uuid].vector == [0.0, 1.0]
+        assert vector_store_partition.records[record_uuid].vector == [0.0, 1.0]
 
         feature = await storage.get_feature(feature_id)
         assert feature is not None
         assert feature.value == "sushi"
 
         await storage.delete_features([feature_id])
-        assert record_uuid not in vector_collection.records
+        assert record_uuid not in vector_store_partition.records
         assert await storage.get_feature(feature_id) is None
     finally:
         await storage.delete_all()
@@ -115,9 +119,11 @@ async def test_add_update_delete_feature_keeps_vector_collection_in_sync(
 @pytest.mark.asyncio
 async def test_vector_search_returns_relational_features_in_similarity_order(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_store_partition: InMemoryVectorStorePartition,
 ):
-    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    storage = VectorStoreSemanticStorage(
+        sqlalchemy_sqlite_engine, vector_store_partition
+    )
     await storage.startup()
     try:
         await storage.add_feature(
@@ -156,10 +162,12 @@ async def test_vector_search_returns_relational_features_in_similarity_order(
 @pytest.mark.asyncio
 async def test_vector_records_carry_no_properties(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_store_partition: InMemoryVectorStorePartition,
 ):
     """The feature row is the authority; the vector record holds a vector."""
-    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    storage = VectorStoreSemanticStorage(
+        sqlalchemy_sqlite_engine, vector_store_partition
+    )
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -172,14 +180,14 @@ async def test_vector_records_carry_no_properties(
             metadata={"source": "chat"},
         )
         record_uuid = await _vector_uuid(storage, feature_id)
-        assert not vector_collection.records[record_uuid].properties
+        assert not vector_store_partition.records[record_uuid].properties
 
         await storage.update_feature(
             feature_id,
             value="sushi",
             embedding=np.array([0.0, 1.0], dtype=float),
         )
-        assert not vector_collection.records[record_uuid].properties
+        assert not vector_store_partition.records[record_uuid].properties
     finally:
         await storage.delete_all()
         await storage.cleanup()
@@ -188,9 +196,11 @@ async def test_vector_records_carry_no_properties(
 @pytest.mark.asyncio
 async def test_an_update_without_an_embedding_leaves_the_vector_record_alone(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_store_partition: InMemoryVectorStorePartition,
 ):
-    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    storage = VectorStoreSemanticStorage(
+        sqlalchemy_sqlite_engine, vector_store_partition
+    )
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -202,11 +212,11 @@ async def test_an_update_without_an_embedding_leaves_the_vector_record_alone(
             embedding=np.array([1.0, 0.0], dtype=float),
         )
         record_uuid = await _vector_uuid(storage, feature_id)
-        before = vector_collection.records[record_uuid]
+        before = vector_store_partition.records[record_uuid]
 
         await storage.update_feature(feature_id, value="sushi", tag="meal")
 
-        assert vector_collection.records[record_uuid] == before
+        assert vector_store_partition.records[record_uuid] == before
         feature = await storage.get_feature(feature_id)
         assert feature is not None
         assert (feature.value, feature.tag) == ("sushi", "meal")
@@ -218,10 +228,12 @@ async def test_an_update_without_an_embedding_leaves_the_vector_record_alone(
 @pytest.mark.asyncio
 async def test_an_update_reads_nothing_back_from_the_vector_store(
     sqlalchemy_sqlite_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_store_partition: InMemoryVectorStorePartition,
 ):
     """An update succeeds with the vector record absent, as a backend may not show it yet."""
-    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    storage = VectorStoreSemanticStorage(
+        sqlalchemy_sqlite_engine, vector_store_partition
+    )
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -233,7 +245,7 @@ async def test_an_update_reads_nothing_back_from_the_vector_store(
             embedding=np.array([1.0, 0.0], dtype=float),
         )
         record_uuid = await _vector_uuid(storage, feature_id)
-        del vector_collection.records[record_uuid]
+        del vector_store_partition.records[record_uuid]
 
         await storage.update_feature(feature_id, value="sushi")
         feature = await storage.get_feature(feature_id)
@@ -243,7 +255,7 @@ async def test_an_update_reads_nothing_back_from_the_vector_store(
         await storage.update_feature(
             feature_id, embedding=np.array([0.0, 1.0], dtype=float)
         )
-        assert vector_collection.records[record_uuid].vector == [0.0, 1.0]
+        assert vector_store_partition.records[record_uuid].vector == [0.0, 1.0]
     finally:
         await storage.delete_all()
         await storage.cleanup()
@@ -258,10 +270,10 @@ _MANY_FEATURES = 40_000
 @pytest.mark.parametrize("deletion", ["delete_all", "delete_feature_set"])
 async def test_deleting_more_features_than_sqlite_binds_removes_every_vector_record(
     sqlalchemy_engine,
-    vector_collection: InMemoryVectorStoreCollection,
+    vector_store_partition: InMemoryVectorStorePartition,
     deletion: str,
 ):
-    storage = VectorStoreSemanticStorage(sqlalchemy_engine, vector_collection)
+    storage = VectorStoreSemanticStorage(sqlalchemy_engine, vector_store_partition)
     await storage.startup()
     try:
         vector_uuids = [uuid4() for _ in range(_MANY_FEATURES)]
@@ -281,7 +293,7 @@ async def test_deleting_more_features_than_sqlite_binds_removes_every_vector_rec
                 ],
             )
             await session.commit()
-        await vector_collection.upsert(
+        await vector_store_partition.upsert(
             records=[
                 Record(uuid=vector_uuid, vector=[1.0, 0.0])
                 for vector_uuid in vector_uuids
@@ -295,7 +307,7 @@ async def test_deleting_more_features_than_sqlite_binds_removes_every_vector_rec
                 filter_expr=parse_filter("set_id IN (user)")
             )
 
-        assert vector_collection.records == {}
+        assert vector_store_partition.records == {}
     finally:
         await storage.delete_all()
         await storage.cleanup()
