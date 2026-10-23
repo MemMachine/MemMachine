@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -2096,18 +2096,6 @@ wheels = [
 ]
 
 [[package]]
-name = "langchain-text-splitters"
-version = "1.1.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "langchain-core" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/26/9f/6c545900fefb7b00ddfa3f16b80d61338a0ec68c31c5451eeeab99082760/langchain_text_splitters-1.1.2.tar.gz", hash = "sha256:782a723db0a4746ac91e251c7c1d57fd23636e4f38ed733074e28d7a86f41627", size = 293580, upload-time = "2026-04-16T14:20:39.162Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/26/1ef06f56198d631296d646a6223de35bcc6cf9795ceb2442816bc963b84c/langchain_text_splitters-1.1.2-py3-none-any.whl", hash = "sha256:a2de0d799ff31886429fd6e2e0032df275b60ec817c19059a7b46181cc1c2f10", size = 35903, upload-time = "2026-04-16T14:20:38.243Z" },
-]
-
-[[package]]
 name = "langsmith"
 version = "0.12.5"
 source = { registry = "https://pypi.org/simple" }
@@ -2348,7 +2336,6 @@ dependencies = [
     { name = "instructor", extra = ["bedrock"] },
     { name = "json-repair" },
     { name = "langchain-aws" },
-    { name = "langchain-text-splitters" },
     { name = "memmachine-common" },
     { name = "neo4j" },
     { name = "nltk" },
@@ -2402,7 +2389,6 @@ requires-dist = [
     { name = "instructor", extras = ["bedrock"], specifier = ">=1.12.0" },
     { name = "json-repair", specifier = ">=0.54" },
     { name = "langchain-aws", specifier = ">=0.2.33" },
-    { name = "langchain-text-splitters", specifier = ">=1.1.1" },
     { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.93.0" },
     { name = "memmachine-common", editable = "packages/common" },
     { name = "milvus-lite", marker = "extra == 'milvus'", specifier = ">=3.0.0" },
