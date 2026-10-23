@@ -376,6 +376,15 @@ class ServerConf(YamlSerializableMixin):
         gt=0,
         lt=65536,
     )
+    metrics_port: int | None = Field(
+        default=None,
+        description=(
+            "The port number for a Prometheus metrics endpoint served from its "
+            "own thread, apart from the MemMachine API server"
+        ),
+        gt=0,
+        lt=65536,
+    )
 
     @model_validator(mode="before")
     @classmethod

@@ -111,11 +111,20 @@ class PrometheusMetricsFactory(MetricsFactory):
         name: str,
         description: str,
         label_names: Iterable[str] = (),
+        *,
+        sum_across_processes: bool = False,
     ) -> Gauge:
         """Return a Prometheus-backed gauge, creating it if absent."""
         if name not in self._metrics:
+            # In multiprocess mode, a livesum gauge counts a process until
+            # multiprocess.mark_process_dead removes its file.
             self._metrics[name] = PrometheusMetricsFactory.Gauge(
-                PrometheusGauge(name, description, labelnames=label_names),
+                PrometheusGauge(
+                    name,
+                    description,
+                    labelnames=label_names,
+                    multiprocess_mode="livesum" if sum_across_processes else "all",
+                ),
             )
         gauge = self._metrics[name]
         if not isinstance(gauge, PrometheusMetricsFactory.Gauge):

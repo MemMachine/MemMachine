@@ -261,6 +261,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     |-----------|-------------|---------|
     | `host`    | API server interface host. | `localhost` |
     | `port`    | API server port. | `8080` |
+    | `metrics_port` | Port for a Prometheus metrics endpoint served from its own thread, so it answers while the server is busy. With `MEMMACHINE_WORKERS` above 1, it reports every worker. | unset |
   </Accordion>
 
   <Accordion title="Prompt">
@@ -413,7 +414,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.password`| Password for database authentication.                             | Depends on provider |
       | `config.uri`  | The URI for the given database.                                      | Depends on provider |
       | `config.token` | Milvus auth token for Zilliz Cloud or auth-enabled Milvus server.   | `""` |
-      | `config.metrics_factory_id` | ID of the metrics exporter factory the Qdrant, Milvus, or Neo4j store reports its operation latencies to. | `prometheus` |
+      | `config.metrics_factory_id` | ID of the metrics exporter factory the database reports to: operation latencies for Qdrant, Milvus, and Neo4j, and connection pool usage for Postgres and SQLite. | `prometheus` |
       | `config.collection_registry` | Qdrant and Milvus: the name of a relational database under `resources.databases` that holds the store's collection registry (see [Vector stores](/open_source/databases#vector-stores)). | *Required* |
       | `config.tombstone_retention_seconds` | Qdrant and Milvus: whole seconds a deleted collection's records are kept before they are purged; at least 10 × `request_timeout_seconds` + 300. | `86400` |
       | `config.request_timeout_seconds` | Qdrant and Milvus: whole seconds a request to the vector store may take before the client gives up; must be positive. | `30` |

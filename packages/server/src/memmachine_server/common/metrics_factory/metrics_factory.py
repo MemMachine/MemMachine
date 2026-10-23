@@ -71,8 +71,15 @@ class MetricsFactory(ABC):
         name: str,
         description: str,
         label_names: Iterable[str] = (),
+        *,
+        sum_across_processes: bool = False,
     ) -> Gauge:
-        """Return a gauge metric by name, creating it if absent."""
+        """Return a gauge metric by name, creating it if absent.
+
+        With `sum_across_processes`, the gauge reports, for each label set, the
+        sum of the values that the server's running processes set; otherwise
+        each process's value is reported on its own.
+        """
         raise NotImplementedError
 
     @abstractmethod

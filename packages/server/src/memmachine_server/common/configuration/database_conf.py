@@ -466,7 +466,7 @@ class SQLiteVecVectorStoreConf(YamlSerializableMixin):
         return self
 
 
-class SqlAlchemyConf(YamlSerializableMixin, PasswordMixin):
+class SqlAlchemyConf(MetricsFactoryIdMixin, YamlSerializableMixin, PasswordMixin):
     """Configuration for SQLAlchemy-backed relational databases."""
 
     dialect: str = Field(..., description="SQL dialect")

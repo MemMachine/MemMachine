@@ -2,15 +2,20 @@
 
 import asyncio
 import logging
+import time
 from asyncio import Lock
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, override
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from sqlalchemy import event, text
+from sqlalchemy import event, make_url, text
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
-from sqlalchemy.pool import ConnectionPoolEntry
+from sqlalchemy.pool import (
+    AsyncAdaptedQueuePool,
+    ConnectionPoolEntry,
+    PoolProxiedConnection,
+)
 
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
@@ -27,6 +32,7 @@ from memmachine_server.common.errors import (
     SQLConfigurationError,
     VectorStoreConfigurationError,
 )
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
@@ -74,6 +80,52 @@ def enable_sqlite_foreign_keys(engine: AsyncEngine) -> None:
         cursor.close()
 
 
+def _report_sql_pool_metrics(
+    engine: AsyncEngine, *, pool_name: str, metrics_factory: MetricsFactory
+) -> None:
+    """Report an engine pool's checked-out connections and checkout wait time."""
+    pool = engine.pool
+    # In-memory SQLite keeps its static pool, which has no checkouts to time.
+    if not isinstance(pool, _TimedCheckoutQueuePool):
+        return
+
+    wait_time = metrics_factory.get_histogram(
+        "db_client_connection_wait_time_seconds",
+        "Time taken to get a connection from the pool",
+        label_names=("pool_name",),
+    )
+    wait_time_labels = {"pool_name": pool_name}
+    pool.wait_time_observer = lambda seconds: wait_time.observe(
+        seconds, labels=wait_time_labels
+    )
+
+    connection_count = metrics_factory.get_gauge(
+        "db_client_connection_count",
+        "Number of connections in the given state",
+        label_names=("pool_name", "state"),
+        sum_across_processes=True,
+    )
+    used_labels = {"pool_name": pool_name, "state": "used"}
+    connection_count.set(0, labels=used_labels)
+
+    @event.listens_for(engine.sync_engine, "checkout")
+    def _report_checkout(
+        _dbapi_connection: DBAPIConnection,
+        _connection_record: ConnectionPoolEntry,
+        _connection_proxy: PoolProxiedConnection,
+    ) -> None:
+        connection_count.set(pool.checkedout(), labels=used_labels)
+
+    @event.listens_for(engine.sync_engine, "checkin")
+    def _report_checkin(
+        _dbapi_connection: DBAPIConnection | None,
+        _connection_record: ConnectionPoolEntry,
+    ) -> None:
+        # The pool takes the connection back after this event, so it still
+        # counts the connection here.
+        connection_count.set(pool.checkedout() - 1, labels=used_labels)
+
+
 def _sql_engine_kwargs(conf: SqlAlchemyConf) -> dict[str, Any]:
     """Build create_async_engine keywords, omitting anything left unset."""
     kwargs: dict[str, Any] = {"echo": False, "future": True}
@@ -101,7 +153,36 @@ def _sql_engine_kwargs(conf: SqlAlchemyConf) -> dict[str, Any]:
             connect_args["timeout"] = conf.connect_timeout
         if connect_args:
             kwargs["connect_args"] = connect_args
+
+    # Time checkouts wherever SQLAlchemy would choose a queue pool. In-memory
+    # SQLite gets a static pool instead: every connection shares one database.
+    url = make_url(conf.uri)
+    dialect = url.get_dialect()()
+    if dialect.get_dialect_pool_class(url) is AsyncAdaptedQueuePool:
+        kwargs["poolclass"] = _TimedCheckoutQueuePool
     return kwargs
+
+
+class _TimedCheckoutQueuePool(AsyncAdaptedQueuePool):
+    """Asyncio queue pool that reports how long each checkout takes."""
+
+    # SQLAlchemy names a pool's logger after its class; keep the name and the
+    # logging configuration of the pool this one extends.
+    _sqla_logger_namespace = "sqlalchemy.pool.impl.AsyncAdaptedQueuePool"
+
+    # Set once the engine has built the pool. A pool that recreate() builds
+    # starts without one.
+    wait_time_observer: Callable[[float], None] | None = None
+
+    @override
+    def connect(self) -> PoolProxiedConnection:
+        start = time.perf_counter()
+        try:
+            return super().connect()
+        finally:
+            # A checkout that times out has waited longest, so failures count.
+            if self.wait_time_observer is not None:
+                self.wait_time_observer(time.perf_counter() - start)
 
 
 class DatabaseManager:
@@ -386,6 +467,9 @@ class DatabaseManager:
 
             engine = create_async_engine(conf.uri, **_sql_engine_kwargs(conf))
             enable_sqlite_foreign_keys(engine)
+            _report_sql_pool_metrics(
+                engine, pool_name=name, metrics_factory=conf.get_metrics_factory()
+            )
             if validate:
                 await self.validate_sql_engine(name, engine)
             self.sql_engines[name] = engine
