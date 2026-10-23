@@ -90,6 +90,35 @@ class WholeTextDeriver(Deriver):
                 )
 
 
+class TextDeriver(Deriver):
+    """Emits one derivative with the segment's text formatted in context.
+
+    The text is embedded without the whitespace at its ends, and a segment
+    of whitespace alone has no derivative.
+    """
+
+    @override
+    async def derive(
+        self,
+        segment: Segment,
+        *,
+        format_options: FormatOptions | None = None,
+    ) -> list[Derivative]:
+        match segment.block:
+            case TextBlock(text=text):
+                stripped = text.strip()
+                if not stripped:
+                    return []
+                return _build_text_derivatives(
+                    segment,
+                    [_format_for_embedding(segment, stripped, format_options)],
+                )
+            case _:
+                raise NotImplementedError(
+                    f"Unsupported block type: {type(segment.block).__name__}"
+                )
+
+
 class SentenceTextDeriver(Deriver):
     """Emits one derivative per sentence in the segment's text, formatted in context."""
 
