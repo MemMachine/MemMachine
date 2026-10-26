@@ -237,14 +237,16 @@ async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session
 
 @pytest.mark.asyncio
 async def test_event_params_serves_a_session_with_the_deployments_reranker():
-    """The reranker is the deployment's whatever the session names."""
+    """The reranker is the deployment's whatever a saved session names."""
     deployment = _DEPLOYMENT.model_copy(update={"reranker": "deployment_reranker"})
     resource_manager = _deployment_resource_manager(deployment)
     resource_manager.get_event_memory.return_value = await event_memory_from_config(
         resource_manager
     )
     resource_manager.get_reranker.reset_mock()
-    config = EventLongTermMemoryConf(session_id="s", reranker="session_reranker")
+    config = EventLongTermMemoryConf.model_validate(
+        {"session_id": "s", "reranker": "session_reranker"}
+    )
 
     await long_term_memory_from_config(config, resource_manager)
 
