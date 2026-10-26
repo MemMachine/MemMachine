@@ -34,6 +34,7 @@ from memmachine_server.common.vector_store.sqlite_properties import (
     property_column_name,
 )
 from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
+    _STORE_SCHEMA_TABLES,
     SQLiteVecVectorStore,
     SQLiteVecVectorStoreParams,
     SQLiteVecVectorStorePartition,
@@ -168,6 +169,24 @@ async def partition(store):
     assert partition is not None
     yield partition
     await store.delete_partition(NAME)
+
+
+# ── Store schema record ──
+
+
+@pytest.mark.asyncio
+async def test_migrate_records_the_store_schema(store):
+    store_table, declared_property_table = _STORE_SCHEMA_TABLES
+    async with store._engine.connect() as connection:
+        stores = (await connection.execute(select(store_table))).all()
+        keys = (
+            await connection.scalars(select(declared_property_table.c.property_key))
+        ).all()
+
+    assert [tuple(row) for row in stores] == [
+        (VECTOR_STORE_NAME, VECTOR_DIM, SimilarityMetric.COSINE.value)
+    ]
+    assert set(keys) == set(INDEXED_PROPERTIES)
 
 
 # ── Partition lifecycle ──

@@ -114,16 +114,19 @@ semantic stores create their tables directly.
 ### Vector stores
 
 A vector store's schema is a small declaration: dimensions, metric, and
-declared properties, and each backend reports its collection's live schema.
-So vector stores reconcile instead of keeping versioned revisions:
-`migrate()` compares the live collection with the declaration.
+declared properties. Qdrant and Milvus report their collection's live
+schema; the SQLite stores keep vectors per partition, so `migrate()` records
+a store's schema in its catalog, one row for the store and one for each
+declared property. So vector stores reconcile instead of keeping versioned
+revisions: `migrate()` compares the live or recorded schema with the
+declaration.
 
 - **A key added to the declaration** is applied in place; records written
   before lack the key, which a declared property allows.
   - Qdrant: a payload index.
   - Milvus: a nullable field and its index.
   - SQLite: a column and index on each partition's tables, found through the
-    catalog.
+    catalog, and the key's row in the recorded schema.
 - **Any other change** (dimensions, metric, a key's type, a removed key) is a
   rebuild into a new store, then a switch to it; Qdrant and Milvus aliases
   can make the switch atomic.

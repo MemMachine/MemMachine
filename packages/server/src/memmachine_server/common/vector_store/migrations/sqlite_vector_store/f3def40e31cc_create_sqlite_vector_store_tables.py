@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "c5aa95b65db9"
+revision: str = "f3def40e31cc"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -21,6 +21,25 @@ def upgrade() -> None:
         sa.Column("index_saved", sa.Boolean(), nullable=False),
         sa.PrimaryKeyConstraint("vector_store_name", "partition_key"),
         sa.UniqueConstraint("incarnation"),
+    )
+    op.create_table(
+        "vector_store_sqlite_st",
+        sa.Column("vector_store_name", sa.String(length=32), nullable=False),
+        sa.Column("vector_dimensions", sa.Integer(), nullable=False),
+        sa.Column("similarity_metric", sa.String(length=16), nullable=False),
+        sa.PrimaryKeyConstraint("vector_store_name"),
+    )
+    op.create_table(
+        "vector_store_sqlite_dp",
+        sa.Column("vector_store_name", sa.String(length=32), nullable=False),
+        sa.Column("property_key", sa.String(length=32), nullable=False),
+        sa.Column("property_type", sa.String(length=16), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["vector_store_name"],
+            ["vector_store_sqlite_st.vector_store_name"],
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("vector_store_name", "property_key"),
     )
     op.create_table(
         "vector_store_sqlite_pd_op",
@@ -41,4 +60,6 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop the tables."""
     op.drop_table("vector_store_sqlite_pd_op")
+    op.drop_table("vector_store_sqlite_dp")
+    op.drop_table("vector_store_sqlite_st")
     op.drop_table("vector_store_sqlite_pt")

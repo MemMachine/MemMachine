@@ -48,7 +48,11 @@ from memmachine_server.common.data_types import (
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
-from memmachine_server.common.sql import validate_engine_connections, write_session
+from memmachine_server.common.sql import (
+    validate_engine_connections,
+    write_connection,
+    write_session,
+)
 
 from .data_types import (
     _IDENTIFIER_MAX_BYTES,
@@ -60,6 +64,7 @@ from .data_types import (
     VectorStorePartitionHandleStaleError,
     VectorStoreSchema,
 )
+from .sql_store_schema import record_store_schema, store_schema_tables
 from .sqlite_properties import (
     compile_property_filter,
     property_column_names,
@@ -109,6 +114,10 @@ class _PartitionRow(BaseSQLiteVecVectorStore):
     )
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
 
+
+_STORE_SCHEMA_TABLES = store_schema_tables(
+    BaseSQLiteVecVectorStore.metadata, "vector_store_sqlite_vec"
+)
 
 SQLITE_VEC_VECTOR_STORE_LINEAGE = Lineage(
     name="sqlite_vec_vector_store",
@@ -486,6 +495,13 @@ class SQLiteVecVectorStore(VectorStore):
     @override
     async def migrate(self) -> None:
         await upgrade_lineage(self._engine, SQLITE_VEC_VECTOR_STORE_LINEAGE)
+        async with write_connection(self._engine) as connection:
+            await record_store_schema(
+                connection,
+                _STORE_SCHEMA_TABLES,
+                self._vector_store_name,
+                self._store_schema,
+            )
 
     @override
     async def startup(self) -> None:
