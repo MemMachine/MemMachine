@@ -42,6 +42,7 @@ from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     delete_long_term_memory_storage,
     event_backend_indexed_properties,
     event_backend_vector_store,
+    event_memory_from_config,
     long_term_memory_from_config,
     partition_key_for_session,
 )
@@ -161,6 +162,9 @@ def _deployment_resource_manager(
         SegmentStorePartition, instance=True
     )
     resource_manager.get_embedder.return_value = embedder
+    resource_manager.get_reranker.return_value = create_autospec(
+        Reranker, instance=True
+    )
     resource_manager.get_episode_storage.return_value = create_autospec(
         EpisodeStorage, instance=True
     )
@@ -183,6 +187,9 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     the request.
     """
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+    resource_manager.get_event_memory.return_value = await event_memory_from_config(
+        resource_manager
+    )
     config = EventLongTermMemoryConf(session_id="raced")
 
     long_term_memory = await long_term_memory_from_config(config, resource_manager)
@@ -207,6 +214,9 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
 async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session_names():
     """A session saved with its own stores and embedder is served from the deployment's."""
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+    resource_manager.get_event_memory.return_value = await event_memory_from_config(
+        resource_manager
+    )
     config = EventLongTermMemoryConf.model_validate(
         {
             "session_id": "s",
@@ -226,6 +236,24 @@ async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session
 
 
 @pytest.mark.asyncio
+async def test_event_params_serves_a_session_with_the_deployments_reranker():
+    """The reranker is the deployment's whatever the session names."""
+    deployment = _DEPLOYMENT.model_copy(update={"reranker": "deployment_reranker"})
+    resource_manager = _deployment_resource_manager(deployment)
+    resource_manager.get_event_memory.return_value = await event_memory_from_config(
+        resource_manager
+    )
+    resource_manager.get_reranker.reset_mock()
+    config = EventLongTermMemoryConf(session_id="s", reranker="session_reranker")
+
+    await long_term_memory_from_config(config, resource_manager)
+
+    resource_manager.get_reranker.assert_awaited_once_with(
+        "deployment_reranker", validate=True
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "deployment",
     [
@@ -233,17 +261,25 @@ async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session
         LongTermMemoryConfPartial(
             backend="declarative", vector_graph_store="g", embedder="e"
         ),
+        LongTermMemoryConfPartial(segment_store="ss", embedder="e"),
+        LongTermMemoryConfPartial(vector_store="vs", embedder="e"),
+        LongTermMemoryConfPartial(vector_store="vs", segment_store="ss"),
     ],
-    ids=["no_long_term_memory", "declarative_memory"],
+    ids=[
+        "no_long_term_memory",
+        "declarative_memory",
+        "no_vector_store",
+        "no_segment_store",
+        "no_embedder",
+    ],
 )
-async def test_event_params_refuses_a_session_of_a_deployment_without_event_memory(
+async def test_event_memory_from_config_refuses_a_deployment_without_event_memory(
     deployment: LongTermMemoryConfPartial | None,
 ):
     resource_manager = _deployment_resource_manager(deployment)
-    config = EventLongTermMemoryConf(session_id="s")
 
     with pytest.raises(ConfigurationError, match="no event memory"):
-        await long_term_memory_from_config(config, resource_manager)
+        await event_memory_from_config(resource_manager)
 
     resource_manager.get_vector_store.assert_not_awaited()
     resource_manager.get_segment_store.assert_not_awaited()
@@ -253,6 +289,9 @@ async def test_event_params_refuses_a_session_of_a_deployment_without_event_memo
 async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without_opening_them():
     """A session's partitions are deleted by key, so deleting creates none."""
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+    resource_manager.get_event_memory.return_value = await event_memory_from_config(
+        resource_manager
+    )
     config = EventLongTermMemoryConf(session_id="s")
 
     await delete_long_term_memory_storage(config, resource_manager)

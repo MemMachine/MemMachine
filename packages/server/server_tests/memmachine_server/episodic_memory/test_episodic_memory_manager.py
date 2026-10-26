@@ -40,6 +40,7 @@ from memmachine_server.episodic_memory.episodic_memory_manager import (
 from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     event_backend_indexed_properties,
+    event_memory_from_config,
 )
 
 
@@ -648,6 +649,9 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
     mock_resource_manager.get_vector_store.return_value = vector_store
     mock_resource_manager.get_segment_store.return_value = segment_store
     mock_resource_manager.get_embedder.return_value = embedder
+    mock_resource_manager.get_event_memory.return_value = (
+        await event_memory_from_config(mock_resource_manager)
+    )
     await mock_session_storage.create_or_validate_session(
         session_key,
         {},
