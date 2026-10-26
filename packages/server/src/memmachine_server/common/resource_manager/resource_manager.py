@@ -206,8 +206,7 @@ class ResourceManagerImpl:
 
         await self._database_manager.migrate_graph_stores()
 
-        if self._conf.semantic_memory.enabled:
-            await (await self.get_semantic_manager()).migrate()
+        await (await self.get_semantic_manager()).migrate()
 
     async def close(self) -> None:
         """Close resources and clean up state."""

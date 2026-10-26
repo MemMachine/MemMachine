@@ -111,6 +111,23 @@ def test_migrate_command_creates_every_selectable_store(
 
 
 @pytest.mark.asyncio
+async def test_migrate_covers_disabled_semantic_memory_storage(
+    configuration_path,
+):
+    configuration_path.write_text(
+        configuration_path.read_text().replace(
+            "semantic_memory:\n", "semantic_memory:\n  enabled: false\n"
+        )
+    )
+
+    await app.migrate()
+
+    assert {"vector_semantic_feature", "semantic_config_category"} <= _tables(
+        configuration_path.parent / "memmachine.db"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_rerun_changes_nothing(configuration_path):
     await app.migrate()
     before = _tables(configuration_path.parent / "memmachine.db")

@@ -43,7 +43,8 @@ Every store a server can open under the configuration:
   configures event memory;
 - every NebulaGraph graph store (a Neo4j graph store creates its indexes as
   its labels grow);
-- semantic memory, when enabled.
+- semantic memory's storage and config store, each when configured, whether
+  or not semantic memory is enabled.
 
 Some creation stays on the request path, as data-plane work rather than
 schema: a SQLite vector store's tables for each partition, Neo4j and

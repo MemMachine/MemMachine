@@ -91,13 +91,17 @@ class SemanticResourceManager:
         """
         Create semantic memory's durable resources, or bring them up to date.
 
-        Run it with no server using them, before semantic memory starts.
+        Its storage and its config store are each migrated when configured,
+        whether or not semantic memory is enabled. Run it with no server
+        using them, before semantic memory starts.
         """
-        if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
-            await self._migrate_vector_store_semantic_storage()
-        else:
-            await (await self._construct_semantic_storage()).migrate()
-        await (await self._build_semantic_config_storage()).migrate()
+        if self._conf.storage_configured():
+            if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
+                await self._migrate_vector_store_semantic_storage()
+            else:
+                await (await self._construct_semantic_storage()).migrate()
+        if self._conf.config_database:
+            await (await self._build_semantic_config_storage()).migrate()
 
     async def get_semantic_storage(self) -> SemanticStorage:
         """Return the semantic storage, building and starting it on first use.
