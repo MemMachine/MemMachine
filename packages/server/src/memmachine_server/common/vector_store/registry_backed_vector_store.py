@@ -456,7 +456,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         Raises:
             SchemaMismatchError:
                 If the storage is missing, or was prepared with other
-                dimensions or another metric.
+                dimensions, another metric, or other declared properties.
         """
         raise NotImplementedError
 

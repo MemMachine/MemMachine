@@ -615,6 +615,20 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
                 f"other than this store's: {self._store_schema.vector_dimensions} dimensions "
                 f"by {metric}."
             )
+        declared_fields = {
+            field["name"]: field["type"]
+            for field in description["fields"]
+            if field["name"].startswith(_DECLARED_FIELD_PREFIX)
+        }
+        declared = {
+            f"{_DECLARED_FIELD_PREFIX}{key}": _DECLARED_DATA_TYPES[property_type]
+            for key, property_type in self._store_schema.indexed_properties.items()
+        }
+        if declared_fields != declared:
+            raise SchemaMismatchError(
+                f"The Milvus collection {self._collection_name!r} holds other "
+                "declared properties than this store's."
+            )
 
     @override
     async def _prepare_partition_storage(

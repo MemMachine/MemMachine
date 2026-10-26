@@ -43,6 +43,9 @@ from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
 )
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
+)
 
 pytestmark = pytest.mark.skipif(
     not hasattr(sqlite3.Connection, "enable_load_extension"),
@@ -1285,3 +1288,17 @@ class TestPartitionResources:
         [found] = await second.query(query_vectors=[record.vector], limit=5)
         assert [match.record_uuid for match in found.matches] == [record.uuid]
         await store.delete_partition(NAME)
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return SQLiteVecVectorStore(
+            _params(
+                store._engine,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )

@@ -39,8 +39,9 @@ when that is missing or behind:
 
 - a SQL store compares its lineage's version table with the newest revision
   this code has, and refuses a missing, older, or unknown revision;
-- a Qdrant or Milvus store checks that its native collection exists with its
-  dimensions and metric (and Milvus loads it);
+- a vector store checks its dimensions, metric, and declared properties: a
+  Qdrant or Milvus store against its native collection (and Milvus loads it),
+  a SQLite store against the schema its migration recorded;
 - a semantic store checks that its tables, or Neo4j constraints, exist.
 
 So an old server refuses a database a newer release migrated, and a new
