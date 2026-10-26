@@ -51,6 +51,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
 )
 from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
+from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
 from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 
 RERANKER_ID = "my_reranker"
@@ -355,6 +356,40 @@ async def test_close_cancels_segment_store_purge_tasks(
     await invalid_resource_manager.close()
 
     assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_get_event_memory_builds_and_starts_one_event_memory(
+    invalid_resource_manager, monkeypatch
+):
+    """Concurrent first accesses build the deployment's EventMemory once and start it once."""
+    event_memory = create_autospec(EventMemory, instance=True)
+    build = AsyncMock(return_value=event_memory)
+    monkeypatch.setattr(resource_manager_module, "event_memory_from_config", build)
+
+    handed_out = await asyncio.gather(
+        invalid_resource_manager.get_event_memory(),
+        invalid_resource_manager.get_event_memory(),
+    )
+
+    assert handed_out == [event_memory, event_memory]
+    build.assert_awaited_once_with(invalid_resource_manager)
+    event_memory.startup.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_close_shuts_the_event_memory_down(invalid_resource_manager, monkeypatch):
+    event_memory = create_autospec(EventMemory, instance=True)
+    monkeypatch.setattr(
+        resource_manager_module,
+        "event_memory_from_config",
+        AsyncMock(return_value=event_memory),
+    )
+    await invalid_resource_manager.get_event_memory()
+
+    await invalid_resource_manager.close()
+
+    event_memory.shutdown.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
