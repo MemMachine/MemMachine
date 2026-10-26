@@ -277,11 +277,6 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         self._index_path = index_path
         self._save_threshold = save_threshold
 
-    @property
-    @override
-    def store_schema(self) -> VectorStoreSchema:
-        return self._store_schema
-
     async def _maybe_save_index(self) -> None:
         """Save the index to disk if applied pending operations exceed the threshold."""
         if self._index_path is None:

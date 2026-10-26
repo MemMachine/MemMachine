@@ -95,7 +95,7 @@ async def _stored(partition) -> dict[UUID, dict]:
         rows = (await session.execute(select(table))).all()
     return {
         row.uuid: _declared_values(
-            row._mapping, partition.store_schema.indexed_properties
+            row._mapping, partition._store_schema.indexed_properties
         )
         for row in rows
     }

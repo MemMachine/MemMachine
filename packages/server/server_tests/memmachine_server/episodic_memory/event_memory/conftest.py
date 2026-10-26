@@ -18,11 +18,7 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.vector_store import (
-    VectorStore,
-    VectorStorePartition,
-    VectorStoreSchema,
-)
+from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.event_memory.data_types import Segment
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
@@ -218,14 +214,14 @@ class FakeReranker(Reranker):
 async def open_event_memory_partition(
     *,
     segment_store_partition: SegmentStorePartition,
-    vector_store_partition: VectorStorePartition,
+    vector_store_partition: InMemoryVectorStorePartition,
     segmenter: Segmenter,
     deriver: Deriver,
     embedder: Embedder,
     reranker: Reranker | None = None,
     metrics_factory: MetricsFactory | None = None,
 ) -> EventMemoryPartition:
-    """Open a partition of an EventMemory whose stores hand out the given partitions."""
+    """Open a partition of an EventMemory whose stores hand out the given partitions, with the vector store partition's schema."""
     segment_store = create_autospec(SegmentStore, instance=True)
     segment_store.open_or_create_partition.return_value = segment_store_partition
     vector_store = create_autospec(VectorStore, instance=True)
@@ -234,6 +230,7 @@ async def open_event_memory_partition(
         EventMemoryParams(
             segment_store=segment_store,
             vector_store=vector_store,
+            store_schema=vector_store_partition._store_schema,
             segmenter=segmenter,
             deriver=deriver,
             embedder=embedder,

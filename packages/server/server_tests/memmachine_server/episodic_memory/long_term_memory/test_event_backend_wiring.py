@@ -208,6 +208,7 @@ async def _event_backend_params(
         EventMemoryParams(
             segment_store=segment_store,
             vector_store=vector_store,
+            store_schema=vector_store_partition._store_schema,
             segmenter=segmenter,
             deriver=WholeTextDeriver(),
             embedder=embedder,

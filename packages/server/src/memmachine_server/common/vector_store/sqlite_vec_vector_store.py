@@ -136,11 +136,6 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
         self._records_table = records_table
         self._vector_table_name = vector_table_name
 
-    @property
-    @override
-    def store_schema(self) -> VectorStoreSchema:
-        return self._store_schema
-
     @staticmethod
     def _serialize_vector(vector: Sequence[float]) -> bytes:
         return sqlite_vec.serialize_float32(list(vector))
