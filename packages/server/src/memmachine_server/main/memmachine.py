@@ -596,13 +596,14 @@ class MemMachine:
                 user_conf = EpisodicMemoryConfPartial()
             user_conf.session_key = session_key
             episodic_conf = user_conf.merge(self._conf.episodic_memory)
-            if episodic_conf.long_term_memory is not None:
-                if isinstance(episodic_conf.long_term_memory, EventLongTermMemoryConf):
-                    deployment_event_memory_ids(self._conf)
-                elif episodic_conf.long_term_memory.embedder is not None:
-                    self._conf.check_embedder(episodic_conf.long_term_memory.embedder)
-                if episodic_conf.long_term_memory.reranker is not None:
-                    self._conf.check_reranker(episodic_conf.long_term_memory.reranker)
+            long_term_memory = episodic_conf.long_term_memory
+            if isinstance(long_term_memory, EventLongTermMemoryConf):
+                deployment_event_memory_ids(self._conf)
+            elif long_term_memory is not None:
+                if long_term_memory.embedder is not None:
+                    self._conf.check_embedder(long_term_memory.embedder)
+                if long_term_memory.reranker is not None:
+                    self._conf.check_reranker(long_term_memory.reranker)
         except ValidationError as e:
             logger.exception(
                 "Failed to merge configuration: %s, %s",

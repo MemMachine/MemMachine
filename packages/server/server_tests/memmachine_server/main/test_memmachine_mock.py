@@ -354,8 +354,7 @@ def test_an_event_project_takes_the_deployments_event_memory(
         session_key="s", user_conf=_EVENT_PROJECT
     )
 
-    assert isinstance(merged.long_term_memory, EventLongTermMemoryConf)
-    assert merged.long_term_memory.reranker == "default-reranker"
+    assert merged.long_term_memory == EventLongTermMemoryConf(session_id="s")
 
 
 def test_a_deployment_without_event_memory_refuses_an_event_project(
