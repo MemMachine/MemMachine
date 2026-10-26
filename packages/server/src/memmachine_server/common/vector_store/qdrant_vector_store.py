@@ -562,6 +562,20 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
                 f"other than this store's: {self._store_schema.vector_dimensions} dimensions "
                 f"by {distance.value}."
             )
+        indexed = {
+            key: index.data_type
+            for key, index in info.payload_schema.items()
+            if key != _PAYLOAD_INCARNATION
+        }
+        declared = {
+            key: QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE[property_type]
+            for key, property_type in self._store_schema.indexed_properties.items()
+        }
+        if indexed != declared:
+            raise SchemaMismatchError(
+                f"The Qdrant collection {self._vector_store_name!r} indexes other "
+                "properties than this store declares."
+            )
 
     @override
     async def _prepare_partition_storage(

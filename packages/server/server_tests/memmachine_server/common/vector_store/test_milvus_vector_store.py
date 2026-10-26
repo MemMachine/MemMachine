@@ -21,6 +21,9 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_p
 from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
     PartitionLifecycleContract,
 )
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
+)
 
 pymilvus = pytest.importorskip("pymilvus")
 DataType = pymilvus.DataType
@@ -2259,3 +2262,18 @@ class TestLifecycleContract(PartitionLifecycleContract):
             consistency_level="Strong",
         )
         return {UUID(row["record_uuid"]) for row in rows}
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return MilvusVectorStore(
+            await _params(
+                store._client,
+                store._partition_registry._engine,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )

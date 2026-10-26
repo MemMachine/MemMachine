@@ -50,6 +50,9 @@ from memmachine_server.common.vector_store.vector_search_engine.usearch_engine i
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
 )
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
+)
 
 VECTOR_STORE_NAME = "test_vector_store"
 NAME = "test_name"
@@ -1914,3 +1917,17 @@ class TestPartitionResources:
 
         await store.shutdown()
         await engine.dispose()
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return SQLiteVectorStore(
+            _params(
+                store._sqlalchemy_engine,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )

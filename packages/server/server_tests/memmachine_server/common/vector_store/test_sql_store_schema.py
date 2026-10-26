@@ -7,9 +7,11 @@ import pytest_asyncio
 from sqlalchemy import MetaData, select
 
 from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.errors import SchemaMismatchError
 from memmachine_server.common.sql import write_connection
 from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.common.vector_store.sql_store_schema import (
+    check_store_schema,
     record_store_schema,
     store_schema_tables,
 )
@@ -72,3 +74,49 @@ async def test_a_recorded_schema_is_kept(sqlalchemy_sqlite_engine, tables):
         )
 
     assert await _recorded(sqlalchemy_sqlite_engine, tables) == before
+
+
+@pytest.mark.asyncio
+async def test_the_store_s_own_recorded_schema_passes_the_check(
+    sqlalchemy_sqlite_engine, tables
+):
+    async with write_connection(sqlalchemy_sqlite_engine) as connection:
+        await record_store_schema(connection, tables, "events", _SCHEMA)
+
+    await check_store_schema(sqlalchemy_sqlite_engine, tables, "events", _SCHEMA)
+
+
+@pytest.mark.asyncio
+async def test_the_check_refuses_a_store_with_no_recorded_schema(
+    sqlalchemy_sqlite_engine, tables
+):
+    with pytest.raises(SchemaMismatchError, match="memmachine-server migrate"):
+        await check_store_schema(sqlalchemy_sqlite_engine, tables, "events", _SCHEMA)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("changes", "match"),
+    [
+        ({"vector_dimensions": 4}, "holds vectors other than"),
+        ({"similarity_metric": SimilarityMetric.COSINE}, "holds vectors other than"),
+        ({"indexed_properties": {"name": str}}, "declares other properties"),
+        (
+            {"indexed_properties": {"name": int, "created_at": datetime}},
+            "declares other properties",
+        ),
+    ],
+)
+async def test_the_check_refuses_a_schema_recorded_otherwise(
+    sqlalchemy_sqlite_engine, tables, changes, match
+):
+    async with write_connection(sqlalchemy_sqlite_engine) as connection:
+        await record_store_schema(connection, tables, "events", _SCHEMA)
+
+    with pytest.raises(SchemaMismatchError, match=match):
+        await check_store_schema(
+            sqlalchemy_sqlite_engine,
+            tables,
+            "events",
+            _SCHEMA.model_copy(update=changes),
+        )

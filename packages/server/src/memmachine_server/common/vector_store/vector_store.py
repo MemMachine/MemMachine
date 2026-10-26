@@ -188,7 +188,7 @@ class VectorStore(ABC):
             SchemaMismatchError:
                 If `migrate` has not created the store's durable resources
                 or brought them up to date, or they conflict with the
-                store's dimensions or metric.
+                store's dimensions, metric, or declared properties.
         """
         raise NotImplementedError
 

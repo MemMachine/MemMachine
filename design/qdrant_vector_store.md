@@ -33,7 +33,8 @@ registry](vector_store_partition_registry.md),
 - **Migration converges:** `migrate` creates the collection and each payload
   index under separate already-exists guards, so a migration that failed
   between them is completed by the next. `startup` checks that the
-  collection exists with the store's dimensions and metric.
+  collection exists with the store's dimensions and metric, and indexes
+  exactly the declared properties, by type.
 - **Client:** `AsyncQdrantClient`, with `request_timeout_seconds` as its
   timeout.
 - **Oversized upserts are halved.** Qdrant's REST API refuses a request over

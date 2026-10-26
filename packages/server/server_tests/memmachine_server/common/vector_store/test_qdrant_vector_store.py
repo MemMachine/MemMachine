@@ -65,6 +65,9 @@ from server_tests.memmachine_server.common.vector_store.declared_schema_contract
 from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
     PartitionLifecycleContract,
 )
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
+)
 
 VECTOR_STORE_NAME = "test_vector_store"
 NAME = "test_name"
@@ -2279,7 +2282,14 @@ class TestStrictModeIsRequested:
             return await original(*args, **kwargs)
 
         monkeypatch.setattr(client, "create_collection", recording_create_collection)
-        store = QdrantVectorStore(await _params(client, registry_engine))
+        # Local mode records no payload indexes, so the store declares none.
+        store = QdrantVectorStore(
+            await _params(
+                client,
+                registry_engine,
+                store_schema=_schema(indexed_properties={}),
+            )
+        )
         await store.migrate()
 
         assert set(requested) == {VECTOR_STORE_NAME}
@@ -2300,3 +2310,18 @@ class TestLifecycleContract(PartitionLifecycleContract):
     async def settle(partition) -> None:
         # A Qdrant write returns once applied, so reads reflect it already.
         pass
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return QdrantVectorStore(
+            await _params(
+                store._client,
+                store._partition_registry._engine,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )
