@@ -841,6 +841,10 @@ class TestUpsertAndQuery:
     ):
         """Milvus refuses a request over proxy.grpc.serverMaxRecvSize (64 MiB
         unless configured) before writing any of it."""
+        # pymilvus checks a string value a character at a time while it
+        # builds a request, within the request's timeout, so this store
+        # gives its request, the whole batch, longer than the module's
+        # timeout.
         refused = await _started_store(
             store._client,
             store._partition_registry._engine,
@@ -848,6 +852,7 @@ class TestUpsertAndQuery:
             store_schema=_schema(indexed_properties={"text": str}),
             max_varchar_length=65535,
             max_request_bytes=128 * 1024 * 1024,
+            request_timeout_seconds=120,
         )
         await refused.create_partition(NAME)
         partition = await refused.open_partition(NAME)
