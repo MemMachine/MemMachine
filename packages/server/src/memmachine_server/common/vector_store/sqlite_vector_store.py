@@ -817,47 +817,7 @@ class SQLiteVectorStore(VectorStore):
             return
 
     @override
-    async def open_or_create_partition(
-        self, partition_key: str
-    ) -> VectorStorePartition:
-        self._require_started()
-        validate_partition_key(partition_key)
-
-        # Read-then-insert, retried: losing the insert means another creator
-        # won (open its partition next), and finding no partition after
-        # losing means a deleter removed the winner.
-        attempts = 0
-        while True:
-            async with self._create_session() as session:
-                incarnation = await self._partition_incarnation(session, partition_key)
-            if incarnation is not None:
-                return await self._partition_handle(partition_key, incarnation)
-
-            incarnation = uuid4()
-            try:
-                await self._insert_partition(partition_key, incarnation)
-            except (
-                VectorStorePartitionAlreadyExistsError,
-                _RegistryInsertRejectedError,
-            ) as err:
-                if isinstance(err, _RegistryInsertRejectedError):
-                    logger.warning(
-                        "Creating partition %r was rejected: %s; minting another "
-                        "incarnation",
-                        partition_key,
-                        err,
-                    )
-                attempts += 1
-                if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise VectorStoreAttemptsExhaustedError(
-                        f"Opening or creating partition {partition_key!r} made no "
-                        f"progress after {_MAX_MINT_ATTEMPTS} attempts"
-                    ) from err
-                continue
-            return await self._partition_handle(partition_key, incarnation)
-
-    @override
-    async def open_partition(self, partition_key: str) -> VectorStorePartition | None:
+    async def get_partition(self, partition_key: str) -> VectorStorePartition | None:
         self._require_started()
         validate_partition_key(partition_key)
 

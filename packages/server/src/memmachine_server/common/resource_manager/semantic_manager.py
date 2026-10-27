@@ -161,9 +161,17 @@ class SemanticResourceManager:
 
         # The manager owns this partition and provisions it when the storage is
         # built.
-        vector_partition = await vector_store.open_or_create_partition(
-            _VECTOR_STORE_PARTITION_KEY
-        )
+        vector_partition = await vector_store.get_partition(_VECTOR_STORE_PARTITION_KEY)
+        if vector_partition is None:
+            await vector_store.create_partition(_VECTOR_STORE_PARTITION_KEY)
+            vector_partition = await vector_store.get_partition(
+                _VECTOR_STORE_PARTITION_KEY
+            )
+            if vector_partition is None:
+                raise RuntimeError(
+                    "The semantic memory's vector store partition is gone right "
+                    "after its creation"
+                )
         storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()
         return storage
