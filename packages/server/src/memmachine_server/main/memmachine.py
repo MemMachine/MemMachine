@@ -16,6 +16,7 @@ from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
     EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
@@ -50,6 +51,9 @@ from memmachine_server.common.session_manager.session_data_manager import (
 )
 from memmachine_server.common.sql_lease_lock import LockAcquireTimeoutError
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    deployment_event_memory_ids,
+)
 from memmachine_server.retrieval_agent import create_retrieval_agent
 from memmachine_server.retrieval_agent.common.agent_api import (
     AgentToolBase,
@@ -72,9 +76,7 @@ from memmachine_server.semantic_memory.semantic_model import (
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
-from memmachine_server.semantic_memory.storage.storage_base import (
-    SemanticDeletionStorage,
-)
+from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 
 logger = logging.getLogger(__name__)
 
@@ -453,7 +455,7 @@ class MemMachine:
     async def _delete_session_episode_store(
         self,
         session_key: str,
-        semantic_storage: SemanticDeletionStorage | None,
+        semantic_storage: SemanticStorage | None,
     ) -> None:
         episode_store = await self._resources.get_episode_storage()
         session_filter = FilterComparison(
@@ -479,7 +481,7 @@ class MemMachine:
     async def _delete_session_semantic_memory(
         self,
         session: SessionData,
-        semantic_storage: SemanticDeletionStorage,
+        semantic_storage: SemanticStorage,
     ) -> None:
         set_ids = SemanticSessionManager.project_deletion_set_ids(
             org_id=session.org_id,
@@ -494,16 +496,11 @@ class MemMachine:
             filter_expr=with_has_set_ids(set_ids, None)
         )
 
-    async def _semantic_deletion_storage(self) -> SemanticDeletionStorage | None:
+    async def _semantic_deletion_storage(self) -> SemanticStorage | None:
         if not self._conf.semantic_memory.storage_configured():
             logger.debug("No semantic storage configured; skipping semantic cleanup.")
             return None
-        storage = await self._resources.get_semantic_deletion_storage()
-        if storage is None:
-            logger.debug(
-                "Semantic storage was never initialized; no semantic data to delete."
-            )
-        return storage
+        return await self._resources.get_semantic_storage()
 
     async def start(
         self, key_to_session: Callable[[str], SessionData] | None = None
@@ -577,7 +574,8 @@ class MemMachine:
             The resolved episodic memory configuration.
 
         Raises:
-            ConfigurationError: If the merged configuration is invalid.
+            ConfigurationError: If the merged configuration is invalid, or
+                has event memory on a deployment that configures none.
 
         """
         # Get default prompts from config, with fallbacks
@@ -589,7 +587,9 @@ class MemMachine:
             user_conf.session_key = session_key
             episodic_conf = user_conf.merge(self._conf.episodic_memory)
             if episodic_conf.long_term_memory is not None:
-                if episodic_conf.long_term_memory.embedder is not None:
+                if isinstance(episodic_conf.long_term_memory, EventLongTermMemoryConf):
+                    deployment_event_memory_ids(self._conf)
+                elif episodic_conf.long_term_memory.embedder is not None:
                     self._conf.check_embedder(episodic_conf.long_term_memory.embedder)
                 if episodic_conf.long_term_memory.reranker is not None:
                     self._conf.check_reranker(episodic_conf.long_term_memory.reranker)

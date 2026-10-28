@@ -83,7 +83,7 @@ def test_update_episodic_memory_conf(
     )
 
     updated = specific.merge(base)
-    assert updated.long_term_memory is not None
+    assert isinstance(updated.long_term_memory, DeclarativeLongTermMemoryConf)
     assert updated.short_term_memory is not None
     assert updated.long_term_memory.embedder == "embedder_v2"
     assert updated.long_term_memory.reranker == "reranker_v1"
@@ -268,6 +268,7 @@ def test_old_param_data_without_backend_loads_as_declarative():
 
 
 def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
+    """A saved event session loads without the stores and embedder it once recorded."""
     data = {
         "session_key": "s",
         "long_term_memory": {
@@ -282,8 +283,9 @@ def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
 
     conf = EpisodicMemoryConf.model_validate(data)
     assert isinstance(conf.long_term_memory, EventLongTermMemoryConf)
-    assert conf.long_term_memory.vector_store == "vstore"
-    assert conf.long_term_memory.segment_store == "pg_engine"
+    assert not {"vector_store", "segment_store", "embedder"} & set(
+        conf.long_term_memory.model_dump()
+    )
     # Default sub-configs.
     assert isinstance(conf.long_term_memory.segmenter, PassthroughSegmenterConf)
     assert isinstance(conf.long_term_memory.deriver, WholeTextDeriverConf)
@@ -338,9 +340,7 @@ def test_partial_merge_with_event_backend_resolves_to_event():
 
     merged = override.merge(base)
     assert isinstance(merged, EventLongTermMemoryConf)
-    assert merged.vector_store == "v"
-    assert merged.segment_store == "seg"
-    assert merged.embedder == "e"
+    assert merged.session_id == "s"
     assert merged.reranker is None
 
 

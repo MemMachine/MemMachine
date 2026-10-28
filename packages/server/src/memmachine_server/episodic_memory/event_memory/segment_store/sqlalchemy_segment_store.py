@@ -229,15 +229,14 @@ class PurgeQueueRow(BaseSegmentStore):
     Claimed oldest-first by the enqueue stamp, which is the database clock,
     so entries from every server order on one clock; entries stamped in the
     same tick are unordered among themselves. The incarnation identifies
-    the rows to reclaim; the logical key is carried for forensics. Every
-    segment row of the incarnation keyed at or below purged_through is
-    deleted; NULL until the first full batch.
+    the rows to reclaim. Every segment row of the incarnation keyed at or
+    below purged_through is deleted; NULL until the first full batch. An
+    entry holds only what the purge reads.
     """
 
     __tablename__ = "segment_store_gc"
 
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    partition_key: MappedColumn[str] = mapped_column(String(255), nullable=False)
     enqueued_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -1267,7 +1266,6 @@ class SQLAlchemySegmentStore(SegmentStore):
             await session.execute(
                 insert(PurgeQueueRow).values(
                     incarnation=incarnation,
-                    partition_key=partition_key,
                     # The database clock: transaction start on PostgreSQL,
                     # and one deletion per transaction, so one stamp per
                     # entry.

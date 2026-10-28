@@ -1,11 +1,14 @@
-"""In-memory VectorStoreCollection implementation for testing."""
+"""In-memory VectorStorePartition implementation for testing."""
 
 import math
 import operator
 from collections.abc import Iterable, Sequence
 from uuid import UUID
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import (
+    PropertyValue,
+    SimilarityMetric,
+)
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -15,12 +18,14 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
-from memmachine_server.common.vector_store import VectorStoreCollection
+from memmachine_server.common.vector_store import (
+    VectorStorePartition,
+    VectorStoreSchema,
+)
 from memmachine_server.common.vector_store.data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -104,24 +109,24 @@ def _passes_threshold(score: float, threshold: float, higher_is_better: bool) ->
 
 
 # ---------------------------------------------------------------------------
-# InMemoryVectorStoreCollection
+# InMemoryVectorStorePartition
 # ---------------------------------------------------------------------------
 
 
-class InMemoryVectorStoreCollection(VectorStoreCollection):
-    """In-memory VectorStoreCollection for testing.
+class InMemoryVectorStorePartition(VectorStorePartition):
+    """In-memory VectorStorePartition for testing.
 
     Supports all similarity metrics (cosine, dot, euclidean, manhattan)
     and full FilterExpr evaluation on record properties.
     """
 
-    def __init__(self, collection_config: VectorStoreCollectionConfig) -> None:
-        self.collection_config = collection_config
+    def __init__(self, *, store_schema: VectorStoreSchema) -> None:
+        self._store_schema = store_schema
         self.records: dict[UUID, Record] = {}
 
     @property
-    def config(self) -> VectorStoreCollectionConfig:
-        return self.collection_config
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
         for record in records:
@@ -139,7 +144,7 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
     ) -> list[QueryResult]:
-        metric = self.collection_config.similarity_metric
+        metric = self._store_schema.similarity_metric
         higher_is_better = metric.higher_is_better
 
         results: list[QueryResult] = []

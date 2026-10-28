@@ -2263,7 +2263,6 @@ async def test_concurrent_remote_delete_yields_single_queue_entry(
             await remote_session.execute(
                 insert(PurgeQueueRow).values(
                     incarnation=incarnation,
-                    partition_key="remote_del",
                     enqueued_at=func.now(),
                 )
             )
@@ -2470,7 +2469,6 @@ async def test_mint_detects_collision_with_concurrent_deletion(
         await remote_session.execute(
             insert(PurgeQueueRow).values(
                 incarnation=victim_incarnation,
-                partition_key="mint_victim",
                 enqueued_at=func.now(),
             )
         )
@@ -3475,7 +3473,6 @@ async def test_sqlite_mint_detects_collision_with_concurrent_deletion(
         await remote_session.execute(
             insert(PurgeQueueRow).values(
                 incarnation=victim_incarnation,
-                partition_key="sq_mint_victim",
                 enqueued_at=func.now(),
             )
         )

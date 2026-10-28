@@ -72,6 +72,8 @@ class SpecDoc:
     - Must refer to an embedder model defined in the system configuration.
     - If set to an empty string (default), the globally configured embedder will
       be used.
+    - Applies to the declarative backend only: an event-backed project uses the
+      embedder the server configures for event memory.
 
     Embedders generate vector embeddings for text to support semantic search and
     similarity operations.

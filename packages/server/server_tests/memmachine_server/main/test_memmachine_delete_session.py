@@ -183,7 +183,7 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     session_manager.delete_session = AsyncMock()
     resources.get_episode_storage = AsyncMock(return_value=episode_store)
     resources.get_session_data_manager = AsyncMock(return_value=session_manager)
-    resources.get_semantic_deletion_storage = AsyncMock(
+    resources.get_semantic_storage = AsyncMock(
         side_effect=AssertionError("semantic storage must stay unused")
     )
 
@@ -208,4 +208,4 @@ async def test_delete_episode_store_processes_in_batches() -> None:
     # delete_episodes called once per non-empty batch
     assert delete_episodes_mock.call_count == 3
     session_manager.delete_session.assert_awaited_once_with(session_key="test-session")
-    resources.get_semantic_deletion_storage.assert_not_awaited()
+    resources.get_semantic_storage.assert_not_awaited()

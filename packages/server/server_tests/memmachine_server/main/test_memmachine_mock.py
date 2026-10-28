@@ -19,6 +19,7 @@ from memmachine_server.common.configuration import (
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
     EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
@@ -29,6 +30,7 @@ from memmachine_server.common.episode_store import (
     EpisodeResponse,
 )
 from memmachine_server.common.errors import (
+    ConfigurationError,
     ResourceNotFoundError,
     SessionNotFoundError,
 )
@@ -327,6 +329,43 @@ def test_with_default_long_conf_enable_status(
     )
     assert conf.short_term_memory_enabled is False
     assert conf.long_term_memory_enabled is True
+
+
+_EVENT_PROJECT = EpisodicMemoryConfPartial(
+    long_term_memory=LongTermMemoryConfPartial(backend="event")
+)
+
+
+def test_an_event_project_takes_the_deployments_event_memory(
+    minimal_conf_factory, patched_resource_manager
+):
+    conf = minimal_conf_factory()
+    conf.episodic_memory.long_term_memory = LongTermMemoryConfPartial(
+        backend="event",
+        vector_store="vs",
+        segment_store="ss",
+        embedder="default-embedder",
+        reranker="default-reranker",
+    )
+    memmachine = MemMachine(conf, patched_resource_manager)
+
+    merged = memmachine._with_default_episodic_memory_conf(
+        session_key="s", user_conf=_EVENT_PROJECT
+    )
+
+    assert isinstance(merged.long_term_memory, EventLongTermMemoryConf)
+    assert merged.long_term_memory.reranker == "default-reranker"
+
+
+def test_a_deployment_without_event_memory_refuses_an_event_project(
+    minimal_conf, patched_resource_manager
+):
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    with pytest.raises(ConfigurationError, match="no event memory"):
+        memmachine._with_default_episodic_memory_conf(
+            session_key="s", user_conf=_EVENT_PROJECT
+        )
 
 
 @pytest.mark.asyncio
@@ -1214,7 +1253,7 @@ async def test_delete_episodes_rejects_ids_from_another_session_before_deleting(
 
     episode_storage.delete_episodes.assert_not_awaited()
     patched_resource_manager.get_episodic_memory_manager.assert_not_awaited()
-    patched_resource_manager.get_semantic_deletion_storage.assert_not_awaited()
+    patched_resource_manager.get_semantic_storage.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1406,7 +1445,7 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     minimal_conf.semantic_memory.storage_configured.return_value = True
     semantic_storage = AsyncMock()
-    patched_resource_manager.get_semantic_deletion_storage = AsyncMock(
+    patched_resource_manager.get_semantic_storage = AsyncMock(
         return_value=semantic_storage
     )
 
@@ -2056,7 +2095,7 @@ async def test_delete_episodes_skips_semantic_when_no_storage_is_configured(
     minimal_conf, patched_resource_manager
 ):
     minimal_conf.semantic_memory.storage_configured.return_value = False
-    patched_resource_manager.get_semantic_deletion_storage = AsyncMock()
+    patched_resource_manager.get_semantic_storage = AsyncMock()
     memmachine, episode_storage = _delete_episodes_machine(
         minimal_conf, patched_resource_manager
     )
@@ -2065,7 +2104,7 @@ async def test_delete_episodes_skips_semantic_when_no_storage_is_configured(
         [_uid("e1")], session_data=DummySessionData("session")
     )
 
-    patched_resource_manager.get_semantic_deletion_storage.assert_not_awaited()
+    patched_resource_manager.get_semantic_storage.assert_not_awaited()
     episode_storage.delete_episodes.assert_awaited_once_with([_uid("e1")])
 
 
@@ -2077,7 +2116,7 @@ async def test_delete_episodes_deletes_semantic_history_when_storage_is_configur
     minimal_conf.semantic_memory.enabled = enabled
     minimal_conf.semantic_memory.storage_configured.return_value = True
     semantic_storage = AsyncMock()
-    patched_resource_manager.get_semantic_deletion_storage = AsyncMock(
+    patched_resource_manager.get_semantic_storage = AsyncMock(
         return_value=semantic_storage
     )
     memmachine, episode_storage = _delete_episodes_machine(
@@ -2097,7 +2136,7 @@ async def test_delete_episodes_deletes_nothing_when_semantic_storage_fails(
     minimal_conf, patched_resource_manager
 ):
     minimal_conf.semantic_memory.storage_configured.return_value = True
-    patched_resource_manager.get_semantic_deletion_storage = AsyncMock(
+    patched_resource_manager.get_semantic_storage = AsyncMock(
         side_effect=ConnectionError("semantic store unreachable")
     )
     memmachine, episode_storage = _delete_episodes_machine(
@@ -2122,7 +2161,7 @@ async def test_delete_episodes_keeps_episodes_when_semantic_history_delete_fails
     semantic_storage.delete_history.side_effect = ConnectionError(
         "semantic store unreachable"
     )
-    patched_resource_manager.get_semantic_deletion_storage = AsyncMock(
+    patched_resource_manager.get_semantic_storage = AsyncMock(
         return_value=semantic_storage
     )
     memmachine, episode_storage = _delete_episodes_machine(
@@ -2163,7 +2202,7 @@ async def test_disabled_semantic_memory_still_deletes_the_project_sets(
     minimal_conf.semantic_memory.enabled = False
     minimal_conf.semantic_memory.storage_configured.return_value = True
     semantic_storage = AsyncMock()
-    patched_resource_manager.get_semantic_deletion_storage = AsyncMock(
+    patched_resource_manager.get_semantic_storage = AsyncMock(
         return_value=semantic_storage
     )
     machine, manager, _ = _pending_session_machine(
@@ -2186,29 +2225,11 @@ async def test_disabled_semantic_memory_still_deletes_the_project_sets(
 
 
 @pytest.mark.asyncio
-async def test_never_initialized_semantic_store_lets_the_deletion_complete(
-    minimal_conf, patched_resource_manager
-):
-    minimal_conf.semantic_memory.storage_configured.return_value = True
-    patched_resource_manager.get_semantic_deletion_storage = AsyncMock(
-        return_value=None
-    )
-    machine, manager, _ = _pending_session_machine(
-        minimal_conf, patched_resource_manager
-    )
-
-    await machine._delete_queued_session(DummySessionData("pending"))
-
-    manager.delete_session.assert_awaited_once_with(session_key="pending")
-    patched_resource_manager.get_semantic_deletion_storage.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_unreachable_semantic_store_leaves_the_session_for_retry(
     minimal_conf, patched_resource_manager
 ):
     minimal_conf.semantic_memory.storage_configured.return_value = True
-    patched_resource_manager.get_semantic_deletion_storage = AsyncMock(
+    patched_resource_manager.get_semantic_storage = AsyncMock(
         side_effect=ConnectionError("semantic store unreachable")
     )
     machine, manager, episode_store = _pending_session_machine(

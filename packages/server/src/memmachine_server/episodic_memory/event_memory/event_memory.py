@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf
 
-from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.data_types import PropertyType, PropertyValue
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -27,7 +27,7 @@ from memmachine_server.common.metrics_factory import (
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import (
     Record,
-    VectorStoreCollection,
+    VectorStorePartition,
 )
 
 from .data_types import (
@@ -57,8 +57,8 @@ class EventMemoryParams(BaseModel):
     Attributes:
         segment_store_partition (SegmentStorePartition):
             Segment store partition.
-        vector_store_collection (VectorStoreCollection):
-            Vector store collection.
+        vector_store_partition (VectorStorePartition):
+            Vector store partition.
         segmenter (Segmenter):
             Segmenter that segments events into segments.
         deriver (Deriver):
@@ -78,9 +78,9 @@ class EventMemoryParams(BaseModel):
         ...,
         description="Segment store partition",
     )
-    vector_store_collection: InstanceOf[VectorStoreCollection] = Field(
+    vector_store_partition: InstanceOf[VectorStorePartition] = Field(
         ...,
-        description="Vector store collection",
+        description="Vector store partition",
     )
     segmenter: InstanceOf[Segmenter] = Field(
         ...,
@@ -116,13 +116,13 @@ class EventMemory:
     )
 
     @classmethod
-    def expected_vector_store_collection_schema(cls) -> dict[str, type[PropertyValue]]:
+    def expected_vector_store_indexed_properties(cls) -> dict[str, PropertyType]:
         """
-        Return the vector store collection schema EventMemory requires.
+        Return the properties EventMemory requires its vector store to declare.
 
-        A vector record carries only the properties its collection declares,
-        so the vector search can filter only on those; a condition on any
-        other property applies to the seeds the search returns.
+        A vector record carries only the properties the vector store
+        declares, so the vector search can filter only on those; a condition
+        on any other property applies to the seeds the search returns.
         """
         return {
             cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
@@ -138,7 +138,7 @@ class EventMemory:
 
         """
         self._segment_store_partition = params.segment_store_partition
-        self._vector_store_collection = params.vector_store_collection
+        self._vector_store_partition = params.vector_store_partition
         self._segmenter = params.segmenter
         self._deriver = params.deriver
         self._embedder = params.embedder
@@ -150,7 +150,7 @@ class EventMemory:
         )
 
         self._schema_fields = frozenset(
-            params.vector_store_collection.config.indexed_properties_schema
+            params.vector_store_partition.store_schema.indexed_properties
         )
 
         missing_base_fields = (
@@ -158,7 +158,7 @@ class EventMemory:
         )
         if missing_base_fields:
             raise ValueError(
-                f"Collection schema missing fields required by EventMemory: "
+                f"Vector store schema missing fields required by EventMemory: "
                 f"{', '.join(sorted(missing_base_fields))}"
             )
 
@@ -180,8 +180,7 @@ class EventMemory:
         """
         Validate a batch of events before encoding.
 
-        Raises ValueError if any event supplies a reserved field name in its properties,
-        or if the collection schema is missing fields required by EventMemory.
+        Raises ValueError if any event supplies a reserved field name in its properties.
         """
         events = list(events)
 
@@ -214,8 +213,7 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If any event supplies a reserved field name in its properties,
-                or if the collection schema is missing fields required by any event's Context type.
+                If any event supplies a reserved field name in its properties.
         """
         async with self._tracker("encode_events"):
             await self._encode_events(events, format_options=format_options)
@@ -289,7 +287,7 @@ class EventMemory:
         ]
 
         if derivative_records:
-            await self._vector_store_collection.upsert(records=derivative_records)
+            await self._vector_store_partition.upsert(records=derivative_records)
         t_vector_store = time.monotonic()
 
         phase_durations = {
@@ -323,7 +321,7 @@ class EventMemory:
         """Build a vector record from a derivative and its embedding.
 
         The record carries the reserved timestamp and the properties the
-        vector store collection declares. Every other property stays on the
+        vector store declares. Every other property stays on the
         segment: the segment store holds them all and evaluates the whole
         filter (see `query`).
         """
@@ -422,23 +420,22 @@ class EventMemory:
         )[0]
         t_embedding = time.monotonic()
 
-        # A vector record carries the properties the collection declares, so
+        # A vector record carries the properties the vector store declares, so
         # a condition naming any other field has nothing to match there. The
         # vector store gets the part of the filter on declared fields, which
         # only ever widens its search; the segment store, which holds every
         # property, gets the whole filter below and narrows it back.
-        collection_filter = None
+        vector_store_filter = None
         if property_filter is not None:
-            collection_filter = extract_filter(
+            vector_store_filter = extract_filter(
                 map_filter_fields(property_filter, self._to_vector_record_property),
                 allowed_fields=self._schema_fields,
             )
 
-        # Search derivative collection for matches.
-        [query_result] = await self._vector_store_collection.query(
+        [query_result] = await self._vector_store_partition.query(
             query_vectors=[query_embedding],
             limit=vector_search_limit,
-            property_filter=collection_filter,
+            property_filter=vector_store_filter,
         )
         t_vector_query = time.monotonic()
 
@@ -505,7 +502,7 @@ class EventMemory:
         # Embedding scores depend on the similarity metric.
         higher_is_better = (
             self._reranker is not None
-            or self._vector_store_collection.config.similarity_metric.higher_is_better
+            or self._vector_store_partition.store_schema.similarity_metric.higher_is_better
         )
 
         # Return scored contexts ordered by score.
@@ -731,7 +728,7 @@ class EventMemory:
 
         # Delete from vector DB first, then segment store.
         if derivative_uuids:
-            await self._vector_store_collection.delete(record_uuids=derivative_uuids)
+            await self._vector_store_partition.delete(record_uuids=derivative_uuids)
 
         await self._segment_store_partition.delete_segments(
             segment_uuids=segment_uuids,
