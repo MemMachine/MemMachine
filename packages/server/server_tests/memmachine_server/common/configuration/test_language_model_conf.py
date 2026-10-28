@@ -173,3 +173,11 @@ def test_read_aws_keys_from_env(monkeypatch, aws_model_conf):
     assert conf.aws_access_key_id.get_secret_value() == "my-key-id"
     assert conf.aws_secret_access_key.get_secret_value() == "access-key"
     assert conf.aws_session_token is None
+
+
+def test_openai_default_model_is_not_retired_gpt5_nano():
+    responses_conf = OpenAIResponsesLanguageModelConf(api_key=SecretStr("key"))
+    chat_conf = OpenAIChatCompletionsLanguageModelConf(api_key=SecretStr("key"))
+
+    assert responses_conf.model == "gpt-5.6-luna"
+    assert chat_conf.model == "gpt-5.6-luna"
