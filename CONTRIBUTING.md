@@ -1,60 +1,107 @@
-
-# Welcome to the MemMachine Project
+# Contributing to MemMachine
 
 Thank you for your interest in contributing to MemMachine! We are a
 community-driven open-source project, and we welcome contributions from
-everyone. Whether you're a new developer or a seasoned pro, your help is
-invaluable.
+everyone.
 
-This guide will walk you through the process of getting started and making your
-first contribution.
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md) and
+[Governance](GOVERNANCE.md) before you start.
 
-## 1. Before You Get Started
+## Issues
 
-Before you make a contribution, please take a moment to review these important
-documents:
+Check the [issues page](https://github.com/MemMachine/MemMachine/issues) to see
+whether your bug or idea has already been reported. For a new bug, a feature,
+or a major documentation change, open an issue with the matching template
+first, so the change can be discussed before work starts. To take an existing
+issue, leave a comment on it. Small fixes, such as typos and broken links, can
+go straight to a pull request.
 
-- [**Code of Conduct**](CODE_OF_CONDUCT.md): Our community's values and
-  expectations for all contributors.
-- [**Governance**](GOVERNANCE.md): The rules and principles by which our project
-  is managed.
+## Setup
 
-## 2. How to Contribute
+1. Fork the repository on GitHub, clone your fork, and add the original
+   repository as the `upstream` remote:
 
-We have two main areas for contributions: the core Python source code and the
-project's documentation. To make your process as smooth as possible, we have
-created specific guides for each.
-
-- **For Core Code Contributions**: If you'd like to contribute code, fix a bug,
-  or propose a new feature, please read our
-  [**Core Contribution Guide**](CONTRIBUTING-CORE.md).
-- **For Documentation Contributions**: If you want to improve a typo, correct a
-  broken link, or add a new guide, please read our
-  [**Documentation Contribution Guide**](CONTRIBUTING-DOCS.md).
-
-### 3. General Contribution Workflow
-
-All contributions, regardless of type, should follow this general workflow:
-
-1. **Fork the Repository**: Fork the project on GitHub to your own account.
-2. **Clone Your Fork**: Clone your forked repository to your local machine:
    ```bash
    git clone https://github.com/YOUR_USERNAME/MemMachine.git
    cd MemMachine
+   git remote add upstream https://github.com/MemMachine/MemMachine.git
    ```
-3. **Create a Branch**: Create a new branch for your changes:
+
+2. Install [uv](https://docs.astral.sh/uv/). From the repository root, install
+   every package in editable mode, with all optional dependencies and the
+   development tools:
+
+   ```bash
+   uv sync --all-extras
+   ```
+
+## Checks
+
+CI runs these checks on every pull request that is not a draft. Run them from
+the repository root before you push.
+
+- Format and lint with [Ruff](https://docs.astral.sh/ruff/):
+
+  ```bash
+  uv run ruff format
+  uv run ruff check
+  ```
+
+- Type check each package with [ty](https://docs.astral.sh/ty/):
+
+  ```bash
+  uv run ty check --project packages/common
+  uv run ty check --project packages/client
+  uv run ty check --project packages/server
+  ```
+
+- Run the unit tests with pytest, and add tests for your change:
+
+  ```bash
+  uv run pytest packages/server/server_tests packages/client/client_tests
+  ```
+
+  Integration tests are marked `integration` and start their databases in
+  Docker; run them by adding `-m integration`. Tests that call OpenAI, Amazon
+  Bedrock, or Cohere use the real APIs, billed to the keys you give them. They
+  read test-only variables and run only when those are set:
+
+  - OpenAI: `MEMMACHINE_TEST_OPENAI_API_KEY`
+  - Amazon Bedrock: `MEMMACHINE_TEST_AWS_ACCESS_KEY_ID`,
+    `MEMMACHINE_TEST_AWS_SECRET_ACCESS_KEY`, and `MEMMACHINE_TEST_AWS_REGION`,
+    plus `MEMMACHINE_TEST_AWS_SESSION_TOKEN` for temporary credentials
+  - Cohere: `MEMMACHINE_TEST_COHERE_API_KEY`
+
+  [Running PyTest Unit Tests](maintainers/running-unit-tests.md) shows more ways
+  to select tests.
+
+The TypeScript client in `packages/ts-client/` has its own commands, listed in
+its [README](packages/ts-client/README.md#development).
+
+## Documentation
+
+The documentation site's source is in `docs/`. [docs/README.md](docs/README.md)
+explains how to preview it locally.
+
+## Pull Requests
+
+1. Create a branch:
+
    ```bash
    git checkout -b feat/your-feature-name
    ```
-4. **Make Your Changes**: Follow the instructions in the relevant guide (Core or
-   Documentation).
-4. **Sign Your Commits**: All commits must be signed using the `-sS` flags. This
-   ensures a verifiable chain of custody for all code. For instructions to
-   create GPG Keys used for signing, refer to the
-   [Microsoft Commit Signing](https://github.com/microsoft/vscode/wiki/Commit-Signing)
-   wiki page for step-by-step instructions.
-5. **Push and Open a Pull Request**: Push your changes to your fork and open a
-   pull request against our `main` branch. A draft pull request does not run
-   CI; the checks run once you mark it ready for review.
+
+2. Sign every commit with `-sS`, which adds a `Signed-off-by` line and a
+   cryptographic signature. GitHub's guide to
+   [signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits)
+   explains how to set up a signing key.
+
+   ```bash
+   git commit -sS -m "Add a new feature"
+   ```
+
+3. Push the branch to your fork and open a pull request against `main`, filling
+   in the template. A draft pull request does not run CI; the checks run once
+   you mark it ready for review.
 
 We look forward to your contributions!
