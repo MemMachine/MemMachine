@@ -272,6 +272,101 @@ class TestSearchDot:
             assert result.matches[i].score >= result.matches[i + 1].score
 
 
+# -- Search: allowlist --
+
+
+class TestSearchAllowlist:
+    @pytest.mark.asyncio
+    async def test_searches_only_among_the_allowlist(self):
+        engine = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add(
+            {
+                1: _normalize([1, 0, 0]),
+                2: _normalize([0, 1, 0]),
+                3: _normalize([1, 1, 0]),
+            }
+        )
+        [result] = await engine.search(
+            [_normalize([1, 0, 0])], allowlist=[2, 3], limit=5
+        )
+        assert [match.key for match in result.matches] == [3, 2]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "metric",
+        [SimilarityMetric.COSINE, SimilarityMetric.EUCLIDEAN, SimilarityMetric.DOT],
+    )
+    async def test_scores_and_order_are_an_unrestricted_searchs(self, metric):
+        engine = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=metric
+        )
+        vectors = {1: [1, 0, 0], 2: [0, 2, 0], 3: [1, 1.5, 0], 4: [-1, 0.5, 0]}
+        await engine.add(vectors)
+        query = [2, 0.5, 0]
+        [searched] = await engine.search([query], limit=len(vectors))
+        [restricted] = await engine.search([query], allowlist=list(vectors), limit=4)
+        assert [match.key for match in restricted.matches] == [
+            match.key for match in searched.matches
+        ]
+        assert [match.score for match in restricted.matches] == pytest.approx(
+            [match.score for match in searched.matches], abs=1e-5
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_key_with_no_vector_is_ignored(self):
+        engine = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add({1: _normalize([1, 0, 0]), 2: _normalize([0, 1, 0])})
+        await engine.remove([2])
+        [result] = await engine.search(
+            [_normalize([1, 0, 0])], allowlist=[1, 2, 9], limit=5
+        )
+        assert [match.key for match in result.matches] == [1]
+
+    @pytest.mark.asyncio
+    async def test_an_empty_allowlist_matches_nothing(self):
+        engine = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add({1: _normalize([1, 0, 0])})
+        [result] = await engine.search([_normalize([1, 0, 0])], allowlist=[], limit=5)
+        assert result.matches == []
+
+    @pytest.mark.asyncio
+    async def test_limit_keeps_the_best(self):
+        engine = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add(
+            {
+                1: _normalize([1, 0, 0]),
+                2: _normalize([0, 1, 0]),
+                3: _normalize([1, 1, 0]),
+            }
+        )
+        [result] = await engine.search(
+            [_normalize([1, 0, 0])], allowlist=[1, 2, 3], limit=2
+        )
+        assert [match.key for match in result.matches] == [1, 3]
+
+    @pytest.mark.asyncio
+    async def test_batched_allowlist_search(self):
+        engine = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add({1: _normalize([1, 0, 0]), 2: _normalize([0, 1, 0])})
+        results = await engine.search(
+            [_normalize([1, 0, 0]), _normalize([0, 1, 0])], allowlist=[1, 2], limit=1
+        )
+        assert [[match.key for match in result.matches] for result in results] == [
+            [1],
+            [2],
+        ]
+
+
 # -- Persistence --
 
 
