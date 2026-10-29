@@ -37,7 +37,7 @@ class OpenAIResponsesLanguageModelConf(
     """Configuration for OpenAI Responses-compatible models."""
 
     model: str = Field(
-        default="gpt-5.6-luna",
+        default="gpt-6-luna",
         description="OpenAI Responses API-compatible model",
     )
     api_key: SecretStr = Field(
@@ -72,7 +72,7 @@ class OpenAIChatCompletionsLanguageModelConf(
     """Configuration for OpenAI Chat Completions-compatible models."""
 
     model: str = Field(
-        default="gpt-5.6-luna",
+        default="gpt-6-luna",
         min_length=1,
         description="OpenAI Chat Completions API-compatible model",
     )

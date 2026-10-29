@@ -79,7 +79,7 @@ def invalid_configure() -> Configuration:
             language_models=LanguageModelsConf(
                 openai_responses_language_model_confs={
                     MODEL_ID: OpenAIResponsesLanguageModelConf(
-                        model="gpt-5.6-luna", api_key=SecretStr("invalid-api-key")
+                        model="gpt-6-luna", api_key=SecretStr("invalid-api-key")
                     )
                 }
             ),

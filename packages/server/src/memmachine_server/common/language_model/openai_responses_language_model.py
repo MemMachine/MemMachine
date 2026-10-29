@@ -34,7 +34,7 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
             AsyncOpenAI client to use for making API calls.
         model (str):
             Name of the OpenAI model to use
-            (e.g. 'gpt-5.6-luna').
+            (e.g. 'gpt-6-luna').
         max_retry_interval_seconds (int):
             Maximal retry interval in seconds when retrying API calls
             (default: 120).
@@ -55,7 +55,7 @@ class OpenAIResponsesLanguageModelParams(BaseModel):
     )
     model: str = Field(
         ...,
-        description="Name of the OpenAI model to use (e.g. 'gpt-5.6-luna')",
+        description="Name of the OpenAI model to use (e.g. 'gpt-6-luna')",
     )
     max_retry_interval_seconds: int = Field(
         120,
