@@ -175,8 +175,9 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
         "config": {
             "backend": "event",
             "embedder": "openai",
+            "reranker": "cohere",
             "vector_store": "vstore",
-            "segment_store": "pgengine",
+            "event_memory_store": "pgengine",
         },
     }
 
@@ -191,15 +192,16 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
     body = response.json()
     assert body["config"]["backend"] == "event"
     assert body["config"]["embedder"] == ""
+    assert body["config"]["reranker"] == ""
     assert "vector_store" not in body["config"]
-    assert "segment_store" not in body["config"]
+    assert "event_memory_store" not in body["config"]
 
     # The request's store ids are not part of the API, so none reach the session.
     mock_memmachine.create_session.assert_awaited_once()
     user_conf = mock_memmachine.create_session.call_args[1]["user_conf"]
     assert user_conf.long_term_memory.backend == "event"
     assert user_conf.long_term_memory.vector_store is None
-    assert user_conf.long_term_memory.segment_store is None
+    assert user_conf.long_term_memory.event_memory_store is None
 
 
 def test_create_project_without_backend_passes_none_through(client, mock_memmachine):

@@ -1,0 +1,605 @@
+"""
+Abstract base class for an event memory store.
+
+Defines an interface for adding, retrieving, and forgetting events with
+their segments, and for the work a derived index of their derivatives
+leaves behind.
+"""
+
+from abc import ABC, abstractmethod
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
+
+from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    Neighborhood,
+    Segment,
+)
+from memmachine_server.episodic_memory.event_memory.event_memory_store.data_types import (
+    EventMemoryStorePartitionConfig,
+    PendingDerivatives,
+    Tombstone,
+)
+
+
+class EventMemoryStorePartition(ABC):
+    """Partition-scoped handle for an event memory store.
+
+    A handle is bound to the partition incarnation it was opened on:
+    deleting the partition permanently invalidates the handle, and its
+    data operations raise `EventMemoryStorePartitionHandleStaleError` from
+    then on, even if a partition is later created under the same key.
+    A call with empty input may do no work and return without checking
+    the handle.
+
+    The partition holds an event at most once, and its events and their
+    segments are immutable: a changed event is forgotten and added again.
+    A derivative stays linked to its segment until its event is
+    forgotten, and a forget records the derivatives it removed in a
+    tombstone, so their derived index entries can still be deleted.
+
+    Segments within a partition are in one total order,
+    `(timestamp, event_uuid, index, offset)`.
+    """
+
+    @property
+    @abstractmethod
+    def config(self) -> EventMemoryStorePartitionConfig:
+        """The configuration for this partition."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def add_events(
+        self,
+        segments_by_event: Mapping[UUID, Iterable[Segment]],
+        pending_derivatives: Iterable[PendingDerivatives],
+    ) -> None:
+        """
+        Add events with their segments, derivative links, and pending derivatives.
+
+        All of it commits together or not at all. A batch naming an event
+        the partition already holds is rejected whole, before anything is
+        stored.
+
+        Args:
+            segments_by_event (Mapping[UUID, Iterable[Segment]]):
+                A mapping from each event's UUID to its segments.
+            pending_derivatives (Iterable[PendingDerivatives]):
+                Each event's derivatives, each linked to the segment it
+                names, and held as pending until
+                `delete_pending_derivatives` removes them.
+
+        Raises:
+            EventMemoryStoreEventAlreadyStoredError:
+                If the partition already holds any of the events; it names
+                them all.
+            ValueError:
+                If a segment names an event other than the one it is listed
+                under, or pending derivatives name an event or a segment
+                that is not in the batch.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_pending_derivatives(
+        self,
+        pending_derivatives_uuids: Iterable[UUID],
+    ) -> None:
+        """
+        Delete pending derivatives given by their UUIDs. Idempotent.
+
+        The derivatives stay linked; only their pending record goes.
+
+        Args:
+            pending_derivatives_uuids (Iterable[UUID]):
+                The UUIDs of the pending derivatives records to delete.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_segments(
+        self,
+        segment_uuids: Iterable[UUID],
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> dict[UUID, Segment]:
+        """
+        Get segments by UUID.
+
+        A UUID the partition does not hold, or whose segment fails a
+        filter, is excluded from the result.
+
+        Args:
+            segment_uuids (Iterable[UUID]):
+                The UUIDs of the segments to get.
+            since (datetime | None):
+                Inclusive lower bound on the segments' timestamps, timezone-aware
+                (default: None).
+            until (datetime | None):
+                Exclusive upper bound on the segments' timestamps, timezone-aware,
+                so ranges meet without overlap (default: None).
+            source_ids (Iterable[str] | None):
+                Keep only segments whose source id is one of these; an
+                empty list keeps none, and None keeps every source
+                (default: None).
+            block_kinds (Iterable[str] | None):
+                Keep only segments whose block is of one of these kinds;
+                an empty list keeps none, and None keeps every kind
+                (default: None).
+            property_filter (FilterExpr | None):
+                A filter expression over segment properties (default: None).
+
+        Returns:
+            dict[UUID, Segment]:
+                A mapping from each UUID found and admitted to its segment.
+
+        Raises:
+            ValueError: If `since` or `until` is naive.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_segment_neighborhoods(
+        self,
+        seed_uuids: Iterable[UUID],
+        *,
+        before: int = 0,
+        after: int = 0,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source_ids: Iterable[str] | None = None,
+        block_kinds: Iterable[str] | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> dict[UUID, Neighborhood]:
+        """
+        Get the segments around each seed segment, excluding the seed itself.
+
+        A walk outward from the seed in the partition's total order. The
+        seed is an address: it is located
+        whether or not it passes any filter, and the filters select the
+        neighbors.
+
+        An implementation may bound how far from each seed it looks for
+        neighbors, so a side can come back with fewer segments than
+        requested even when more exist further away.
+
+        Args:
+            seed_uuids (Iterable[UUID]):
+                The UUIDs of the segments to gather neighbors around.
+            before (int):
+                The maximum number of neighbors before each seed, nonnegative
+                (default: 0).
+            after (int):
+                The maximum number of neighbors after each seed, nonnegative
+                (default: 0).
+            since (datetime | None):
+                Inclusive lower bound on the neighbors' timestamps, timezone-aware
+                (default: None).
+            until (datetime | None):
+                Exclusive upper bound on the neighbors' timestamps, timezone-aware,
+                so ranges meet without overlap (default: None).
+            source_ids (Iterable[str] | None):
+                Keep only neighbors whose source id is one of these; an
+                empty list keeps none, and None keeps every source
+                (default: None).
+            block_kinds (Iterable[str] | None):
+                Keep only neighbors whose block is of one of these kinds;
+                an empty list keeps none, and None keeps every kind
+                (default: None).
+            property_filter (FilterExpr | None):
+                A filter expression over the neighbors' properties
+                (default: None).
+
+        Returns:
+            dict[UUID, Neighborhood]:
+                A mapping from each known seed to its neighbors: `before`
+                in order ending just before the seed, `after` in order
+                starting just after it. A seed with no neighbors to show
+                maps to two empty lists; an unknown seed is excluded from
+                the result.
+
+        Raises:
+            ValueError:
+                If `before` or `after` is negative, or `since` or `until`
+                is naive.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        """
+        Get the segment each of the given derivatives belongs to.
+
+        A derivative belongs to exactly one segment.
+
+        Args:
+            derivative_uuids (Iterable[UUID]):
+                The UUIDs of the derivatives whose owning segments to look up.
+
+        Returns:
+            dict[UUID, UUID]:
+                A mapping from each given derivative UUID the partition holds
+                to its segment's UUID.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def forget_events(
+        self,
+        event_uuids: Iterable[UUID],
+    ) -> Tombstone | None:
+        """
+        Forget events, with their segments, derivative links, and pending derivatives.
+
+        All of it commits together or not at all, with a tombstone naming
+        every derivative the forget unlinked. The tombstone's time is taken
+        after the events are locked, so a write that claims pending
+        derivatives of these events either finishes its claim before that
+        time or finds them gone. An event the partition does not hold is
+        skipped. Idempotent.
+
+        Args:
+            event_uuids (Iterable[UUID]):
+                The UUIDs of the events to forget.
+
+        Returns:
+            Tombstone | None:
+                The tombstone, awaiting its first delete, or None if the
+                forget unlinked no derivative.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def record_tombstone_first_delete(self, tombstone_uuid: UUID) -> None:
+        """
+        Record that a tombstone's derivatives were deleted from their index once.
+
+        The tombstone then awaits only its second delete, which falls due
+        once the store's retention has passed since the forget. Idempotent,
+        and a no-op for a tombstone no longer awaiting its first delete.
+
+        Args:
+            tombstone_uuid (UUID):
+                The UUID of the tombstone.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def require_current(self) -> None:
+        """
+        Raise unless the partition this handle was opened on still exists.
+
+        Raises:
+            EventMemoryStorePartitionHandleStaleError:
+                If the partition was deleted, whether or not another was
+                created under its key since.
+        """
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class PendingDerivativesClaim:
+    """
+    A claim on pending derivatives whose writer did not delete them.
+
+    Attributes:
+        partition_key (str):
+            The key of the partition holding the derivatives.
+        partition (EventMemoryStorePartition):
+            A handle on the partition the derivatives belong to.
+        pending_derivatives (PendingDerivatives):
+            The pending derivatives.
+        generation (int):
+            The claim's generation; a later claim on the same record has a
+            higher one.
+        attempt (int):
+            The claim's attempt number since the record was claimed without
+            failing, from 1.
+    """
+
+    partition_key: str
+    partition: EventMemoryStorePartition
+    pending_derivatives: PendingDerivatives
+    generation: int
+    attempt: int
+
+
+@dataclass(frozen=True)
+class TombstoneClaim:
+    """
+    A claim on a tombstone that is due for a delete.
+
+    Attributes:
+        partition_key (str):
+            The key of the partition the tombstone belongs to.
+        tombstone (Tombstone):
+            The tombstone.
+        second_delete (bool):
+            Whether the claim is for the tombstone's second delete; it is
+            for its first otherwise.
+        generation (int):
+            The claim's generation; a later claim on the same tombstone has
+            a higher one.
+        attempt (int):
+            The claim's attempt number since the tombstone last made
+            progress, from 1.
+    """
+
+    partition_key: str
+    tombstone: Tombstone
+    second_delete: bool
+    generation: int
+    attempt: int
+
+
+class EventMemoryStore(ABC):
+    """
+    Abstract base class for an event memory store.
+
+    Manages partition-scoped handles.
+
+    Partition keys must match `[a-z0-9_]+`
+    (lowercase alphanumeric and underscores only)
+    and be at most 32 bytes.
+    """
+
+    @abstractmethod
+    async def startup(self) -> None:
+        """Startup."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """Shutdown."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def create_partition(
+        self,
+        partition_key: str,
+        config: EventMemoryStorePartitionConfig,
+    ) -> None:
+        """
+        Create a new partition.
+
+        Args:
+            partition_key (str):
+                The key of the partition.
+            config (EventMemoryStorePartitionConfig):
+                Configuration for the partition.
+
+        Raises:
+            EventMemoryStorePartitionAlreadyExistsError: If the partition already exists.
+            EventMemoryStoreAttemptsExhaustedError:
+                If creation exhausted its internal attempts on a
+                failure that should not recur; an immediate retry is
+                unlikely to succeed -- diagnose the chained cause.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def open_partition(
+        self, partition_key: str
+    ) -> EventMemoryStorePartition | None:
+        """
+        Open a partition-scoped handle for an existing partition.
+
+        Args:
+            partition_key (str):
+                The key of the partition.
+
+        Returns:
+            EventMemoryStorePartition | None:
+                A partition-scoped handle, or None if the partition does not exist.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def open_or_create_partition(
+        self,
+        partition_key: str,
+        config: EventMemoryStorePartitionConfig,
+    ) -> EventMemoryStorePartition:
+        """
+        Open the partition if it exists, or create it if it does not.
+
+        Args:
+            partition_key (str):
+                The key of the partition.
+            config (EventMemoryStorePartitionConfig):
+                Configuration for the partition.
+
+        Returns:
+            EventMemoryStorePartition:
+                A partition-scoped handle.
+
+        Raises:
+            EventMemoryStorePartitionConfigMismatchError:
+                If the partition already exists with a different configuration.
+            EventMemoryStoreAttemptsExhaustedError:
+                If creation exhausted its internal attempts on a
+                failure that should not recur; an immediate retry is
+                unlikely to succeed -- diagnose the chained cause.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def close_partition(
+        self, event_memory_store_partition: EventMemoryStorePartition
+    ) -> None:
+        """
+        Close a partition-scoped handle.
+
+        Args:
+            event_memory_store_partition (EventMemoryStorePartition):
+                The partition-scoped handle to close.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_partition(self, partition_key: str) -> None:
+        """
+        Delete a partition.
+
+        The partition becomes unreachable immediately: it can no longer be
+        opened, and handles opened on it raise from then on.
+        Implementations may defer physically reclaiming its storage to
+        `purge_deleted_partitions`. Idempotent.
+
+        Args:
+            partition_key (str):
+                The key of the partition to delete.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def purge_deleted_partitions(self) -> bool:
+        """
+        Physically reclaim storage for deleted partitions, bounded per call.
+
+        The sweeper: reclaims what `delete_partition` deferred, for every
+        partition, oldest deletion first at the database clock's
+        resolution. Each call does a bounded amount
+        of work, sized so it does not noticeably degrade concurrent
+        request serving, commits what it did or nothing, and is safe to
+        repeat, including after a failure on backend contention with
+        another writer, and to run concurrently from any process. The
+        store never schedules
+        it; a deployment must run it somewhere (the server's resource
+        manager runs it in the background). Implementations that reclaim
+        physically in
+        `delete_partition` may return False without doing anything.
+
+        Returns:
+            bool:
+                True if another call may reclaim more. False if this call
+                found nothing to claim; entries a concurrent purger holds
+                are that purger's to finish, so the caller may back off.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def claim_pending_derivatives(
+        self,
+        *,
+        min_age_seconds: int,
+        lease_seconds: int,
+    ) -> PendingDerivativesClaim | None:
+        """
+        Claim the oldest pending derivatives that have waited long enough.
+
+        Pending derivatives are due once `min_age_seconds` have passed
+        since they were added, on the store's clock. A due record is
+        claimable unless a claim on it holds its lease, or its last claim
+        failed and its backoff has not passed, or its claims failed the
+        store's maximum number of times in a row. A claim holds its record
+        for `lease_seconds`. Claims skip deleted partitions. Safe to call
+        from several processes at once.
+
+        Args:
+            min_age_seconds (int):
+                Seconds pending derivatives must have waited.
+            lease_seconds (int):
+                Seconds the claim holds its record.
+
+        Returns:
+            PendingDerivativesClaim | None:
+                The claim, or None if no record is claimable.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def finish_pending_derivatives_claim(
+        self, claim: PendingDerivativesClaim
+    ) -> None:
+        """
+        Delete claimed pending derivatives, if the claim is the latest on them.
+
+        A claim that outlasted its lease leaves the record to the later
+        claim.
+
+        Args:
+            claim (PendingDerivativesClaim):
+                The claim.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def fail_pending_derivatives_claim(
+        self, claim: PendingDerivativesClaim, error: Exception
+    ) -> None:
+        """
+        End a claim whose work raised, if the claim is the latest on its record.
+
+        The record is claimable again after a backoff that grows with each
+        failed claim in a row. After the store's maximum, it is no longer
+        claimed, and the store reports it.
+
+        Args:
+            claim (PendingDerivativesClaim):
+                The claim.
+            error (Exception):
+                What the work raised.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def claim_tombstone(self) -> TombstoneClaim | None:
+        """
+        Claim the oldest tombstone due for a delete.
+
+        A tombstone awaiting its first delete is due at once. One awaiting
+        its second is due once the store's retention has passed since its
+        forget, on the store's clock. A due tombstone is claimable unless a
+        claim on it holds its lease, or its last claim failed and its
+        backoff has not passed, or its claims failed the store's maximum
+        number of times in a row. Claims skip deleted partitions. Safe to
+        call from several processes at once.
+
+        Returns:
+            TombstoneClaim | None:
+                The claim, or None if no tombstone is claimable.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def finish_tombstone_claim(self, claim: TombstoneClaim) -> None:
+        """
+        Record a claimed delete as done.
+
+        After its first delete, the tombstone awaits its second; after its
+        second, it is removed.
+
+        Args:
+            claim (TombstoneClaim):
+                The claim.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def fail_tombstone_claim(
+        self, claim: TombstoneClaim, error: Exception
+    ) -> None:
+        """
+        End a claim whose delete raised, if the claim is the latest on its tombstone.
+
+        The tombstone is claimable again after a backoff that grows with
+        each failed claim in a row. After the store's maximum, it is no
+        longer claimed, and the store reports it.
+
+        Args:
+            claim (TombstoneClaim):
+                The claim.
+            error (Exception):
+                What the delete raised.
+        """
+        raise NotImplementedError
