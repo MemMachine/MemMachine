@@ -5,6 +5,23 @@ Each life of a partition gets its own records table, vector search engine,
 and index file. A pending operations table tracks search engine operations
 for crash recovery: on a store's startup, its partitions' unfinalized
 operations are replayed.
+
+What survives a crash
+---------------------
+
+`upsert` and `delete` commit to SQLite before they return, so a process crash
+loses nothing: the pending log carries every operation the search engine has
+not been checkpointed with, and startup replays it.
+
+A power failure is weaker, and callers should size their expectations to it.
+The index is published atomically but not durably (see
+`vector_search_engine.index_persistence`), so a power failure can revert the
+last publication while the records table -- and the trim that ran behind that
+publication -- stay committed. The result is records whose vectors are missing
+from the index. They are simply unfindable: `query` cannot reach them, and
+nothing else reads a stored vector, so re-upserting them is the repair.
+Callers that need every record searchable after a power failure must be able
+to re-ingest; nothing here detects the gap for them.
 """
 
 import asyncio
@@ -47,6 +64,7 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.rw_locks import AsyncRWLock
 from memmachine_server.common.sql import write_session
 
 from .data_types import (
@@ -173,10 +191,21 @@ async def _save_partition_index(
     create_session: async_sessionmaker[AsyncSession],
     incarnation: UUID,
     search_engine: VectorSearchEngine,
+    engine_lock: AsyncRWLock,
     path: str,
 ) -> None:
-    """Save a partition life's index to disk, leaving no file if the partition is deleted."""
-    await search_engine.save(path)
+    """Publish a partition life's index to disk and trim the operations it holds.
+
+    The order is the whole protocol. The pending log is the only other copy of
+    these vectors -- the records table has no vector column -- so an applied row
+    may be deleted only once the index that holds it has been published.
+    `save` returning is that statement, and no more than that: publication is
+    atomic, not durable, so a power failure can revert it after this trim has
+    committed. See the module docstring for what that leaves behind. A save
+    that a deletion overtakes leaves no file.
+    """
+    async with engine_lock.write_lock():
+        await search_engine.save(path)
 
     async with write_session(create_session) as session:
         # The write lock holds a deletion off until this commits, and the
@@ -199,7 +228,12 @@ async def _save_partition_index(
 
 
 class SQLiteVectorStorePartition(VectorStorePartition):
-    """A partition backed by SQLite + a pluggable vector search engine."""
+    """A partition backed by SQLite + a pluggable vector search engine.
+
+    Reads run freely. Writes are serialized by `write_lock`, which the store
+    shares among every handle on one partition life, so the engine sees a
+    partition's writes in the order SQLite committed them.
+    """
 
     class _KeyFilter:
         """Per-candidate SQL filter using a sync SQLAlchemy session."""
@@ -255,6 +289,8 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         sync_sqlalchemy_engine: Engine,
         records_table: Table,
         search_engine: VectorSearchEngine,
+        engine_lock: AsyncRWLock,
+        write_lock: asyncio.Lock,
         vector_store_name: str,
         partition_key: str,
         incarnation: UUID,
@@ -267,6 +303,8 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         self._sync_sqlalchemy_engine = sync_sqlalchemy_engine
         self._records_table = records_table
         self._search_engine = search_engine
+        self._engine_lock = engine_lock
+        self._write_lock = write_lock
 
         self._vector_store_name = vector_store_name
         self._partition_key = partition_key
@@ -283,7 +321,12 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         return self._store_schema
 
     async def _maybe_save_index(self) -> None:
-        """Save the index to disk if applied pending operations exceed the threshold."""
+        """Save the index to disk if applied pending operations exceed the threshold.
+
+        Call with the write lock held: saving trims every applied operation
+        from the log, and the log is the only other copy of a vector applied
+        after the index was written.
+        """
         if self._index_path is None:
             return
 
@@ -302,6 +345,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                 create_session=self._create_session,
                 incarnation=self._incarnation,
                 search_engine=self._search_engine,
+                engine_lock=self._engine_lock,
                 path=self._index_path,
             )
 
@@ -314,64 +358,66 @@ class SQLiteVectorStorePartition(VectorStorePartition):
             )
             validate_dimensions(record.vector, self._store_schema.vector_dimensions)
 
-        async with write_session(self._create_session) as session:
-            await self._require_current(session)
-            if not records:
-                return
-            insert_records = sqlite_insert(self._records_table)
-            upsert_records = insert_records.on_conflict_do_update(
-                index_elements=[self._records_table.c.uuid],
-                # Every column but the row id takes the new version's value,
-                # so a declared key the record no longer holds becomes NULL;
-                # the uuid, rewritten to itself, keeps the SET list nonempty
-                # for a store that declares no keys.
-                set_={
-                    column.name: insert_records.excluded[column.name]
-                    for column in self._records_table.columns
-                    if column.name != "row_id"
-                },
-            ).returning(self._records_table.c.uuid, self._records_table.c.row_id)
-            rows = (
-                await session.execute(
-                    upsert_records,
-                    [
-                        {
-                            "uuid": record.uuid,
-                            **property_column_values(
-                                record.properties, self._store_schema.indexed_properties
-                            ),
-                        }
-                        for record in records
-                    ],
-                )
-            ).all()
-            uuid_to_row_id: dict[UUID, int] = {row.uuid: row.row_id for row in rows}
+        async with self._write_lock:
+            async with write_session(self._create_session) as session:
+                await self._require_current(session)
+                if not records:
+                    return
+                insert_records = sqlite_insert(self._records_table)
+                upsert_records = insert_records.on_conflict_do_update(
+                    index_elements=[self._records_table.c.uuid],
+                    # Every column but the row id takes the new version's value,
+                    # so a declared key the record no longer holds becomes NULL;
+                    # the uuid, rewritten to itself, keeps the SET list nonempty
+                    # for a store that declares no keys.
+                    set_={
+                        column.name: insert_records.excluded[column.name]
+                        for column in self._records_table.columns
+                        if column.name != "row_id"
+                    },
+                ).returning(self._records_table.c.uuid, self._records_table.c.row_id)
+                rows = (
+                    await session.execute(
+                        upsert_records,
+                        [
+                            {
+                                "uuid": record.uuid,
+                                **property_column_values(
+                                    record.properties,
+                                    self._store_schema.indexed_properties,
+                                ),
+                            }
+                            for record in records
+                        ],
+                    )
+                ).all()
+                uuid_to_row_id: dict[UUID, int] = {row.uuid: row.row_id for row in rows}
 
-            pending_operation_values = [
-                {
-                    "incarnation": self._incarnation,
-                    "record_row_id": uuid_to_row_id[record.uuid],
-                    "operation_type": "upsert",
-                    "vector": np.array(record.vector, dtype=np.float32).tobytes(),
-                    "applied": False,
-                }
-                for record in records
-            ]
-            if pending_operation_values:
-                upsert_pending_operation = sqlite_insert(_PendingOperationRow)
-                await session.execute(
-                    upsert_pending_operation.on_conflict_do_update(
-                        index_elements=["incarnation", "record_row_id"],
-                        set_={
-                            "operation_type": upsert_pending_operation.excluded.operation_type,
-                            "vector": upsert_pending_operation.excluded.vector,
-                            "applied": upsert_pending_operation.excluded.applied,
-                        },
-                    ),
-                    pending_operation_values,
-                )
+                pending_operation_values = [
+                    {
+                        "incarnation": self._incarnation,
+                        "record_row_id": uuid_to_row_id[record.uuid],
+                        "operation_type": "upsert",
+                        "vector": np.array(record.vector, dtype=np.float32).tobytes(),
+                        "applied": False,
+                    }
+                    for record in records
+                ]
+                if pending_operation_values:
+                    upsert_pending_operation = sqlite_insert(_PendingOperationRow)
+                    await session.execute(
+                        upsert_pending_operation.on_conflict_do_update(
+                            index_elements=["incarnation", "record_row_id"],
+                            set_={
+                                "operation_type": upsert_pending_operation.excluded.operation_type,
+                                "vector": upsert_pending_operation.excluded.vector,
+                                "applied": upsert_pending_operation.excluded.applied,
+                            },
+                        ),
+                        pending_operation_values,
+                    )
 
-        await self._apply_engine_upserts(records, uuid_to_row_id)
+            await self._apply_engine_upserts(records, uuid_to_row_id)
 
     async def _apply_engine_upserts(
         self,
@@ -386,8 +432,11 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         }
 
         if engine_vectors:
-            await self._search_engine.remove(engine_vectors.keys())
-            await self._search_engine.add(engine_vectors)
+            # One hold for both, so no search sees the record's old vector gone
+            # and its new one not yet there.
+            async with self._engine_lock.write_lock():
+                await self._search_engine.remove(engine_vectors.keys())
+                await self._search_engine.add(engine_vectors)
 
             async with write_session(self._create_session) as session:
                 await session.execute(
@@ -432,9 +481,10 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         key_filter = self._build_key_filter(property_filter)
 
         try:
-            search_results = await self._search_engine.search(
-                query_vectors, limit=limit, allowed_keys=key_filter
-            )
+            async with self._engine_lock.read_lock():
+                search_results = await self._search_engine.search(
+                    query_vectors, limit=limit, allowed_keys=key_filter
+                )
 
             results: list[QueryResult] = []
             for search_result in search_results:
@@ -508,60 +558,62 @@ class SQLiteVectorStorePartition(VectorStorePartition):
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         record_uuids = list(record_uuids)
 
-        async with write_session(self._create_session) as session:
-            await self._require_current(session)
-            if not record_uuids:
-                return
-            rows = (
+        async with self._write_lock:
+            async with write_session(self._create_session) as session:
+                await self._require_current(session)
+                if not record_uuids:
+                    return
+                rows = (
+                    await session.execute(
+                        select(self._records_table.c.row_id).where(
+                            self._records_table.c.uuid.in_(record_uuids),
+                        )
+                    )
+                ).all()
+                if not rows:
+                    return
+
+                record_row_ids = [row.row_id for row in rows]
+
+                upsert_pending_operation = sqlite_insert(_PendingOperationRow)
                 await session.execute(
-                    select(self._records_table.c.row_id).where(
+                    upsert_pending_operation.on_conflict_do_update(
+                        index_elements=["incarnation", "record_row_id"],
+                        set_={
+                            "operation_type": upsert_pending_operation.excluded.operation_type,
+                            "applied": upsert_pending_operation.excluded.applied,
+                        },
+                    ),
+                    [
+                        {
+                            "incarnation": self._incarnation,
+                            "record_row_id": record_row_id,
+                            "operation_type": "delete",
+                            "applied": False,
+                        }
+                        for record_row_id in record_row_ids
+                    ],
+                )
+
+                await session.execute(
+                    delete(self._records_table).where(
                         self._records_table.c.uuid.in_(record_uuids),
                     )
                 )
-            ).all()
-            if not rows:
-                return
 
-            record_row_ids = [row.row_id for row in rows]
-
-            upsert_pending_operation = sqlite_insert(_PendingOperationRow)
-            await session.execute(
-                upsert_pending_operation.on_conflict_do_update(
-                    index_elements=["incarnation", "record_row_id"],
-                    set_={
-                        "operation_type": upsert_pending_operation.excluded.operation_type,
-                        "applied": upsert_pending_operation.excluded.applied,
-                    },
-                ),
-                [
-                    {
-                        "incarnation": self._incarnation,
-                        "record_row_id": record_row_id,
-                        "operation_type": "delete",
-                        "applied": False,
-                    }
-                    for record_row_id in record_row_ids
-                ],
-            )
-
-            await session.execute(
-                delete(self._records_table).where(
-                    self._records_table.c.uuid.in_(record_uuids),
+            async with self._engine_lock.write_lock():
+                await self._search_engine.remove(record_row_ids)
+            async with write_session(self._create_session) as session:
+                await session.execute(
+                    update(_PendingOperationRow)
+                    .where(
+                        _PendingOperationRow.incarnation == self._incarnation,
+                        _PendingOperationRow.record_row_id.in_(record_row_ids),
+                        _PendingOperationRow.applied.is_(False),
+                    )
+                    .values(applied=True)
                 )
-            )
-
-        await self._search_engine.remove(record_row_ids)
-        async with write_session(self._create_session) as session:
-            await session.execute(
-                update(_PendingOperationRow)
-                .where(
-                    _PendingOperationRow.incarnation == self._incarnation,
-                    _PendingOperationRow.record_row_id.in_(record_row_ids),
-                    _PendingOperationRow.applied.is_(False),
-                )
-                .values(applied=True)
-            )
-        await self._maybe_save_index()
+            await self._maybe_save_index()
 
     async def _require_current(self, session: AsyncSession) -> None:
         """Raise unless this handle's life is still its partition's."""
@@ -682,6 +734,8 @@ class SQLiteVectorStore(VectorStore):
             self._sqlalchemy_engine, expire_on_commit=False
         )
         self._search_engines: dict[UUID, VectorSearchEngine] = {}
+        self._engine_locks: dict[UUID, AsyncRWLock] = {}
+        self._write_locks: dict[UUID, asyncio.Lock] = {}
         self._sa_metadata = MetaData()
 
         self._sync_sqlalchemy_engine = create_engine(
@@ -765,9 +819,10 @@ class SQLiteVectorStore(VectorStore):
         if not all_row_ids:
             return
 
-        await search_engine.remove(all_row_ids)
-        if upserted_vectors:
-            await search_engine.add(upserted_vectors)
+        async with self._engine_lock_for(incarnation).write_lock():
+            await search_engine.remove(all_row_ids)
+            if upserted_vectors:
+                await search_engine.add(upserted_vectors)
 
         async with write_session(self._create_session) as session:
             await session.execute(
@@ -786,13 +841,20 @@ class SQLiteVectorStore(VectorStore):
             for incarnation, search_engine in self._search_engines.items():
                 path = self._index_path(incarnation)
                 assert path is not None
-                await _save_partition_index(
-                    create_session=self._create_session,
-                    incarnation=incarnation,
-                    search_engine=search_engine,
-                    path=str(path),
-                )
+                # Hold the partition's write lock for the whole save. A write
+                # that applied after the index file was written but before the
+                # trim would be absent from the file and trimmed from the log.
+                async with self._write_lock_for(incarnation):
+                    await _save_partition_index(
+                        create_session=self._create_session,
+                        incarnation=incarnation,
+                        search_engine=search_engine,
+                        engine_lock=self._engine_lock_for(incarnation),
+                        path=str(path),
+                    )
         self._search_engines.clear()
+        self._engine_locks.clear()
+        self._write_locks.clear()
         self._sync_sqlalchemy_engine.dispose()
         self._started = False
 
@@ -884,6 +946,8 @@ class SQLiteVectorStore(VectorStore):
             search_engine=await self._get_or_create_vector_search_engine(
                 incarnation, partition_key
             ),
+            engine_lock=self._engine_lock_for(incarnation),
+            write_lock=self._write_lock_for(incarnation),
             vector_store_name=self._vector_store_name,
             partition_key=partition_key,
             incarnation=incarnation,
@@ -917,6 +981,8 @@ class SQLiteVectorStore(VectorStore):
         if index_path is not None:
             await asyncio.to_thread(index_path.unlink, missing_ok=True)
         self._search_engines.pop(incarnation, None)
+        self._engine_locks.pop(incarnation, None)
+        self._write_locks.pop(incarnation, None)
 
     @override
     async def purge_deleted_partitions(self) -> bool:
@@ -983,9 +1049,34 @@ class SQLiteVectorStore(VectorStore):
             Column("row_id", Integer, primary_key=True, autoincrement=True),
             Column("uuid", Uuid, nullable=False, unique=True),
             *property_columns(self._store_schema.indexed_properties),
+            # A plain rowid is reused once the highest row is deleted. query()
+            # resolves scored keys to rows without a lock, so a scored key could
+            # resolve to a record other than the one the engine scored.
+            sqlite_autoincrement=True,
         )
         property_indexes(records_table, self._store_schema.indexed_properties)
         return records_table
+
+    def _engine_lock_for(self, incarnation: UUID) -> AsyncRWLock:
+        """Get or create the lock guarding a partition life's search engine.
+
+        Engines are not safe for concurrent use: searches take the read side,
+        everything else the write side. Shared by every handle on the
+        partition life, and dropped with its engine when the partition is
+        deleted.
+        """
+        return self._engine_locks.setdefault(incarnation, AsyncRWLock())
+
+    def _write_lock_for(self, incarnation: UUID) -> asyncio.Lock:
+        """Get or create the lock serializing a partition life's writes.
+
+        Held from SQL commit through engine apply, mark-applied, and any save,
+        so the engine sees writes in commit order and a save's trim cannot land
+        between another write's apply and its bookkeeping. Shared by every
+        handle on the partition life, and dropped with its engine when the
+        partition is deleted.
+        """
+        return self._write_locks.setdefault(incarnation, asyncio.Lock())
 
     def _index_path(self, incarnation: UUID) -> Path | None:
         """Return the on-disk index path for a partition life, or None if in-memory."""
@@ -1032,7 +1123,8 @@ class SQLiteVectorStore(VectorStore):
                 # The engine just propagates whatever its backend raises.
                 # Wrap any failure as IndexLoadError so callers see one type.
                 try:
-                    await search_engine.load(str(index_path))
+                    async with self._engine_lock_for(incarnation).write_lock():
+                        await search_engine.load(str(index_path))
                 except Exception as e:
                     raise IndexLoadError(
                         self._vector_store_name, partition_key, index_path

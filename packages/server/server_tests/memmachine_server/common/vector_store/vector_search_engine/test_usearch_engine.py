@@ -296,6 +296,42 @@ class TestPersistence:
         assert result.matches[0].key == 1
         assert result.matches[0].score == pytest.approx(1.0, abs=0.01)
 
+    @pytest.mark.asyncio
+    async def test_save_leaves_no_temp_file(self, tmp_path: Path):
+        engine = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add({1: _normalize([1, 0, 0])})
+
+        path = tmp_path / "test.idx"
+        await engine.save(str(path))
+
+        assert path.exists()
+        assert not (tmp_path / "test.idx.tmp").exists()
+
+    @pytest.mark.asyncio
+    async def test_load_clears_stale_temp_file(self, tmp_path: Path):
+        engine = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add({1: _normalize([1, 0, 0]), 2: _normalize([0, 1, 0])})
+
+        path = tmp_path / "test.idx"
+        await engine.save(str(path))
+
+        # A temp file left behind by a previously interrupted save.
+        stale_temp = tmp_path / "test.idx.tmp"
+        stale_temp.write_text("STALE")
+
+        engine2 = USearchVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine2.load(str(path))
+
+        assert not stale_temp.exists()
+        result = await _search_one(engine2, _normalize([1, 0, 0]), limit=2)
+        assert {m.key for m in result.matches} == {1, 2}
+
 
 # -- SearchResult types --
 
