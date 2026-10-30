@@ -35,19 +35,12 @@ class VectorStorePartition(ABC):
     An `upsert` or `delete` is durable once it returns; queries may not
     reflect it right away. A store that guarantees more states it.
 
-    A partition stores the properties its store declares
-    (`store_schema.indexed_properties`), typed and indexed for filtering
-    during a search, and no others: a record or a filter naming an
-    undeclared key is rejected, so an undeclared key never exists in the
-    store, neither stored write-only nor scanned for. Every store evaluates
-    the whole filter language during a search.
+    A partition stores the properties its store's schema declares, typed
+    and indexed for filtering during a search, and no others: a record or a
+    filter naming an undeclared key is rejected, so an undeclared key never
+    exists in the store, neither stored write-only nor scanned for. Every
+    store evaluates the whole filter language during a search.
     """
-
-    @property
-    @abstractmethod
-    def store_schema(self) -> VectorStoreSchema:
-        """The schema every record and query of this partition follows."""
-        raise NotImplementedError
 
     @abstractmethod
     async def upsert(
@@ -61,6 +54,10 @@ class VectorStorePartition(ABC):
         Insert records with new UUIDs, and replace records with existing UUIDs:
         a replaced record holds only the vector and properties it is upserted
         with.
+
+        Cancelling the call stops it from sending further requests to the
+        backend; a request already sent may still be applied, so a cancelled
+        upsert may have written some of the records.
 
         Args:
             records (Iterable[Record]):
