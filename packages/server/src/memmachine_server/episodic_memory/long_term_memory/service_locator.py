@@ -13,6 +13,7 @@ from memmachine_server.common.configuration.episodic_config import (
     PassthroughSegmenterConf,
     SegmenterConf,
     SentenceTextDeriverConf,
+    TextDeriverConf,
     TextSegmenterConf,
     WholeTextDeriverConf,
 )
@@ -25,6 +26,7 @@ from memmachine_server.common.vector_store import VectorStoreCollectionConfig
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
+    TextDeriver,
     WholeTextDeriver,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
@@ -229,6 +231,8 @@ def _build_deriver(conf: DeriverConf) -> Deriver:
     match conf:
         case WholeTextDeriverConf():
             return WholeTextDeriver()
+        case TextDeriverConf():
+            return TextDeriver()
         case SentenceTextDeriverConf():
             return SentenceTextDeriver()
         case _:
