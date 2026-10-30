@@ -1,143 +1,244 @@
-"""Data types for vector store."""
+"""
+Data types for vector store.
 
-from collections.abc import Mapping
+Imports nothing from this package; the rest of it builds on these types.
+"""
+
+import re
+from collections.abc import Collection, Iterable, Mapping
+from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    field_validator,
+)
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE,
     PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
+    PropertyType,
     PropertyValue,
     SimilarityMetric,
 )
 
-from .utils import validate_identifier
+
+def _coerce_property_types(value: object) -> object:
+    # A caller may name a type or pass the type itself.
+    if not isinstance(value, Mapping):
+        return value
+    resolved: dict[object, object] = {}
+    for key, property_type in value.items():
+        if isinstance(property_type, str):
+            if property_type not in PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE:
+                raise ValueError(
+                    f"Unknown property type name {property_type!r} for key {key!r}; "
+                    f"expected one of {sorted(PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE)}"
+                )
+            resolved[key] = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE[property_type]
+        else:
+            resolved[key] = property_type
+    return resolved
 
 
-class VectorStoreCollectionConfig(BaseModel):
+def _validate_property_keys(value: dict[str, PropertyType]) -> dict[str, PropertyType]:
+    for key in value:
+        if not is_valid_identifier(key):
+            raise ValueError(
+                f"Property key {key!r} must match [a-z0-9_]+ and be at most 32 bytes"
+            )
+    return value
+
+
+IndexedProperties = Annotated[
+    dict[str, PropertyType],
+    BeforeValidator(_coerce_property_types),
+    AfterValidator(_validate_property_keys),
+]
+"""
+The properties a store declares for every partition it holds: each key the
+store indexes and filters on, with the type its values hold. A record or a
+filter naming any other key is rejected.
+"""
+
+
+def validate_vector_store_name(name: str) -> None:
+    """Raise ValueError unless `name` can name a vector store on every backend."""
+    if not is_valid_identifier(name):
+        raise ValueError(
+            f"Vector store name {name!r} must match [a-z0-9_]+ and be at most 32 bytes."
+        )
+
+
+# Matched with fullmatch: `$` also matches before a trailing newline.
+_IDENTIFIER_RE = re.compile(r"[a-z0-9_]+")
+_IDENTIFIER_MAX_BYTES = 32
+
+
+def is_valid_identifier(value: str) -> bool:
     """
-    Configuration for a logical collection in a vector store.
+    Whether `value` is portable as a name wherever a backend restricts names.
+
+    Such a name holds only lowercase letters, digits, and underscores, and is
+    at most 32 bytes, so every backend accepts it.
+    """
+    return (
+        bool(_IDENTIFIER_RE.fullmatch(value))
+        and len(value.encode()) <= _IDENTIFIER_MAX_BYTES
+    )
+
+
+class VectorStoreSchema(BaseModel):
+    """
+    The shape of a vector store's records and the metric its queries score by.
 
     Attributes:
         vector_dimensions (int):
-            Dimensionality of vectors stored in the collection.
+            Dimensionality of every vector in the store.
         similarity_metric (SimilarityMetric):
-            Metric used to compare vectors.
-        indexed_properties_schema (dict[str, type[PropertyValue]]):
-            Schema suggesting which properties should be indexed for filtering.
+            The metric every query of the store scores by (default: cosine).
+        indexed_properties (IndexedProperties):
+            The properties every partition of the store declares.
     """
 
-    vector_dimensions: int
-    similarity_metric: SimilarityMetric = SimilarityMetric.COSINE
-    indexed_properties_schema: dict[str, type[PropertyValue]] = Field(
-        default_factory=dict
+    model_config = ConfigDict(frozen=True)
+
+    vector_dimensions: int = Field(
+        ..., gt=0, description="Dimensionality of every vector in the store"
+    )
+    similarity_metric: SimilarityMetric = Field(
+        SimilarityMetric.COSINE,
+        description="The metric every query of the store scores by",
+    )
+    indexed_properties: IndexedProperties = Field(
+        ...,
+        description="The properties every partition of the store declares",
     )
 
-    @field_validator("indexed_properties_schema", mode="after")
-    @classmethod
-    def _validate_property_keys(
-        cls, v: dict[str, type[PropertyValue]]
-    ) -> dict[str, type[PropertyValue]]:
-        for key in v:
-            if not validate_identifier(key):
-                raise ValueError(
-                    f"Property key {key!r} must match [a-z0-9_]+ and be at most 32 bytes"
-                )
-        return v
 
-    @field_validator("indexed_properties_schema", mode="before")
-    @classmethod
-    def _coerce_indexed_properties_schema(cls, v: object) -> object:
-        if v is None:
-            return {}
-        if isinstance(v, Mapping):
-            result = {}
-            for key, value in v.items():
-                if isinstance(value, str):
-                    if value not in PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE:
-                        raise ValueError(
-                            f"Unknown property type name {value!r} for key {key!r}."
-                        )
-                    result[key] = PROPERTY_TYPE_NAME_TO_PROPERTY_TYPE[value]
-                else:
-                    result[key] = value
-            return result
+class VectorStorePartitionAlreadyExistsError(Exception):
+    """Raised when creating a partition that already exists."""
 
-        return v
-
-    @field_serializer("indexed_properties_schema")
-    def _serialize_indexed_properties_schema(
-        self, v: dict[str, type[PropertyValue]]
-    ) -> dict[str, str]:
-        return {
-            k: PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[val] for k, val in sorted(v.items())
-        }
+    def __init__(self, vector_store_name: str, partition_key: str) -> None:
+        """Initialize with the vector store and the key of the existing partition."""
+        self.vector_store_name = vector_store_name
+        self.partition_key = partition_key
+        super().__init__(
+            f"Partition {partition_key!r} of vector store {vector_store_name!r} already exists."
+        )
 
 
-class VectorStoreCollectionAlreadyExistsError(Exception):
-    """Raised when creating a collection that already exists."""
-
-    def __init__(self, namespace: str, name: str) -> None:
-        """Initialize with the namespace and name of the existing collection."""
-        self.namespace = namespace
-        self.name = name
-        super().__init__(f"Collection ({namespace!r}, {name!r}) already exists.")
-
-
-class VectorStoreCollectionConfigMismatchError(Exception):
-    """Raised when opening a collection with a different configuration than it was created with."""
+class VectorStorePartitionPendingError(Exception):
+    """Raised when opening a partition whose creation has not completed."""
 
     def __init__(
         self,
-        namespace: str,
-        name: str,
-        existing_config: VectorStoreCollectionConfig,
-        requested_config: VectorStoreCollectionConfig,
+        vector_store_name: str,
+        partition_key: str,
+        registered_at: datetime,
     ) -> None:
-        """Initialize with the namespace, name, and configurations."""
-        self.namespace = namespace
-        self.name = name
-        self.existing_config = existing_config
-        self.requested_config = requested_config
+        """Initialize with the pending partition's vector store, key, and registration time."""
+        self.vector_store_name = vector_store_name
+        self.partition_key = partition_key
+        self.registered_at = registered_at
         super().__init__(
-            f"Collection ({namespace!r}, {name!r}) already exists with a different configuration. "
-            f"Existing config: {existing_config.model_dump_json()}, "
-            f"requested config: {requested_config.model_dump_json()}."
+            f"Partition {partition_key!r} of vector store {vector_store_name!r} has "
+            f"been pending since {registered_at.isoformat()}; if its creation was "
+            "abandoned, delete it to create it again."
+        )
+
+
+class VectorStorePartitionDeletedError(Exception):
+    """Raised when a partition is deleted before its creation completes."""
+
+    def __init__(self, vector_store_name: str, partition_key: str) -> None:
+        """Initialize with the vector store and the key of the deleted partition."""
+        self.vector_store_name = vector_store_name
+        self.partition_key = partition_key
+        super().__init__(
+            f"Partition {partition_key!r} of vector store {vector_store_name!r} was "
+            "deleted before its creation completed"
+        )
+
+
+class VectorStorePartitionHandleStaleError(Exception):
+    """Raised when a handle is used after its partition was deleted."""
+
+    def __init__(self, vector_store_name: str, partition_key: str) -> None:
+        """Record the vector store and the key the stale handle belonged to."""
+        self.vector_store_name = vector_store_name
+        self.partition_key = partition_key
+        super().__init__(
+            f"Stale handle for partition {partition_key!r} of vector store "
+            f"{vector_store_name!r}: the partition was deleted (or re-created) after this "
+            "handle was bound"
+        )
+
+
+class VectorStoreAttemptsExhaustedError(Exception):
+    """Raised when an operation gave up after repeated attempts that made no progress."""
+
+
+class UndeclaredPropertyKeyError(ValueError):
+    """Raised when a record or a filter names a key the store has not declared."""
+
+    def __init__(self, keys: Iterable[str], declared: Collection[str]) -> None:
+        """Initialize with the offending keys and the declared ones."""
+        self.keys = sorted(set(keys))
+        self.declared = sorted(declared)
+        super().__init__(
+            f"Property keys {self.keys} are not declared by the vector store; "
+            f"declared keys: {self.declared}."
+        )
+
+
+class PropertyTypeMismatchError(ValueError):
+    """Raised when a record's value is not of its key's declared type."""
+
+    def __init__(self, key: str, declared: PropertyType, value: PropertyValue) -> None:
+        """Initialize with the key, its declared type and the offending value."""
+        self.key = key
+        self.declared = declared
+        self.value = value
+        super().__init__(
+            f"Property {key!r} is declared as "
+            f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}, "
+            f"got {type(value).__name__} {value!r}."
         )
 
 
 class Record(BaseModel):
     """
-    A record in the vector store.
+    A record to write to a vector store partition.
 
     Attributes:
         uuid (UUID):
             Unique identifier for the record.
-        vector (list[float] | None):
-            Vector for similarity search.
-            `None` is not allowed on input.
-            `None` on output means the vector was not requested (`return_vector=False`)
-            (default: None).
-        properties (dict[str, PropertyValue] | None):
-            Property key-value pairs.
-            Use `{}` to represent missing properties; `None` on input is treated as `{}`.
-            `None` on output means the properties were not requested (`return_properties=False`)
-            (default: None).
+        vector (list[float]):
+            Vector for similarity search, of finite coordinates.
+        properties (dict[str, PropertyValue]):
+            Property key-value pairs to filter on
+            (default: `{}`).
     """
 
     uuid: UUID
-    vector: list[float] | None = None
-    properties: dict[str, PropertyValue] | None = None
+    vector: list[FiniteFloat]
+    properties: dict[str, PropertyValue] = Field(default_factory=dict)
 
-    @field_validator("properties")
+    @field_validator("properties", mode="after")
     @classmethod
     def _validate_property_keys(
-        cls, v: dict[str, PropertyValue] | None
-    ) -> dict[str, PropertyValue] | None:
+        cls, v: dict[str, PropertyValue]
+    ) -> dict[str, PropertyValue]:
         if v:
             for key in v:
-                if not validate_identifier(key):
+                if not is_valid_identifier(key):
                     raise ValueError(
                         f"Property key {key!r} must match [a-z0-9_]+ and be at most 32 bytes"
                     )
@@ -154,7 +255,7 @@ class QueryMatch(BaseModel):
 
     Attributes:
         score (float):
-            The meaning depends on the collection's `SimilarityMetric`:
+            The meaning depends on the store's `SimilarityMetric`:
             - *cosine*: cosine similarity in [-1, 1].
             - *dot*: raw dot product [0, inf).
             - *euclidean*: Euclidean distance [0, inf).
@@ -162,12 +263,12 @@ class QueryMatch(BaseModel):
 
             Use `SimilarityMetric.higher_is_better` to determine which
             direction indicates a better match.
-        record (Record):
-            The matched record.
+        record_uuid (UUID):
+            UUID of the matched record.
     """
 
     score: float
-    record: Record
+    record_uuid: UUID
 
 
 class QueryResult(BaseModel):

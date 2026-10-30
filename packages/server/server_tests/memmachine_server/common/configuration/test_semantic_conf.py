@@ -70,3 +70,29 @@ def test_semantic_config_sets_missing_episode_grace_period():
 
     with pytest.raises(ValidationError):
         SemanticMemoryConf(enabled=False, missing_episode_grace_period_sec=-1)
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        ({"database": "db"}, True),
+        ({}, False),
+        ({"storage_backend": "pgvector", "database": "db"}, True),
+        ({"storage_backend": "neo4j"}, False),
+        (
+            {
+                "storage_backend": "vector_store",
+                "feature_store": "features",
+                "vector_collection": "vectors",
+            },
+            True,
+        ),
+        ({"storage_backend": "vector_store", "feature_store": "features"}, False),
+        ({"storage_backend": "vector_store", "database": "db"}, False),
+    ],
+)
+def test_storage_configured_reads_only_the_selected_backend(fields, expected):
+    conf = SemanticMemoryConf(**fields)
+
+    assert conf.enabled is False
+    assert conf.storage_configured() is expected

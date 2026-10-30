@@ -77,6 +77,8 @@ class SegmentStorePartition(ABC):
         Returns:
             dict[UUID, list[Segment]]:
                 A mapping from each seed segment UUID to its context segments.
+                A seed that does not match the filter has no entry, and a
+                context holds only segments that match it.
         """
         raise NotImplementedError
 
@@ -113,6 +115,27 @@ class SegmentStorePartition(ABC):
         Returns:
             dict[UUID, list[UUID]]:
                 A mapping from each segment UUID to the UUIDs of its associated derivatives.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_segment_uuids_by_derivative_uuids(
+        self,
+        derivative_uuids: Iterable[UUID],
+    ) -> dict[UUID, UUID]:
+        """
+        Get the segment each of the given derivatives belongs to.
+
+        A derivative belongs to exactly one segment.
+
+        Args:
+            derivative_uuids (Iterable[UUID]):
+                The UUIDs of the derivatives whose owning segments to look up.
+
+        Returns:
+            dict[UUID, UUID]:
+                A mapping from each given derivative UUID the partition holds
+                to its segment's UUID.
         """
         raise NotImplementedError
 

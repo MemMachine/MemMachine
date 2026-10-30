@@ -167,7 +167,7 @@ def test_get_project(client, mock_memmachine):
 
 
 def test_create_project_with_explicit_event_backend(client, mock_memmachine):
-    """Client opts into event backend; resource ids round-trip in the response."""
+    """Client opts into event backend; the response names none of the deployment's stores."""
     payload = {
         "org_id": "test_org",
         "project_id": "test_proj",
@@ -177,17 +177,12 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
             "embedder": "openai",
             "vector_store": "vstore",
             "segment_store": "pgengine",
-            "properties_schema": {"my_field": "str"},
         },
     }
 
     mock_session = MagicMock()
     mock_session.episode_memory_conf.long_term_memory = EventLongTermMemoryConf(
         session_id="test_org/test_proj",
-        embedder="openai",
-        vector_store="vstore",
-        segment_store="pgengine",
-        properties_schema={"my_field": "str"},
     )
     mock_memmachine.create_session.return_value = mock_session
 
@@ -195,16 +190,16 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
     assert response.status_code == 201
     body = response.json()
     assert body["config"]["backend"] == "event"
-    assert body["config"]["vector_store"] == "vstore"
-    assert body["config"]["segment_store"] == "pgengine"
-    assert body["config"]["properties_schema"] == {"my_field": "str"}
+    assert body["config"]["embedder"] == ""
+    assert "vector_store" not in body["config"]
+    assert "segment_store" not in body["config"]
 
-    # Server forwards the event-shaped partial to create_session unchanged.
+    # The request's store ids are not part of the API, so none reach the session.
     mock_memmachine.create_session.assert_awaited_once()
     user_conf = mock_memmachine.create_session.call_args[1]["user_conf"]
     assert user_conf.long_term_memory.backend == "event"
-    assert user_conf.long_term_memory.vector_store == "vstore"
-    assert user_conf.long_term_memory.segment_store == "pgengine"
+    assert user_conf.long_term_memory.vector_store is None
+    assert user_conf.long_term_memory.segment_store is None
 
 
 def test_create_project_without_backend_passes_none_through(client, mock_memmachine):

@@ -283,29 +283,6 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         return best
 
     @override
-    async def get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        async with self._lock.read_lock():
-            return await asyncio.to_thread(self._sync_get_vectors, keys)
-
-    def _sync_get_vectors(self, keys: Iterable[int]) -> dict[int, list[float]]:
-        keys = list(keys)
-        if not keys:
-            return {}
-
-        try:
-            vectors = self._index.get_items(keys)
-            return {
-                key: list(vector) for key, vector in zip(keys, vectors, strict=True)
-            }
-        except RuntimeError:
-            # Fallback: a deleted key was requested. Fetch one by one.
-            result: dict[int, list[float]] = {}
-            for key in keys:
-                with contextlib.suppress(RuntimeError):
-                    result[key] = list(self._index.get_items([key])[0])
-            return result
-
-    @override
     async def remove(self, keys: Iterable[int]) -> None:
         async with self._lock.write_lock():
             await asyncio.to_thread(self._sync_remove, keys)

@@ -1,10 +1,14 @@
 import importlib.util
+import sqlite3
+from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from pydantic import SecretStr
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from memmachine_server.common.configuration.database_conf import (
     DatabasesConf,
@@ -16,18 +20,37 @@ from memmachine_server.common.configuration.database_conf import (
     SQLiteVectorStoreEngine,
     SQLiteVecVectorStoreConf,
 )
+from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.errors import (
     MilvusConfigurationError,
     QdrantConfigurationError,
     VectorStoreConfigurationError,
 )
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
+from memmachine_server.common.sql import write_session
 from memmachine_server.common.vector_graph_store import VectorGraphStore
+from memmachine_server.common.vector_store import VectorStoreSchema
+from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyVectorStorePartitionRegistryParams,
+)
 
 requires_pymilvus = pytest.mark.skipif(
     importlib.util.find_spec("pymilvus") is None,
     reason="requires pymilvus optional dependency",
 )
+
+requires_sqlite_extension_loading = pytest.mark.skipif(
+    not hasattr(sqlite3.Connection, "enable_load_extension"),
+    reason="sqlite3 built without extension loading support",
+)
+
+
+_SCHEMA = VectorStoreSchema(
+    vector_dimensions=3,
+    similarity_metric=SimilarityMetric.COSINE,
+    indexed_properties={},
+)
+_STORE: dict[str, Any] = {"vector_store_name": "c", "store_schema": _SCHEMA}
 
 
 def _empty_vector_store_confs(conf: MagicMock) -> None:
@@ -289,31 +312,47 @@ async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted():
 # --- Qdrant ---
 
 
-def _qdrant_only_conf() -> MagicMock:
-    """Build a DatabasesConf mock with only a Qdrant entry."""
+def _qdrant_only_conf(registry_dir: Path) -> MagicMock:
+    """Build a DatabasesConf mock with only a Qdrant entry.
+
+    Its partition registry is a SQLite file in `registry_dir`.
+    """
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {}
+    conf.relational_db_confs = {
+        "registry": SqlAlchemyConf(
+            dialect="sqlite",
+            driver="aiosqlite",
+            path=str(registry_dir / "registry.db"),
+        )
+    }
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {
-        "qdrant1": QdrantConf(host="localhost", port=6333),
+        "qdrant1": QdrantConf(
+            partition_registry="registry",
+            host="localhost",
+            port=6333,
+        ),
     }
+    conf.milvus_confs = {}
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
     return conf
 
 
 @pytest.mark.asyncio
-async def test_qdrant_client_kwargs_forwarded():
-    """host, port, grpc_port, prefer_grpc, and https are forwarded to AsyncQdrantClient."""
-    conf = _qdrant_only_conf()
+async def test_qdrant_client_kwargs_forwarded(tmp_path):
+    """host, port, grpc_port, prefer_grpc, https, api_key, and request_timeout_seconds are forwarded to AsyncQdrantClient."""
+    conf = _qdrant_only_conf(tmp_path)
     conf.qdrant_confs["qdrant1"] = QdrantConf(
+        partition_registry="registry",
         host="qdrant.example.com",
         port=7333,
         grpc_port=7334,
         prefer_grpc=True,
         https=True,
         api_key=SecretStr("secret-key"),
+        request_timeout_seconds=7,
     )
 
     mock_client = AsyncMock()
@@ -342,13 +381,14 @@ async def test_qdrant_client_kwargs_forwarded():
     assert call_kwargs["grpc_port"] == 7334
     assert call_kwargs["prefer_grpc"] is True
     assert call_kwargs["https"] is True
+    assert call_kwargs["timeout"] == 7
     assert call_kwargs["api_key"] == "secret-key"
 
 
 @pytest.mark.asyncio
-async def test_qdrant_api_key_omitted_when_empty():
+async def test_qdrant_api_key_omitted_when_empty(tmp_path):
     """api_key is not forwarded when it is the empty default."""
-    conf = _qdrant_only_conf()
+    conf = _qdrant_only_conf(tmp_path)
 
     mock_client = AsyncMock()
     mock_client.get_collections = AsyncMock(return_value=[])
@@ -374,12 +414,16 @@ async def test_qdrant_api_key_omitted_when_empty():
 
 
 @pytest.mark.asyncio
-async def test_qdrant_creates_vector_store():
-    """async_get_qdrant_client creates a QdrantVectorStore and stores it."""
-    conf = _qdrant_only_conf()
-    conf.qdrant_confs["qdrant1"] = QdrantConf(registry_replication_factor=3)
+async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
+    """get_vector_store builds a QdrantVectorStore of the name and starts it up."""
+    conf = _qdrant_only_conf(tmp_path)
+    conf.qdrant_confs["qdrant1"] = QdrantConf(
+        partition_registry="registry",
+        tombstone_retention_seconds=3600,
+    )
 
     mock_client = AsyncMock()
+    mock_client.get_collections = AsyncMock(return_value=[])
     mock_client.close = AsyncMock()
 
     with (
@@ -390,31 +434,63 @@ async def test_qdrant_creates_vector_store():
             "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
+            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyVectorStorePartitionRegistry",
+        ) as mock_registry_cls,
+        patch(
             "qdrant_client.AsyncQdrantClient",
             return_value=mock_client,
         ),
     ):
+        mock_registry_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_qdrant_client("qdrant1")
+        await builder.get_vector_store("qdrant1", **_STORE)
 
+    mock_registry_cls.assert_called_once_with(
+        SQLAlchemyVectorStorePartitionRegistryParams(
+            engine=builder.sql_engines["registry"],
+            vector_store_name="c",
+            tombstone_retention_seconds=3600,
+        )
+    )
+    mock_registry_cls.return_value.startup.assert_awaited_once()
     mock_params_cls.assert_called_once()
     kwargs = mock_params_cls.call_args.kwargs
     assert kwargs["client"] is mock_client
-    assert kwargs["registry_replication_factor"] == 3
+    assert kwargs["partition_registry"] is mock_registry_cls.return_value
+    assert kwargs["vector_store_name"] == "c"
+    assert kwargs["store_schema"] is _SCHEMA
     # Asserted as "not None" rather than pinned to a value: OperationTracker
     # accepts None and then discards every timing without error, so passing the
     # keyword is not the property that matters - passing a factory is.
     assert kwargs["metrics_factory"] is not None
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
-    assert "qdrant1" in builder.vector_stores
+    assert ("qdrant1", "c") in builder.vector_stores
 
 
 @pytest.mark.asyncio
-async def test_get_vector_store_qdrant():
+async def test_qdrant_client_is_not_opened_when_the_partition_registry_is_unknown(
+    tmp_path,
+):
+    """The registry database is resolved before the client is opened, so a
+    bad partition_registry leaves no client behind."""
+    conf = _qdrant_only_conf(tmp_path)
+    conf.qdrant_confs["qdrant1"] = QdrantConf(partition_registry="missing")
+
+    with patch("qdrant_client.AsyncQdrantClient") as mock_cls:
+        builder = DatabaseManager(conf)
+        with pytest.raises(VectorStoreConfigurationError, match="missing"):
+            await builder.get_vector_store("qdrant1", **_STORE)
+
+    mock_cls.assert_not_called()
+    assert "qdrant1" not in builder.qdrant_clients
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_qdrant(tmp_path):
     """get_vector_store returns the VectorStore for a Qdrant config."""
-    conf = _qdrant_only_conf()
+    conf = _qdrant_only_conf(tmp_path)
 
     mock_client = AsyncMock()
     mock_client.get_collections = AsyncMock(return_value=[])
@@ -434,15 +510,15 @@ async def test_get_vector_store_qdrant():
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
-        store = await builder.get_vector_store("qdrant1")
+        store = await builder.get_vector_store("qdrant1", **_STORE)
 
     assert store is mock_store_cls.return_value
 
 
 @pytest.mark.asyncio
-async def test_qdrant_config_not_found():
+async def test_qdrant_config_not_found(tmp_path):
     """async_get_qdrant_client raises ValueError for unknown names."""
-    conf = _qdrant_only_conf()
+    conf = _qdrant_only_conf(tmp_path)
     conf.qdrant_confs = {}
     builder = DatabaseManager(conf)
     with pytest.raises(ValueError, match="Qdrant config 'missing' not found"):
@@ -463,11 +539,12 @@ async def test_qdrant_validation_failure():
 
 
 @pytest.mark.asyncio
-async def test_qdrant_close():
+async def test_qdrant_close(tmp_path):
     """close() cleans up Qdrant clients and vector stores."""
-    conf = _qdrant_only_conf()
+    conf = _qdrant_only_conf(tmp_path)
 
     mock_client = AsyncMock()
+    mock_client.get_collections = AsyncMock(return_value=[])
     mock_client.close = AsyncMock()
 
     with (
@@ -485,10 +562,10 @@ async def test_qdrant_close():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_qdrant_client("qdrant1")
+        await builder.get_vector_store("qdrant1", **_STORE)
 
     assert "qdrant1" in builder.qdrant_clients
-    assert "qdrant1" in builder.vector_stores
+    assert ("qdrant1", "c") in builder.vector_stores
 
     await builder.close()
 
@@ -500,15 +577,24 @@ async def test_qdrant_close():
 # --- Milvus ---
 
 
-def _milvus_only_conf() -> MagicMock:
-    """Build a DatabasesConf mock with only a Milvus entry."""
+def _milvus_only_conf(registry_dir: Path) -> MagicMock:
+    """Build a DatabasesConf mock with only a Milvus entry.
+
+    Its partition registry is a SQLite file in `registry_dir`.
+    """
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {}
+    conf.relational_db_confs = {
+        "registry": SqlAlchemyConf(
+            dialect="sqlite",
+            driver="aiosqlite",
+            path=str(registry_dir / "registry.db"),
+        )
+    }
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {}
     conf.milvus_confs = {
-        "milvus1": MilvusConf(uri="./milvus.db"),
+        "milvus1": MilvusConf(partition_registry="registry", uri="http://milvus:19530"),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -517,19 +603,20 @@ def _milvus_only_conf() -> MagicMock:
 
 @pytest.mark.asyncio
 @requires_pymilvus
-async def test_milvus_client_kwargs_forwarded():
-    """uri, token, and db_name are forwarded to MilvusClient."""
-    conf = _milvus_only_conf()
+async def test_milvus_client_kwargs_forwarded(tmp_path):
+    """uri, token, db_name and the request timeout are forwarded to AsyncMilvusClient."""
+    conf = _milvus_only_conf(tmp_path)
     conf.milvus_confs["milvus1"] = MilvusConf(
+        partition_registry="registry",
         uri="https://example.zillizcloud.com",
         token=SecretStr("secret-token"),
         db_name="memory",
-        consistency_level="Strong",
+        request_timeout_seconds=7,
     )
 
-    mock_client = MagicMock()
-    mock_client.list_collections.return_value = []
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -538,7 +625,7 @@ async def test_milvus_client_kwargs_forwarded():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client) as mock_cls,
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client) as mock_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
@@ -548,16 +635,17 @@ async def test_milvus_client_kwargs_forwarded():
     assert call_kwargs["uri"] == "https://example.zillizcloud.com"
     assert call_kwargs["token"] == "secret-token"
     assert call_kwargs["db_name"] == "memory"
+    assert call_kwargs["timeout"] == 7
 
 
 @pytest.mark.asyncio
 @requires_pymilvus
-async def test_milvus_token_and_db_name_omitted_when_empty():
+async def test_milvus_token_and_db_name_omitted_when_empty(tmp_path):
     """Empty auth and database values are not forwarded."""
-    conf = _milvus_only_conf()
+    conf = _milvus_only_conf(tmp_path)
 
-    mock_client = MagicMock()
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -566,24 +654,50 @@ async def test_milvus_token_and_db_name_omitted_when_empty():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client) as mock_cls,
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client) as mock_cls,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.async_get_milvus_client("milvus1")
 
-    assert mock_cls.call_args.kwargs == {"uri": "./milvus.db"}
+    assert mock_cls.call_args.kwargs == {"uri": "http://milvus:19530", "timeout": 30}
 
 
 @pytest.mark.asyncio
 @requires_pymilvus
-async def test_milvus_creates_vector_store():
-    """async_get_milvus_client creates a MilvusVectorStore and stores it."""
-    conf = _milvus_only_conf()
-    conf.milvus_confs["milvus1"] = MilvusConf(consistency_level="Strong")
+async def test_milvus_client_is_not_opened_when_the_partition_registry_is_unknown(
+    tmp_path,
+):
+    """The registry database is resolved before the client is opened, so a
+    bad partition_registry leaves no client behind."""
+    conf = _milvus_only_conf(tmp_path)
+    conf.milvus_confs["milvus1"] = MilvusConf(partition_registry="missing")
 
-    mock_client = MagicMock()
-    mock_client.close = MagicMock()
+    with patch("pymilvus.AsyncMilvusClient") as mock_cls:
+        builder = DatabaseManager(conf)
+        with pytest.raises(VectorStoreConfigurationError, match="missing"):
+            await builder.get_vector_store("milvus1", **_STORE)
+
+    mock_cls.assert_not_called()
+    assert "milvus1" not in builder.milvus_clients
+
+
+@pytest.mark.asyncio
+@requires_pymilvus
+async def test_get_vector_store_builds_a_milvus_store(tmp_path):
+    """get_vector_store builds a MilvusVectorStore of the name and starts it up."""
+    conf = _milvus_only_conf(tmp_path)
+    conf.milvus_confs["milvus1"] = MilvusConf(
+        partition_registry="registry",
+        tombstone_retention_seconds=3600,
+        request_timeout_seconds=7,
+        max_varchar_length=2048,
+        purge_batch_size=500,
+    )
+
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -592,30 +706,48 @@ async def test_milvus_creates_vector_store():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client),
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyVectorStorePartitionRegistry",
+        ) as mock_registry_cls,
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
+        mock_registry_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_milvus_client("milvus1")
+        await builder.get_vector_store("milvus1", **_STORE)
 
+    mock_registry_cls.assert_called_once_with(
+        SQLAlchemyVectorStorePartitionRegistryParams(
+            engine=builder.sql_engines["registry"],
+            vector_store_name="c",
+            tombstone_retention_seconds=3600,
+        )
+    )
+    mock_registry_cls.return_value.startup.assert_awaited_once()
     mock_params_cls.assert_called_once_with(
         client=mock_client,
-        consistency_level="Strong",
+        partition_registry=mock_registry_cls.return_value,
+        vector_store_name="c",
+        store_schema=_SCHEMA,
+        request_timeout_seconds=7,
+        max_varchar_length=2048,
+        purge_batch_size=500,
+        metrics_factory=conf.milvus_confs["milvus1"].get_metrics_factory(),
     )
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
     mock_store_cls.return_value.startup.assert_awaited_once()
-    assert "milvus1" in builder.vector_stores
+    assert ("milvus1", "c") in builder.vector_stores
 
 
 @pytest.mark.asyncio
 @requires_pymilvus
-async def test_get_vector_store_milvus():
+async def test_get_vector_store_milvus(tmp_path):
     """get_vector_store returns the VectorStore for a Milvus config."""
-    conf = _milvus_only_conf()
+    conf = _milvus_only_conf(tmp_path)
 
-    mock_client = MagicMock()
-    mock_client.list_collections.return_value = []
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -624,19 +756,19 @@ async def test_get_vector_store_milvus():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client),
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
-        store = await builder.get_vector_store("milvus1")
+        store = await builder.get_vector_store("milvus1", **_STORE)
 
     assert store is mock_store_cls.return_value
 
 
 @pytest.mark.asyncio
-async def test_milvus_config_not_found():
+async def test_milvus_config_not_found(tmp_path):
     """async_get_milvus_client raises ValueError for unknown names."""
-    conf = _milvus_only_conf()
+    conf = _milvus_only_conf(tmp_path)
     conf.milvus_confs = {}
     builder = DatabaseManager(conf)
     with pytest.raises(ValueError, match="Milvus config 'missing' not found"):
@@ -646,24 +778,33 @@ async def test_milvus_config_not_found():
 @pytest.mark.asyncio
 async def test_milvus_validation_failure():
     """validate_milvus_client raises MilvusConfigurationError on failure."""
-    mock_client = MagicMock()
-    mock_client.list_collections.side_effect = ConnectionError("refused")
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(side_effect=ConnectionError("refused"))
+    mock_client.close = AsyncMock()
 
     with pytest.raises(MilvusConfigurationError, match="failed verification"):
-        await DatabaseManager.validate_milvus_client("milvus1", mock_client)
+        await DatabaseManager.validate_milvus_client(
+            "milvus1", mock_client, request_timeout_seconds=7
+        )
 
-    mock_client.close.assert_called_once()
+    mock_client.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 @requires_pymilvus
-async def test_milvus_close():
-    """close() cleans up Milvus clients and vector stores."""
-    conf = _milvus_only_conf()
+async def test_milvus_validation_is_bounded_by_the_request_timeout(tmp_path):
+    """The connectivity check carries the configured request timeout, which
+    the client's own timeout bounds only for connecting."""
+    conf = _milvus_only_conf(tmp_path)
+    conf.milvus_confs["milvus1"] = MilvusConf(
+        partition_registry="registry",
+        uri="http://milvus.example.com:19530",
+        request_timeout_seconds=7,
+    )
 
-    mock_client = MagicMock()
-    mock_client.close = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
 
     with (
         patch(
@@ -672,21 +813,51 @@ async def test_milvus_close():
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch("pymilvus.MilvusClient", return_value=mock_client),
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_milvus_client("milvus1", validate=True)
+        await builder._validate_milvus_clients()
+
+    assert mock_client.list_collections.await_args_list == [
+        call(timeout=7),
+        call(timeout=7),
+    ]
+
+
+@pytest.mark.asyncio
+@requires_pymilvus
+async def test_milvus_close(tmp_path):
+    """close() cleans up Milvus clients and vector stores."""
+    conf = _milvus_only_conf(tmp_path)
+
+    mock_client = AsyncMock()
+    mock_client.list_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
+        ) as mock_store_cls,
+        patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_milvus_client("milvus1")
+        await builder.get_vector_store("milvus1", **_STORE)
 
     assert "milvus1" in builder.milvus_clients
-    assert "milvus1" in builder.vector_stores
+    assert ("milvus1", "c") in builder.vector_stores
 
     await builder.close()
 
     assert builder.milvus_clients == {}
     assert builder.vector_stores == {}
-    mock_client.close.assert_called()
+    mock_client.close.assert_awaited()
 
 
 # --- SQLite-backed VectorStores ---
@@ -709,7 +880,7 @@ def _sqlite_vector_store_only_conf(**vs_overrides) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_sqlite_vector_store_creates_store_and_engine():
-    """async_get_sqlite_vector_store builds an engine, store, and starts it up."""
+    """get_vector_store builds an engine and a store of the name and starts it up."""
     conf = _sqlite_vector_store_only_conf(
         sqlite_vector_store_confs={
             "vs1": SQLiteVectorStoreConf(
@@ -739,7 +910,7 @@ async def test_sqlite_vector_store_creates_store_and_engine():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        store = await builder.async_get_sqlite_vector_store("vs1")
+        store = await builder.get_vector_store("vs1", **_STORE)
 
     assert store is mock_store_cls.return_value
     mock_create.assert_called_once()
@@ -748,13 +919,126 @@ async def test_sqlite_vector_store_creates_store_and_engine():
 
     params_kwargs = mock_params_cls.call_args.kwargs
     assert params_kwargs["sqlalchemy_engine"] is mock_engine
+    assert params_kwargs["vector_store_name"] == "c"
+    assert params_kwargs["store_schema"] is _SCHEMA
     assert params_kwargs["index_directory"] == "/tmp/vs"
     assert params_kwargs["save_threshold"] == 200
     assert callable(params_kwargs["vector_search_engine_factory"])
 
     mock_store_cls.return_value.startup.assert_awaited_once()
-    assert "vs1" in builder.vector_stores
+    assert ("vs1", "c") in builder.vector_stores
     assert "vs1" in builder.vector_store_sql_engines
+
+
+@pytest.mark.asyncio
+async def test_a_sqlite_vector_store_engine_takes_the_write_lock_at_begin(tmp_path):
+    """The engine behind a configured SQLite vector store is set up for write transactions."""
+    path = tmp_path / "vs.db"
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path=str(path))}
+    )
+    builder = DatabaseManager(conf)
+    await builder.get_vector_store("vs1", **_STORE)
+    other = create_async_engine(
+        f"sqlite+aiosqlite:///{path}", connect_args={"timeout": 0.2}
+    )
+    try:
+        engine = builder.vector_store_sql_engines["vs1"]
+        # The write transaction has written nothing, and holds the lock already.
+        async with (
+            write_session(async_sessionmaker(engine)),
+            other.connect() as connection,
+        ):
+            with pytest.raises(OperationalError):
+                await connection.execute(text("CREATE TABLE probe (k INTEGER)"))
+    finally:
+        await other.dispose()
+        await builder.close()
+
+
+@pytest.mark.asyncio
+async def test_a_sqlite_vector_store_engine_enforces_foreign_keys(tmp_path):
+    """Every connection of a configured SQLite vector store's engine enforces foreign keys."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={
+            "vs1": SQLiteVectorStoreConf(path=str(tmp_path / "vs.db"))
+        }
+    )
+    builder = DatabaseManager(conf)
+    try:
+        await builder.get_vector_store("vs1", **_STORE)
+        engine = builder.vector_store_sql_engines["vs1"]
+        async with engine.connect() as connection:
+            result = await connection.execute(text("PRAGMA foreign_keys"))
+            assert result.scalar_one() == 1
+    finally:
+        await builder.close()
+
+
+@requires_sqlite_extension_loading
+@pytest.mark.asyncio
+async def test_a_sqlite_vec_vector_store_engine_loads_sqlite_vec(tmp_path):
+    """Every connection of a configured sqlite-vec vector store's engine has sqlite-vec loaded."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vec_vector_store_confs={
+            "vec1": SQLiteVecVectorStoreConf(path=str(tmp_path / "vec.db"))
+        }
+    )
+    builder = DatabaseManager(conf)
+    try:
+        await builder.get_vector_store("vec1", **_STORE)
+        engine = builder.vector_store_sql_engines["vec1"]
+        async with engine.connect() as connection:
+            result = await connection.execute(text("SELECT vec_version()"))
+            assert result.scalar_one()
+    finally:
+        await builder.close()
+
+
+@pytest.mark.asyncio
+async def test_stores_of_one_sqlite_vector_store_share_its_engine():
+    """Two stores on one configured SQLite vector store share its engine."""
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path="vs.db")}
+    )
+
+    mock_engine = MagicMock(spec=AsyncEngine)
+    mock_engine.dispose = AsyncMock()
+
+    def build_store(_params: object) -> MagicMock:
+        store = MagicMock()
+        store.startup = AsyncMock()
+        store.shutdown = AsyncMock()
+        return store
+
+    with (
+        patch(
+            "memmachine_server.common.resource_manager.database_manager.create_async_engine",
+            return_value=mock_engine,
+        ) as mock_create,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStoreParams",
+        ) as mock_params_cls,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
+            side_effect=build_store,
+        ),
+    ):
+        builder = DatabaseManager(conf)
+        first = await builder.get_vector_store("vs1", **_STORE)
+        second = await builder.get_vector_store(
+            "vs1",
+            vector_store_name="d",
+            store_schema=_SCHEMA,
+        )
+
+    assert first is not second
+    assert builder.vector_stores == {("vs1", "c"): first, ("vs1", "d"): second}
+    assert mock_create.call_count == 1
+    assert [
+        (params.kwargs["vector_store_name"], params.kwargs["sqlalchemy_engine"])
+        for params in mock_params_cls.call_args_list
+    ] == [("c", mock_engine), ("d", mock_engine)]
 
 
 @pytest.mark.asyncio
@@ -789,7 +1073,7 @@ async def test_sqlite_vector_store_default_engine_is_usearch():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_sqlite_vector_store("vs1")
+        await builder.get_vector_store("vs1", **_STORE)
 
         # Invoke the factory the manager passed into params and confirm it
         # routes to the USearch engine.
@@ -823,11 +1107,12 @@ async def test_sqlite_vector_store_caches_after_first_call():
             "memmachine_server.common.vector_store.sqlite_vector_store.SQLiteVectorStore",
         ) as mock_store_cls,
     ):
-        mock_store_cls.return_value.startup = AsyncMock()
-        mock_store_cls.return_value.shutdown = AsyncMock()
+        store = mock_store_cls.return_value
+        store.startup = AsyncMock()
+        store.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        first = await builder.async_get_sqlite_vector_store("vs1")
-        second = await builder.async_get_sqlite_vector_store("vs1")
+        first = await builder.get_vector_store("vs1", **_STORE)
+        second = await builder.get_vector_store("vs1", **_STORE)
 
     assert first is second
     assert mock_create.call_count == 1
@@ -835,8 +1120,8 @@ async def test_sqlite_vector_store_caches_after_first_call():
 
 
 @pytest.mark.asyncio
-async def test_sqlite_vector_store_startup_failure_disposes_engine():
-    """If startup() fails, the engine is disposed and no state is retained."""
+async def test_sqlite_vector_store_startup_failure_keeps_no_store():
+    """If startup() fails, no store is kept; the configured vector store's engine stays for close()."""
     conf = _sqlite_vector_store_only_conf(
         sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path="vs.db")}
     )
@@ -861,26 +1146,17 @@ async def test_sqlite_vector_store_startup_failure_disposes_engine():
         )
         builder = DatabaseManager(conf)
         with pytest.raises(VectorStoreConfigurationError, match="failed to start"):
-            await builder.async_get_sqlite_vector_store("vs1")
+            await builder.get_vector_store("vs1", **_STORE)
 
+    assert ("vs1", "c") not in builder.vector_stores
+    mock_engine.dispose.assert_not_awaited()
+    await builder.close()
     mock_engine.dispose.assert_awaited_once()
-    assert "vs1" not in builder.vector_stores
-    assert "vs1" not in builder.vector_store_sql_engines
-
-
-@pytest.mark.asyncio
-async def test_sqlite_vector_store_unknown_name_raises():
-    conf = _sqlite_vector_store_only_conf()
-    builder = DatabaseManager(conf)
-    with pytest.raises(
-        ValueError, match="SQLiteVectorStore config 'missing' not found"
-    ):
-        await builder.async_get_sqlite_vector_store("missing")
 
 
 @pytest.mark.asyncio
 async def test_sqlite_vec_vector_store_creates_store_and_engine():
-    """async_get_sqlite_vec_vector_store builds an engine, store, and starts it up."""
+    """get_vector_store builds an engine and a sqlite-vec store of the name."""
     conf = _sqlite_vector_store_only_conf(
         sqlite_vec_vector_store_confs={"vec1": SQLiteVecVectorStoreConf(path="vec.db")}
     )
@@ -899,32 +1175,28 @@ async def test_sqlite_vec_vector_store_creates_store_and_engine():
         patch(
             "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
         ) as mock_store_cls,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vec_vector_store.load_sqlite_vec_extension",
+        ) as mock_load,
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        store = await builder.async_get_sqlite_vec_vector_store("vec1")
+        store = await builder.get_vector_store("vec1", **_STORE)
 
     assert store is mock_store_cls.return_value
+    mock_load.assert_called_once_with(mock_engine)
     create_args = mock_create.call_args
     assert create_args.args[0] == "sqlite+aiosqlite:///vec.db"
 
     params_kwargs = mock_params_cls.call_args.kwargs
     assert params_kwargs["engine"] is mock_engine
+    assert params_kwargs["vector_store_name"] == "c"
+    assert params_kwargs["store_schema"] is _SCHEMA
 
     mock_store_cls.return_value.startup.assert_awaited_once()
-    assert "vec1" in builder.vector_stores
+    assert ("vec1", "c") in builder.vector_stores
     assert "vec1" in builder.vector_store_sql_engines
-
-
-@pytest.mark.asyncio
-async def test_sqlite_vec_vector_store_unknown_name_raises():
-    conf = _sqlite_vector_store_only_conf()
-    builder = DatabaseManager(conf)
-    with pytest.raises(
-        ValueError, match="SQLiteVecVectorStore config 'missing' not found"
-    ):
-        await builder.async_get_sqlite_vec_vector_store("missing")
 
 
 @pytest.mark.asyncio
@@ -955,14 +1227,17 @@ async def test_get_vector_store_dispatches_to_sqlite_backends():
         patch(
             "memmachine_server.common.vector_store.sqlite_vec_vector_store.SQLiteVecVectorStore",
         ) as mock_vec_cls,
+        patch(
+            "memmachine_server.common.vector_store.sqlite_vec_vector_store.load_sqlite_vec_extension",
+        ),
     ):
         mock_vs_cls.return_value.startup = AsyncMock()
         mock_vs_cls.return_value.shutdown = AsyncMock()
         mock_vec_cls.return_value.startup = AsyncMock()
         mock_vec_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        vs = await builder.get_vector_store("vs1")
-        vec = await builder.get_vector_store("vec1")
+        vs = await builder.get_vector_store("vs1", **_STORE)
+        vec = await builder.get_vector_store("vec1", **_STORE)
 
     assert vs is mock_vs_cls.return_value
     assert vec is mock_vec_cls.return_value
@@ -973,7 +1248,7 @@ async def test_get_vector_store_unknown_name_raises():
     conf = _sqlite_vector_store_only_conf()
     builder = DatabaseManager(conf)
     with pytest.raises(ValueError, match="VectorStore 'missing' not found"):
-        await builder.get_vector_store("missing")
+        await builder.get_vector_store("missing", **_STORE)
 
 
 @pytest.mark.asyncio
@@ -1001,9 +1276,9 @@ async def test_close_disposes_vector_store_engines_and_shuts_down_stores():
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
         builder = DatabaseManager(conf)
-        await builder.async_get_sqlite_vector_store("vs1")
+        await builder.get_vector_store("vs1", **_STORE)
 
-        assert "vs1" in builder.vector_stores
+        assert ("vs1", "c") in builder.vector_stores
         assert "vs1" in builder.vector_store_sql_engines
 
         await builder.close()

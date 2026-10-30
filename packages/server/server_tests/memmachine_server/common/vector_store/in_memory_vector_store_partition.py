@@ -1,11 +1,14 @@
-"""In-memory VectorStoreCollection implementation for testing."""
+"""In-memory VectorStorePartition implementation for testing."""
 
 import math
 import operator
 from collections.abc import Iterable, Sequence
 from uuid import UUID
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import (
+    PropertyValue,
+    SimilarityMetric,
+)
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -15,12 +18,18 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
-from memmachine_server.common.vector_store import VectorStoreCollection
+from memmachine_server.common.vector_store import (
+    VectorStorePartition,
+    VectorStoreSchema,
+)
 from memmachine_server.common.vector_store.data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreCollectionConfig,
+)
+from memmachine_server.common.vector_store.utils import (
+    validate_declared_properties,
+    validate_supported_filter,
 )
 
 # ---------------------------------------------------------------------------
@@ -104,31 +113,41 @@ def _passes_threshold(score: float, threshold: float, higher_is_better: bool) ->
 
 
 # ---------------------------------------------------------------------------
-# InMemoryVectorStoreCollection
+# InMemoryVectorStorePartition
 # ---------------------------------------------------------------------------
 
 
-class InMemoryVectorStoreCollection(VectorStoreCollection):
-    """In-memory VectorStoreCollection for testing.
+class InMemoryVectorStorePartition(VectorStorePartition):
+    """In-memory VectorStorePartition for testing.
 
-    Supports all similarity metrics (cosine, dot, euclidean, manhattan)
-    and full FilterExpr evaluation on record properties.
+    Supports all similarity metrics (cosine, dot, euclidean, manhattan),
+    evaluates FilterExpr on record properties, and enforces the declared
+    schema the way a real store does.
     """
 
-    def __init__(self, collection_config: VectorStoreCollectionConfig) -> None:
-        self.collection_config = collection_config
+    def __init__(
+        self,
+        *,
+        store_schema: VectorStoreSchema,
+    ) -> None:
+        self._store_schema = store_schema
         self.records: dict[UUID, Record] = {}
 
     @property
-    def config(self) -> VectorStoreCollectionConfig:
-        return self.collection_config
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
+        records = list(records)
+        for record in records:
+            validate_declared_properties(
+                record.properties, self._store_schema.indexed_properties
+            )
         for record in records:
             self.records[record.uuid] = Record(
                 uuid=record.uuid,
-                vector=list(record.vector) if record.vector is not None else None,
-                properties=dict(record.properties) if record.properties else {},
+                vector=list(record.vector),
+                properties=dict(record.properties),
             )
 
     async def query(
@@ -138,10 +157,13 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
         score_threshold: float | None = None,
         limit: int | None = None,
         property_filter: FilterExpr | None = None,
-        return_vector: bool = False,
-        return_properties: bool = True,
     ) -> list[QueryResult]:
-        metric = self.collection_config.similarity_metric
+        if property_filter is not None:
+            validate_supported_filter(
+                property_filter, self._store_schema.indexed_properties
+            )
+
+        metric = self._store_schema.similarity_metric
         higher_is_better = metric.higher_is_better
 
         results: list[QueryResult] = []
@@ -149,10 +171,8 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
             qv = list(query_vector)
             matches: list[QueryMatch] = []
             for record in self.records.values():
-                if record.vector is None:
-                    continue
                 if property_filter is not None and not evaluate_filter(
-                    property_filter, record.properties or {}
+                    property_filter, record.properties
                 ):
                     continue
                 score = _score(metric, qv, record.vector)
@@ -160,54 +180,13 @@ class InMemoryVectorStoreCollection(VectorStoreCollection):
                     score, score_threshold, higher_is_better
                 ):
                     continue
-                matches.append(
-                    QueryMatch(
-                        score=score,
-                        record=self._project_record(
-                            record, return_vector, return_properties
-                        ),
-                    )
-                )
+                matches.append(QueryMatch(score=score, record_uuid=record.uuid))
             matches.sort(key=lambda m: m.score, reverse=higher_is_better)
             if limit is not None:
                 matches = matches[:limit]
             results.append(QueryResult(matches=matches))
         return results
 
-    async def get(
-        self,
-        *,
-        record_uuids: Iterable[UUID],
-        return_vector: bool = False,
-        return_properties: bool = True,
-    ) -> list[Record]:
-        out: list[Record] = []
-        for uid in record_uuids:
-            record = self.records.get(uid)
-            if record is None:
-                continue
-            out.append(self._project_record(record, return_vector, return_properties))
-        return out
-
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         for uid in record_uuids:
             self.records.pop(uid, None)
-
-    @staticmethod
-    def _project_record(
-        record: Record, return_vector: bool, return_properties: bool
-    ) -> Record:
-        """Return a copy of the record with only the requested fields."""
-        return Record(
-            uuid=record.uuid,
-            vector=(
-                list(record.vector)
-                if return_vector and record.vector is not None
-                else None
-            ),
-            properties=(
-                dict(record.properties)
-                if return_properties and record.properties
-                else None
-            ),
-        )

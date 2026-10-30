@@ -70,7 +70,7 @@ def mock_metrics_factory():
         def get_summary(self, name, description, label_names=...):
             return self.summaries
 
-        def get_gauge(self, name, description, label_names=...):
+        def get_gauge(self, name, description, label_names=..., *, additive=False):
             return self.gauge
 
         def get_histogram(self, name, description, label_names=...):

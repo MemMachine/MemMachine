@@ -1,20 +1,31 @@
 """Public exports for vector store."""
 
 from .data_types import (
+    PropertyTypeMismatchError,
     QueryResult,
     Record,
-    VectorStoreCollectionAlreadyExistsError,
-    VectorStoreCollectionConfig,
-    VectorStoreCollectionConfigMismatchError,
+    UndeclaredPropertyKeyError,
+    VectorStoreAttemptsExhaustedError,
+    VectorStorePartitionAlreadyExistsError,
+    VectorStorePartitionDeletedError,
+    VectorStorePartitionHandleStaleError,
+    VectorStorePartitionPendingError,
+    VectorStoreSchema,
 )
-from .vector_store import VectorStore, VectorStoreCollection
+from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 
 __all__ = [
+    "PropertyTypeMismatchError",
     "QueryResult",
     "Record",
+    "UndeclaredPropertyKeyError",
     "VectorStore",
-    "VectorStoreCollection",
-    "VectorStoreCollectionAlreadyExistsError",
-    "VectorStoreCollectionConfig",
-    "VectorStoreCollectionConfigMismatchError",
+    "VectorStoreAttemptsExhaustedError",
+    "VectorStoreParams",
+    "VectorStorePartition",
+    "VectorStorePartitionAlreadyExistsError",
+    "VectorStorePartitionDeletedError",
+    "VectorStorePartitionHandleStaleError",
+    "VectorStorePartitionPendingError",
+    "VectorStoreSchema",
 ]

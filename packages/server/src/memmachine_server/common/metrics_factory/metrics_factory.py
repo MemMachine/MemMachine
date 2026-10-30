@@ -71,8 +71,16 @@ class MetricsFactory(ABC):
         name: str,
         description: str,
         label_names: Iterable[str] = (),
+        *,
+        additive: bool = False,
     ) -> Gauge:
-        """Return a gauge metric by name, creating it if absent."""
+        """Return a gauge metric by name, creating it if absent.
+
+        `additive` states whether the values that different processes set for
+        one label set add up to a meaningful total. An implementation that
+        merges processes sums an additive gauge's values and keeps a
+        non-additive gauge's values per process.
+        """
         raise NotImplementedError
 
     @abstractmethod

@@ -1,0 +1,512 @@
+"""
+Base classes for a vector store whose partitions a partition registry arbitrates.
+
+The registry mints each partition's incarnation and arbitrates creation,
+deletion, and reclamation across processes. A partition's key is reserved,
+its storage is prepared, and the reservation is confirmed, which makes the
+partition live; only a live partition is opened. The backend holds records,
+each carrying its partition's incarnation, and a subclass decides how: it
+prepares the storage the store's partitions share and the storage a new
+partition needs of its own, builds a handle for one partition, and purges a
+deleted incarnation's records.
+"""
+
+import asyncio
+import contextlib
+import logging
+from abc import abstractmethod
+from collections.abc import Iterable, Sequence
+from typing import override
+from uuid import UUID
+
+from pydantic import Field, InstanceOf
+
+from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+
+from .data_types import (
+    QueryResult,
+    Record,
+    VectorStoreAttemptsExhaustedError,
+    VectorStorePartitionAlreadyExistsError,
+    VectorStorePartitionDeletedError,
+    VectorStorePartitionPendingError,
+    VectorStoreSchema,
+)
+from .partition_registry import (
+    Registration,
+    Reservation,
+    VectorStorePartitionRegistry,
+)
+from .utils import (
+    validate_declared_properties,
+    validate_dimensions,
+    validate_limit,
+    validate_partition_key,
+    validate_query_vector,
+    validate_score_threshold,
+    validate_supported_filter,
+)
+from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
+
+logger = logging.getLogger(__name__)
+
+# Attempts open-or-create makes, _OPEN_OR_CREATE_RETRY_DELAY_SECONDS apart,
+# before it gives up on a partition that stays pending or a key it keeps
+# losing.
+_MAX_OPEN_OR_CREATE_ATTEMPTS = 10
+_OPEN_OR_CREATE_RETRY_DELAY_SECONDS = 1
+
+
+class RegistryBackedVectorStorePartition(VectorStorePartition):
+    """A handle bound to one incarnation of a partition.
+
+    Each operation checks its inputs and that the partition is still live:
+    `upsert` before and after its backend call, `query` before it, and
+    `delete` after it.
+
+    A check after a write makes one that raced the partition's deletion
+    raise instead of reporting success; whatever such a write landed, the
+    purge reclaims.
+
+    For subclasses: `_vector_store_name` is the store's name and
+    `_incarnation` the incarnation the handle is bound to, and a subclass
+    implements the backend calls `_upsert`, `_query`, and `_delete`.
+    """
+
+    def __init__(
+        self,
+        *,
+        vector_store_name: str,
+        registration: Registration,
+        store_schema: VectorStoreSchema,
+        tracker: OperationTracker,
+    ) -> None:
+        """Initialize with the registration the handle is bound to."""
+        self._vector_store_name = vector_store_name
+        self._registration = registration
+        self._incarnation = registration.incarnation
+        self._store_schema = store_schema
+        self._tracker = tracker
+
+    @property
+    @override
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
+
+    @override
+    async def upsert(self, *, records: Iterable[Record]) -> None:
+        async with self._tracker("upsert"):
+            records = list(records)
+            for record in records:
+                validate_declared_properties(
+                    record.properties, self._store_schema.indexed_properties
+                )
+                validate_dimensions(record.vector, self._store_schema.vector_dimensions)
+            await self._registration.require_current()
+            if not records:
+                return
+            await self._upsert(records)
+            await self._registration.require_current()
+
+    @override
+    async def query(
+        self,
+        *,
+        query_vectors: Iterable[Sequence[float]],
+        limit: int,
+        score_threshold: float | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> list[QueryResult]:
+        async with self._tracker("query"):
+            query_vectors = [list(query_vector) for query_vector in query_vectors]
+            for query_vector in query_vectors:
+                validate_query_vector(
+                    query_vector, self._store_schema.vector_dimensions
+                )
+            validate_score_threshold(score_threshold)
+            validate_limit(limit)
+            if property_filter is not None:
+                validate_supported_filter(
+                    property_filter, self._store_schema.indexed_properties
+                )
+            await self._registration.require_current()
+            if not query_vectors:
+                return []
+            return await self._query(
+                query_vectors,
+                limit=limit,
+                score_threshold=score_threshold,
+                property_filter=property_filter,
+            )
+
+    @override
+    async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
+        async with self._tracker("delete"):
+            # One check, after: a delete adds nothing a purge must reclaim,
+            # and a stale handle's delete reaches only its own incarnation.
+            record_uuids = list(record_uuids)
+            if record_uuids:
+                await self._delete(record_uuids)
+            await self._registration.require_current()
+
+    @abstractmethod
+    async def _upsert(self, records: list[Record]) -> None:
+        """
+        Write records to the backend under the handle's incarnation.
+
+        Called between two liveness checks, with at least one record, each
+        already checked against the store's schema: its keys are declared,
+        each value is of its key's declared type, and its vector has the
+        store's dimensions.
+        A record replaces the one with its UUID. The records are durable when
+        it returns; a call that raises may have written some of them.
+
+        Args:
+            records (list[Record]): The records to write.
+
+        Raises:
+            Exception: Whatever the backend raises; the upsert raises it.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _query(
+        self,
+        query_vectors: list[list[float]],
+        *,
+        limit: int,
+        score_threshold: float | None,
+        property_filter: FilterExpr | None,
+    ) -> list[QueryResult]:
+        """
+        Search the handle's incarnation's records for each query vector.
+
+        Called after a liveness check, with at least one query vector and a
+        positive limit, the vectors, threshold, and filter already checked: the
+        filter names declared keys only.
+
+        Args:
+            query_vectors (list[list[float]]): The vectors to search for.
+            limit (int): The most matches to return per query vector.
+            score_threshold (float | None):
+                The score a match must reach, or None for any.
+            property_filter (FilterExpr | None):
+                The condition a match's properties must meet, or None.
+
+        Returns:
+            list[QueryResult]:
+                One result per query vector, in order, its matches best
+                first.
+
+        Raises:
+            Exception: Whatever the backend raises; the query raises it.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _delete(self, record_uuids: list[UUID]) -> None:
+        """
+        Delete the handle's incarnation's records with these UUIDs.
+
+        Called before a liveness check, with at least one UUID, possibly
+        through a handle whose partition was deleted. A UUID with no record
+        under the incarnation is skipped. The deletions are durable when it
+        returns; a call that raises may have deleted some of the records.
+
+        Args:
+            record_uuids (list[UUID]): The UUIDs of the records to delete.
+
+        Raises:
+            Exception: Whatever the backend raises; the delete raises it.
+        """
+        raise NotImplementedError
+
+
+class RegistryBackedVectorStoreParams(VectorStoreParams):
+    """
+    Parameters for a RegistryBackedVectorStore.
+
+    Attributes:
+        partition_registry (VectorStorePartitionRegistry):
+            Registry of the store's partitions, shared by every process
+            serving this store, and by no other store. Started by the
+            caller.
+        metrics_factory (MetricsFactory | None):
+            An instance of MetricsFactory for collecting usage metrics
+            (default: None).
+    """
+
+    partition_registry: InstanceOf[VectorStorePartitionRegistry] = Field(
+        ...,
+        description=(
+            "Registry of the store's partitions, shared by every process serving "
+            "this store, and by no other store. Started by the caller"
+        ),
+    )
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        None,
+        description="An instance of MetricsFactory for collecting usage metrics",
+    )
+
+
+class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
+    VectorStore
+):
+    """A vector store whose partitions a VectorStorePartitionRegistry arbitrates.
+
+    Any process sharing the backend and the registry may serve any partition.
+    A partition is pending until its storage is prepared: meanwhile opening it
+    raises VectorStorePartitionPendingError, `open_or_create_partition` waits
+    a bounded time for it, and creating its key raises
+    VectorStorePartitionAlreadyExistsError. A partition a crash left pending
+    stays pending until `delete_partition` deletes it.
+
+    For subclasses: `_vector_store_name` and `_store_schema` are the
+    store's parameters, `_partition_registry` is the registry, and
+    `_tracker` times each operation, and a subclass implements
+    `_prepare_storage`, `_prepare_partition_storage`, `_partition_handle`,
+    and `_purge_round`.
+    """
+
+    def __init__(
+        self, params: RegistryBackedVectorStoreParams, *, metrics_prefix: str
+    ) -> None:
+        """Initialize with the store's schema and registry, and the prefix of its metrics."""
+        super().__init__()
+        self._vector_store_name = params.vector_store_name
+        self._store_schema = params.store_schema
+        self._partition_registry = params.partition_registry
+        self._tracker = OperationTracker(params.metrics_factory, prefix=metrics_prefix)
+        # Reservations cancelled after a failed preparation, held until done
+        # so the garbage collector cannot drop one whose creation was
+        # cancelled.
+        self._reservation_cancellations: set[asyncio.Task[None]] = set()
+
+    @override
+    async def startup(self) -> None:
+        # The caller owns the registry's lifecycle and that of any client a
+        # subclass is given.
+        async with self._tracker("startup"):
+            await self._prepare_storage()
+
+    @override
+    async def shutdown(self) -> None:
+        # The caller owns the registry's lifecycle and that of any client a
+        # subclass is given.
+        pass
+
+    @override
+    async def create_partition(self, partition_key: str) -> None:
+        validate_partition_key(partition_key)
+        async with self._tracker("create_partition"):
+            # The registry decides a creation race. The partition stays
+            # pending until its storage is prepared; if it is deleted
+            # meanwhile, confirming the reservation raises.
+            reservation = await self._partition_registry.reserve(partition_key)
+            await self._prepare_and_confirm_or_cancel(reservation)
+
+    @override
+    async def open_or_create_partition(self, partition_key: str) -> PartitionT:
+        validate_partition_key(partition_key)
+        async with self._tracker("open_or_create_partition"):
+            # Read-then-create, retried: a pending partition is another
+            # creator's (open it once it is live), losing the reservation
+            # means another creator took the key meanwhile, and losing the
+            # confirmation means a deleter removed this one while its storage
+            # was prepared (create again).
+            pending_error: VectorStorePartitionPendingError | None = None
+            lost_race: (
+                VectorStorePartitionAlreadyExistsError
+                | VectorStorePartitionDeletedError
+                | None
+            ) = None
+            for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
+                if attempt:
+                    await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
+                try:
+                    registration = await self._partition_registry.resolve(partition_key)
+                except VectorStorePartitionPendingError as err:
+                    pending_error = err
+                    continue
+                pending_error = None
+                if registration is not None:
+                    return self._partition_handle(registration)
+                try:
+                    reservation = await self._partition_registry.reserve(partition_key)
+                except VectorStorePartitionAlreadyExistsError as err:
+                    lost_race = err
+                    continue
+                try:
+                    registration = await self._prepare_and_confirm_or_cancel(
+                        reservation
+                    )
+                except VectorStorePartitionDeletedError as err:
+                    lost_race = err
+                    continue
+                return self._partition_handle(registration)
+            # The last lookup found the partition pending.
+            if pending_error is not None:
+                raise pending_error
+            raise VectorStoreAttemptsExhaustedError(
+                f"Opening or creating partition {partition_key!r} of vector store "
+                f"{self._vector_store_name!r} made no progress after "
+                f"{_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
+            ) from lost_race
+
+    async def _prepare_and_confirm_or_cancel(
+        self, reservation: Reservation
+    ) -> Registration:
+        """Prepare a reserved partition's storage and confirm the reservation, cancelling it if either raises or the creation is cancelled.
+
+        The cancel acts only on a pending partition, so a confirmation that
+        committed before its failure or cancellation was observed stands. A
+        partition whose reservation the registry cannot cancel stays pending
+        until it is deleted.
+        """
+        try:
+            await self._prepare_partition_storage(
+                reservation.partition_key, reservation.incarnation
+            )
+            return await reservation.confirm()
+        except BaseException:
+            # Shielded, so a cancelled creation still frees the key. The task
+            # reports its own failure, since a creation cancelled again stops
+            # awaiting it before it ends.
+            cancellation = asyncio.create_task(reservation.cancel())
+            self._reservation_cancellations.add(cancellation)
+
+            def finish(task: asyncio.Task[None]) -> None:
+                self._reservation_cancellations.discard(task)
+                if not task.cancelled() and task.exception() is not None:
+                    logger.exception(
+                        "Could not cancel the reservation of partition %r of "
+                        "vector store %r after its creation failed or was "
+                        "cancelled; it stays pending until deleted",
+                        reservation.partition_key,
+                        self._vector_store_name,
+                        exc_info=task.exception(),
+                    )
+
+            cancellation.add_done_callback(finish)
+            with contextlib.suppress(Exception):
+                await asyncio.shield(cancellation)
+            raise
+
+    @override
+    async def open_partition(self, partition_key: str) -> PartitionT | None:
+        validate_partition_key(partition_key)
+        async with self._tracker("open_partition"):
+            registration = await self._partition_registry.resolve(partition_key)
+            if registration is None:
+                return None
+            return self._partition_handle(registration)
+
+    @override
+    async def delete_partition(self, partition_key: str) -> None:
+        validate_partition_key(partition_key)
+        async with self._tracker("delete_partition"):
+            # The partition is unreachable once unregister returns, and its
+            # incarnation awaits the purge.
+            await self._partition_registry.unregister(partition_key)
+
+    @override
+    async def purge_deleted_partitions(self) -> bool:
+        # One purge round per call, on a due tombstone.
+        async with self._tracker("purge_deleted_partitions"):
+            return await self._partition_registry.run_purge_round(self._purge_round)
+
+    @abstractmethod
+    async def _prepare_storage(self) -> None:
+        """
+        Prepare the storage the store's partitions share.
+
+        That is whatever a partition needs besides its incarnation and its
+        own storage. Storage of one partition's own is prepared when it
+        registers, by `_prepare_partition_storage`. What is prepared for one
+        store serves no other. It runs when the store starts, by any number of
+        processes at once, so it must be idempotent and safe to race, and must
+        complete what a failed call left part-made.
+
+        Raises:
+            Exception:
+                Whatever the backend raises. Startup then fails.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _prepare_partition_storage(
+        self, partition_key: str, incarnation: UUID
+    ) -> None:
+        """
+        Prepare the storage a newly reserved partition needs of its own.
+
+        The partition is reserved, pending, under the incarnation, and its
+        reservation is confirmed once this returns. The storage the store's
+        partitions share was prepared at startup, so this may have nothing to
+        prepare. Whatever a failed or interrupted call leaves
+        must be recoverable: reclaimed by the purge rounds of the incarnation
+        once its pending partition is deleted.
+
+        Args:
+            partition_key (str):
+                Key of the partition being created.
+            incarnation (UUID):
+                The incarnation the partition's records will carry.
+
+        Raises:
+            Exception:
+                Whatever the backend raises. The reservation is then
+                cancelled, or, if the registry cannot cancel it, the
+                partition stays pending until it is deleted.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def _partition_handle(self, registration: Registration) -> PartitionT:
+        """
+        Build a handle bound to a live partition's registration.
+
+        The storage the store's partitions share was prepared at startup,
+        and the partition's own before it was marked live.
+
+        Args:
+            registration (Registration):
+                The live partition's registration, which carries its key and
+                incarnation.
+
+        Returns:
+            PartitionT:
+                A handle bound to the registration, whose operations raise
+                once the partition is deleted.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _purge_round(self, incarnation: UUID) -> bool:
+        """
+        Delete records carrying a deleted incarnation, and return whether it found any.
+
+        Runs under a purge claim, after the tombstone's retention. Returning
+        False removes the tombstone, so it must return False only when no
+        record under the incarnation remains; a round may delete some of the
+        records and return True, to be run again. It may delete storage that
+        holds only the incarnation's records, which a failed or interrupted
+        preparation may have left part-made. It must be safe to repeat, and
+        to run on two purgers at once. A round that finds the incarnation's
+        storage missing returns False.
+
+        Args:
+            incarnation (UUID):
+                The incarnation the deleted partition's records carry.
+
+        Returns:
+            bool:
+                Whether the round found records under the incarnation.
+
+        Raises:
+            Exception:
+                Whatever the backend raises. The round then counts as
+                failed, and the tombstone stays for a later claim.
+        """
+        raise NotImplementedError

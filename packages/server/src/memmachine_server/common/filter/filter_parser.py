@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Callable
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal, NamedTuple, Protocol, cast, runtime_checkable
@@ -395,6 +396,51 @@ def map_filter_fields(
     if isinstance(expr, Not):
         return Not(expr=map_filter_fields(expr.expr, transform))
     raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
+
+
+def filter_fields(expr: FilterExpr) -> frozenset[str]:
+    """Every field name a filter tree addresses."""
+    if isinstance(expr, (Comparison, In, IsNull)):
+        return frozenset((expr.field,))
+    if isinstance(expr, Not):
+        return filter_fields(expr.expr)
+    if isinstance(expr, (And, Or)):
+        return filter_fields(expr.left) | filter_fields(expr.right)
+    raise TypeError(f"Unsupported filter expression type: {type(expr)}")
+
+
+def extract_filter(
+    expr: FilterExpr, *, allowed_fields: AbstractSet[str]
+) -> FilterExpr | None:
+    """The part of a filter that names only the allowed fields; None when no part does.
+
+    Every record that matches the filter matches its part.
+    """
+    return _extract_filter(expr, allowed_fields, negated=False)
+
+
+def _extract_filter(
+    expr: FilterExpr, allowed_fields: AbstractSet[str], *, negated: bool
+) -> FilterExpr | None:
+    """The part of a filter under an odd number of negations when `negated`.
+
+    The roles then swap: every record that matches the part matches the
+    filter, so the negation around the part is again the wider one.
+    """
+    if isinstance(expr, Not):
+        part = _extract_filter(expr.expr, allowed_fields, negated=not negated)
+        return None if part is None else Not(expr=part)
+    if isinstance(expr, (And, Or)):
+        left = _extract_filter(expr.left, allowed_fields, negated=negated)
+        right = _extract_filter(expr.right, allowed_fields, negated=negated)
+        if left is not None and right is not None:
+            return type(expr)(left=left, right=right)
+        # Leaving out a side widens an And and narrows an Or; under a
+        # negation, the reverse.
+        if isinstance(expr, And) != negated:
+            return left if right is None else right
+        return None
+    return expr if filter_fields(expr) <= allowed_fields else None
 
 
 def parse_filter(spec: str | None) -> FilterExpr | None:

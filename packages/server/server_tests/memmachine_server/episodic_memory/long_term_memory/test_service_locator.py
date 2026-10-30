@@ -1,13 +1,37 @@
 """Unit tests for service_locator helpers."""
 
+from unittest.mock import NonCallableMagicMock, create_autospec
+
 import pytest
 
+from memmachine_server.common.configuration import Configuration
+from memmachine_server.common.configuration.episodic_config import (
+    EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
+    LongTermMemoryConfPartial,
+)
+from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.embedder import Embedder
+from memmachine_server.common.episode_store import EpisodeStorage
+from memmachine_server.common.errors import ConfigurationError
+from memmachine_server.common.resource_manager import CommonResourceManager
+from memmachine_server.common.vector_store import (
+    VectorStore,
+    VectorStorePartition,
+    VectorStoreSchema,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStore,
+    SegmentStorePartition,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
-    _resolve_user_properties_schema,
+    _event_params,
+    event_backend_indexed_properties,
+    event_backend_vector_store,
     partition_key_for_session,
 )
 
@@ -76,23 +100,135 @@ def test_partition_key_empty_string_passthrough():
     assert len(key) == PARTITION_KEY_MAX_BYTES
 
 
-def test_resolve_user_properties_schema_accepts_normal_keys():
-    resolved = _resolve_user_properties_schema({"customer_tier": "str", "score": "int"})
-    assert resolved == {"customer_tier": str, "score": int}
+@pytest.mark.asyncio
+async def test_every_backend_and_embedder_name_the_one_event_store():
+    """The event store's name is fixed, whatever the backend and embedder."""
+    names = set()
+    for vector_store, embedder_id in (("vs_a", "e"), ("vs_b", "e"), ("vs_a", "f")):
+        resource_manager = _deployment_resource_manager(
+            LongTermMemoryConfPartial(
+                backend="event",
+                vector_store=vector_store,
+                segment_store="ss",
+                embedder=embedder_id,
+            )
+        )
+        await event_backend_vector_store(resource_manager)
+        names.add(
+            resource_manager.get_vector_store.await_args.kwargs["vector_store_name"]
+        )
+
+    assert names == {"event_memory"}
 
 
-def test_resolve_user_properties_schema_rejects_underscore_prefixed_keys():
-    """`_`-prefixed keys collide with system-defined event fields
-    (`_episode_uid`, `_session_key`, ...). The merged collection schema is
-    a dict-spread with user_schema last, so allowing them would silently
-    overwrite the system slot and may change its declared type."""
-    with pytest.raises(ValueError, match="reserved"):
-        _resolve_user_properties_schema({"_episode_uid": "str"})
+def _deployment_resource_manager(
+    deployment: LongTermMemoryConfPartial | None,
+) -> NonCallableMagicMock:
+    """A resource manager whose deployment configures `deployment` and whose stores open autospec partitions."""
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.open_or_create_partition.return_value = create_autospec(
+        VectorStorePartition, instance=True
+    )
+    embedder = create_autospec(Embedder, instance=True)
+    embedder.dimensions = 3
+    embedder.similarity_metric = SimilarityMetric.COSINE
+    resource_manager = create_autospec(CommonResourceManager, instance=True)
+    resource_manager.config = create_autospec(Configuration, instance=True)
+    resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(
+        long_term_memory=deployment
+    )
+    resource_manager.get_vector_store.return_value = vector_store
+    resource_manager.get_segment_store.return_value = create_autospec(
+        SegmentStore, instance=True
+    )
+    resource_manager.get_segment_store.return_value.open_or_create_partition.return_value = create_autospec(
+        SegmentStorePartition, instance=True
+    )
+    resource_manager.get_embedder.return_value = embedder
+    resource_manager.get_episode_storage.return_value = create_autospec(
+        EpisodeStorage, instance=True
+    )
+    resource_manager.get_metrics_factory.return_value = None
+    return resource_manager
 
-    with pytest.raises(ValueError, match="reserved"):
-        _resolve_user_properties_schema({"_my_field": "int"})
+
+_DEPLOYMENT = LongTermMemoryConfPartial(
+    backend="event", vector_store="vs", segment_store="ss", embedder="e"
+)
 
 
-def test_resolve_user_properties_schema_rejects_unknown_type_name():
-    with pytest.raises(ValueError, match="unknown type name"):
-        _resolve_user_properties_schema({"customer_tier": "date"})
+@pytest.mark.asyncio
+async def test_event_params_opens_the_session_partition_in_the_event_store():
+    """The session's partition is opened in the deployment's event store.
+
+    Opening creates the partition when it is absent; the vector store's
+    registry arbitrates creation across processes, so a worker that loses
+    the race to another opens the winner's partition instead of failing
+    the request.
+    """
+    resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+    config = EventLongTermMemoryConf(session_id="raced")
+
+    params = await _event_params(config, resource_manager)
+
+    vector_store = resource_manager.get_vector_store.return_value
+    assert (
+        params.vector_store_partition
+        is vector_store.open_or_create_partition.return_value
+    )
+    vector_store.open_or_create_partition.assert_awaited_once_with("raced")
+    resource_manager.get_vector_store.assert_awaited_once_with(
+        "vs",
+        vector_store_name="event_memory",
+        store_schema=VectorStoreSchema(
+            vector_dimensions=3,
+            similarity_metric=SimilarityMetric.COSINE,
+            indexed_properties=event_backend_indexed_properties(),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session_names():
+    """A session saved with its own stores and embedder is served from the deployment's."""
+    resource_manager = _deployment_resource_manager(_DEPLOYMENT)
+    config = EventLongTermMemoryConf.model_validate(
+        {
+            "session_id": "s",
+            "vector_store": "other_vs",
+            "segment_store": "other_ss",
+            "embedder": "other_e",
+        }
+    )
+
+    await _event_params(config, resource_manager)
+
+    assert resource_manager.get_vector_store.await_args.args == ("vs",)
+    resource_manager.get_segment_store.assert_awaited_once_with("ss")
+    assert {call.args[0] for call in resource_manager.get_embedder.await_args_list} == {
+        "e"
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "deployment",
+    [
+        None,
+        LongTermMemoryConfPartial(
+            backend="declarative", vector_graph_store="g", embedder="e"
+        ),
+    ],
+    ids=["no_long_term_memory", "declarative_memory"],
+)
+async def test_event_params_refuses_a_session_of_a_deployment_without_event_memory(
+    deployment: LongTermMemoryConfPartial | None,
+):
+    resource_manager = _deployment_resource_manager(deployment)
+    config = EventLongTermMemoryConf(session_id="s")
+
+    with pytest.raises(ConfigurationError, match="no event memory"):
+        await _event_params(config, resource_manager)
+
+    resource_manager.get_vector_store.assert_not_awaited()
+    resource_manager.get_segment_store.assert_not_awaited()
