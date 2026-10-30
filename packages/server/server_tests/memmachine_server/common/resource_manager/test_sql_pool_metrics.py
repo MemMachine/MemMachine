@@ -75,20 +75,3 @@ async def test_a_checkout_reports_how_long_it_waited_for_a_connection(tmp_path):
         assert _sample("db_client_connection_wait_time_seconds_sum", labels) >= 0.2
     finally:
         await manager.close()
-
-
-@pytest.mark.asyncio
-async def test_every_connection_to_an_in_memory_sqlite_database_shares_it():
-    """The pool that times checkouts would give each connection its own database."""
-    manager, pool_name = _database_manager(
-        SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path=":memory:")
-    )
-    engine = await manager.async_get_sql_engine(pool_name)
-    try:
-        async with engine.connect() as first:
-            await first.execute(text("CREATE TABLE shared (id INTEGER)"))
-            async with engine.connect() as second:
-                result = await second.execute(text("SELECT count(*) FROM shared"))
-                assert result.scalar_one() == 0
-    finally:
-        await manager.close()

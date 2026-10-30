@@ -35,6 +35,7 @@ from memmachine_server.common.data_types import (
     PropertyValue,
     SimilarityMetric,
 )
+from memmachine_server.common.errors import MilvusConfigurationError
 from memmachine_server.common.filter.filter_parser import (
     And,
     Comparison,
@@ -45,6 +46,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     Record,
     VectorStoreAttemptsExhaustedError,
@@ -85,6 +87,7 @@ INDEXED_PROPERTIES: dict[str, PropertyType] = {
 REQUEST_TIMEOUT_SECONDS = 17
 MAX_VARCHAR_LENGTH = 1024
 PURGE_BATCH_SIZE = 5000
+MAX_REQUEST_BYTES = 48 * 1024 * 1024
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -124,6 +127,7 @@ async def _params(client, registry_engine, **overrides) -> MilvusVectorStorePara
         "request_timeout_seconds": REQUEST_TIMEOUT_SECONDS,
         "max_varchar_length": MAX_VARCHAR_LENGTH,
         "purge_batch_size": PURGE_BATCH_SIZE,
+        "max_request_bytes": MAX_REQUEST_BYTES,
     }
     params.update(overrides)
     params["partition_registry"] = SQLAlchemyVectorStorePartitionRegistry(
@@ -215,6 +219,7 @@ def _with_purge_batch_size(
             request_timeout_seconds=REQUEST_TIMEOUT_SECONDS,
             max_varchar_length=MAX_VARCHAR_LENGTH,
             purge_batch_size=purge_batch_size,
+            max_request_bytes=MAX_REQUEST_BYTES,
         )
     )
 
@@ -359,6 +364,7 @@ def registry_url(tmp_path) -> str:
 @pytest_asyncio.fixture
 async def store(milvus_client, registry_url):
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     vector_store = await _started_store(milvus_client, registry_engine)
     yield vector_store
     await vector_store.shutdown()
@@ -372,6 +378,7 @@ async def other_store(milvus_container, registry_url):
     database."""
     client = AsyncMilvusClient(uri=milvus_container.get_connection_url())
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     vector_store = await _started_store(client, registry_engine)
     yield vector_store
     await vector_store.shutdown()
@@ -432,7 +439,13 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "setting", ["request_timeout_seconds", "max_varchar_length", "purge_batch_size"]
+    "setting",
+    [
+        "request_timeout_seconds",
+        "max_varchar_length",
+        "purge_batch_size",
+        "max_request_bytes",
+    ],
 )
 def test_a_setting_that_is_not_positive_is_refused(setting):
     with pytest.raises(ValueError, match=setting):
@@ -736,15 +749,16 @@ class TestConcurrentPreparation:
 
 class TestUpsertAndQuery:
     @pytest.mark.asyncio
-    async def test_an_upsert_over_the_request_size_limit_stores_every_record(
-        self, store
+    async def test_an_upsert_over_max_request_bytes_is_packed_into_requests_within_it(
+        self, store, monkeypatch
     ):
-        """Milvus refuses a request over proxy.grpc.serverMaxRecvSize (64 MiB
-        unless configured), so the batch is halved until it fits."""
+        """Each request on the wire takes at most max_request_bytes, and at
+        least its entities' values, which the store counts exactly."""
         # A store of its own, whose declared string holds 60,000 bytes; the
-        # batch is over 64 MiB. pymilvus checks a string value a character at
-        # a time while it builds a request, within the request's timeout, so
-        # this store gives its requests longer than the module's timeout.
+        # batch is over max_request_bytes and the server's 64 MiB limit.
+        # pymilvus checks a string value a character at a time while it
+        # builds a request, within the request's timeout, so this store
+        # gives its requests longer than the module's timeout.
         oversized = await _started_store(
             store._client,
             store._partition_registry._engine,
@@ -761,9 +775,15 @@ class TestUpsertAndQuery:
             _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"text": text})
             for _ in range(1_200)
         ]
+        record_bytes = partition._entity_size(partition._build_entity(records[0]))
+        sent = await _recorded_upsert_requests(store._client, monkeypatch)
 
         await partition.upsert(records=records)
 
+        assert sum(rows for _, rows in sent) == len(records)
+        assert len(sent) > 1
+        for request_bytes, rows in sent:
+            assert rows * record_bytes <= request_bytes <= MAX_REQUEST_BYTES
         assert sorted(
             await _incarnation_uuids(
                 partition._client,
@@ -771,6 +791,123 @@ class TestUpsertAndQuery:
                 partition._incarnation,
             )
         ) == sorted(record.uuid for record in records)
+
+    @pytest.mark.asyncio
+    async def test_a_cancelled_upsert_sends_no_request_after_the_cancellation(
+        self, store, monkeypatch
+    ):
+        """Cancelled while its first request is in flight, the upsert sends
+        no further request, pymilvus's retries included; the server may still
+        apply the first."""
+        records = _alike_records(9)
+        sizer = _partition_on(store._client)
+        entity = sizer._build_entity(records[0])
+        cancelled = await _started_store(
+            store._client,
+            store._partition_registry._engine,
+            max_request_bytes=sizer._envelope_size(entity)
+            + 3 * sizer._entity_size(entity),
+        )
+        await cancelled.create_partition("cancelled")
+        partition = await cancelled.open_partition("cancelled")
+        assert partition is not None
+        stub = (await store._client._get_connection())._async_stub
+        in_flight = asyncio.Event()
+        sent: list[int] = []
+        send = stub.Upsert
+
+        def send_and_signal(request, **kwargs):
+            sent.append(request.num_rows)
+            in_flight.set()
+            return send(request, **kwargs)
+
+        monkeypatch.setattr(stub, "Upsert", send_and_signal)
+        upsert = asyncio.create_task(partition.upsert(records=records))
+        await in_flight.wait()
+
+        upsert.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await upsert
+        assert sent == [3]
+        assert set(await _stored(partition, [record.uuid for record in records])) <= {
+            record.uuid for record in records[:3]
+        }
+        await cancelled.delete_partition("cancelled")
+
+    @pytest.mark.asyncio
+    async def test_a_request_over_the_servers_limit_raises_a_configuration_error(
+        self, store
+    ):
+        """Milvus refuses a request over proxy.grpc.serverMaxRecvSize (64 MiB
+        unless configured) before writing any of it."""
+        # pymilvus checks a string value a character at a time while it
+        # builds a request, within the request's timeout, so this store
+        # gives its request, the whole batch, longer than the module's
+        # timeout.
+        refused = await _started_store(
+            store._client,
+            store._partition_registry._engine,
+            vector_store_name="refused",
+            store_schema=_schema(indexed_properties={"text": str}),
+            max_varchar_length=65535,
+            max_request_bytes=128 * 1024 * 1024,
+            request_timeout_seconds=120,
+        )
+        await refused.create_partition(NAME)
+        partition = await refused.open_partition(NAME)
+        assert partition is not None
+        text = "x" * 60_000
+        records = [
+            _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"text": text})
+            for _ in range(1_200)
+        ]
+
+        with pytest.raises(MilvusConfigurationError, match="max_request_bytes"):
+            await partition.upsert(records=records)
+
+        assert (
+            await _incarnation_uuids(
+                partition._client,
+                partition._collection_name,
+                partition._incarnation,
+            )
+            == []
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_record_too_large_for_a_request_alone_is_refused_before_any_is_sent(
+        self, store, monkeypatch
+    ):
+        small = await _started_store(
+            store._client,
+            store._partition_registry._engine,
+            vector_store_name="small_requests",
+            max_request_bytes=1024,
+        )
+        await small.create_partition(NAME)
+        partition = await small.open_partition(NAME)
+        assert partition is not None
+        records = _alike_records(2)
+        records.append(
+            _make_record(
+                vector=_normalize([1.0, 0.0, 0.0]), properties={"name": "x" * 1000}
+            )
+        )
+        sent = await _recorded_upsert_requests(store._client, monkeypatch)
+
+        with pytest.raises(ValueError, match="max_request_bytes"):
+            await partition.upsert(records=records)
+
+        assert sent == []
+        assert (
+            await _incarnation_uuids(
+                partition._client,
+                partition._collection_name,
+                partition._incarnation,
+            )
+            == []
+        )
 
     @pytest.mark.asyncio
     async def test_a_query_may_ask_for_hundreds_of_results(self, partition):
@@ -1665,24 +1802,49 @@ class _CurrentRegistration(Registration):
         return None
 
 
-def _partition_on(client: AsyncMilvusClient) -> MilvusVectorStorePartition:
-    """A handle on a given client, bound to a live incarnation."""
+def _partition_on(
+    client: AsyncMilvusClient,
+    *,
+    max_request_bytes: int = MAX_REQUEST_BYTES,
+    registration: Registration | None = None,
+) -> MilvusVectorStorePartition:
+    """A handle on a given client, bound to a registration, by default a live one."""
     return MilvusVectorStorePartition(
         client=client,
         collection_name=f"sys_{VECTOR_STORE_NAME}",
         vector_store_name=VECTOR_STORE_NAME,
-        registration=_CurrentRegistration(
-            partition_key=NAME,
-            incarnation=uuid4(),
-        ),
+        registration=registration
+        or _CurrentRegistration(partition_key=NAME, incarnation=uuid4()),
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
-            indexed_properties={},
+            indexed_properties=INDEXED_PROPERTIES,
         ),
         tracker=OperationTracker(None, prefix="test"),
         request_timeout_seconds=REQUEST_TIMEOUT_SECONDS,
+        max_request_bytes=max_request_bytes,
     )
+
+
+def _alike_records(count: int) -> list[Record]:
+    """Records that each take the same bytes in a request."""
+    return [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(count)]
+
+
+async def _recorded_upsert_requests(
+    client: AsyncMilvusClient, monkeypatch
+) -> list[tuple[int, int]]:
+    """Each upsert request the client sends from now on: its bytes on the wire and its rows."""
+    stub = (await client._get_connection())._async_stub
+    send = stub.Upsert
+    sent: list[tuple[int, int]] = []
+
+    def record(request, **kwargs):
+        sent.append((request.ByteSize(), request.num_rows))
+        return send(request, **kwargs)
+
+    monkeypatch.setattr(stub, "Upsert", record)
+    return sent
 
 
 @pytest.mark.asyncio
@@ -1696,61 +1858,92 @@ async def test_a_delete_milvus_does_not_accept_in_full_raises():
         await partition.delete(record_uuids=[uuid4(), uuid4()])
 
 
-def _too_large() -> grpc.aio.AioRpcError:
-    """The error Milvus's proxy answers a request over its receive limit with."""
-    return grpc.aio.AioRpcError(
-        grpc.StatusCode.RESOURCE_EXHAUSTED,
-        details="grpc: received message larger than max",
-    )
-
-
 @pytest.mark.asyncio
-async def test_a_batch_refused_as_too_large_is_halved_until_it_fits():
-    """Milvus's proxy refuses a request over its gRPC receive limit with
-    RESOURCE_EXHAUSTED."""
-    upserted: list[list[str]] = []
-
-    def refuse_more_than_two(
-        *, collection_name: str, data: list[dict], timeout: int
-    ) -> None:
-        if len(data) > 2:
-            raise _too_large()
-        upserted.append([entity["id"] for entity in data])
-
+@pytest.mark.parametrize(
+    ("records_per_request", "short_by", "expected"),
+    [
+        (5, 0, [5]),
+        (5, 1, [4, 1]),
+        (2, 0, [2, 2, 1]),
+        (2, 1, [1, 1, 1, 1, 1]),
+        (1, 0, [1, 1, 1, 1, 1]),
+    ],
+    ids=[
+        "an_exact_fit",
+        "a_byte_short_of_a_fit",
+        "two_per_request",
+        "a_byte_short_of_two",
+        "one_per_request",
+    ],
+)
+async def test_records_are_packed_in_order_into_the_fewest_requests_that_fit(
+    records_per_request: int, short_by: int, expected: list[int]
+):
+    """A request fits a max_request_bytes of exactly the bytes the store
+    counts for it, and each is sent once."""
     client = MagicMock(spec=AsyncMilvusClient)
-    client.upsert = AsyncMock(side_effect=refuse_more_than_two)
-    partition = _partition_on(client)
-    records = [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(5)]
+    client.upsert = AsyncMock()
+    sizer = _partition_on(client)
+    entity = sizer._build_entity(_alike_records(1)[0])
+    partition = _partition_on(
+        client,
+        max_request_bytes=sizer._envelope_size(entity)
+        + records_per_request * sizer._entity_size(entity)
+        - short_by,
+    )
+    records = _alike_records(5)
 
     await partition.upsert(records=records)
 
-    assert sorted(len(batch) for batch in upserted) == [1, 2, 2]
-    assert {primary_id for batch in upserted for primary_id in batch} == {
-        partition._primary_id(record.uuid) for record in records
-    }
+    assert [len(call.kwargs["data"]) for call in client.upsert.call_args_list] == (
+        expected
+    )
+    assert [
+        entity["id"]
+        for call in client.upsert.call_args_list
+        for entity in call.kwargs["data"]
+    ] == [partition._primary_id(record.uuid) for record in records]
 
 
 @pytest.mark.asyncio
-async def test_an_upsert_with_an_entity_refused_alone_raises():
-    """Halving stops at a single entity: an entity refused on its own fails the
-    upsert, which does not report it accepted."""
-    refused = _make_record(vector=[0.0, 0.0, 1.0])
-
-    def refuse_the_refused_entity(
-        *, collection_name: str, data: list[dict], timeout: int
-    ) -> None:
-        if any(entity["vector"] == refused.vector for entity in data):
-            raise _too_large()
-
+async def test_a_record_too_large_for_a_request_alone_is_refused_before_any_is_sent():
     client = MagicMock(spec=AsyncMilvusClient)
-    client.upsert = AsyncMock(side_effect=refuse_the_refused_entity)
-    partition = _partition_on(client)
-    records = [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(4)]
-    records.insert(3, refused)
+    client.upsert = AsyncMock()
+    sizer = _partition_on(client)
+    entity = sizer._build_entity(_alike_records(1)[0])
+    partition = _partition_on(
+        client,
+        max_request_bytes=sizer._envelope_size(entity) + sizer._entity_size(entity),
+    )
+    records = _alike_records(4)
+    records.insert(
+        2, _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"name": "x"})
+    )
 
-    with pytest.raises(grpc.aio.AioRpcError) as raised:
+    with pytest.raises(ValueError, match="max_request_bytes"):
         await partition.upsert(records=records)
-    assert raised.value.code() == grpc.StatusCode.RESOURCE_EXHAUSTED
+
+    client.upsert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_request_refused_as_too_large_raises_a_configuration_error():
+    """Milvus's proxy refuses a request over its gRPC receive limit with
+    RESOURCE_EXHAUSTED; the request was within max_request_bytes, so the
+    setting exceeds the server's limit."""
+    client = MagicMock(spec=AsyncMilvusClient)
+    client.upsert = AsyncMock(
+        side_effect=grpc.aio.AioRpcError(
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            details="grpc: received message larger than max",
+        )
+    )
+    partition = _partition_on(client)
+
+    with pytest.raises(MilvusConfigurationError, match="max_request_bytes"):
+        await partition.upsert(records=_alike_records(4))
+
+    client.upsert.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1767,12 +1960,44 @@ async def test_an_upsert_that_fails_otherwise_is_not_sent_again(error: Exception
     client = MagicMock(spec=AsyncMilvusClient)
     client.upsert = AsyncMock(side_effect=error)
     partition = _partition_on(client)
-    records = [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(4)]
+    records = _alike_records(4)
 
     with pytest.raises(type(error)):
         await partition.upsert(records=records)
 
     client.upsert.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_upsert_sends_no_request_after_the_cancellation():
+    """Cancelled while a request is in flight, the upsert sends no further
+    request and does not check the registration again."""
+    in_flight = asyncio.Event()
+
+    async def hold(**kwargs) -> None:
+        in_flight.set()
+        await asyncio.Event().wait()
+
+    client = MagicMock(spec=AsyncMilvusClient)
+    client.upsert = AsyncMock(side_effect=hold)
+    registration = MagicMock(spec=Registration, partition_key=NAME, incarnation=uuid4())
+    registration.require_current = AsyncMock()
+    sizer = _partition_on(client)
+    entity = sizer._build_entity(_alike_records(1)[0])
+    partition = _partition_on(
+        client,
+        max_request_bytes=sizer._envelope_size(entity) + sizer._entity_size(entity),
+        registration=registration,
+    )
+    upsert = asyncio.create_task(partition.upsert(records=_alike_records(3)))
+    await in_flight.wait()
+
+    upsert.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await upsert
+    client.upsert.assert_awaited_once()
+    registration.require_current.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1789,6 +2014,7 @@ async def test_a_purge_round_milvus_does_not_accept_in_full_raises(registry_url)
     client.query = AsyncMock(return_value=[{"id": "listed_a"}, {"id": "listed_b"}])
     client.delete = AsyncMock(return_value={"delete_count": 1})
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     try:
         store = await _started_store(
             client, registry_engine, store_schema=_schema(indexed_properties={})

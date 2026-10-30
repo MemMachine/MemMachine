@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
-from sqlalchemy import inspect, select
+from sqlalchemy import event, inspect, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.data_types import PropertyType, SimilarityMetric
@@ -92,7 +92,7 @@ async def _stored(partition) -> dict[UUID, dict]:
         rows = (await session.execute(select(table))).all()
     return {
         row.uuid: _declared_values(
-            row._mapping, partition.store_schema.indexed_properties
+            row._mapping, partition._store_schema.indexed_properties
         )
         for row in rows
     }
@@ -1170,6 +1170,41 @@ class TestUpsertBehavior:
         results = await partition.query(query_vectors=[v2], limit=1)
         assert results[0].matches[0].record_uuid == record_uuid
         assert results[0].matches[0].score == pytest.approx(1.0, abs=0.01)
+
+
+# ── Cancellation ──
+
+
+class TestCancellation:
+    @pytest.mark.asyncio
+    async def test_a_cancelled_upsert_executes_no_statement_after_the_cancellation(
+        self, store, partition
+    ):
+        """Cancelled as its first statement goes out, the upsert executes no
+        further statement, and the partition stays usable."""
+        records = [
+            _make_record(vector=_normalize([1.0, float(i), 0.0])) for i in range(3)
+        ]
+        executed: list[str] = []
+        upsert = asyncio.create_task(partition.upsert(records=records))
+
+        def cancel_the_upsert(
+            _connection, _cursor, statement, _parameters, _context, _executemany
+        ) -> None:
+            executed.append(statement)
+            upsert.cancel()
+
+        sync_engine = store._engine.sync_engine
+        event.listen(sync_engine, "before_cursor_execute", cancel_the_upsert)
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await upsert
+        finally:
+            event.remove(sync_engine, "before_cursor_execute", cancel_the_upsert)
+
+        assert len(executed) == 1
+        await partition.upsert(records=records)
+        assert set(await _stored(partition)) == {record.uuid for record in records}
 
 
 # ── Filter edge cases ──
