@@ -1,6 +1,6 @@
 # MemMachine Helm Chart
 
-Deploys MemMachine with optional in-cluster PostgreSQL (pgvector), Neo4j and Qdrant. All three can be replaced with external instances via `postgres.enabled=false` / `neo4j.enabled=false` / `qdrant.enabled=false`.
+Deploys MemMachine with optional in-cluster PostgreSQL (pgvector), Neo4j, and Qdrant. All three can be replaced with external instances via `postgres.enabled=false` / `neo4j.enabled=false` / `qdrant.enabled=false`.
 
 ## Chart Info
 
@@ -240,7 +240,7 @@ Any other value fails the render with an error naming the two accepted values.
 
 > **Upgrading a release installed before chart 0.2.0:** those releases ran Neo4j,
 > and the default is now `event`. A plain `helm upgrade` would switch the backend
-> and **delete the Neo4j Deployment, Service and `neo4j-pvc`** — and with it the
+> and **delete the Neo4j Deployment, Service, and `neo4j-pvc`** — and with it the
 > stored memories, depending on the StorageClass reclaim policy. Pin the old
 > backend when upgrading:
 >
@@ -248,7 +248,7 @@ Any other value fails the render with an error naming the two accepted values.
 > helm upgrade memmachine . --set episodicMemory.longTermMemory.backend=declarative
 > ```
 
-The unused store's Deployment, Service and PVC are skipped even if its `enabled`
+The unused store's Deployment, Service, and PVC are skipped even if its `enabled`
 flag is left `true`, so switching the backend is a single value. `neo4j.enabled`
 and `qdrant.enabled` keep their existing meaning — in-cluster versus an external
 host — and only apply to whichever store the backend actually uses.

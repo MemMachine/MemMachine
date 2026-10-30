@@ -218,7 +218,7 @@ class MemMachineTools:
         """
         Search for memories in MemMachine.
 
-        This tool retrieves relevant context, memories or profile for a user whenever
+        This tool retrieves relevant context, memories, or profile for a user whenever
         context is missing or unclear. Use this whenever you need to recall what has been
         previously discussed, even if it was from an earlier conversation or session.
         This searches both profile memory (long-term user traits and facts) and episodic
