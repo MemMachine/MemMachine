@@ -115,7 +115,7 @@ def test_load_sample_cpu_config():
     conf = Configuration.load_yml_file(str(config_path))
     resources_conf = conf.resources
     assert conf.logging.level == LogLevel.INFO
-    assert conf.session_manager.database == "profile_storage"
+    assert conf.session_manager.database == "relational_db"
     assert (
         len(resources_conf.language_models.openai_chat_completions_language_model_confs)
         > 0
@@ -126,9 +126,9 @@ def test_load_sample_cpu_config():
         ].model
         == "llama3"
     )
-    postgres_conf = resources_conf.databases.relational_db_confs["profile_storage"]
+    postgres_conf = resources_conf.databases.relational_db_confs["relational_db"]
     assert postgres_conf.password == SecretStr("<YOUR_PASSWORD_HERE>")
-    assert conf.semantic_memory.database == "profile_storage"
+    assert conf.semantic_memory.database == "relational_db"
     embedder_conf = resources_conf.embedders.openai["openai_embedder"]
     assert embedder_conf.api_key == SecretStr("<YOUR_API_KEY>")
     reranker_conf = resources_conf.rerankers.amazon_bedrock["aws_reranker_id"]
@@ -439,7 +439,7 @@ def test_disabled_semantic_memory_round_trips_through_yaml():
     conf_cp = Configuration(**dumped)
 
     assert dumped["semantic_memory"]["enabled"] is False
-    assert dumped["semantic_memory"]["config_database"] == "profile_storage"
+    assert dumped["semantic_memory"]["config_database"] == "relational_db"
     assert conf_cp.semantic_memory.enabled is False
 
 

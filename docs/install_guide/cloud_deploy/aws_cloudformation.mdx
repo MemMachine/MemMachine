@@ -473,7 +473,7 @@ Resources:
             level: info #| debug | error
 
           episode_store:
-            database: profile_storage
+            database: relational_db
 
           episodic_memory:
             long_term_memory:
@@ -487,10 +487,10 @@ Resources:
           semantic_memory:
             llm_model: openai_model
             embedding_model: openai_embedder
-            database: profile_storage
+            database: relational_db
 
           session_manager:
-            database: profile_storage
+            database: relational_db
 
           prompt:
             session:
@@ -499,7 +499,7 @@ Resources:
 
           resources:
             databases:
-              profile_storage:
+              relational_db:
                 provider: postgres
                 config:
                   host: postgres

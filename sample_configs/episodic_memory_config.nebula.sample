@@ -3,7 +3,7 @@ logging:
   level: info #| debug | error
 
 episode_store:
-  database: profile_storage
+  database: relational_db
 
 episodic_memory:
   long_term_memory:
@@ -18,7 +18,7 @@ episodic_memory:
     # embedder: openai_embedder
     # reranker: my_reranker_id              # optional; omit to use embedding scores
     # vector_store: event_vector_store      # references resources.databases
-    # segment_store: profile_storage        # references a relational DB; segment store is created from it
+    # segment_store: relational_db          # references a relational DB; segment store is created from it
     # properties_schema:                    # optional — user-defined filterable properties
     #   source_role: str
     #   target_id: str
@@ -33,10 +33,10 @@ episodic_memory:
 semantic_memory:
   llm_model: openai_model
   embedding_model: openai_embedder
-  database: profile_storage
+  database: relational_db
 
 session_manager:
-  database: profile_storage
+  database: relational_db
   instance_cache_size: 0  # Set above 0 to retain idle episodic memory instances.
 
 prompt:
@@ -45,7 +45,7 @@ prompt:
 
 resources:
   databases:
-    profile_storage:
+    relational_db:
       provider: postgres
       config:
         host: localhost
