@@ -1,7 +1,5 @@
 """Atomic SQL storage for exclusive leases."""
 
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -21,6 +19,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
+
+from memmachine_server.common.sql import write_connection
 
 _metadata = MetaData()
 _lease_lock = Table(
@@ -68,21 +68,6 @@ class SQLLeaseStore:
                 statement = pg_insert(_counter).values(**values)
             await conn.execute(statement.on_conflict_do_nothing(index_elements=["id"]))
 
-    @asynccontextmanager
-    async def _transaction(self) -> AsyncGenerator[AsyncConnection, None]:
-        if self._engine.dialect.name == "sqlite":
-            async with self._engine.connect() as conn:
-                await conn.exec_driver_sql("BEGIN IMMEDIATE")
-                try:
-                    yield conn
-                    await conn.commit()
-                except BaseException:
-                    await conn.rollback()
-                    raise
-        else:
-            async with self._engine.begin() as conn:
-                yield conn
-
     async def _lock_resource(
         self, conn: AsyncConnection, key: str, *, create: bool = False
     ) -> tuple[str | None, int | None] | None:
@@ -128,7 +113,7 @@ class SQLLeaseStore:
         """Grant an exclusive lease if the key has no live holder."""
         if not key or duration_ms <= 0:
             raise ValueError("key and duration must be valid")
-        async with self._transaction() as conn:
+        async with write_connection(self._engine) as conn:
             resource = await self._lock_resource(conn, key, create=True)
             assert resource is not None
             holder_id, expiry = resource
@@ -158,7 +143,7 @@ class SQLLeaseStore:
         """Extend a live lease and return its new expiry."""
         if duration_ms <= 0:
             raise ValueError("duration must be positive")
-        async with self._transaction() as conn:
+        async with write_connection(self._engine) as conn:
             resource = await self._lock_resource(conn, key)
             if resource is None:
                 return None
@@ -176,7 +161,7 @@ class SQLLeaseStore:
 
     async def release(self, key: str, lease_id: str) -> bool:
         """Delete a live lease row while retaining the global token counter."""
-        async with self._transaction() as conn:
+        async with write_connection(self._engine) as conn:
             resource = await self._lock_resource(conn, key)
             if resource is None:
                 return False

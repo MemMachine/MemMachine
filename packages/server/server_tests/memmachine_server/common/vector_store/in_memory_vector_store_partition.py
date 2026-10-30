@@ -133,10 +133,6 @@ class InMemoryVectorStorePartition(VectorStorePartition):
         self._store_schema = store_schema
         self.records: dict[UUID, Record] = {}
 
-    @property
-    def store_schema(self) -> VectorStoreSchema:
-        return self._store_schema
-
     async def upsert(self, *, records: Iterable[Record]) -> None:
         records = list(records)
         for record in records:
