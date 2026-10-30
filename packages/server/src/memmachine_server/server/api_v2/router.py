@@ -131,7 +131,7 @@ def _project_config_from_ltm(
         return ProjectConfig(
             backend="event",
             embedder="",
-            reranker=ltm.reranker or "",
+            reranker="",
             vector_graph_store="",
         )
     return ProjectConfig(

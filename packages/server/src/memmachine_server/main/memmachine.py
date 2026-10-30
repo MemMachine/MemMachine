@@ -220,20 +220,20 @@ class MemMachine:
                 except Exception:
                     ltm.reranker = None
 
-            # vector_store + segment_store are required to materialize an
+            # vector_store + event_memory_store are required to materialize an
             # event-backed long-term memory. If either is missing, disable.
             missing = [
                 name
                 for name, value in (
                     ("vector_store", ltm.vector_store),
-                    ("segment_store", ltm.segment_store),
+                    ("event_memory_store", ltm.event_memory_store),
                 )
                 if value is None
             ]
             if missing:
                 self._disable_long_term_memory(
                     "Event-backed long-term memory requires both vector_store "
-                    f"and segment_store; missing: {', '.join(missing)}. "
+                    f"and event_memory_store; missing: {', '.join(missing)}. "
                     "Disabling long-term episodic memory."
                 )
 
@@ -515,6 +515,15 @@ class MemMachine:
         if self._started:
             return
         self._key_to_session = key_to_session
+        long_term_memory = self._conf.episodic_memory.long_term_memory
+        if (
+            self._conf.episodic_memory.enabled
+            and long_term_memory is not None
+            and long_term_memory.event_memory_store is not None
+        ):
+            # Its background work finishes what a stopped process left,
+            # whether or not a session is opened.
+            await self._resources.get_event_memory()
         await self._queue_pending_session_deletions()
         self._delete_worker = asyncio.create_task(self._delete_session_worker())
         self._started = True
@@ -586,13 +595,14 @@ class MemMachine:
                 user_conf = EpisodicMemoryConfPartial()
             user_conf.session_key = session_key
             episodic_conf = user_conf.merge(self._conf.episodic_memory)
-            if episodic_conf.long_term_memory is not None:
-                if isinstance(episodic_conf.long_term_memory, EventLongTermMemoryConf):
-                    deployment_event_memory_ids(self._conf)
-                elif episodic_conf.long_term_memory.embedder is not None:
-                    self._conf.check_embedder(episodic_conf.long_term_memory.embedder)
-                if episodic_conf.long_term_memory.reranker is not None:
-                    self._conf.check_reranker(episodic_conf.long_term_memory.reranker)
+            long_term_memory = episodic_conf.long_term_memory
+            if isinstance(long_term_memory, EventLongTermMemoryConf):
+                deployment_event_memory_ids(self._conf)
+            elif long_term_memory is not None:
+                if long_term_memory.embedder is not None:
+                    self._conf.check_embedder(long_term_memory.embedder)
+                if long_term_memory.reranker is not None:
+                    self._conf.check_reranker(long_term_memory.reranker)
         except ValidationError as e:
             logger.exception(
                 "Failed to merge configuration: %s, %s",
