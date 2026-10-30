@@ -16,11 +16,8 @@ from memmachine_server.common.episode_store import (
     EpisodeStorage,
     EpisodeType,
 )
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-    map_filter_fields,
-    normalize_filter_field,
-)
+from memmachine_server.common.filter import FilterExpr, map_filter_fields
+from memmachine_server.common.filter.filter_parser import normalize_filter_field
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore

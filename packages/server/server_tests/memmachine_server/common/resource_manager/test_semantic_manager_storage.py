@@ -17,7 +17,7 @@ from memmachine_server.common.configuration import (
     SemanticMemoryConf,
     SemanticMemoryStorageBackend,
 )
-from memmachine_server.common.filter.filter_parser import In
+from memmachine_server.common.filter import In
 from memmachine_server.common.resource_manager.semantic_manager import (
     SemanticResourceManager,
 )
@@ -155,5 +155,5 @@ async def test_pgvector_store_before_data_migrations_is_migrated_and_deleted_fro
         tag="facts",
         embedding=np.array([1.0, 0.0]),
     )
-    await storage.delete_feature_set(filter_expr=In(field="set_id", values=[SET_ID]))
+    await storage.delete_feature_set(filter_expr=In(field="set_id", values=(SET_ID,)))
     assert await storage.get_feature(feature_id) is None

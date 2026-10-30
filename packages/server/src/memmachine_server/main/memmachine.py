@@ -32,14 +32,8 @@ from memmachine_server.common.errors import (
     ResourceNotReadyError,
     SessionNotFoundError,
 )
+from memmachine_server.common.filter import And, Equals, FilterExpr
 from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
     parse_filter,
     to_property_filter,
 )
@@ -458,11 +452,7 @@ class MemMachine:
         semantic_storage: SemanticStorage | None,
     ) -> None:
         episode_store = await self._resources.get_episode_storage()
-        session_filter = FilterComparison(
-            field="session_key",
-            op="=",
-            value=session_key,
-        )
+        session_filter = Equals(field="session_key", value=session_key)
         while True:
             episode_ids = await episode_store.get_episode_ids(
                 filter_expr=session_filter,
@@ -772,7 +762,7 @@ class MemMachine:
             return right
         if right is None:
             return left
-        return FilterAnd(left=left, right=right)
+        return And((left, right))
 
     def _should_dispatch_to_semantic_memory(
         self, target_memories: list[MemoryType]
@@ -1216,11 +1206,7 @@ class MemMachine:
 
         if MemoryType.Episodic in target_memories:
             episode_storage = await self._resources.get_episode_storage()
-            session_filter = FilterComparison(
-                field="session_key",
-                op="=",
-                value=session_data.session_key,
-            )
+            session_filter = Equals(field="session_key", value=session_data.session_key)
             combined_filter = self._merge_filter_exprs(
                 session_filter,
                 search_filter_expr,
@@ -1277,11 +1263,7 @@ class MemMachine:
         """
         episode_storage = await self._resources.get_episode_storage()
 
-        session_filter = FilterComparison(
-            field="session_key",
-            op="=",
-            value=session_data.session_key,
-        )
+        session_filter = Equals(field="session_key", value=session_data.session_key)
 
         search_filter_expr = parse_filter(search_filter) if search_filter else None
         combined_filter = self._merge_filter_exprs(session_filter, search_filter_expr)

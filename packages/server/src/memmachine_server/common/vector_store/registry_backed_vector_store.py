@@ -39,13 +39,13 @@ from .partition_registry import (
     VectorStorePartitionRegistry,
 )
 from .utils import (
-    validate_declared_properties,
+    bind_filter,
+    bind_record,
     validate_dimensions,
     validate_limit,
     validate_partition_key,
     validate_query_vector,
     validate_score_threshold,
-    validate_supported_filter,
 )
 from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 
@@ -97,11 +97,11 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
     @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
         async with self._tracker("upsert"):
-            records = list(records)
+            records = [
+                bind_record(record, self._store_schema.indexed_properties)
+                for record in records
+            ]
             for record in records:
-                validate_declared_properties(
-                    record.properties, self._store_schema.indexed_properties
-                )
                 validate_dimensions(record.vector, self._store_schema.vector_dimensions)
             await self._registration.require_current()
             if not records:
@@ -127,7 +127,7 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
             validate_score_threshold(score_threshold)
             validate_limit(limit)
             if property_filter is not None:
-                validate_supported_filter(
+                property_filter = bind_filter(
                     property_filter, self._store_schema.indexed_properties
                 )
             await self._registration.require_current()
@@ -156,9 +156,9 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
         Write records to the backend under the handle's incarnation.
 
         Called between two liveness checks, with at least one record, each
-        already checked against the store's schema: its keys are declared,
-        each value is of its key's declared type, and its vector has the
-        store's dimensions.
+        the one `bind_record` returns and already checked against the store's
+        schema: its keys are declared, each value is of its key's declared
+        type, and its vector has the store's dimensions.
         A record replaces the one with its UUID. The records are durable when
         it returns; a call that raises may have written some of them.
 
@@ -184,7 +184,8 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
 
         Called after a liveness check, with at least one query vector and a
         positive limit, the vectors, threshold, and filter already checked: the
-        filter names declared keys only.
+        filter is the one `bind_filter` returns, naming declared keys only and
+        holding values of their keys' declared types only.
 
         Args:
             query_vectors (list[list[float]]): The vectors to search for.

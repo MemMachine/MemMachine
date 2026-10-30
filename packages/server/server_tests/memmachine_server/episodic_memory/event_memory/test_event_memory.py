@@ -11,9 +11,9 @@ import pytest
 
 from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
     IsNull,
@@ -770,12 +770,14 @@ class TestQueryWithFilter:
         result = await event_memory.query(
             "thing",
             property_filter=And(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="episode_uid", op="=", value="e1"),
+                (
+                    Equals(field="m.color", value="red"),
+                    Equals(field="episode_uid", value="e1"),
+                )
             ),
         )
 
-        assert seen == [Comparison(field="_episode_uid", op="=", value="e1")]
+        assert seen == [Equals(field="_episode_uid", value="e1")]
         all_texts = {
             seg.block.text
             for scored in result.scored_segment_contexts
@@ -797,8 +799,10 @@ class TestQueryWithFilter:
         await event_memory.query(
             "thing",
             property_filter=Or(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="episode_uid", op="=", value="e1"),
+                (
+                    Equals(field="m.color", value="red"),
+                    Equals(field="episode_uid", value="e1"),
+                )
             ),
         )
 
@@ -809,36 +813,48 @@ class TestQueryWithFilter:
         [
             pytest.param(
                 Or(
-                    left=And(
-                        left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="episode_uid", op="=", value="e1"),
-                    ),
-                    right=And(
-                        left=Comparison(field="m.color", op="=", value="blue"),
-                        right=Comparison(field="episode_uid", op="=", value="e2"),
-                    ),
+                    (
+                        And(
+                            (
+                                Equals(field="m.color", value="red"),
+                                Equals(field="episode_uid", value="e1"),
+                            )
+                        ),
+                        And(
+                            (
+                                Equals(field="m.color", value="blue"),
+                                Equals(field="episode_uid", value="e2"),
+                            )
+                        ),
+                    )
                 ),
                 Or(
-                    left=Comparison(field="_episode_uid", op="=", value="e1"),
-                    right=Comparison(field="_episode_uid", op="=", value="e2"),
+                    (
+                        Equals(field="_episode_uid", value="e1"),
+                        Equals(field="_episode_uid", value="e2"),
+                    )
                 ),
                 id="each arm of an or",
             ),
             pytest.param(
                 Not(
-                    expr=Or(
-                        left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="episode_uid", op="=", value="e1"),
+                    Or(
+                        (
+                            Equals(field="m.color", value="red"),
+                            Equals(field="episode_uid", value="e1"),
+                        )
                     )
                 ),
-                Not(expr=Comparison(field="_episode_uid", op="=", value="e1")),
+                Not(Equals(field="_episode_uid", value="e1")),
                 id="a negated or",
             ),
             pytest.param(
                 Not(
-                    expr=And(
-                        left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="episode_uid", op="=", value="e1"),
+                    And(
+                        (
+                            Equals(field="m.color", value="red"),
+                            Equals(field="episode_uid", value="e1"),
+                        )
                     )
                 ),
                 None,
@@ -846,16 +862,14 @@ class TestQueryWithFilter:
             ),
             pytest.param(
                 Not(
-                    expr=Or(
-                        left=Comparison(field="m.color", op="=", value="red"),
-                        right=Not(
-                            expr=Comparison(field="episode_uid", op="=", value="e1")
-                        ),
+                    Or(
+                        (
+                            Equals(field="m.color", value="red"),
+                            Not(Equals(field="episode_uid", value="e1")),
+                        )
                     )
                 ),
-                Not(
-                    expr=Not(expr=Comparison(field="_episode_uid", op="=", value="e1"))
-                ),
+                Not(Not(Equals(field="_episode_uid", value="e1"))),
                 id="a negation under a negated or",
             ),
         ],
@@ -910,15 +924,17 @@ class TestQueryWithFilter:
         await event_memory.query(
             "thing",
             property_filter=And(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="m.size", op="=", value=1),
+                (
+                    Equals(field="m.color", value="red"),
+                    Equals(field="m.size", value=1),
+                )
             ),
         )
 
         record = next(iter(vector_store_partition.records.values()))
         assert _record_properties(record)["color"] == "red"
         assert "size" not in _record_properties(record)
-        assert seen == [Comparison(field="color", op="=", value="red")]
+        assert seen == [Equals(field="color", value="red")]
 
     async def test_a_seed_the_filter_rejects_is_left_out_though_its_context_matches(
         self,
@@ -938,7 +954,7 @@ class TestQueryWithFilter:
             "thing",
             vector_search_limit=2,
             expand_context=1,
-            property_filter=Comparison(field="m.color", op="=", value="red"),
+            property_filter=Equals(field="m.color", value="red"),
         )
 
         seed_blocks = [
@@ -955,7 +971,7 @@ class TestQueryWithFilter:
 
         result = await event_memory.query(
             "thing",
-            property_filter=Comparison(field="m.color", op="=", value="red"),
+            property_filter=Equals(field="m.color", value="red"),
         )
         all_texts = {
             seg.block.text
@@ -974,7 +990,7 @@ class TestQueryWithFilter:
 
         result = await event_memory.query(
             "thing",
-            property_filter=Comparison(field="m.color", op="!=", value="red"),
+            property_filter=Not(Equals(field="m.color", value="red")),
         )
         all_texts = {
             seg.block.text
@@ -994,7 +1010,7 @@ class TestQueryWithFilter:
 
         result = await event_memory.query(
             "thing",
-            property_filter=In(field="m.color", values=["red", "green"]),
+            property_filter=In(field="m.color", values=("red", "green")),
         )
         all_texts = {
             seg.block.text
@@ -1034,8 +1050,7 @@ class TestQueryWithFilter:
         result = await event_memory.query(
             "thing",
             property_filter=And(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Not(expr=IsNull(field="m.color")),
+                (Equals(field="m.color", value="red"), Not(IsNull(field="m.color")))
             ),
         )
         all_texts = {
@@ -1057,8 +1072,10 @@ class TestQueryWithFilter:
         result = await event_memory.query(
             "thing",
             property_filter=Or(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="m.color", op="=", value="blue"),
+                (
+                    Equals(field="m.color", value="red"),
+                    Equals(field="m.color", value="blue"),
+                )
             ),
         )
         all_texts = {
@@ -1079,7 +1096,7 @@ class TestQueryWithFilter:
 
         result = await event_memory.query(
             "thing",
-            property_filter=Not(expr=Comparison(field="m.color", op="=", value="red")),
+            property_filter=Not(Equals(field="m.color", value="red")),
         )
         all_texts = {
             seg.block.text
@@ -1099,7 +1116,7 @@ class TestQueryWithFilter:
 
         result = await event_memory.query(
             "thing",
-            property_filter=Comparison(field="m.color", op="=", value="purple"),
+            property_filter=Equals(field="m.color", value="purple"),
         )
         assert result.scored_segment_contexts == []
 
@@ -1110,11 +1127,7 @@ class TestQueryWithFilter:
 
         result = await event_memory.query(
             "hi",
-            property_filter=Comparison(
-                field="context.producer",
-                op="=",
-                value="Alice",
-            ),
+            property_filter=Equals(field="context.producer", value="Alice"),
         )
         assert result.scored_segment_contexts == []
 
@@ -1311,19 +1324,19 @@ class TestQueryWithAConditionOnAnUndeclaredField:
 
         on_the_segment_only = await _query_texts(
             event_memory,
-            Comparison(field="m.color", op="=", value="red"),
+            Equals(field="m.color", value="red"),
             limit=3,
             query="blue thing",
         )
         on_the_segment_only_with_every_seed = await _query_texts(
             event_memory,
-            Comparison(field="m.color", op="=", value="red"),
+            Equals(field="m.color", value="red"),
             limit=11,
             query="blue thing",
         )
         on_the_record = await _query_texts(
             event_memory,
-            Comparison(field="episode_uid", op="=", value="red"),
+            Equals(field="episode_uid", value="red"),
             limit=3,
             query="blue thing",
         )

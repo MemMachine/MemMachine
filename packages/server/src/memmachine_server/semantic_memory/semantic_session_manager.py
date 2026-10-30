@@ -19,7 +19,7 @@ from uuid import UUID
 from pydantic import BaseModel, JsonValue
 
 from memmachine_server.common.episode_store import Episode
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage as ESemanticConfigStorage,
 )
