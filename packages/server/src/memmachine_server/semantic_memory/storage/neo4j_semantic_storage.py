@@ -142,7 +142,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self._vector_global_lock = Lock()
         self._vector_index_creation_lock: MutableMapping[str, Lock] = {}
 
-    async def startup(self) -> None:
+    async def migrate(self) -> None:
         await self._driver.execute_query(
             _neo4j_query(
                 """
@@ -161,6 +161,9 @@ class Neo4jSemanticStorage(SemanticStorage):
                 """
             ),
         )
+
+    async def startup(self) -> None:
+        await self.migrate()
         await self._backfill_embedding_dimensions()
         await self._load_set_embedding_dimensions()
         await self._ensure_existing_set_labels()

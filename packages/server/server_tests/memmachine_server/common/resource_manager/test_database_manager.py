@@ -27,7 +27,7 @@ from memmachine_server.common.errors import (
     VectorStoreConfigurationError,
 )
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.sql import write_connection, write_session
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
@@ -928,6 +928,32 @@ async def test_sqlite_vector_store_creates_store_and_engine():
     mock_store_cls.return_value.startup.assert_awaited_once()
     assert ("vs1", "c") in builder.vector_stores
     assert "vs1" in builder.vector_store_sql_engines
+
+
+@pytest.mark.asyncio
+async def test_a_sqlite_relational_engine_takes_the_write_lock_at_begin(tmp_path):
+    """A relational SQLite engine is set up for write transactions."""
+    path = tmp_path / "relational.db"
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {}
+    conf.nebula_graph_confs = {}
+    _empty_vector_store_confs(conf)
+    conf.relational_db_confs = {
+        "sqlite1": SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path=str(path))
+    }
+    builder = DatabaseManager(conf)
+    engine = await builder.async_get_sql_engine("sqlite1")
+    other = create_async_engine(
+        f"sqlite+aiosqlite:///{path}", connect_args={"timeout": 0.2}
+    )
+    try:
+        # The write transaction has written nothing, and holds the lock already.
+        async with write_connection(engine), other.connect() as connection:
+            with pytest.raises(OperationalError):
+                await connection.execute(text("CREATE TABLE probe (k INTEGER)"))
+    finally:
+        await other.dispose()
+        await builder.close()
 
 
 @pytest.mark.asyncio

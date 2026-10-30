@@ -23,6 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
 
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     VectorStoreAttemptsExhaustedError,
     VectorStorePartitionAlreadyExistsError,
@@ -72,6 +73,7 @@ async def _registry(
             base_purge_retry_backoff_seconds=base_purge_retry_backoff_seconds,
         )
     )
+    await registry.migrate()
     await registry.startup()
     return registry
 
@@ -757,6 +759,7 @@ async def test_the_backoff_stops_doubling_at_its_maximum(
             max_purge_retry_backoff_seconds=120,
         )
     )
+    await registry.migrate()
     await registry.startup()
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
@@ -967,6 +970,8 @@ async def test_racing_purgers_retry_a_round_that_never_ended_once(
     """Purgers on separate engines that find the same claim whose round never
     ended claim it once between them, as its next attempt."""
     engines = [create_async_engine(sqlalchemy_engine.url) for _ in range(4)]
+    for engine in engines:
+        enable_sqlite_explicit_begin(engine)
     ran: list[UUID] = []
     try:
         purgers = [await _registry(engine, vector_store_name) for engine in engines]
@@ -1108,6 +1113,8 @@ async def test_concurrent_purgers_claim_each_tombstone_once(
     """Purgers on separate engines, as in separate processes, split a backlog
     between them: every tombstone is claimed once, whatever the interleaving."""
     engines = [create_async_engine(sqlalchemy_engine.url) for _ in range(3)]
+    for engine in engines:
+        enable_sqlite_explicit_begin(engine)
     try:
         purgers = [
             await _registry(engine, vector_store_name, tombstone_retention_seconds=0)
@@ -1348,6 +1355,8 @@ async def test_sqlite_stays_writable_while_a_round_runs(tmp_path, vector_store_n
     url = f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
     purger_engine = create_async_engine(url)
     impatient_engine = create_async_engine(url, connect_args={"timeout": 0.1})
+    enable_sqlite_explicit_begin(purger_engine)
+    enable_sqlite_explicit_begin(impatient_engine)
     try:
         purger = await _registry(purger_engine, vector_store_name)
         impatient = await _registry(impatient_engine, vector_store_name)
@@ -1458,8 +1467,9 @@ async def test_a_mint_checks_the_queue_after_its_insert(
     """A mint colliding with a deletion in flight sees the deletion's tombstone.
 
     The deletion frees the incarnation's row and queues its tombstone in one
-    uncommitted transaction; the colliding mint's insert waits on it. Only a
-    queue check made after the insert sees the tombstone once the deletion
+    uncommitted transaction; the colliding mint waits on it, at its insert,
+    or on SQLite, where its transaction takes the write lock, at BEGIN. Only
+    a queue check made after the insert sees the tombstone once the deletion
     commits: one made before reads the queue too early and registers a
     partition under an incarnation awaiting purge.
     """
@@ -1470,11 +1480,13 @@ async def test_a_mint_checks_the_queue_after_its_insert(
         "memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry.uuid4",
         lambda: next(minted),
     )
-    insert_issued = asyncio.Event()
+    mint_waiting = asyncio.Event()
 
     def on_statement(_connection, _cursor, statement, _parameters, _context, _many):
-        if statement.startswith(f"INSERT INTO {PartitionRow.__tablename__}"):
-            insert_issued.set()
+        if statement == "BEGIN IMMEDIATE" or statement.startswith(
+            f"INSERT INTO {PartitionRow.__tablename__}"
+        ):
+            mint_waiting.set()
 
     event.listen(sqlalchemy_engine.sync_engine, "before_cursor_execute", on_statement)
     creator = None
@@ -1491,7 +1503,7 @@ async def test_a_mint_checks_the_queue_after_its_insert(
                 )
             )
             creator = asyncio.create_task(registry.reserve("fresh"))
-            await asyncio.wait_for(insert_issued.wait(), 30)
+            await asyncio.wait_for(mint_waiting.wait(), 30)
         fresh = (await asyncio.wait_for(creator, 30)).incarnation
     finally:
         event.remove(
@@ -1774,6 +1786,8 @@ async def test_mixed_operations_across_engines_finish_cleanly_and_strand_nothing
     no tombstone's rounds overlap; and once they stop, no incarnation is both
     registered and queued, and the purge drains every tombstone."""
     engines = [create_async_engine(sqlalchemy_engine.url) for _ in range(4)]
+    for engine in engines:
+        enable_sqlite_explicit_begin(engine)
     watch = _OverlapWatch()
     try:
         registries = [

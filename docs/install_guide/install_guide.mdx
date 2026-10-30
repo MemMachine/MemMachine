@@ -337,13 +337,13 @@ resources:
 
 You're ready to go! Run these commands from the directory where you've installed MemMachine.
 
-First, you need to sync the profile schema. This is a **one-time** command that must be run before the very first time you start the server.
+First, create the schema of the databases your configuration names. Run this once the databases are up, before the first start, and again after every upgrade with no server running:
 
 ```
-memmachine-sync-profile-schema
+memmachine-server migrate
 ```
 
-Now you can start the MemMachine server. If you have run MemMachine before, you can skip the sync step and go straight to this command:
+Now you can start the MemMachine server:
 
 ```
 memmachine-server

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql.sqltypes import JSON
 
+from memmachine_server.common.sql import write_session
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.cluster_manager import (
     ClusterInfo,
@@ -98,18 +99,20 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
 
-    async def startup(self) -> None:
+    async def migrate(self) -> None:
         async with self._engine.begin() as conn:
             await conn.run_sync(BaseClusterStore.metadata.create_all)
 
+    async def startup(self) -> None:
+        await self.migrate()
+
     async def delete_all(self) -> None:
-        async with self._create_session() as session:
+        async with write_session(self._session_factory) as session:
             await session.execute(delete(ClusterEventRow))
             await session.execute(delete(ClusterRow))
             await session.execute(delete(ClusterStateRow))
             await session.execute(delete(ClusterPendingRow))
             await session.execute(delete(ClusterSplitRow))
-            await session.commit()
 
     async def get_state(self, *, set_id: SetIdT) -> ClusterState | None:
         set_key = str(set_id)
@@ -181,7 +184,7 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
 
     async def save_state(self, *, set_id: SetIdT, state: ClusterState) -> None:
         set_key = str(set_id)
-        async with self._create_session() as session:
+        async with write_session(self._session_factory) as session:
             await session.execute(
                 delete(ClusterEventRow).where(ClusterEventRow.set_id == set_key)
             )
@@ -258,11 +261,9 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
                     ]
                 )
 
-            await session.commit()
-
     async def delete_state(self, *, set_id: SetIdT) -> None:
         set_key = str(set_id)
-        async with self._create_session() as session:
+        async with write_session(self._session_factory) as session:
             await session.execute(
                 delete(ClusterEventRow).where(ClusterEventRow.set_id == set_key)
             )
@@ -278,4 +279,3 @@ class ClusterStateStorageSqlAlchemy(ClusterStateStorage):
             await session.execute(
                 delete(ClusterSplitRow).where(ClusterSplitRow.set_id == set_key)
             )
-            await session.commit()

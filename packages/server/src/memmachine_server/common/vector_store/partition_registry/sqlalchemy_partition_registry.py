@@ -15,6 +15,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import override
 from uuid import UUID, uuid4
 
@@ -48,6 +49,8 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.pool import StaticPool
 
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.sql import write_connection
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store.data_types import (
     _IDENTIFIER_MAX_BYTES,
@@ -141,6 +144,13 @@ class PurgeQueueRow(BasePartitionRegistry):
     )
 
 
+PARTITION_REGISTRY_LINEAGE = Lineage(
+    name="partition_registry",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BasePartitionRegistry.metadata,
+)
+
+
 class _RegistryInsertRejectedError(Exception):
     """A registry insert was rejected for a reason other than the key being taken."""
 
@@ -161,7 +171,9 @@ class SQLAlchemyVectorStorePartitionRegistryParams(BaseModel):
 
     Attributes:
         engine (AsyncEngine):
-            Async SQLAlchemy engine, on PostgreSQL or SQLite.
+            Async SQLAlchemy engine, on PostgreSQL or SQLite. On SQLite, set
+            up by `enable_sqlite_explicit_begin` at its creation: the
+            registry's write transactions take SQLite's write lock at BEGIN.
         vector_store_name (str):
             The name of the store the registry serves: registry objects with
             the same name on the same database are one registry. It follows
@@ -182,7 +194,11 @@ class SQLAlchemyVectorStorePartitionRegistryParams(BaseModel):
     """
 
     engine: InstanceOf[AsyncEngine] = Field(
-        ..., description="Async SQLAlchemy engine, on PostgreSQL or SQLite"
+        ...,
+        description=(
+            "Async SQLAlchemy engine, on PostgreSQL or SQLite. On SQLite, set "
+            "up by enable_sqlite_explicit_begin at its creation"
+        ),
     )
     vector_store_name: str = Field(
         ...,
@@ -286,6 +302,10 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         self._tombstone_claim_endings: set[asyncio.Task[None]] = set()
 
     @override
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._engine, PARTITION_REGISTRY_LINEAGE)
+
+    @override
     async def startup(self) -> None:
         async with self._engine.begin() as connection:
             await connection.run_sync(BasePartitionRegistry.metadata.create_all)
@@ -329,7 +349,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         # queuing a colliding incarnation, which the insert waited on, is
         # visible to it; the locking read sees the latest committed state.
         try:
-            async with self._engine.begin() as connection:
+            async with write_connection(self._engine) as connection:
                 await connection.execute(
                     insert(PartitionRow).values(
                         vector_store_name=self._vector_store_name,
@@ -478,7 +498,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
             .with_for_update(skip_locked=True)
             .scalar_subquery()
         )
-        async with self._engine.begin() as connection:
+        async with write_connection(self._engine) as connection:
             row = (
                 await connection.execute(
                     update(PurgeQueueRow)
@@ -548,7 +568,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         A raise on the last attempt is reported: claims skip the tombstone from
         then on.
         """
-        async with self._engine.begin() as connection:
+        async with write_connection(self._engine) as connection:
             ended = await connection.execute(
                 update(PurgeQueueRow)
                 .where(
@@ -600,7 +620,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
 
     async def _end_tombstone_claim(self, claim: _TombstoneClaim) -> None:
         """End a tombstone claim and take back its attempt, if the claim is the latest."""
-        async with self._engine.begin() as connection:
+        async with write_connection(self._engine) as connection:
             await connection.execute(
                 update(PurgeQueueRow)
                 .where(
@@ -626,14 +646,14 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         progress, if the claim is the latest.
         """
         if not any_records_found:
-            async with self._engine.begin() as connection:
+            async with write_connection(self._engine) as connection:
                 await connection.execute(
                     delete(PurgeQueueRow).where(
                         PurgeQueueRow.incarnation == claim.incarnation
                     )
                 )
             return
-        async with self._engine.begin() as connection:
+        async with write_connection(self._engine) as connection:
             ended = await connection.execute(
                 update(PurgeQueueRow)
                 .where(
@@ -666,7 +686,7 @@ class _SQLAlchemyReservation(Reservation):
     async def confirm(self) -> Registration:
         # Conditional on the incarnation and on the row being pending, so a
         # creation marks live only the partition it reserved.
-        async with self.engine.begin() as connection:
+        async with write_connection(self.engine) as connection:
             result = await connection.execute(
                 update(PartitionRow)
                 .where(
@@ -733,7 +753,7 @@ async def _unregister_where(
     DELETE goes first and takes the row's write lock, so racing deleters
     serialize on it and the loser finds no row and returns.
     """
-    async with engine.begin() as connection:
+    async with write_connection(engine) as connection:
         row = (
             await connection.execute(
                 delete(PartitionRow)

@@ -39,6 +39,7 @@ from memmachine_server.common.filter.filter_parser import Comparison as FilterCo
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.sql_lease_lock import (
     LockAcquireTimeoutError,
     SQLLeaseLockService,
@@ -1553,6 +1554,8 @@ async def test_two_machines_share_sql_deletion_lease(
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'deletion-leases.db'}"
     first_engine = create_async_engine(database_url)
     second_engine = create_async_engine(database_url)
+    enable_sqlite_explicit_begin(first_engine)
+    enable_sqlite_explicit_begin(second_engine)
     entered = asyncio.Event()
     release = asyncio.Event()
     deletions: list[str] = []
@@ -1574,6 +1577,7 @@ async def test_two_machines_share_sql_deletion_lease(
     try:
         first_lease = SQLLeaseLockService(first_engine)
         second_lease = SQLLeaseLockService(second_engine)
+        await first_lease.migrate()
         await first_lease.startup()
 
         first_resources = AsyncMock()

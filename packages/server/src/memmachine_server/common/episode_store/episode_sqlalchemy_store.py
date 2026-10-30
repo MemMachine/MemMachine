@@ -4,6 +4,7 @@ import logging
 import socket
 from collections.abc import Iterable
 from datetime import UTC
+from pathlib import Path
 from typing import Any, TypeVar, overload
 from uuid import UUID
 
@@ -58,6 +59,8 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.sql import write_session
 from memmachine_server.common.utils import ensure_tz_aware
 
 logger = logging.getLogger(__name__)
@@ -136,6 +139,13 @@ class Episode(BaseEpisodeStore):
         )
 
 
+EPISODE_STORE_LINEAGE = Lineage(
+    name="episode_store",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BaseEpisodeStore.metadata,
+)
+
+
 class SqlAlchemyEpisodeStore(EpisodeStorage):
     """SQLAlchemy episode store implementation."""
 
@@ -157,6 +167,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
+
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._engine, EPISODE_STORE_LINEAGE)
 
     async def startup(self) -> None:
         try:
@@ -181,9 +194,8 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             ) from err
 
     async def delete_all(self) -> None:
-        async with self._create_session() as session:
+        async with write_session(self._session_factory) as session:
             await session.execute(delete(Episode))
-            await session.commit()
 
     @validate_call
     @timed("add_episodes")
@@ -225,16 +237,14 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
         insert_stmt = insert(Episode).returning(Episode)
 
-        async with self._create_session() as session:
+        async with write_session(self._session_factory) as session:
             result = await session.execute(insert_stmt, values_to_insert)
             persisted_episodes = result.scalars().all()
 
-            await session.commit()
-
-            persisted_by_uid = {episode.uid: episode for episode in persisted_episodes}
-            res_episodes = [
-                persisted_by_uid[entry.uid].to_typed_model() for entry in episodes
-            ]
+        persisted_by_uid = {episode.uid: episode for episode in persisted_episodes}
+        res_episodes = [
+            persisted_by_uid[entry.uid].to_typed_model() for entry in episodes
+        ]
 
         return res_episodes
 
@@ -444,9 +454,8 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     async def delete_episodes(self, episode_ids: list[UUID]) -> None:
         stmt = delete(Episode).where(Episode.uid.in_(episode_ids))
 
-        async with self._create_session() as session:
+        async with write_session(self._session_factory) as session:
             await session.execute(stmt)
-            await session.commit()
 
     async def delete_episode_messages(
         self,
@@ -464,6 +473,5 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             end_time=end_time,
         )
 
-        async with self._create_session() as session:
+        async with write_session(self._session_factory) as session:
             await session.execute(stmt)
-            await session.commit()

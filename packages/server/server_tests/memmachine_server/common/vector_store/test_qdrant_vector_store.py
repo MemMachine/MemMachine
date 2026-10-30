@@ -34,6 +34,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     QueryResult,
     Record,
@@ -134,6 +135,7 @@ def any_qdrant_client(request):
 async def registry_engine(tmp_path):
     """The relational database holding the partition registry, one per test."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
+    enable_sqlite_explicit_begin(engine)
     yield engine
     await engine.dispose()
 
@@ -165,6 +167,7 @@ async def _params(client, registry_engine, **overrides) -> QdrantVectorStorePara
             tombstone_retention_seconds=0,
         )
     )
+    await params["partition_registry"].migrate()
     await params["partition_registry"].startup()
     return QdrantVectorStoreParams(**params)
 
@@ -172,6 +175,7 @@ async def _params(client, registry_engine, **overrides) -> QdrantVectorStorePara
 @pytest_asyncio.fixture
 async def store(any_qdrant_client, registry_engine):
     s = QdrantVectorStore(await _params(any_qdrant_client, registry_engine))
+    await s.migrate()
     await s.startup()
     yield s
 
@@ -374,6 +378,7 @@ class TestSimilarityMetrics:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
+        await store.migrate()
         await store.startup()
         await store.create_partition(NAME)
         partition = await store.open_partition(NAME)
@@ -426,6 +431,7 @@ class TestSimilarityMetrics:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
+        await store.migrate()
         await store.startup()
         await store.create_partition(NAME)
         partition = await store.open_partition(NAME)
@@ -1286,6 +1292,7 @@ class TestPartitionIsolation:
                 ),
             )
         )
+        await store.migrate()
         await store.startup()
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
@@ -1344,6 +1351,7 @@ class TestPartitionIsolation:
                 vector_store_name=f"{VECTOR_STORE_NAME}_other",
             )
         )
+        await other.migrate()
         await other.startup()
         await store.create_partition(NAME)
         await other.create_partition(NAME)
@@ -1460,6 +1468,7 @@ class TestPurge:
                 any_qdrant_client, registry_engine, vector_store_name="dropped_native"
             )
         )
+        await dropped.migrate()
         await dropped.startup()
         await dropped.create_partition("dropped")
         partition = await dropped.open_partition("dropped")
@@ -1702,6 +1711,7 @@ class TestAgainstAModel:
                 store_schema=_schema(indexed_properties=_MODEL_INDEXED_PROPERTIES),
             )
         )
+        await store.migrate()
         await store.startup()
         rng = random.Random(_MODEL_SEED)
         run = _ModelRun(store, rng, sorted(uuid4() for _ in range(_MODEL_POOL_SIZE)))
@@ -1871,6 +1881,8 @@ async def sqlite_registry_engines(tmp_path):
     """Two engines on one SQLite registry file, as two processes open it."""
     url = f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
     engines = [create_async_engine(url) for _ in range(2)]
+    for engine in engines:
+        enable_sqlite_explicit_begin(engine)
     yield engines
     for engine in engines:
         await engine.dispose()
@@ -1917,6 +1929,7 @@ async def _stores_sharing_a_registry(
                 store_schema=_schema(indexed_properties=_CHURN_INDEXED_PROPERTIES),
             )
         )
+        await store.migrate()
         await store.startup()
         stores.append(store)
     return stores
@@ -2034,6 +2047,7 @@ class TestMetrics:
         store = QdrantVectorStore(
             await _params(qdrant_client, registry_engine, metrics_factory=mock_factory)
         )
+        await store.migrate()
         await store.startup()
 
         await store.create_partition("metrics_test")
@@ -2143,7 +2157,9 @@ class TestCollectionProvisioningAcrossWorkers:
         store_b = QdrantVectorStore(
             await _params(client_b, registry_engine, vector_store_name=native)
         )
+        await store_a.migrate()
         await store_a.startup()
+        await store_b.migrate()
         await store_b.startup()
         self._together(
             monkeypatch,
@@ -2237,6 +2253,7 @@ class TestStrictMode:
     @pytest.mark.asyncio
     async def test_the_collection_is_strict(self, qdrant_client, registry_engine):
         store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
+        await store.migrate()
         await store.startup()
         info = await qdrant_client.get_collection(VECTOR_STORE_NAME)
         assert info.config.strict_mode_config is not None
@@ -2263,6 +2280,7 @@ class TestStrictMode:
     ):
         """The store answers a mistyped leaf itself; the server would refuse it."""
         store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
+        await store.migrate()
         await store.startup()
         await store.delete_partition("mistyped")
         await store.create_partition("mistyped")

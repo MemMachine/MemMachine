@@ -47,7 +47,8 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.sql import write_connection, write_session
 
 from .data_types import (
     _IDENTIFIER_MAX_BYTES,
@@ -59,6 +60,7 @@ from .data_types import (
     VectorStorePartitionHandleStaleError,
     VectorStoreSchema,
 )
+from .sql_store_schema import record_store_schema, store_schema_tables
 from .sqlite_properties import (
     compile_property_filter,
     property_column_values,
@@ -158,6 +160,17 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     )  # "upsert" or "delete"
     vector: MappedColumn[bytes | None] = mapped_column(LargeBinary, nullable=True)
     applied: MappedColumn[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+_STORE_SCHEMA_TABLES = store_schema_tables(
+    BaseSQLiteVectorStore.metadata, "vector_store_sqlite"
+)
+
+SQLITE_VECTOR_STORE_LINEAGE = Lineage(
+    name="sqlite_vector_store",
+    versions=Path(__file__).parent / "migrations" / "sqlite_vector_store",
+    metadata=BaseSQLiteVectorStore.metadata,
+)
 
 
 def _enable_sqlite_foreign_keys(
@@ -698,6 +711,17 @@ class SQLiteVectorStore(VectorStore):
         if not self._started:
             raise RuntimeError(
                 "VectorStore has not been started. Call startup() first."
+            )
+
+    @override
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._sqlalchemy_engine, SQLITE_VECTOR_STORE_LINEAGE)
+        async with write_connection(self._sqlalchemy_engine) as connection:
+            await record_store_schema(
+                connection,
+                _STORE_SCHEMA_TABLES,
+                self._vector_store_name,
+                self._store_schema,
             )
 
     @override
