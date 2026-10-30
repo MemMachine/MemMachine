@@ -236,7 +236,7 @@ class TestMemMachineClient:
             cfg = mock_post.call_args[1]["json"]["config"]
             assert cfg["backend"] == "event"
             assert "vector_store" not in cfg
-            assert "segment_store" not in cfg
+            assert "event_memory_store" not in cfg
 
     def test_get_project_404_raises_http_error(self):
         """Test missing project preserves HTTPError semantics."""

@@ -450,6 +450,7 @@ class DatabaseManager:
 
             engine = create_async_engine(conf.uri, **_sql_engine_kwargs(conf))
             enable_sqlite_foreign_keys(engine)
+            enable_sqlite_explicit_begin(engine)
             _report_sql_pool_metrics(
                 engine, pool_name=name, metrics_factory=conf.get_metrics_factory()
             )
@@ -727,6 +728,7 @@ class DatabaseManager:
                 partition_registry=partition_registry,
                 vector_store_name=vector_store_name,
                 store_schema=store_schema,
+                max_request_bytes=conf.max_request_bytes,
                 metrics_factory=conf.get_metrics_factory(),
             )
         )
@@ -831,6 +833,7 @@ class DatabaseManager:
                 request_timeout_seconds=conf.request_timeout_seconds,
                 max_varchar_length=conf.max_varchar_length,
                 purge_batch_size=conf.purge_batch_size,
+                max_request_bytes=conf.max_request_bytes,
                 metrics_factory=conf.get_metrics_factory(),
             )
         )
