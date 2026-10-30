@@ -8,12 +8,13 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, override
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
 import pytest_asyncio
+from pydantic import ValidationError
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from sqlalchemy.engine import URL
@@ -2057,6 +2058,150 @@ class TestMetrics:
         assert call_labels[1]["labels"]["status"] == "ok"
 
         await store.delete_partition("metrics_test")
+
+
+# ── Index / quantization configuration ──
+
+
+class TestIndexAndQuantizationParams:
+    """Native-collection HNSW, quantization, and optimizer configuration."""
+
+    @pytest.fixture
+    def mocked_qdrant_client(self) -> AsyncQdrantClient:
+        """A client the parameters accept, for tests that never reach a server."""
+        return MagicMock(spec=AsyncQdrantClient)
+
+    def test_dict_configs_are_coerced_to_qdrant_models(
+        self, mocked_qdrant_client, registry_engine
+    ):
+        """Plain dicts (the YAML form) coerce into qdrant's own model types."""
+        params = QdrantVectorStoreParams.model_validate(
+            {
+                "client": mocked_qdrant_client,
+                "partition_registry": SQLAlchemyVectorStorePartitionRegistry(
+                    SQLAlchemyVectorStorePartitionRegistryParams(
+                        engine=registry_engine,
+                        vector_store_name=VECTOR_STORE_NAME,
+                        tombstone_retention_seconds=0,
+                    )
+                ),
+                "vector_store_name": VECTOR_STORE_NAME,
+                "store_schema": {
+                    "vector_dimensions": VECTOR_DIM,
+                    "indexed_properties": {"name": "str", "created_at": "datetime"},
+                },
+                "hnsw_config": {"ef_construct": 256, "payload_m": 32},
+                "optimizers_config": {"default_segment_number": 4},
+                "quantization_config": {"turbo": {"always_ram": True, "bits": "bits2"}},
+            }
+        )
+        assert params.store_schema.indexed_properties == {
+            "name": str,
+            "created_at": datetime,
+        }
+        assert isinstance(params.hnsw_config, models.HnswConfigDiff)
+        assert params.hnsw_config.ef_construct == 256
+        assert isinstance(params.optimizers_config, models.OptimizersConfigDiff)
+        assert params.optimizers_config.default_segment_number == 4
+        assert isinstance(params.quantization_config, models.TurboQuantization)
+        assert params.quantization_config.turbo.bits == models.TurboQuantBitSize.BITS2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("m", [None, 0])
+    async def test_hnsw_config_zero_or_unset_m_accepted(
+        self, mocked_qdrant_client, registry_engine, m
+    ):
+        params = await _params(
+            mocked_qdrant_client,
+            registry_engine,
+            hnsw_config=models.HnswConfigDiff(m=m, ef_construct=200),
+        )
+        assert isinstance(params.hnsw_config, models.HnswConfigDiff)
+        assert params.hnsw_config.m == m
+
+    @pytest.mark.asyncio
+    async def test_hnsw_config_nonzero_m_rejected(
+        self, mocked_qdrant_client, registry_engine
+    ):
+        """Native collections require m=0; a positive global m is rejected."""
+        with pytest.raises(ValidationError, match="payload_m"):
+            await _params(
+                mocked_qdrant_client,
+                registry_engine,
+                hnsw_config=models.HnswConfigDiff(m=16),
+            )
+
+    @pytest.mark.asyncio
+    async def test_native_hnsw_config_defaults_to_tenant_indexing(
+        self, mocked_qdrant_client, registry_engine
+    ):
+        """With no override, the native graph is disabled with a default payload_m."""
+        store = QdrantVectorStore(
+            await _params(
+                mocked_qdrant_client,
+                registry_engine,
+            )
+        )
+        cfg = store._native_hnsw_config()
+        assert cfg.m == 0
+        assert cfg.payload_m == QdrantVectorStore._DEFAULT_NATIVE_PAYLOAD_M
+
+    @pytest.mark.asyncio
+    async def test_native_hnsw_config_merges_overrides_but_pins_m(
+        self, mocked_qdrant_client, registry_engine
+    ):
+        """Caller fields layer on top, but m stays pinned at 0 for tenant isolation."""
+        store = QdrantVectorStore(
+            await _params(
+                mocked_qdrant_client,
+                registry_engine,
+                hnsw_config=models.HnswConfigDiff(ef_construct=222, payload_m=32),
+            )
+        )
+        cfg = store._native_hnsw_config()
+        assert cfg.m == 0
+        assert cfg.payload_m == 32
+        assert cfg.ef_construct == 222
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_native_collection_creation_forwards_configs(
+        self, any_qdrant_client, registry_engine
+    ):
+        """The native (not registry) create_collection call carries the configs."""
+        opt = models.OptimizersConfigDiff(default_segment_number=3)
+        quant = models.TurboQuantization(
+            turbo=models.TurboQuantQuantizationConfig(
+                always_ram=True, bits=models.TurboQuantBitSize.BITS2
+            )
+        )
+        params = await _params(
+            any_qdrant_client,
+            registry_engine,
+            vector_store_name="forwarded_configs",
+            hnsw_config=models.HnswConfigDiff(ef_construct=222, payload_m=32),
+            optimizers_config=opt,
+            quantization_config=quant,
+        )
+        store = QdrantVectorStore(params)
+
+        # The native collection is created at startup, not per partition.
+        spy = AsyncMock(wraps=any_qdrant_client.create_collection)
+        try:
+            with patch.object(any_qdrant_client, "create_collection", new=spy):
+                await store.startup()
+        finally:
+            await any_qdrant_client.delete_collection(store._vector_store_name)
+
+        # The one collection created is the native one, and it carries the
+        # settings; the registry is tables, not a collection.
+        assert len(spy.call_args_list) == 1
+        kwargs = spy.call_args_list[0].kwargs
+        assert kwargs["hnsw_config"].m == 0
+        assert kwargs["hnsw_config"].payload_m == 32
+        assert kwargs["hnsw_config"].ef_construct == 222
+        assert kwargs["optimizers_config"] == opt
+        assert kwargs["quantization_config"] == quant
 
 
 @pytest.mark.integration

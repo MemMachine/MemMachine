@@ -721,12 +721,18 @@ class DatabaseManager:
             QdrantVectorStoreParams,
         )
 
+        # QdrantConf carries the index and quantization settings as plain
+        # mappings, so qdrant-client stays optional for config parsing; the
+        # params model validates them against qdrant's own models.
         return QdrantVectorStore(
             QdrantVectorStoreParams(
                 client=client,
                 partition_registry=partition_registry,
                 vector_store_name=vector_store_name,
                 store_schema=store_schema,
+                hnsw_config=conf.hnsw_config,
+                optimizers_config=conf.optimizers_config,
+                quantization_config=conf.quantization_config,
                 metrics_factory=conf.get_metrics_factory(),
             )
         )
@@ -822,6 +828,8 @@ class DatabaseManager:
             MilvusVectorStoreParams,
         )
 
+        # MilvusConf carries the vector index as a plain mapping, so pymilvus
+        # stays optional for config parsing; the params model validates it.
         return MilvusVectorStore(
             MilvusVectorStoreParams(
                 client=client,
@@ -832,6 +840,7 @@ class DatabaseManager:
                 max_varchar_length=conf.max_varchar_length,
                 purge_batch_size=conf.purge_batch_size,
                 metrics_factory=conf.get_metrics_factory(),
+                vector_index=conf.vector_index,
             )
         )
 

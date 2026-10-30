@@ -19,16 +19,22 @@ registry](vector_store_partition_registry.md),
 - **Tenancy:** partition-key multi-tenancy with `partitionkey.isolation`: each
   segment builds its vector index per group of tenants, so a search filtered
   on one incarnation searches only its group. Milvus documents isolation for
-  HNSW indexes; the store's HNSW_SQ is one.
-- **Vector index:** HNSW_SQ, 4-bit codes with FP16 refinement, M=18,
-  efConstruction=240: what AUTOINDEX builds on CPU from Milvus 2.6.10
-  (`autoIndex.params.build`, `autoindex_param_nocuda.go`). Naming it builds
-  the same index on every server, whatever its version (2.6.8 and 2.6.9 build
-  float32 HNSW) or AUTOINDEX configuration. A search sets only
-  `refine_k = 8` and leaves `ef` at knowhere's default, `max(limit, 16)`:
-  knowhere walks the graph on the 4-bit codes keeping `max(ef, limit x
-  refine_k)` candidates, and rescores `limit x refine_k` of them against the
-  FP16 vectors. Neither the index nor the search is configurable.
+  HNSW indexes; the default, HNSW_SQ, is one.
+- **Vector index:** one spec configures the index and its searches together:
+  an index type, its build parameters, and the parameters every search passes,
+  so both come from one author for one index type. Startup creates the index
+  unless the collection has one, in which case the collection keeps its index;
+  the search parameters apply to every query from startup on. Milvus checks
+  the parameters the index type takes when it creates the index and when a
+  search reaches an indexed segment, and ignores other keys. The default is
+  HNSW_SQ, 4-bit codes with FP16 refinement, M=18, efConstruction=240: what
+  AUTOINDEX builds on CPU from Milvus 2.6.10 (`autoIndex.params.build`,
+  `autoindex_param_nocuda.go`). Naming it builds the same index on every
+  server, whatever its version (2.6.8 and 2.6.9 build float32 HNSW) or
+  AUTOINDEX configuration. Its search sets only `refine_k = 8` and leaves `ef`
+  at knowhere's default, `max(limit, 16)`: knowhere walks the graph on the
+  4-bit codes keeping `max(ef, limit x refine_k)` candidates, and rescores
+  `limit x refine_k` of them against the FP16 vectors.
 - **Declared properties:** each has a scalar AUTOINDEX, which Milvus
   resolves by type (BITMAP for BOOL, STL_SORT for TIMESTAMPTZ, HYBRID
   otherwise: BITMAP under 100 distinct values, STL_SORT above). A datetime is
@@ -107,7 +113,7 @@ tenant, over two runs unless marked:
 |---|---|---|---|
 | AUTOINDEX, no search parameters (one run) | 0.73 | 0.88 | |
 | HNSW_SQ, `refine_k = 4` | 0.945-0.955 | 0.998-0.999 | 2.2 / 2.6-3.0 ms |
-| HNSW_SQ, `refine_k = 8` (the store) | 0.988-0.990 | 0.999 | 2.2-2.3 / 2.7-3.0 ms |
+| HNSW_SQ, `refine_k = 8` (the store's default) | 0.988-0.990 | 0.999 | 2.2-2.3 / 2.7-3.0 ms |
 | HNSW_SQ, `refine_k = 16` | 0.993-0.994 | 0.999 | 2.4 / 3.7-4.0 ms |
 | HNSW_SQ, `ef = max(k, 128)`, `refine_k = 4` | 0.989-0.990 | 0.998-0.999 | 2.3-2.4 / 2.5-2.6 ms |
 | Float32 HNSW, M=18, efConstruction=240 | 0.855-0.860 | 0.984-0.986 | 2.3-2.6 / 2.5-2.6 ms |
