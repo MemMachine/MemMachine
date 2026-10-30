@@ -1,22 +1,25 @@
-"""Data types for segment store."""
+"""Data types for event memory store."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from uuid import UUID
 
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, field_validator
 
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PayloadCodecConfig,
     PlaintextPayloadCodecConfig,
     decode_payload_codec_config,
     encode_payload_codec_config,
 )
+from memmachine_server.episodic_memory.event_memory.data_types import Derivative
 
 _JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
 
-class SegmentStorePartitionConfig(BaseModel):
-    """Configuration for a logical partition in a segment store."""
+class EventMemoryStorePartitionConfig(BaseModel):
+    """Configuration for a logical partition in an event memory store."""
 
     payload_codec_config: PayloadCodecConfig = Field(
         default_factory=PlaintextPayloadCodecConfig,
@@ -46,14 +49,14 @@ class SegmentStorePartitionConfig(BaseModel):
         return value
 
 
-class SegmentStorePartitionConfigMismatchError(Exception):
+class EventMemoryStorePartitionConfigMismatchError(Exception):
     """Raised when opening a partition with a different configuration than it was created with."""
 
     def __init__(
         self,
         partition_key: str,
-        existing_config: SegmentStorePartitionConfig,
-        requested_config: SegmentStorePartitionConfig,
+        existing_config: EventMemoryStorePartitionConfig,
+        requested_config: EventMemoryStorePartitionConfig,
     ) -> None:
         """Initialize with the partition key and configurations."""
         self.partition_key = partition_key
@@ -66,7 +69,7 @@ class SegmentStorePartitionConfigMismatchError(Exception):
         )
 
 
-class SegmentStoreAttemptsExhaustedError(Exception):
+class EventMemoryStoreAttemptsExhaustedError(Exception):
     """The store exhausted its internal attempts; diagnose the cause.
 
     Raised when an operation kept failing in a way that should not recur
@@ -75,7 +78,7 @@ class SegmentStoreAttemptsExhaustedError(Exception):
     """
 
 
-class SegmentStorePartitionHandleStaleError(Exception):
+class EventMemoryStorePartitionHandleStaleError(Exception):
     """A partition handle outlived the partition incarnation it was opened on."""
 
     def __init__(self, partition_key: str) -> None:
@@ -87,10 +90,67 @@ class SegmentStorePartitionHandleStaleError(Exception):
         self.partition_key = partition_key
 
 
-class SegmentStorePartitionAlreadyExistsError(Exception):
+class EventMemoryStorePartitionAlreadyExistsError(Exception):
     """Raised when creating a partition that already exists."""
 
     def __init__(self, partition_key: str) -> None:
         """Initialize with the key of the existing partition."""
         self.partition_key = partition_key
         super().__init__(f"Partition {partition_key!r} already exists.")
+
+
+class PendingDerivatives(BaseModel):
+    """
+    One event's derivatives, held with the event until their derived index has them.
+
+    Attributes:
+        uuid (UUID):
+            UUID of this record, chosen by its writer.
+        event_uuid (UUID):
+            UUID of the event the derivatives come from.
+        properties (dict[str, PropertyValue]):
+            The event's properties, which every one of its segments carries
+            and its derivatives' vector records take their declared keys from.
+        derivatives (list[Derivative]):
+            The derivatives.
+    """
+
+    uuid: UUID = Field(..., description="UUID of this record, chosen by its writer")
+    event_uuid: UUID = Field(
+        ..., description="UUID of the event the derivatives come from"
+    )
+    properties: dict[str, PropertyValue] = Field(
+        ...,
+        description=(
+            "The event's properties, which every one of its segments carries "
+            "and its derivatives' vector records take their declared keys from"
+        ),
+    )
+    derivatives: list[Derivative] = Field(..., description="The derivatives")
+
+
+class Tombstone(BaseModel):
+    """
+    The derivatives a forget removed, whose derived index entries remain to delete.
+
+    Attributes:
+        uuid (UUID):
+            UUID of the tombstone.
+        derivative_uuids (list[UUID]):
+            UUIDs of the removed derivatives.
+    """
+
+    uuid: UUID = Field(..., description="UUID of the tombstone")
+    derivative_uuids: list[UUID] = Field(
+        ..., description="UUIDs of the removed derivatives"
+    )
+
+
+class EventMemoryStoreEventAlreadyStoredError(Exception):
+    """A batch named an event the partition already holds; nothing was stored."""
+
+    def __init__(self, event_uuids: Iterable[UUID]) -> None:
+        """Record the uuids of the events the partition already holds."""
+        self.event_uuids = frozenset(event_uuids)
+        listed = ", ".join(str(uuid) for uuid in sorted(self.event_uuids))
+        super().__init__(f"Events already stored: {listed}.")

@@ -122,6 +122,7 @@ def db_conf_dict() -> dict:
                     "api_key": "test-key",
                     "partition_registry": "local_sqlite",
                     "request_timeout_seconds": 12,
+                    "max_request_bytes": 1048576,
                 },
             },
             "my_milvus": {
@@ -134,6 +135,7 @@ def db_conf_dict() -> dict:
                     "request_timeout_seconds": 7,
                     "max_varchar_length": 2048,
                     "purge_batch_size": 500,
+                    "max_request_bytes": 2097152,
                 },
             },
             "my_sqlite_vs": {
@@ -209,6 +211,7 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert qdrant_conf.api_key == SecretStr("test-key")
     assert qdrant_conf.partition_registry == "local_sqlite"
     assert qdrant_conf.request_timeout_seconds == 12
+    assert qdrant_conf.max_request_bytes == 1048576
 
     # Milvus check
     milvus_conf = storage_conf.milvus_confs["my_milvus"]
@@ -220,6 +223,7 @@ def test_parse_valid_storage_dict(db_conf_dict):
     assert milvus_conf.request_timeout_seconds == 7
     assert milvus_conf.max_varchar_length == 2048
     assert milvus_conf.purge_batch_size == 500
+    assert milvus_conf.max_request_bytes == 2097152
 
     # SQLiteVectorStore (hnswlib engine)
     sqlite_vs_conf = storage_conf.sqlite_vector_store_confs["my_sqlite_vs"]
@@ -295,6 +299,7 @@ def test_milvus_conf_defaults():
     assert conf.request_timeout_seconds == 30
     assert conf.max_varchar_length == 65535
     assert conf.purge_batch_size == 10000
+    assert conf.max_request_bytes == 67108864
 
 
 def test_milvus_conf_requires_a_partition_registry():
@@ -342,8 +347,10 @@ def test_milvus_conf_accepts_a_server_uri(uri):
     assert MilvusConf(partition_registry="db", uri=uri).uri == uri
 
 
-@pytest.mark.parametrize("setting", ["max_varchar_length", "purge_batch_size"])
-def test_milvus_conf_rejects_a_length_or_batch_size_that_is_not_positive(setting):
+@pytest.mark.parametrize(
+    "setting", ["max_varchar_length", "purge_batch_size", "max_request_bytes"]
+)
+def test_milvus_conf_rejects_a_size_that_is_not_positive(setting):
     with pytest.raises(ValueError, match=setting):
         MilvusConf.model_validate({"partition_registry": "db", setting: 0})
 
@@ -416,6 +423,12 @@ def test_qdrant_conf_defaults():
     assert conf.tombstone_retention_seconds == 86400
     assert conf.api_key.get_secret_value() == ""
     assert conf.request_timeout_seconds == 30
+    assert conf.max_request_bytes == 33554432
+
+
+def test_qdrant_conf_rejects_a_request_size_that_is_not_positive():
+    with pytest.raises(ValueError, match="max_request_bytes"):
+        QdrantConf.model_validate({"partition_registry": "db", "max_request_bytes": 0})
 
 
 def test_qdrant_conf_rejects_a_timeout_that_is_not_a_positive_whole_second():

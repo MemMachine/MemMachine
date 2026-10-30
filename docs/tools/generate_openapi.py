@@ -15,6 +15,7 @@ from copy import deepcopy
 from fastapi import FastAPI
 
 from memmachine_server.common.api.version import get_version
+from memmachine_server.server.api_v1.router import load_v1_api_router
 from memmachine_server.server.api_v2.router import load_v2_api_router
 
 UNTAGGED_LABEL = "Untagged"
@@ -29,6 +30,9 @@ TAG_DESCRIPTIONS = {
     "Semantic Memory: Sets": "Set type and set ID lifecycle, listing, and configuration.",
     "Semantic Memory: Categories": "Category, template, and tag management for semantic sets.",
     "System": "Infrastructure, health, and observability.",
+    "v1 Tenants": "Lifecycle of a v1 tenant, the memory an agent writes into.",
+    "v1 Episodic Memory": "Queries of a tenant's event memory, and expansion along its timeline.",
+    "v1 Events": "Ingestion and removal of the events a tenant remembers.",
     UNTAGGED_LABEL: "Endpoints missing an explicit tag — please add one.",
 }
 
@@ -47,8 +51,10 @@ REQUEST_BODY_EXAMPLES: dict[str, dict] = {
 
 def _clean_operation_id(operation_id: str) -> str:
     """Strip FastAPI's auto-generated suffixes like '_api_v2_..._post'."""
-    # Remove the _api_v2_..._method suffix that FastAPI appends
-    cleaned = re.sub(r"_api_v2_\w*_(?:post|get|put|delete|patch)$", "", operation_id)
+    # Remove the _api_v2_..._method and _v1_..._method suffixes FastAPI appends
+    cleaned = re.sub(
+        r"_(?:api_v2|v1)_\w*_(?:post|get|put|delete|patch)$", "", operation_id
+    )
     # Strip trailing _endpoint from config router function names
     cleaned = re.sub(r"_endpoint$", "", cleaned)
     return cleaned
@@ -79,6 +85,7 @@ def generate() -> dict:
     """Build the OpenAPI spec dict."""
     app = FastAPI()
     load_v2_api_router(app, with_config_api=True)
+    load_v1_api_router(app)
     spec = deepcopy(app.openapi())
 
     # Strip SCM dev metadata (e.g. "0.2.7.dev69+g71322db" -> "0.2.7") so the
