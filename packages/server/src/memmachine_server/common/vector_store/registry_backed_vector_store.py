@@ -265,8 +265,8 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
     For subclasses: `_vector_store_name` and `_store_schema` are the
     store's parameters, `_partition_registry` is the registry, and
     `_tracker` times each operation, and a subclass implements
-    `_prepare_storage`, `_prepare_partition_storage`, `_partition_handle`,
-    and `_purge_round`.
+    `_prepare_storage`, `_check_storage`, `_prepare_partition_storage`,
+    `_partition_handle`, and `_purge_round`.
     """
 
     def __init__(
@@ -284,11 +284,21 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         self._reservation_cancellations: set[asyncio.Task[None]] = set()
 
     @override
+    async def migrate(self) -> None:
+        # The caller owns the registry's lifecycle and that of any client a
+        # subclass is given; migrating the store prepares the storage its
+        # partitions share, then checks it against the store's declaration.
+        async with self._tracker("migrate"):
+            await self._prepare_storage()
+            await self._check_storage()
+
+    @override
     async def startup(self) -> None:
         # The caller owns the registry's lifecycle and that of any client a
-        # subclass is given.
+        # subclass is given; starting the store checks the storage its
+        # partitions share.
         async with self._tracker("startup"):
-            await self._prepare_storage()
+            await self._check_storage()
 
     @override
     async def shutdown(self) -> None:
@@ -424,13 +434,29 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         That is whatever a partition needs besides its incarnation and its
         own storage. Storage of one partition's own is prepared when it
         registers, by `_prepare_partition_storage`. What is prepared for one
-        store serves no other. It runs when the store starts, by any number of
-        processes at once, so it must be idempotent and safe to race, and must
-        complete what a failed call left part-made.
+        store serves no other. It runs when the store migrates, with no other
+        process using the store; it must be idempotent, and must complete what
+        a failed call left part-made.
 
         Raises:
             Exception:
-                Whatever the backend raises. Startup then fails.
+                Whatever the backend raises. Migrating then fails.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _check_storage(self) -> None:
+        """
+        Check that the storage the store's partitions share is prepared for the store.
+
+        It runs when the store starts, by any number of processes at once,
+        and after `_prepare_storage` when the store migrates. It changes
+        nothing.
+
+        Raises:
+            SchemaMismatchError:
+                If the storage is missing, or was prepared with other
+                dimensions, another metric, or other declared properties.
         """
         raise NotImplementedError
 
@@ -443,8 +469,8 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
         The partition is reserved, pending, under the incarnation, and its
         reservation is confirmed once this returns. The storage the store's
-        partitions share was prepared at startup, so this may have nothing to
-        prepare. Whatever a failed or interrupted call leaves
+        partitions share was prepared when the store migrated, so this may have
+        nothing to prepare. Whatever a failed or interrupted call leaves
         must be recoverable: reclaimed by the purge rounds of the incarnation
         once its pending partition is deleted.
 
@@ -467,8 +493,8 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         """
         Build a handle bound to a live partition's registration.
 
-        The storage the store's partitions share was prepared at startup,
-        and the partition's own before it was marked live.
+        The storage the store's partitions share was prepared when the store
+        migrated, and the partition's own before it was marked live.
 
         Args:
             registration (Registration):

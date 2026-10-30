@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store import (
     QueryResult,
     Record,
@@ -89,6 +90,10 @@ class _Store(RegistryBackedVectorStore[_Partition]):
         return None
 
     @override
+    async def _check_storage(self) -> None:
+        return None
+
+    @override
     async def _prepare_partition_storage(
         self, partition_key: str, incarnation: UUID
     ) -> None:
@@ -116,11 +121,13 @@ async def _prepared(partition_key: str, incarnation: UUID) -> None:
 @pytest_asyncio.fixture
 async def registry(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
+    enable_sqlite_explicit_begin(engine)
     registry = SQLAlchemyVectorStorePartitionRegistry(
         SQLAlchemyVectorStorePartitionRegistryParams(
             engine=engine, vector_store_name="store", tombstone_retention_seconds=0
         )
     )
+    await registry.migrate()
     await registry.startup()
     yield registry
     await engine.dispose()

@@ -39,8 +39,8 @@ through SQLAlchemy. The backend keeps only records, each carrying the
 
 - `VectorStorePartitionRegistry` (`common/vector_store/partition_registry/`)
   is the ABC. A registry belongs to one store and is addressed by partition
-  key. Its operations are `startup`, `reserve`, `resolve`, `unregister`, and
-  `run_purge_round`.
+  key. Its operations are `migrate`, `startup`, `reserve`, `resolve`,
+  `unregister`, and `run_purge_round`.
 - `Reservation` and `Registration` are handles on one life of a partition (see
   [Reservations and registrations](#reservations-and-registrations)).
 - `SQLAlchemyVectorStorePartitionRegistry` is the one implementation. It
@@ -53,7 +53,8 @@ through SQLAlchemy. The backend keeps only records, each carrying the
   handle's liveness fence. Its handle's `upsert`, `query`, and `delete` check
   their inputs and the handle's liveness around the backend call. A subclass
   supplies the backend steps: preparing the storage the store's partitions
-  share, at startup; preparing the storage a new partition needs of its own;
+  share, when the store migrates, and checking it when the store starts;
+  preparing the storage a new partition needs of its own;
   the handle's backend calls (`_upsert`, `_query`, `_delete`); and one purge
   round over an incarnation's records. Nothing in the base assumes how the
   backend lays records out. Qdrant and Milvus keep every partition of a store
@@ -127,8 +128,8 @@ reservation, or a registration.
   or `None`, or raises when the partition is pending, and `require_current`
   raises once it is deleted. Each is one read or one write, so an open takes
   one round trip and the fence one.
-- **What each part gains.** The registry's operations, beside `startup`, are
-  all addressed by key. A store's partition handle is built from one
+- **What each part gains.** The registry's operations, beside `migrate` and
+  `startup`, are all addressed by key. A store's partition handle is built from one
   registration, and its fence is one call. The store's creation flow reads as
   the lifecycle it implements: reserve, prepare storage under the
   reservation's incarnation, then confirm the reservation, or cancel it if
@@ -242,8 +243,8 @@ makes the partition live:
 - Whatever a failed or interrupted preparation leaves is recoverable: the
   partition's own storage is reclaimed by its incarnation's purge rounds once
   the pending partition is deleted. The storage a store's partitions share is
-  prepared at startup, each step idempotent, so a startup that failed part way
-  is completed by the next (the [Qdrant](qdrant_vector_store.md) and
+  prepared by `migrate`, each step idempotent, so a migration that failed part
+  way is completed by the next (the [Qdrant](qdrant_vector_store.md) and
   [Milvus](milvus_vector_store.md) documents say how).
 - A partition deleted while its storage is prepared is not marked live, since
   the mark is conditional on its incarnation: the creation raises
@@ -323,8 +324,8 @@ the backend is remote:
   the key first, in a separate transaction, and would still need the
   key-addressed path for a caller that holds no handle. A pending
   reservation's `cancel` serves the creation taking back its own.
-- **`startup` creates the registry's tables when missing**, as every store's
-  startup creates its own durable resources idempotently.
+- **`migrate` creates the registry's tables and `startup` checks them**, as
+  every store's do (see [schema migration](schema_migration.md)).
 
 ## Alternatives considered
 
@@ -335,8 +336,8 @@ the backend is remote:
 - **Storage first, registry last**, with no pending state. Storage named by a
   partition's incarnation cannot be made before the registry mints the
   incarnation, so a partition's own storage is prepared after its reservation,
-  and the storage a store's partitions share is prepared at startup. The cost
-  is a pending row a crash leaves, deleted like any other.
+  and the storage a store's partitions share is prepared by `migrate`. The
+  cost is a pending row a crash leaves, deleted like any other.
 - **One registry class for both levels**, with `mark_live(incarnation)`,
   `unregister_incarnation(incarnation)` and a lookup answering the state as
   fields. Callers carry incarnations back into the registry, any incarnation

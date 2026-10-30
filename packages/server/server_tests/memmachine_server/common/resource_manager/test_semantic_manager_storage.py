@@ -40,7 +40,7 @@ def _manager(conf: SemanticMemoryConf, resources: MagicMock) -> SemanticResource
 
 def _resources_without_models(engine: AsyncEngine) -> MagicMock:
     vector_store = MagicMock()
-    vector_store.open_or_create_partition = AsyncMock(return_value=MagicMock())
+    vector_store.open_partition = AsyncMock(return_value=MagicMock())
     resources = MagicMock()
     resources.get_sql_engine = AsyncMock(return_value=engine)
     resources.get_vector_store = AsyncMock(return_value=vector_store)
@@ -67,6 +67,9 @@ async def test_storage_builds_while_disabled_without_models(sqlalchemy_sqlite_en
     resources = _resources_without_models(sqlalchemy_sqlite_engine)
     manager = _manager(_DISABLED_VECTOR_STORE_CONF, resources)
 
+    # The tables migrate creates.
+    await VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, MagicMock()).migrate()
+
     storage = await manager.get_semantic_storage()
 
     assert isinstance(storage, VectorStoreSemanticStorage)
@@ -78,6 +81,9 @@ async def test_storage_builds_while_disabled_without_models(sqlalchemy_sqlite_en
 async def test_storage_is_built_once(sqlalchemy_sqlite_engine):
     resources = _resources_without_models(sqlalchemy_sqlite_engine)
     manager = _manager(_DISABLED_VECTOR_STORE_CONF, resources)
+
+    # The tables migrate creates.
+    await VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, MagicMock()).migrate()
 
     first, second = await asyncio.gather(
         manager.get_semantic_storage(), manager.get_semantic_storage()
@@ -143,6 +149,7 @@ async def test_pgvector_store_before_data_migrations_is_migrated_and_deleted_fro
         resources,
     )
 
+    await manager.migrate()
     storage = await manager.get_semantic_storage()
 
     head = ScriptDirectory.from_config(_alembic_config()).get_current_head()

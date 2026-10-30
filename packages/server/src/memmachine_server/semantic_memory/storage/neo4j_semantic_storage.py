@@ -25,7 +25,7 @@ from neo4j.graph import Node as Neo4jNode
 from pydantic import InstanceOf
 
 from memmachine_server.common.data_types import FilterValue, PropertyValue
-from memmachine_server.common.errors import InvalidArgumentError
+from memmachine_server.common.errors import InvalidArgumentError, SchemaMismatchError
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -117,6 +117,10 @@ def _neo4j_query(text: str) -> Query:
     return Query(cast(LiteralString, text))
 
 
+_CONSTRAINT_NAMES = ("set_history_unique", "set_embedding_unique")
+"""The constraints `migrate` creates, by name."""
+
+
 class Neo4jSemanticStorage(SemanticStorage):
     """Concrete :class:`SemanticStorageBase` backed by Neo4j."""
 
@@ -142,7 +146,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self._vector_global_lock = Lock()
         self._vector_index_creation_lock: MutableMapping[str, Lock] = {}
 
-    async def startup(self) -> None:
+    async def migrate(self) -> None:
         await self._driver.execute_query(
             _neo4j_query(
                 """
@@ -161,9 +165,18 @@ class Neo4jSemanticStorage(SemanticStorage):
                 """
             ),
         )
-        await self._backfill_embedding_dimensions()
+
+    async def startup(self) -> None:
+        records, _, _ = await self._driver.execute_query(
+            _neo4j_query("SHOW CONSTRAINTS YIELD name RETURN name"),
+        )
+        missing = set(_CONSTRAINT_NAMES) - {record["name"] for record in records}
+        if missing:
+            raise SchemaMismatchError(
+                f"The Neo4j semantic memory constraints {', '.join(sorted(missing))} "
+                "are missing. Run `memmachine-server migrate`."
+            )
         await self._load_set_embedding_dimensions()
-        await self._ensure_existing_set_labels()
         await self._hydrate_vector_index_state()
 
     async def cleanup(self) -> None:
@@ -1275,15 +1288,10 @@ class Neo4jSemanticStorage(SemanticStorage):
             prefix=self._VECTOR_INDEX_PREFIX,
         )
         for record in records:
-            name = record.get("name")
             set_id = self._set_id_from_record(record)
             dimensions = self._dimensions_from_record(record)
 
-            if set_id is None:
-                await self._drop_index_if_named(name)
-                continue
-
-            if dimensions is not None:
+            if set_id is not None and dimensions is not None:
                 self._vector_index_by_set[set_id] = dimensions
 
     async def _drop_index_if_named(self, name: str | None) -> None:
@@ -1383,24 +1391,6 @@ class Neo4jSemanticStorage(SemanticStorage):
         sanitized = _sanitize_identifier(set_id)
         return f"{self._VECTOR_INDEX_PREFIX}_{sanitized}"
 
-    async def _backfill_embedding_dimensions(self) -> None:
-        await self._driver.execute_query(
-            """
-            MATCH (f:Feature)
-            WHERE f.embedding IS NOT NULL AND f.embedding_dimensions IS NULL
-            WITH f, size(f.embedding) AS dims
-            SET f.embedding_dimensions = dims
-            """,
-        )
-        await self._driver.execute_query(
-            """
-            MATCH (f:Feature)
-            WHERE f.embedding_dimensions IS NOT NULL AND f.set_id IS NOT NULL
-            MERGE (s:SetEmbedding {set_id: f.set_id})
-            ON CREATE SET s.dimensions = f.embedding_dimensions
-            """,
-        )
-
     async def _load_set_embedding_dimensions(self) -> None:
         self._set_embedding_dimensions.clear()
         records, _, _ = await self._driver.execute_query(
@@ -1412,12 +1402,6 @@ class Neo4jSemanticStorage(SemanticStorage):
             if set_id is None or dims is None:
                 continue
             self._set_embedding_dimensions[str(set_id)] = int(dims)
-
-    async def _ensure_existing_set_labels(self) -> None:
-        if not self._set_embedding_dimensions:
-            return
-        for set_id in list(self._set_embedding_dimensions.keys()):
-            await self._ensure_set_label_applied(set_id)
 
     async def _ensure_set_embedding_dimensions(
         self,

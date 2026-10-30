@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +14,7 @@ from memmachine_server.common.configuration.episodic_config import (
     ShortTermMemoryConf,
 )
 from memmachine_server.common.errors import (
+    SchemaMismatchError,
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
@@ -85,17 +87,21 @@ def episodic_memory_conf():
 async def session_manager(sqlalchemy_engine: AsyncEngine):
     """Fixture for SessionDataManagerImpl, with tables created."""
     manager = SessionDataManagerSQL(engine=sqlalchemy_engine)
-    await manager.create_tables()
+    await manager.migrate()
+    await manager.startup()
     yield manager
     await manager.drop_tables()
     await manager.close()
 
 
 @pytest.mark.asyncio
-async def test_create_tables(sqlalchemy_engine: AsyncEngine):
-    """Test that create_tables creates the expected tables."""
+async def test_startup_refuses_an_unmigrated_database(sqlalchemy_engine: AsyncEngine):
     manager = SessionDataManagerSQL(engine=sqlalchemy_engine)
-    await manager.create_tables()
+    with pytest.raises(SchemaMismatchError, match="memmachine-server migrate"):
+        await manager.startup()
+
+    await manager.migrate()
+    await manager.startup()
 
 
 @pytest.mark.asyncio
@@ -166,8 +172,14 @@ async def test_concurrent_creation_validates_the_committed_session(
     monkeypatch: pytest.MonkeyPatch,
     changed_field: str | None,
 ) -> None:
-    """Workers racing for one key get the normal validation result."""
-    select_barrier = asyncio.Barrier(2)
+    """Workers racing for one key get the normal validation result.
+
+    Each worker's first read waits for the other's, or for a second, so the
+    workers both read before either writes wherever the database lets them.
+    On SQLite, where creation's transaction holds the write lock from BEGIN,
+    the second worker reads only once the first commits.
+    """
+    both_read = asyncio.Event()
     original_execute = AsyncSession.execute
     select_count = 0
 
@@ -176,8 +188,10 @@ async def test_concurrent_creation_validates_the_committed_session(
         result = await original_execute(db_session, statement, *args, **kwargs)
         if statement.is_select and select_count < 2:
             select_count += 1
-            async with asyncio.timeout(5):
-                await select_barrier.wait()
+            if select_count == 2:
+                both_read.set()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(both_read.wait(), 1)
         return result
 
     monkeypatch.setattr(AsyncSession, "execute", synchronized_select)
@@ -572,6 +586,57 @@ async def test_delete_session_cascades_to_short_term_memory(
         match=f"session {session_key} does not have short term memory",
     ):
         await session_manager.get_short_term_memory(session_key)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_episodic_config_updates_both_land(
+    session_manager: SessionDataManagerSQL,
+    episodic_memory_conf: EpisodicMemoryConf,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Two updates of different flags on one session both land.
+
+    The first update to read the session is held there until the second
+    reads it too, or for a second. An update that read the session without
+    locking it would overwrite the other's flag with the value it read.
+    """
+    await session_manager.create_or_validate_session(
+        "flags", {}, episodic_memory_conf, "", {}
+    )
+    held = asyncio.Event()
+    second_read = asyncio.Event()
+    original_execute = AsyncSession.execute
+
+    async def interleaved_execute(db_session: AsyncSession, statement, *args, **kwargs):
+        result = await original_execute(db_session, statement, *args, **kwargs)
+        if statement.is_select:
+            if not held.is_set():
+                held.set()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(second_read.wait(), 1)
+            else:
+                second_read.set()
+        return result
+
+    monkeypatch.setattr(AsyncSession, "execute", interleaved_execute)
+    await asyncio.wait_for(
+        asyncio.gather(
+            session_manager.update_session_episodic_config(
+                "flags", long_term_memory_enabled=False
+            ),
+            session_manager.update_session_episodic_config(
+                "flags", short_term_memory_enabled=False
+            ),
+        ),
+        30,
+    )
+    monkeypatch.setattr(AsyncSession, "execute", original_execute)
+
+    session_info = await session_manager.get_session_info("flags")
+    assert session_info is not None
+    assert not session_info.episode_memory_conf.long_term_memory_enabled
+    assert not session_info.episode_memory_conf.short_term_memory_enabled
 
 
 @pytest.mark.asyncio

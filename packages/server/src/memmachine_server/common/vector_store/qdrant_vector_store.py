@@ -19,6 +19,7 @@ from memmachine_server.common.data_types import (
     PropertyValue,
     SimilarityMetric,
 )
+from memmachine_server.common.errors import SchemaMismatchError
 from memmachine_server.common.filter.filter_parser import (
     And as FilterAnd,
 )
@@ -538,6 +539,43 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
             except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
                 if not QdrantVectorStore._is_already_exists_error(e):
                     raise
+
+    @override
+    async def _check_storage(self) -> None:
+        if not await self._client.collection_exists(self._vector_store_name):
+            raise SchemaMismatchError(
+                f"The Qdrant collection {self._vector_store_name!r} is missing. "
+                "Run `memmachine-server migrate`."
+            )
+        info = await self._client.get_collection(self._vector_store_name)
+        vectors = info.config.params.vectors
+        distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
+            self._store_schema.similarity_metric
+        ]
+        if (
+            not isinstance(vectors, models.VectorParams)
+            or vectors.size != self._store_schema.vector_dimensions
+            or vectors.distance != distance
+        ):
+            raise SchemaMismatchError(
+                f"The Qdrant collection {self._vector_store_name!r} holds vectors "
+                f"other than this store's: {self._store_schema.vector_dimensions} dimensions "
+                f"by {distance.value}."
+            )
+        indexed = {
+            key: index.data_type
+            for key, index in info.payload_schema.items()
+            if key != _PAYLOAD_INCARNATION
+        }
+        declared = {
+            key: QdrantVectorStore._PROPERTY_TYPE_TO_INDEX_TYPE[property_type]
+            for key, property_type in self._store_schema.indexed_properties.items()
+        }
+        if indexed != declared:
+            raise SchemaMismatchError(
+                f"The Qdrant collection {self._vector_store_name!r} indexes other "
+                "properties than this store declares."
+            )
 
     @override
     async def _prepare_partition_storage(

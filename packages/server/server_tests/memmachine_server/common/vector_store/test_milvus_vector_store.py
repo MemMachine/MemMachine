@@ -21,6 +21,9 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_p
 from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
     PartitionLifecycleContract,
 )
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
+)
 
 pymilvus = pytest.importorskip("pymilvus")
 DataType = pymilvus.DataType
@@ -45,6 +48,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     Record,
     VectorStoreAttemptsExhaustedError,
@@ -135,6 +139,7 @@ async def _params(client, registry_engine, **overrides) -> MilvusVectorStorePara
             tombstone_retention_seconds=0,
         )
     )
+    await params["partition_registry"].migrate()
     await params["partition_registry"].startup()
     return MilvusVectorStoreParams(**params)
 
@@ -346,6 +351,7 @@ async def _started_store(
     vector_store = MilvusVectorStore(
         await _params(client, registry_engine, **overrides)
     )
+    await vector_store.migrate()
     await vector_store.startup()
     return vector_store
 
@@ -359,6 +365,7 @@ def registry_url(tmp_path) -> str:
 @pytest_asyncio.fixture
 async def store(milvus_client, registry_url):
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     vector_store = await _started_store(milvus_client, registry_engine)
     yield vector_store
     await vector_store.shutdown()
@@ -372,6 +379,7 @@ async def other_store(milvus_container, registry_url):
     database."""
     client = AsyncMilvusClient(uri=milvus_container.get_connection_url())
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     vector_store = await _started_store(client, registry_engine)
     yield vector_store
     await vector_store.shutdown()
@@ -406,6 +414,7 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
             store._client, store._partition_registry._engine, vector_store_name="timed"
         )
     )
+    await timed.migrate()
     await timed.startup()
     await timed.create_partition("timed")
     partition = await timed.open_partition("timed")
@@ -459,10 +468,10 @@ async def partition(store):
 class TestPartitionLifecycle:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("failing_step", ["create_index", "load_collection"])
-    async def test_a_startup_that_failed_part_way_is_as_if_never_attempted(
+    async def test_a_migration_that_failed_part_way_is_as_if_never_attempted(
         self, store, monkeypatch, failing_step
     ):
-        """The next startup completes the native collection a failed one left behind."""
+        """The next migration completes the native collection a failed one left behind."""
         partial = MilvusVectorStore(
             await _params(
                 store._client,
@@ -478,8 +487,9 @@ class TestPartitionLifecycle:
         with monkeypatch.context() as patch:
             patch.setattr(store._client, failing_step, refuse)
             with pytest.raises(pymilvus.MilvusException, match="refused"):
-                await partial.startup()
+                await partial.migrate()
 
+        await partial.migrate()
         await partial.startup()
         await partial.create_partition("partial")
         partition = await partial.open_partition("partial")
@@ -527,6 +537,7 @@ class TestPartitionLifecycle:
                 vector_store_name="0_digit_first",
             )
         )
+        await digit_first.migrate()
         await digit_first.startup()
         await digit_first.create_partition("digit_first")
         assert await digit_first.open_partition("digit_first") is not None
@@ -671,67 +682,6 @@ async def _require_usable(partition: MilvusVectorStorePartition) -> None:
         property_filter=Comparison(field="name", op="=", value="usable"),
     )
     assert [match.record_uuid for match in result.matches] == [record.uuid]
-
-
-class TestConcurrentPreparation:
-    @pytest.mark.asyncio
-    async def test_a_startup_finding_the_native_collection_mid_preparation_completes_it(
-        self, store, other_store, monkeypatch
-    ):
-        """Two stores of one name start at once, and the second finds the
-        native collection the first created but has not yet indexed or
-        loaded. The second's startup completes it, so its partition is usable
-        before the first startup goes on, and both stores' partitions end
-        usable with every index."""
-        # A name of its own, so the first startup creates the native collection.
-        first = MilvusVectorStore(
-            await _params(
-                store._client,
-                store._partition_registry._engine,
-                vector_store_name="raced_preparation",
-                store_schema=_schema(indexed_properties={"name": str}),
-            )
-        )
-        second = MilvusVectorStore(
-            await _params(
-                other_store._client,
-                other_store._partition_registry._engine,
-                vector_store_name="raced_preparation",
-                store_schema=_schema(indexed_properties={"name": str}),
-            )
-        )
-        first_created = asyncio.Event()
-        second_done = asyncio.Event()
-        create_native_collection = store._client.create_collection
-
-        async def create_and_hold(*args, **kwargs):
-            await create_native_collection(*args, **kwargs)
-            first_created.set()
-            await asyncio.wait_for(second_done.wait(), 60)
-
-        monkeypatch.setattr(store._client, "create_collection", create_and_hold)
-
-        async def start_second() -> None:
-            try:
-                await asyncio.wait_for(first_created.wait(), 60)
-                await second.startup()
-                await second.create_partition("second")
-                partition = await second.open_partition("second")
-                assert partition is not None
-                await _require_usable(partition)
-            finally:
-                second_done.set()
-
-        await asyncio.gather(first.startup(), start_second())
-
-        await first.create_partition("first")
-        partition = await first.open_partition("first")
-        assert partition is not None
-        await _require_usable(partition)
-        assert set(await store._client.list_indexes(first._collection_name)) == {
-            "vector",
-            "_p_name",
-        }
 
 
 class TestUpsertAndQuery:
@@ -1452,6 +1402,7 @@ class TestScores:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
+        await scored.migrate()
         await scored.startup()
         await scored.delete_partition("scores")
         await scored.create_partition("scores")
@@ -1785,10 +1736,15 @@ async def test_a_purge_round_milvus_does_not_accept_in_full_raises(registry_url)
     # the deleted partition.
     client.has_collection = AsyncMock(return_value=True)
     client.list_indexes = AsyncMock(return_value=["vector"])
+    client.describe_collection = AsyncMock(
+        return_value={"fields": [{"name": "vector", "params": {"dim": VECTOR_DIM}}]}
+    )
+    client.describe_index = AsyncMock(return_value={"metric_type": "COSINE"})
     client.load_collection = AsyncMock(return_value=None)
     client.query = AsyncMock(return_value=[{"id": "listed_a"}, {"id": "listed_b"}])
     client.delete = AsyncMock(return_value={"delete_count": 1})
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     try:
         store = await _started_store(
             client, registry_engine, store_schema=_schema(indexed_properties={})
@@ -2306,3 +2262,18 @@ class TestLifecycleContract(PartitionLifecycleContract):
             consistency_level="Strong",
         )
         return {UUID(row["record_uuid"]) for row in rows}
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return MilvusVectorStore(
+            await _params(
+                store._client,
+                store._partition_registry._engine,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )

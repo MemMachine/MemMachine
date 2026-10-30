@@ -47,7 +47,12 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
+from memmachine_server.common.sql import write_connection, write_session
 
 from .data_types import (
     _IDENTIFIER_MAX_BYTES,
@@ -58,6 +63,11 @@ from .data_types import (
     VectorStorePartitionAlreadyExistsError,
     VectorStorePartitionHandleStaleError,
     VectorStoreSchema,
+)
+from .sql_store_schema import (
+    check_store_schema,
+    record_store_schema,
+    store_schema_tables,
 )
 from .sqlite_properties import (
     compile_property_filter,
@@ -158,6 +168,17 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     )  # "upsert" or "delete"
     vector: MappedColumn[bytes | None] = mapped_column(LargeBinary, nullable=True)
     applied: MappedColumn[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+_STORE_SCHEMA_TABLES = store_schema_tables(
+    BaseSQLiteVectorStore.metadata, "vector_store_sqlite"
+)
+
+SQLITE_VECTOR_STORE_LINEAGE = Lineage(
+    name="sqlite_vector_store",
+    versions=Path(__file__).parent / "migrations" / "sqlite_vector_store",
+    metadata=BaseSQLiteVectorStore.metadata,
+)
 
 
 def _enable_sqlite_foreign_keys(
@@ -701,14 +722,36 @@ class SQLiteVectorStore(VectorStore):
             )
 
     @override
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._sqlalchemy_engine, SQLITE_VECTOR_STORE_LINEAGE)
+        async with write_connection(self._sqlalchemy_engine) as connection:
+            await record_store_schema(
+                connection,
+                _STORE_SCHEMA_TABLES,
+                self._vector_store_name,
+                self._store_schema,
+            )
+        await check_store_schema(
+            self._sqlalchemy_engine,
+            _STORE_SCHEMA_TABLES,
+            self._vector_store_name,
+            self._store_schema,
+        )
+
+    @override
     async def startup(self) -> None:
         if self._started:
             return
 
         if self._index_directory is not None:
             self._index_directory.mkdir(parents=True, exist_ok=True)
-        async with self._sqlalchemy_engine.begin() as connection:
-            await connection.run_sync(BaseSQLiteVectorStore.metadata.create_all)
+        await check_lineage(self._sqlalchemy_engine, SQLITE_VECTOR_STORE_LINEAGE)
+        await check_store_schema(
+            self._sqlalchemy_engine,
+            _STORE_SCHEMA_TABLES,
+            self._vector_store_name,
+            self._store_schema,
+        )
         await self._replay_pending_operations()
 
         self._started = True

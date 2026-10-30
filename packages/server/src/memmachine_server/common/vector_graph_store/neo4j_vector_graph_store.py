@@ -900,6 +900,9 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         """Delete all nodes and relationships from the database."""
         await self._driver.execute_query(_neo4j_query("MATCH (n) DETACH DELETE n"))
 
+    async def migrate(self) -> None:
+        """Create nothing ahead of use: each index is created once its label grows past a threshold."""
+
     async def close(self) -> None:
         """Close the underlying Neo4j driver."""
         await self._driver.close()

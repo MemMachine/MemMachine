@@ -13,6 +13,7 @@ admits fewer.
 
 import logging
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import ClassVar, override
 from uuid import UUID, uuid4
 
@@ -46,7 +47,12 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
+from memmachine_server.common.sql import write_connection, write_session
 
 from .data_types import (
     _IDENTIFIER_MAX_BYTES,
@@ -57,6 +63,11 @@ from .data_types import (
     VectorStorePartitionAlreadyExistsError,
     VectorStorePartitionHandleStaleError,
     VectorStoreSchema,
+)
+from .sql_store_schema import (
+    check_store_schema,
+    record_store_schema,
+    store_schema_tables,
 )
 from .sqlite_properties import (
     compile_property_filter,
@@ -106,6 +117,17 @@ class _PartitionRow(BaseSQLiteVecVectorStore):
         String(_PARTITION_KEY_MAX_BYTES), primary_key=True
     )
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
+
+
+_STORE_SCHEMA_TABLES = store_schema_tables(
+    BaseSQLiteVecVectorStore.metadata, "vector_store_sqlite_vec"
+)
+
+SQLITE_VEC_VECTOR_STORE_LINEAGE = Lineage(
+    name="sqlite_vec_vector_store",
+    versions=Path(__file__).parent / "migrations" / "sqlite_vec_vector_store",
+    metadata=BaseSQLiteVecVectorStore.metadata,
+)
 
 
 class SQLiteVecVectorStorePartition(VectorStorePartition):
@@ -484,9 +506,31 @@ class SQLiteVecVectorStore(VectorStore):
         self._sa_metadata = MetaData()
 
     @override
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._engine, SQLITE_VEC_VECTOR_STORE_LINEAGE)
+        async with write_connection(self._engine) as connection:
+            await record_store_schema(
+                connection,
+                _STORE_SCHEMA_TABLES,
+                self._vector_store_name,
+                self._store_schema,
+            )
+        await check_store_schema(
+            self._engine,
+            _STORE_SCHEMA_TABLES,
+            self._vector_store_name,
+            self._store_schema,
+        )
+
+    @override
     async def startup(self) -> None:
-        async with self._engine.begin() as connection:
-            await connection.run_sync(BaseSQLiteVecVectorStore.metadata.create_all)
+        await check_lineage(self._engine, SQLITE_VEC_VECTOR_STORE_LINEAGE)
+        await check_store_schema(
+            self._engine,
+            _STORE_SCHEMA_TABLES,
+            self._vector_store_name,
+            self._store_schema,
+        )
 
     @override
     async def shutdown(self) -> None:

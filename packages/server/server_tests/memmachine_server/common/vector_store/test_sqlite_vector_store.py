@@ -36,6 +36,7 @@ from memmachine_server.common.vector_store.sqlite_properties import (
     property_column_name,
 )
 from memmachine_server.common.vector_store.sqlite_vector_store import (
+    _STORE_SCHEMA_TABLES,
     IndexLoadError,
     SQLiteVectorStore,
     SQLiteVectorStoreParams,
@@ -48,6 +49,9 @@ from memmachine_server.common.vector_store.vector_search_engine.usearch_engine i
 )
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
+)
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
 )
 
 VECTOR_STORE_NAME = "test_vector_store"
@@ -121,6 +125,7 @@ async def store(tmp_path):
     enable_sqlite_explicit_begin(engine)
     enable_sqlite_foreign_keys(engine)
     vector_store = SQLiteVectorStore(_params(engine))
+    await vector_store.migrate()
     await vector_store.startup()
     yield vector_store
     await vector_store.shutdown()
@@ -161,6 +166,7 @@ async def _store_with(store, vector_store_name: str, **overrides) -> SQLiteVecto
             store_schema=_schema(**overrides),
         )
     )
+    await other.migrate()
     await other.startup()
     return other
 
@@ -172,6 +178,24 @@ async def partition(store):
     assert partition is not None
     yield partition
     await store.delete_partition(NAME)
+
+
+# ── Store schema record ──
+
+
+@pytest.mark.asyncio
+async def test_migrate_records_the_store_schema(store):
+    store_table, declared_property_table = _STORE_SCHEMA_TABLES
+    async with store._sqlalchemy_engine.connect() as connection:
+        stores = (await connection.execute(select(store_table))).all()
+        keys = (
+            await connection.scalars(select(declared_property_table.c.property_key))
+        ).all()
+
+    assert [tuple(row) for row in stores] == [
+        (VECTOR_STORE_NAME, VECTOR_DIM, SimilarityMetric.COSINE.value)
+    ]
+    assert set(keys) == set(INDEXED_PROPERTIES)
 
 
 # ── Partition lifecycle ──
@@ -1321,6 +1345,7 @@ async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
         save_threshold=save_threshold,
     )
     store = SQLiteVectorStore(params)
+    await store.migrate()
     await store.startup()
     return store, engine
 
@@ -1877,6 +1902,7 @@ class TestPartitionResources:
             )
         )
         stores.append(store)
+        await store.migrate()
         await store.startup()
         partition = await store.open_or_create_partition(NAME)
 
@@ -1891,3 +1917,17 @@ class TestPartitionResources:
 
         await store.shutdown()
         await engine.dispose()
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return SQLiteVectorStore(
+            _params(
+                store._sqlalchemy_engine,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )
