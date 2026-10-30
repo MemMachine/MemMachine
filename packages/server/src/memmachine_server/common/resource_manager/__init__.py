@@ -17,6 +17,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
 from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
+from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
 )
@@ -58,6 +59,10 @@ class CommonResourceManager(Protocol):
 
     async def get_segment_store(self, name: str) -> SegmentStore:
         """Return the segment store by name."""
+        raise NotImplementedError
+
+    async def get_event_memory(self) -> EventMemory:
+        """Return the deployment's EventMemory, its background work running."""
         raise NotImplementedError
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:

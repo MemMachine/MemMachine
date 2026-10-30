@@ -4409,7 +4409,7 @@
             },
             "type": "object",
             "title": "Metadata",
-            "description": "\n    Additional metadata associated with the message, represented as key-value\n    pairs. Optional; defaults to an empty object.\n    Retrieval operations may utilize this metadata for filtering.\n    Use 'metadata.{key}' to filter based on specific metadata keys.\n    "
+            "description": "\n    Additional metadata associated with the message, represented as key-value\n    pairs. Optional; defaults to an empty object.\n    Each key is lowercase letters, digits, and underscores, at most 32 bytes,\n    outside the reserved prefix `memmachine_`; a request with another key is\n    refused with 422.\n    Retrieval operations may utilize this metadata for filtering.\n    Use 'metadata.{key}' to filter based on specific metadata keys.\n    "
           },
           "episode_type": {
             "anyOf": [
@@ -4508,7 +4508,7 @@
           "reranker": {
             "type": "string",
             "title": "Reranker",
-            "description": "\n    The name of the reranker model to use for this project.\n\n    - Must refer to a reranker model defined in the system configuration.\n    - If set to an empty string (default), the globally configured reranker will\n      be used.\n\n    Rerankers typically re-score retrieved documents to improve result quality.\n    ",
+            "description": "\n    The name of the reranker model to use for this project.\n\n    - Must refer to a reranker model defined in the system configuration.\n    - If set to an empty string (default), the globally configured reranker will\n      be used.\n    - Applies to the declarative backend only: an event-backed project uses the\n      reranker the server configures for event memory.\n\n    Rerankers typically re-score retrieved documents to improve result quality.\n    ",
             "default": "",
             "examples": [
               "bge-reranker-large",
@@ -4534,7 +4534,7 @@
         },
         "type": "object",
         "title": "ProjectConfig",
-        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses the server's event\n  memory, its vector store, segment store, and embedder.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: server falls back to its parse-time default\n  (declarative, for backwards compatibility with pre-discriminator clients)."
+        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses the server's event\n  memory, its vector store, segment store, embedder, and reranker.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: server falls back to its parse-time default\n  (declarative, for backwards compatibility with pre-discriminator clients)."
       },
       "ProjectResponse": {
         "properties": {

@@ -298,6 +298,16 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
         gt=0,
         description="Seconds a request to Qdrant may take before the client gives up.",
     )
+    max_request_bytes: int = Field(
+        default=32 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Bytes one upsert request to Qdrant may take as the client "
+            "serializes it; a record that alone exceeds it is refused. Qdrant "
+            "refuses a REST request over its service.max_request_size_mb, 32 MiB "
+            "unless the server sets it otherwise, and sets no limit over gRPC."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_retention(self) -> Self:
@@ -364,6 +374,16 @@ class MilvusConf(MetricsFactoryIdMixin, YamlSerializableMixin, WithValueFromEnv)
             "The most entities one purge round lists and deletes. Milvus refuses "
             "a query whose limit exceeds its "
             "quotaAndLimits.limits.maxQueryResultWindow, 16384 unless the server "
+            "sets it otherwise."
+        ),
+    )
+    max_request_bytes: int = Field(
+        default=64 * 1024 * 1024,
+        gt=0,
+        description=(
+            "Bytes one upsert request to Milvus may take as gRPC serializes it; "
+            "a record that alone exceeds it is refused. Milvus refuses a request "
+            "over its proxy.grpc.serverMaxRecvSize, 67108864 unless the server "
             "sets it otherwise."
         ),
     )

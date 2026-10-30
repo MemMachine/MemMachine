@@ -170,7 +170,11 @@ class SQLLeaseLockService:
     """
 
     def __init__(self, engine: AsyncEngine) -> None:
-        """Use an existing asynchronous SQLAlchemy engine."""
+        """Use an existing asynchronous SQLAlchemy engine.
+
+        On SQLite, the engine must be set up by `enable_sqlite_explicit_begin`
+        at its creation: lease changes take SQLite's write lock at BEGIN.
+        """
         self._store = SQLLeaseStore(engine)
 
     async def startup(self) -> None:

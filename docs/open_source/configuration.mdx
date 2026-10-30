@@ -140,11 +140,11 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `short_term_memory.message_capacity` | The maximum character capacity for short-term memory.                     | `64000`      |
 
     The event backend serves every session with the vector store, segment
-    store, and embedder configured here, and a project cannot choose others.
-    Changing them does not move existing data: point them only at stores
-    that hold it, and rebuild the event memory's vectors before changing the
-    embedder. A deployment that configures no event memory can neither open
-    nor delete event sessions.
+    store, embedder, and reranker configured here, and a project cannot
+    choose others. Changing them does not move existing data: point them
+    only at stores that hold it, and rebuild the event memory's vectors
+    before changing the embedder. A deployment that configures no event
+    memory can neither open nor delete event sessions.
   </Accordion>
 
   <Accordion title="Retrieval Agent">
@@ -427,6 +427,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `config.request_timeout_seconds` | Qdrant and Milvus: whole seconds a request to the vector store may take before the client gives up; must be positive. | `30` |
       | `config.max_varchar_length` | Milvus: bytes a declared string property can hold, at most the server's `proxy.maxVarCharLength`. A native collection keeps the length it was created with. | `65535` |
       | `config.purge_batch_size` | Milvus: the most entities one purge round lists and deletes, at most the server's `quotaAndLimits.limits.maxQueryResultWindow`. | `10000` |
+      | `config.max_request_bytes` | Qdrant and Milvus: bytes one upsert request may take as the client serializes it; a record that alone exceeds it is refused. At most the server's request size limit: Qdrant's `service.max_request_size_mb` over REST (gRPC has none), Milvus's `proxy.grpc.serverMaxRecvSize`. | `33554432` (Qdrant), `67108864` (Milvus) |
       | `config.path`  | The path for the given database.                                    | Depends on provider |
       | `config.username` | Username for internal graph store authentication.                | Depends on provider |
       | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |
