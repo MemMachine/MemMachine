@@ -313,7 +313,7 @@ helm upgrade --install memmachine . --set qdrant.existingSecret=my-qdrant-key
 | `memmachine.config.gatewayUrl`     | `http://localhost:8080`                          | `GATEWAY_URL` env var                         |
 | `memmachine.model.provider`        | `openai-responses`                               | LLM provider type                             |
 | `memmachine.model.base_url`        | `https://api.openai.com/v1`                      | LLM API base URL                              |
-| `memmachine.model.model_path`      | `gpt-5-mini`                                     | LLM model name                                |
+| `memmachine.model.model_path`      | `gpt-6-luna`                                     | LLM model name                                |
 | `memmachine.embedder.provider`     | `openai`                                         | Embedder provider type                        |
 | `memmachine.embedder.base_url`     | `https://api.openai.com/v1`                      | Embedder API base URL                         |
 | `memmachine.embedder.model_path`   | `text-embedding-3-small`                         | Embedding model name                          |
@@ -509,7 +509,7 @@ OpenAI is the default backend. Only the API key and model names need to be set:
 helm upgrade --install memmachine . \
   --namespace memmachine --create-namespace \
   --set memmachine.openaiApiKey=sk-... \
-  --set memmachine.model.model_path=gpt-4o-mini \
+  --set memmachine.model.model_path=gpt-6-luna \
   --set memmachine.embedder.model_path=text-embedding-3-small \
   --set memmachine.embedder.dimensions=1536
 ```

@@ -37,7 +37,7 @@ class LiteLLMLanguageModelParams(BaseModel):
     Attributes:
         model (str):
             The LiteLLM model spec, e.g. 'anthropic/claude-sonnet-4-6',
-            'openai/gpt-4o', 'bedrock/anthropic.claude-3-5-sonnet-...'.
+            'openai/gpt-6-luna', 'bedrock/anthropic.claude-3-5-sonnet-...'.
         api_key (str | None):
             Optional explicit API key. When set, takes precedence over
             LiteLLM's per-backing env-var resolution. Useful for proxy mode.
@@ -65,7 +65,7 @@ class LiteLLMLanguageModelParams(BaseModel):
         ...,
         description=(
             "LiteLLM model spec (e.g. 'anthropic/claude-sonnet-4-6', "
-            "'openai/gpt-4o', 'bedrock/anthropic.claude-3-5-sonnet-...')"
+            "'openai/gpt-6-luna', 'bedrock/anthropic.claude-3-5-sonnet-...')"
         ),
         min_length=1,
     )

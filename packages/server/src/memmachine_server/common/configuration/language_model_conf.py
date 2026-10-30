@@ -115,7 +115,7 @@ class LiteLLMLanguageModelConf(
         min_length=1,
         description=(
             "LiteLLM model spec, e.g. 'anthropic/claude-sonnet-4-6', "
-            "'openai/gpt-4o', 'bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0'."
+            "'openai/gpt-6-luna', 'bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0'."
         ),
     )
     api_key: SecretStr | None = Field(
