@@ -5,6 +5,23 @@ Each life of a partition gets its own records table, vector search engine,
 and index file. A pending operations table tracks search engine operations
 for crash recovery: on a store's startup, its partitions' unfinalized
 operations are replayed.
+
+What survives a crash
+---------------------
+
+`upsert` and `delete` commit to SQLite before they return, so a process crash
+loses nothing: the pending log carries every operation the search engine has
+not been checkpointed with, and startup replays it.
+
+A power failure is weaker, and callers should size their expectations to it.
+The index is published atomically but not durably (see
+`vector_search_engine.index_persistence`), so a power failure can revert the
+last publication while the records table -- and the trim that ran behind that
+publication -- stay committed. The result is records whose vectors are missing
+from the index. They are simply unfindable: `query` cannot reach them, and
+nothing else reads a stored vector, so re-upserting them is the repair.
+Callers that need every record searchable after a power failure must be able
+to re-ingest; nothing here detects the gap for them.
 """
 
 import asyncio
@@ -175,7 +192,16 @@ async def _save_partition_index(
     search_engine: VectorSearchEngine,
     path: str,
 ) -> None:
-    """Save a partition life's index to disk, leaving no file if the partition is deleted."""
+    """Publish a partition life's index to disk and trim the operations it holds.
+
+    The order is the whole protocol. The pending log is the only other copy of
+    these vectors -- the records table has no vector column -- so an applied row
+    may be deleted only once the index that holds it has been published.
+    `save` returning is that statement, and no more than that: publication is
+    atomic, not durable, so a power failure can revert it after this trim has
+    committed. See the module docstring for what that leaves behind. A save
+    that a deletion overtakes leaves no file.
+    """
     await search_engine.save(path)
 
     async with write_session(create_session) as session:
@@ -983,6 +1009,10 @@ class SQLiteVectorStore(VectorStore):
             Column("row_id", Integer, primary_key=True, autoincrement=True),
             Column("uuid", Uuid, nullable=False, unique=True),
             *property_columns(self._store_schema.indexed_properties),
+            # A plain rowid is reused once the highest row is deleted. query()
+            # resolves scored keys to rows without a lock, so a scored key could
+            # resolve to a record other than the one the engine scored.
+            sqlite_autoincrement=True,
         )
         property_indexes(records_table, self._store_schema.indexed_properties)
         return records_table

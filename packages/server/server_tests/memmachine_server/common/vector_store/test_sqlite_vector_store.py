@@ -46,6 +46,9 @@ from memmachine_server.common.vector_store.sqlite_vector_store import (
 from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
     USearchVectorSearchEngine,
 )
+from memmachine_server.common.vector_store.vector_search_engine.vector_search_engine import (
+    VectorSearchEngine,
+)
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
 )
@@ -1202,8 +1205,6 @@ class TestConcurrentAsync:
     @pytest.mark.asyncio
     async def test_concurrent_upserts(self, partition):
         """Multiple concurrent upserts should not error and all records should be persisted."""
-        import asyncio
-
         all_uuids: list[UUID] = []
 
         async def upsert_batch(start: int) -> None:
@@ -1226,8 +1227,6 @@ class TestConcurrentAsync:
     @pytest.mark.asyncio
     async def test_concurrent_upsert_and_query(self, partition):
         """Query during upsert should not error (eventual consistency)."""
-        import asyncio
-
         records = [
             _make_record(vector=_normalize([float(i), 1.0, 0.0])) for i in range(20)
         ]
@@ -1307,6 +1306,136 @@ class TestConcurrentAsync:
             )
 
 
+# ── row_id reuse (issue #1468) ──
+
+
+class _GatedSearchEngine(VectorSearchEngine):
+    """Delegates to a real engine; the next search() parks after scoring.
+
+    query() scores keys and then resolves them to rows without a lock, so a
+    write can retire a scored row in the gap. The gate parks in that gap.
+    """
+
+    def __init__(self, inner: VectorSearchEngine) -> None:
+        self.inner = inner
+        self.gate: asyncio.Event | None = None
+        self.gate_reached = asyncio.Event()
+
+    async def add(self, vectors):
+        await self.inner.add(vectors)
+
+    async def remove(self, keys):
+        await self.inner.remove(keys)
+
+    async def search(self, vectors, *, limit, allowed_keys=None):
+        results = await self.inner.search(
+            vectors, limit=limit, allowed_keys=allowed_keys
+        )
+        if self.gate is not None:
+            gate, self.gate = self.gate, None
+            self.gate_reached.set()
+            await gate.wait()
+        return results
+
+    async def save(self, path):
+        await self.inner.save(path)
+
+    async def load(self, path):
+        await self.inner.load(path)
+
+
+class TestRowIdReuse:
+    """Regression tests for row_id reuse (issue #1468).
+
+    Without AUTOINCREMENT, SQLite assigns max(rowid) + 1, so a deleted record's
+    id can go to the next insert. Serialized writes do not cover the read path,
+    which resolves scored keys to rows without a lock, so these tests pin the
+    id policy itself.
+    """
+
+    async def _row_id_of(self, partition, record_uuid):
+        async with partition._create_session() as session:
+            return (
+                await session.execute(
+                    select(partition._records_table.c.row_id).where(
+                        partition._records_table.c.uuid == record_uuid
+                    )
+                )
+            ).scalar_one()
+
+    @pytest.mark.asyncio
+    async def test_row_ids_are_never_reused(self, partition):
+        """A new record must not be assigned a previously deleted row_id."""
+        record_a = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await partition.upsert(records=[record_a])
+        row_id_a = await self._row_id_of(partition, record_a.uuid)
+
+        await partition.delete(record_uuids=[record_a.uuid])
+
+        record_b = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        await partition.upsert(records=[record_b])
+        row_id_b = await self._row_id_of(partition, record_b.uuid)
+
+        assert row_id_b != row_id_a
+
+    @pytest.mark.asyncio
+    async def test_a_query_cannot_return_a_record_it_never_scored(self, tmp_path):
+        """A key the engine scored must never resolve to a later record.
+
+        Writes run freely between scoring and row lookup, so a reused row_id
+        would return a never-scored record with another's score: here, a
+        record orthogonal to the query as a perfect hit. With ids never reused
+        the stale key matches no row and is dropped.
+        """
+        db_path = tmp_path / "test.db"
+        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        enable_sqlite_explicit_begin(engine)
+        enable_sqlite_foreign_keys(engine)
+        gated_engines: list[_GatedSearchEngine] = []
+
+        def factory(ndim, metric):
+            gated = _GatedSearchEngine(
+                USearchVectorSearchEngine(num_dimensions=ndim, similarity_metric=metric)
+            )
+            gated_engines.append(gated)
+            return gated
+
+        store = SQLiteVectorStore(_params(engine, vector_search_engine_factory=factory))
+        await store.startup()
+        # The store built one engine at construction, to refuse what no
+        # engine of the factory can serve; the partition's is the next.
+        gated_engines.clear()
+        try:
+            partition = await store.open_or_create_partition(NAME)
+            (gated_engine,) = gated_engines
+
+            scored = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+            await partition.upsert(records=[scored])
+
+            # The query parks holding the scored key: the highest row_id, and
+            # so the one a reused id would hand out next.
+            gate = asyncio.Event()
+            gated_engine.gate = gate
+            query_task = asyncio.create_task(
+                partition.query(query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=1)
+            )
+            await gated_engine.gate_reached.wait()
+
+            await partition.delete(record_uuids=[scored.uuid])
+            successor = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+            await partition.upsert(records=[successor])
+
+            gate.set()
+            results = await query_task
+
+            assert [match.record_uuid for match in results[0].matches] == [], (
+                "a record the engine never scored was returned"
+            )
+        finally:
+            await store.shutdown()
+            await engine.dispose()
+
+
 # ── Crash recovery & pending operations ──
 
 
@@ -1323,6 +1452,17 @@ async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
     store = SQLiteVectorStore(params)
     await store.startup()
     return store, engine
+
+
+async def _stored_record_uuids(engine, store) -> set[UUID]:
+    """The uuids the test partition's records table holds."""
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        incarnation = await store._partition_incarnation(session, NAME)
+        rows = (
+            await session.execute(select(store._records_table(incarnation).c.uuid))
+        ).all()
+    return {row.uuid for row in rows}
 
 
 async def _pending_operation_count(engine) -> int:
@@ -1744,6 +1884,56 @@ class TestIndexFileDurability:
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
         )
         assert len(results[0].matches) == 2
+
+        await store2.shutdown()
+        await engine2.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_reverted_publication_costs_search_not_records(self, tmp_path):
+        """A publication lost to power failure leaves records unsearchable.
+
+        The swap is atomic, not durable, so a power failure can revert the last
+        publication after the trim behind it has committed. Restoring the
+        previous index bytes reconstructs exactly that state, deterministically
+        rather than by pulling a plug, and pins the direction it fails in: the
+        row survives, and only search loses the record, until it is upserted
+        again. The collection contract has no read that can show the survivor --
+        `query` is the only read and it goes through the index that lost it --
+        so this looks at the row directly.
+        """
+        db_path = tmp_path / "test.db"
+        store1, engine1 = await _fresh_store(db_path, tmp_path, save_threshold=1)
+
+        coll = await store1.open_or_create_partition(NAME)
+        r1 = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
+        await coll.upsert(records=[r1])
+
+        index_dir = tmp_path / "indexes"
+        idx_files = list(index_dir.glob("*.idx"))
+        assert len(idx_files) == 1
+        published_without_r2 = idx_files[0].read_bytes()
+
+        # Publishes an index holding both, then trims r2's only other copy.
+        r2 = _make_record(vector=_normalize([0.0, 1.0, 0.0]))
+        await coll.upsert(records=[r2])
+        assert await _pending_operation_count(engine1) == 0
+
+        await store1.shutdown()
+        await engine1.dispose()
+
+        # Power failure: the publication that held r2 never reached the disk.
+        idx_files[0].write_bytes(published_without_r2)
+
+        store2, engine2 = await _fresh_store(db_path, tmp_path)
+        coll2 = await store2.open_partition(NAME)
+        assert coll2 is not None
+
+        # The record is still a row.
+        assert await _stored_record_uuids(engine2, store2) == {r1.uuid, r2.uuid}
+
+        # The index just cannot find it any more.
+        results = await coll2.query(query_vectors=[r2.vector], limit=10)
+        assert [match.record_uuid for match in results[0].matches] == [r1.uuid]
 
         await store2.shutdown()
         await engine2.dispose()
