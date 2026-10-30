@@ -27,21 +27,16 @@ from sqlalchemy import (
     String,
     Table,
     Uuid,
-    create_engine,
     delete,
-    event,
     func,
     select,
     update,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.engine import Engine
-from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, MappedColumn, Session, mapped_column
-from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.orm import DeclarativeBase, MappedColumn, mapped_column
+from sqlalchemy.pool import StaticPool
 
 from memmachine_server.common.data_types import (
     SimilarityMetric,
@@ -75,7 +70,7 @@ from .utils import (
     validate_score_threshold,
     validate_supported_filter,
 )
-from .vector_search_engine import VectorSearchEngine
+from .vector_search_engine import SearchResult, VectorSearchEngine
 from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 
 logger = logging.getLogger(__name__)
@@ -160,14 +155,6 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     applied: MappedColumn[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
-def _enable_sqlite_foreign_keys(
-    dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
-) -> None:
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
-
-
 async def _save_partition_index(
     *,
     create_session: async_sessionmaker[AsyncSession],
@@ -201,58 +188,10 @@ async def _save_partition_index(
 class SQLiteVectorStorePartition(VectorStorePartition):
     """A partition backed by SQLite + a pluggable vector search engine."""
 
-    class _KeyFilter:
-        """Per-candidate SQL filter using a sync SQLAlchemy session."""
-
-        def __init__(
-            self,
-            sync_sqlalchemy_engine: Engine,
-            records_table: Table,
-            filter_expression: ColumnElement[bool],
-        ) -> None:
-            """Initialize with a sync SQLAlchemy engine, records table, and filter expression."""
-            self._sync_sqlalchemy_engine = sync_sqlalchemy_engine
-            self._records_table = records_table
-            self._filter_expression = filter_expression
-
-            self._cache: dict[int, bool] = {}
-            self._session: Session | None = None
-
-        def _get_session(self) -> Session:
-            if self._session is None:
-                self._session = Session(self._sync_sqlalchemy_engine)
-            return self._session
-
-        def __contains__(self, key: object) -> bool:
-            """Return whether the key passes the SQL filter."""
-            if not isinstance(key, int):
-                return False
-            if key in self._cache:
-                return self._cache[key]
-
-            row = (
-                self._get_session()
-                .execute(
-                    select(self._records_table.c.row_id).where(
-                        self._records_table.c.row_id == key,
-                        self._filter_expression,
-                    )
-                )
-                .scalar()
-            )
-            result = row is not None
-            self._cache[key] = result
-            return result
-
-        def __del__(self) -> None:
-            if self._session is not None:
-                self._session.close()
-
     def __init__(
         self,
         *,
         create_session: async_sessionmaker[AsyncSession],
-        sync_sqlalchemy_engine: Engine,
         records_table: Table,
         search_engine: VectorSearchEngine,
         vector_store_name: str,
@@ -261,10 +200,11 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         store_schema: VectorStoreSchema,
         index_path: str | None,
         save_threshold: int,
+        selective_filter_limit: int,
+        overfetch_factor: int,
     ) -> None:
         """Initialize a handle on one life of a partition."""
         self._create_session = create_session
-        self._sync_sqlalchemy_engine = sync_sqlalchemy_engine
         self._records_table = records_table
         self._search_engine = search_engine
 
@@ -276,6 +216,8 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
         self._index_path = index_path
         self._save_threshold = save_threshold
+        self._selective_filter_limit = selective_filter_limit
+        self._overfetch_factor = overfetch_factor
 
     @property
     @override
@@ -429,12 +371,8 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         if not query_vectors:
             return []
 
-        key_filter = self._build_key_filter(property_filter)
-
         try:
-            search_results = await self._search_engine.search(
-                query_vectors, limit=limit, allowed_keys=key_filter
-            )
+            search_results = await self._search(query_vectors, limit, property_filter)
 
             results: list[QueryResult] = []
             for search_result in search_results:
@@ -454,21 +392,76 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
         return results
 
-    def _build_key_filter(
-        self, property_filter: FilterExpr | None
-    ) -> _KeyFilter | None:
-        if property_filter is None:
-            return None
+    async def _search(
+        self,
+        query_vectors: Sequence[Sequence[float]],
+        limit: int,
+        property_filter: FilterExpr | None,
+    ) -> list[SearchResult]:
+        """
+        Search the engine among the records the filter admits.
 
-        return SQLiteVectorStorePartition._KeyFilter(
-            sync_sqlalchemy_engine=self._sync_sqlalchemy_engine,
-            records_table=self._records_table,
-            filter_expression=compile_property_filter(
-                property_filter,
-                self._records_table,
-                self._store_schema.indexed_properties,
-            ),
+        A filter admitting at most `selective_filter_limit` records has the
+        engine search every one of them. A broader one is applied to the
+        best `limit * overfetch_factor` candidates of a search without it,
+        so the cost stays bounded, and a query returns fewer than `limit`
+        matches when fewer candidates pass.
+        """
+        if property_filter is None:
+            return await self._search_engine.search(query_vectors, limit=limit)
+
+        row_id = self._records_table.c.row_id
+        filter_expression = compile_property_filter(
+            property_filter,
+            self._records_table,
+            self._store_schema.indexed_properties,
         )
+        # One row past the limit tells "at most this many" from "more".
+        async with self._create_session() as session:
+            admitted_row_ids = (
+                (
+                    await session.execute(
+                        select(row_id)
+                        .where(filter_expression)
+                        .limit(self._selective_filter_limit + 1)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        if len(admitted_row_ids) <= self._selective_filter_limit:
+            return await self._search_engine.search(
+                query_vectors, limit=limit, allowlist=admitted_row_ids
+            )
+
+        search_results = await self._search_engine.search(
+            query_vectors, limit=limit * self._overfetch_factor
+        )
+        results: list[SearchResult] = []
+        async with self._create_session() as session:
+            for search_result in search_results:
+                admitted = set(
+                    (
+                        await session.execute(
+                            select(row_id).where(
+                                row_id.in_(
+                                    [match.key for match in search_result.matches]
+                                ),
+                                filter_expression,
+                            )
+                        )
+                    ).scalars()
+                )
+                results.append(
+                    SearchResult(
+                        matches=[
+                            match
+                            for match in search_result.matches
+                            if match.key in admitted
+                        ][:limit]
+                    )
+                )
+        return results
 
     async def _build_matches(
         self,
@@ -603,6 +596,16 @@ class SQLiteVectorStoreParams(VectorStoreParams):
             Number of engine operations before auto-saving the index to disk.
             Only applies when index_directory is set
             (default: 1000).
+        selective_filter_limit (int):
+            A filter admitting at most this many records has the engine
+            search every one of them; a broader one is applied to the
+            candidates of a search without it
+            (default: 10000).
+        overfetch_factor (int):
+            A broader filter is applied to the best `limit` times this many
+            candidates of a search without it; a query returns fewer than
+            `limit` matches when fewer candidates pass
+            (default: 64).
     """
 
     sqlalchemy_engine: InstanceOf[AsyncEngine] = Field(
@@ -631,6 +634,24 @@ class SQLiteVectorStoreParams(VectorStoreParams):
         description=(
             "Number of engine operations before auto-saving the index to disk. "
             "Only applies when index_directory is set"
+        ),
+    )
+    selective_filter_limit: int = Field(
+        10_000,
+        ge=0,
+        description=(
+            "A filter admitting at most this many records has the engine "
+            "search every one of them; a broader one is applied to the "
+            "candidates of a search without it"
+        ),
+    )
+    overfetch_factor: int = Field(
+        64,
+        ge=1,
+        description=(
+            "A broader filter is applied to the best limit times this many "
+            "candidates of a search without it; a query returns fewer than "
+            "limit matches when fewer candidates pass"
         ),
     )
 
@@ -677,20 +698,14 @@ class SQLiteVectorStore(VectorStore):
             Path(params.index_directory) if params.index_directory else None
         )
         self._save_threshold = params.save_threshold
+        self._selective_filter_limit = params.selective_filter_limit
+        self._overfetch_factor = params.overfetch_factor
 
         self._create_session = async_sessionmaker(
             self._sqlalchemy_engine, expire_on_commit=False
         )
         self._search_engines: dict[UUID, VectorSearchEngine] = {}
         self._sa_metadata = MetaData()
-
-        self._sync_sqlalchemy_engine = create_engine(
-            str(self._sqlalchemy_engine.url).replace("aiosqlite", "pysqlite")
-        )
-
-        event.listen(
-            self._sync_sqlalchemy_engine, "connect", _enable_sqlite_foreign_keys
-        )
 
         self._started = False
 
@@ -793,7 +808,6 @@ class SQLiteVectorStore(VectorStore):
                     path=str(path),
                 )
         self._search_engines.clear()
-        self._sync_sqlalchemy_engine.dispose()
         self._started = False
 
     @override
@@ -879,7 +893,6 @@ class SQLiteVectorStore(VectorStore):
         index_path = self._index_path(incarnation)
         return SQLiteVectorStorePartition(
             create_session=self._create_session,
-            sync_sqlalchemy_engine=self._sync_sqlalchemy_engine,
             records_table=self._records_table(incarnation),
             search_engine=await self._get_or_create_vector_search_engine(
                 incarnation, partition_key
@@ -890,6 +903,8 @@ class SQLiteVectorStore(VectorStore):
             store_schema=self._store_schema,
             index_path=str(index_path) if index_path is not None else None,
             save_threshold=self._save_threshold,
+            selective_filter_limit=self._selective_filter_limit,
+            overfetch_factor=self._overfetch_factor,
         )
 
     @override
