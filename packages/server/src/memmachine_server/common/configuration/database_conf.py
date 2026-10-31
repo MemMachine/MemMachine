@@ -259,6 +259,21 @@ class QdrantConf(MetricsFactoryIdMixin, YamlSerializableMixin, ApiKeyMixin):
             "is set to match so all replicas confirm writes."
         ),
     )
+    pool_size: int | None = Field(
+        default=None,
+        description=(
+            "Maximum number of HTTP connections kept open to Qdrant per client. "
+            "Passed to the Qdrant client as pool_size. Unset keeps the client's "
+            "default."
+        ),
+    )
+    timeout: int | None = Field(
+        default=None,
+        description=(
+            "Request timeout in seconds for the Qdrant client. "
+            "Unset keeps the client's default."
+        ),
+    )
 
 
 class MilvusConf(YamlSerializableMixin, WithValueFromEnv):
