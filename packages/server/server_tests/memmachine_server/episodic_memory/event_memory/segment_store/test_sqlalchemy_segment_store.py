@@ -3795,6 +3795,23 @@ async def test_static_pool_engine_is_rejected(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_old_sqlite_runtime_is_rejected(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding events and claiming pending derivatives and tombstones depend on
+    RETURNING; refuse an older SQLite loudly.
+
+    The store's own minimum is raised past the runtime rather than the
+    stdlib's version tuple being patched process-wide, which SQLAlchemy's
+    dialect also reads.
+    """
+    monkeypatch.setattr(sqlalchemy_segment_store, "_MIN_SQLITE_VERSION", (99, 0))
+    with pytest.raises(ValidationError, match="RETURNING"):
+        SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
+
+
+@pytest.mark.asyncio
 async def test_unsupported_dialect_engine_is_rejected(
     sqlalchemy_sqlite_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
