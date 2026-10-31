@@ -8,7 +8,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self, override
 
 from neo4j import AsyncDriver, AsyncGraphDatabase
-from sqlalchemy import event, make_url, text
+from sqlalchemy import event, text
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import (
@@ -70,9 +70,7 @@ def _report_sql_pool_metrics(
 ) -> None:
     """Report an engine pool's checked-out connections and checkout wait time."""
     pool = engine.pool
-    # In-memory SQLite keeps its static pool, which has no checkouts to time.
-    if not isinstance(pool, _TimedCheckoutQueuePool):
-        return
+    assert isinstance(pool, _TimedCheckoutQueuePool)
 
     wait_time = metrics_factory.get_histogram(
         "db_client_connection_wait_time_seconds",
@@ -139,12 +137,7 @@ def _sql_engine_kwargs(conf: SqlAlchemyConf) -> dict[str, Any]:
         if connect_args:
             kwargs["connect_args"] = connect_args
 
-    # Time checkouts wherever SQLAlchemy would choose a queue pool. In-memory
-    # SQLite gets a static pool instead: every connection shares one database.
-    url = make_url(conf.uri)
-    dialect = url.get_dialect()()
-    if dialect.get_dialect_pool_class(url) is AsyncAdaptedQueuePool:
-        kwargs["poolclass"] = _TimedCheckoutQueuePool
+    kwargs["poolclass"] = _TimedCheckoutQueuePool
     return kwargs
 
 
@@ -450,6 +443,7 @@ class DatabaseManager:
 
             engine = create_async_engine(conf.uri, **_sql_engine_kwargs(conf))
             enable_sqlite_foreign_keys(engine)
+            enable_sqlite_explicit_begin(engine)
             _report_sql_pool_metrics(
                 engine, pool_name=name, metrics_factory=conf.get_metrics_factory()
             )
@@ -727,6 +721,7 @@ class DatabaseManager:
                 partition_registry=partition_registry,
                 vector_store_name=vector_store_name,
                 store_schema=store_schema,
+                max_request_bytes=conf.max_request_bytes,
                 metrics_factory=conf.get_metrics_factory(),
             )
         )
@@ -831,6 +826,7 @@ class DatabaseManager:
                 request_timeout_seconds=conf.request_timeout_seconds,
                 max_varchar_length=conf.max_varchar_length,
                 purge_batch_size=conf.purge_batch_size,
+                max_request_bytes=conf.max_request_bytes,
                 metrics_factory=conf.get_metrics_factory(),
             )
         )

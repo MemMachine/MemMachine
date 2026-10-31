@@ -89,11 +89,6 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
         self._store_schema = store_schema
         self._tracker = tracker
 
-    @property
-    @override
-    def store_schema(self) -> VectorStoreSchema:
-        return self._store_schema
-
     @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
         async with self._tracker("upsert"):
@@ -160,7 +155,9 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
         each value is of its key's declared type, and its vector has the
         store's dimensions.
         A record replaces the one with its UUID. The records are durable when
-        it returns; a call that raises may have written some of them.
+        it returns; a call that raises may have written some of them. A
+        cancelled call sends no request after the cancellation, and one it
+        sent before may still be applied.
 
         Args:
             records (list[Record]): The records to write.

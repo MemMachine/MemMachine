@@ -172,10 +172,7 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     params = await _event_params(config, resource_manager)
 
     vector_store = resource_manager.get_vector_store.return_value
-    assert (
-        params.vector_store_partition
-        is vector_store.open_or_create_partition.return_value
-    )
+    assert params.event_memory_partition.similarity_metric is SimilarityMetric.COSINE
     vector_store.open_or_create_partition.assert_awaited_once_with("raced")
     resource_manager.get_vector_store.assert_awaited_once_with(
         "vs",

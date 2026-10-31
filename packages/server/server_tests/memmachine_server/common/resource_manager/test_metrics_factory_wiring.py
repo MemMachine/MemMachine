@@ -125,20 +125,20 @@ def test_segment_store_params_accepts_a_factory():
     assert "metrics_factory" in SQLAlchemySegmentStoreParams.model_fields
 
 
-def test_event_backend_params_carries_a_factory_through(mock_metrics_factory):
-    """EventBackendParams must be able to hand EventMemory a factory.
+def test_event_memory_params_carries_a_factory_through(mock_metrics_factory):
+    """EventMemoryParams must be able to hand EventMemory a factory.
 
-    EventMemory reads ``params.metrics_factory``; if the backend params have no
-    such field, the value silently defaults to None however carefully the
-    service locator resolves one.
+    EventMemory reads ``params.metrics_factory``; if its params have no such
+    field, the value silently defaults to None however carefully the service
+    locator resolves one.
     """
-    from memmachine_server.episodic_memory.long_term_memory.long_term_memory import (
-        EventBackendParams,
+    from memmachine_server.episodic_memory.event_memory.event_memory import (
+        EventMemoryParams,
     )
 
-    assert "metrics_factory" in EventBackendParams.model_fields
+    assert "metrics_factory" in EventMemoryParams.model_fields
 
-    field = EventBackendParams.model_fields["metrics_factory"]
+    field = EventMemoryParams.model_fields["metrics_factory"]
     assert field.default is None, (
         "the field should default to None so existing callers keep working; "
         "the service locator is what supplies a real factory"
@@ -146,7 +146,7 @@ def test_event_backend_params_carries_a_factory_through(mock_metrics_factory):
 
 
 def test_event_params_supplies_a_factory(mock_metrics_factory):
-    """The service locator must put a factory into EventBackendParams.
+    """The service locator must put a factory into EventMemoryParams.
 
     EventMemory reads ``params.metrics_factory``; if the locator never sets it,
     the field's None default silently wins and the tracker goes dark.
@@ -157,7 +157,7 @@ def test_event_params_supplies_a_factory(mock_metrics_factory):
 
     source = inspect.getsource(service_locator._event_params)
     assert "metrics_factory=" in source, (
-        "_event_params builds EventBackendParams without a metrics_factory, so "
+        "_event_params builds EventMemoryParams without a metrics_factory, so "
         "EventMemory's OperationTracker discards every timing silently"
     )
 
