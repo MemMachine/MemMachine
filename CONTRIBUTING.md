@@ -61,10 +61,20 @@ the repository root before you push.
   uv run pytest packages/server/server_tests packages/client/client_tests
   ```
 
-  Integration tests are marked `integration` and start their databases in
-  Docker; run them by adding `-m integration`. Tests that call OpenAI, Amazon
-  Bedrock, or Cohere use the real APIs, billed to the keys you give them. They
-  read test-only variables and run only when those are set:
+  Integration tests are marked `integration`; run them by adding
+  `-m integration`. Most start their databases in Docker. The rest connect to
+  a server you run, and skip when they can't reach it:
+
+  - NebulaGraph Enterprise 5.0 or later, at `NEBULA_HOST` (default
+    `127.0.0.1:9669`), with `NEBULA_USER` and `NEBULA_PASSWORD`
+  - An OpenAI-compatible server serving `qwen3:8b`, such as Ollama, at the
+    base URL in `OLLAMA_HOST`, which has no default
+  - A MemMachine server, for the Python client's tests, at
+    `MEMORY_BACKEND_URL` (default `http://localhost:8080`)
+
+  Tests that call OpenAI, Amazon Bedrock, or Cohere use the real APIs, billed
+  to the keys you give them. They read test-only variables and run only when
+  those are set:
 
   - OpenAI: `MEMMACHINE_TEST_OPENAI_API_KEY`
   - Amazon Bedrock: `MEMMACHINE_TEST_AWS_ACCESS_KEY_ID`,
