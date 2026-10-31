@@ -6,8 +6,13 @@ from collections.abc import AsyncGenerator
 from sqlalchemy import event
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.interfaces import DBAPIConnection
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import ConnectionPoolEntry
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+)
+from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
 
 _BEGIN_IMMEDIATE_OPTION = "memmachine_sqlite_begin_immediate"
 """Execution option asking the begin hook for `BEGIN IMMEDIATE`."""
@@ -41,18 +46,42 @@ def enable_sqlite_explicit_begin(engine: AsyncEngine) -> None:
 
     The driver emits no `BEGIN` before a SELECT and a deferred one before
     the first data-modifying statement, so a transaction's earlier reads
-    and DDL run outside it. A transaction `write_session` opens begins with
-    `BEGIN IMMEDIATE`, which takes the write lock; any other begins with a
-    deferred `BEGIN`, so reads never take the write lock.
+    and DDL run outside it. A transaction `write_session` or
+    `write_connection` opens begins with `BEGIN IMMEDIATE`, which takes the
+    write lock; any other begins with a deferred `BEGIN`, so reads never take
+    the write lock.
 
     Registered at engine creation, before any connection is pooled: a
-    listener added later misses the connections already pooled. No-op for
-    other dialects.
+    listener added later misses the connections already pooled. Every
+    user of the engine then opens its write transactions with
+    `write_session` or `write_connection`. No-op for other dialects.
     """
     if engine.dialect.name != "sqlite":
         return
     event.listen(engine.sync_engine, "connect", _disable_implicit_begin)
     event.listen(engine.sync_engine, "begin", _begin)
+
+
+def validate_engine_connections(engine: AsyncEngine) -> None:
+    """
+    Raise ValueError unless every session of the engine gets its own connection to one database.
+
+    A pool that hands every session one connection (`StaticPool`) cannot
+    keep their transactions apart, and separate connections to in-memory
+    SQLite each open their own empty database.
+    """
+    shares_one_connection = isinstance(engine.pool, StaticPool)
+    if shares_one_connection:
+        raise ValueError(
+            "Engine uses StaticPool, which shares one connection across "
+            "sessions. Use a multi-connection pool instead."
+        )
+    database = engine.url.database
+    if engine.dialect.name == "sqlite" and database in (None, "", ":memory:"):
+        raise ValueError(
+            "Engine uses in-memory SQLite, where each connection gets a "
+            "separate database. Use a file path instead."
+        )
 
 
 @contextlib.asynccontextmanager
@@ -76,6 +105,25 @@ async def write_session(
         # Set before the transaction begins, where the begin hook reads it.
         await session.connection(execution_options={_BEGIN_IMMEDIATE_OPTION: True})
         yield session
+
+
+@contextlib.asynccontextmanager
+async def write_connection(
+    engine: AsyncEngine,
+) -> AsyncGenerator[AsyncConnection, None]:
+    """
+    A connection whose transaction holds SQLite's write lock from `BEGIN`, committed when the block exits.
+
+    The counterpart of `write_session` for work on a connection: a block
+    that raises, or a commit that fails, rolls the transaction back.
+    Requires an engine set up by `enable_sqlite_explicit_begin`. On other
+    dialects, an ordinary transaction.
+    """
+    async with engine.connect() as connection:
+        # Set before the transaction begins, where the begin hook reads it.
+        await connection.execution_options(**{_BEGIN_IMMEDIATE_OPTION: True})
+        async with connection.begin():
+            yield connection
 
 
 def _disable_implicit_begin(

@@ -45,6 +45,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     Record,
     VectorStoreAttemptsExhaustedError,
@@ -359,6 +360,7 @@ def registry_url(tmp_path) -> str:
 @pytest_asyncio.fixture
 async def store(milvus_client, registry_url):
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     vector_store = await _started_store(milvus_client, registry_engine)
     yield vector_store
     await vector_store.shutdown()
@@ -372,6 +374,7 @@ async def other_store(milvus_container, registry_url):
     database."""
     client = AsyncMilvusClient(uri=milvus_container.get_connection_url())
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     vector_store = await _started_store(client, registry_engine)
     yield vector_store
     await vector_store.shutdown()
@@ -1789,6 +1792,7 @@ async def test_a_purge_round_milvus_does_not_accept_in_full_raises(registry_url)
     client.query = AsyncMock(return_value=[{"id": "listed_a"}, {"id": "listed_b"}])
     client.delete = AsyncMock(return_value={"delete_count": 1})
     registry_engine = create_async_engine(registry_url)
+    enable_sqlite_explicit_begin(registry_engine)
     try:
         store = await _started_store(
             client, registry_engine, store_schema=_schema(indexed_properties={})
