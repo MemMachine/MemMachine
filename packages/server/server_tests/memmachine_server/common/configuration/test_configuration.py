@@ -267,6 +267,90 @@ def test_old_param_data_without_backend_loads_as_declarative():
     assert conf.long_term_memory.vector_graph_store == "my_storage_id"
 
 
+def test_backend_inferred_as_event_from_a_vector_store():
+    """Naming an event-only field is an unambiguous request for event memory.
+
+    The two backends share no field names, so a config pointing at a
+    `vector_store` cannot mean the declarative backend - it has no such field.
+    This is what makes event memory reachable without a `backend` key while
+    leaving pre-discriminator configs, which name a `vector_graph_store`, alone.
+    """
+    partial = LongTermMemoryConfPartial.model_validate(
+        {
+            "session_id": "s",
+            "embedder": "e",
+            "vector_store": "my_qdrant",
+            "segment_store": "my_sql",
+        }
+    )
+    merged = partial.merge(LongTermMemoryConfPartial())
+    assert merged.backend == "event"
+
+
+def test_backend_inferred_as_declarative_from_a_vector_graph_store():
+    partial = LongTermMemoryConfPartial.model_validate(
+        {
+            "session_id": "s",
+            "embedder": "e",
+            "reranker": "r",
+            "vector_graph_store": "my_neo4j",
+        }
+    )
+    merged = partial.merge(LongTermMemoryConfPartial())
+    assert merged.backend == "declarative"
+
+
+def test_explicit_backend_beats_inference():
+    """An explicit discriminator is a decision; inference is only a fallback."""
+    partial = LongTermMemoryConfPartial.model_validate(
+        {
+            "session_id": "s",
+            "embedder": "e",
+            "reranker": "r",
+            "backend": "declarative",
+            "vector_graph_store": "n",
+        }
+    )
+    assert partial.merge(LongTermMemoryConfPartial()).backend == "declarative"
+
+
+def test_backend_falls_back_to_declarative_when_no_store_is_named():
+    """Nothing to infer from, so the legacy reading stands."""
+    partial = LongTermMemoryConfPartial(session_id="s", embedder="e", reranker="r")
+    assert partial.resolve_backend(LongTermMemoryConfPartial()) == "declarative"
+
+
+@pytest.mark.parametrize(
+    ("primary_stores", "fallback_stores"),
+    [
+        ({"vector_store": "v", "segment_store": "seg"}, {"vector_graph_store": "g"}),
+        ({"vector_store": "v"}, {"vector_graph_store": "g"}),
+        ({"vector_graph_store": "g"}, {"vector_store": "v", "segment_store": "seg"}),
+    ],
+)
+def test_vector_graph_store_on_either_side_selects_declarative(
+    primary_stores, fallback_stores
+):
+    primary = LongTermMemoryConfPartial(**primary_stores)
+    fallback = LongTermMemoryConfPartial(
+        session_id="s", embedder="e", reranker="r", **fallback_stores
+    )
+
+    merged = primary.merge(fallback)
+    assert isinstance(merged, DeclarativeLongTermMemoryConf)
+    assert merged.vector_graph_store == "g"
+
+
+def test_backend_inferred_as_event_from_the_fallback_stores():
+    fallback = LongTermMemoryConfPartial(
+        session_id="s", embedder="e", vector_store="v", segment_store="seg"
+    )
+
+    merged = LongTermMemoryConfPartial().merge(fallback)
+    assert isinstance(merged, EventLongTermMemoryConf)
+    assert merged.vector_store == "v"
+
+
 def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
     data = {
         "session_key": "s",

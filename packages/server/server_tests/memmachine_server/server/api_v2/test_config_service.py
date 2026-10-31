@@ -521,6 +521,62 @@ def test_backend_flip_event_to_declarative_clears_event_fields(
     assert "properties_schema={}" in message
 
 
+def test_backend_flip_inferred_event_to_declarative_clears_event_fields(
+    memory_resource_manager,
+):
+    memory_resource_manager.config.episodic_memory.long_term_memory = (
+        LongTermMemoryConfPartial(
+            embedder="emb",
+            vector_store="qdrant_vs",
+            segment_store="sqlite_db",
+            properties_schema={"customer_tier": "str"},
+        )
+    )
+
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {
+            "long_term_memory": {
+                "backend": "declarative",
+                "vector_graph_store": "neo4j",
+                "reranker": "rrk",
+            }
+        }
+    )
+    service = ConfigService(memory_resource_manager)
+    message = service.update_memory_config(spec, None)
+
+    ltm = memory_resource_manager.config.episodic_memory.long_term_memory
+    assert ltm.backend == "declarative"
+    assert ltm.vector_store is None
+    assert ltm.segment_store is None
+    assert ltm.properties_schema == {}
+    assert ltm.vector_graph_store == "neo4j"
+    assert "vector_store=null" in message
+
+
+def test_backend_set_on_inferred_event_preserves_event_fields(
+    memory_resource_manager,
+):
+    memory_resource_manager.config.episodic_memory.long_term_memory = (
+        LongTermMemoryConfPartial(
+            vector_store="qdrant_vs",
+            segment_store="sqlite_db",
+        )
+    )
+
+    spec = UpdateEpisodicMemorySpec.model_validate(
+        {"long_term_memory": {"backend": "event"}}
+    )
+    service = ConfigService(memory_resource_manager)
+    message = service.update_memory_config(spec, None)
+
+    ltm = memory_resource_manager.config.episodic_memory.long_term_memory
+    assert ltm.backend == "event"
+    assert ltm.vector_store == "qdrant_vs"
+    assert ltm.segment_store == "sqlite_db"
+    assert "backend=event" in message
+
+
 def test_backend_no_flip_preserves_cross_backend_fields(memory_resource_manager):
     """Re-asserting the same backend must NOT wipe anything."""
     memory_resource_manager.config.episodic_memory.long_term_memory = (

@@ -4299,7 +4299,7 @@
               }
             ],
             "title": "Backend",
-            "description": "Long-term memory backend. None means the writer predates the discriminator and is treated as 'declarative'."
+            "description": "Long-term memory backend. None means the config sets none, and the store fields decide: 'event' when a vector_store or segment_store is named and no vector_graph_store is, 'declarative' otherwise."
           },
           "embedder": {
             "anyOf": [
@@ -4569,7 +4569,7 @@
         },
         "type": "object",
         "title": "ProjectConfig",
-        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses VectorStore +\n  SegmentStore. Requires `vector_store` and `segment_store`.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: server falls back to its parse-time default\n  (declarative, for backwards compatibility with pre-discriminator clients)."
+        "description": "Project configuration model.\n\nIdentifies the long-term-memory backend and the resource ids it should\nbind to. If any string field is left empty (\"\"), the server falls back to\nits globally-configured defaults.\n\nBackend selection:\n- `backend=\"event\"` (default for new projects): uses VectorStore +\n  SegmentStore. Requires `vector_store` and `segment_store`.\n- `backend=\"declarative\"`: uses VectorGraphStore. Requires\n  `vector_graph_store`.\n- Empty/null `backend`: the server's configured backend if its config sets\n  one. Otherwise the store ids decide: a `vector_graph_store`, here or in\n  the server's config, selects declarative, then a `vector_store` or\n  `segment_store` selects event, and naming no store selects declarative."
       },
       "ProjectResponse": {
         "properties": {
