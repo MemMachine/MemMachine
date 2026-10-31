@@ -3,19 +3,24 @@
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import override
-from uuid import UUID
+from unittest.mock import create_autospec
+from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 
+from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
     demangle_user_metadata_key,
     map_filter_fields,
     normalize_filter_field,
 )
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.vector_store import VectorStoreSchema
+from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.event_memory.data_types import Segment
+from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
     WholeTextDeriver,
@@ -23,11 +28,17 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
+    EventMemoryPartition,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
+    PendingDerivatives,
+    SegmentStore,
+    SegmentStoreEventAlreadyStoredError,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
+    Tombstone,
 )
+from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
@@ -56,6 +67,9 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         self.segment_order: list[UUID] = []
         self.event_to_segments: dict[UUID, list[UUID]] = defaultdict(list)
         self.segment_to_derivatives: dict[UUID, list[UUID]] = {}
+        self.pending_derivatives: dict[UUID, PendingDerivatives] = {}
+        self.tombstones: dict[UUID, Tombstone] = {}
+        self.tombstones_awaiting_second_delete: set[UUID] = set()
 
     @override
     @property
@@ -63,15 +77,39 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return self._config
 
     @override
-    async def add_segments(
+    async def add_events(
         self,
-        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
+        segments_by_event: Mapping[UUID, Iterable[Segment]],
+        pending_derivatives: Iterable[PendingDerivatives],
     ) -> None:
-        for segment, derivative_uuids in segments_to_derivative_uuids.items():
-            self.segments[segment.uuid] = segment
-            self.segment_order.append(segment.uuid)
-            self.event_to_segments[segment.event_uuid].append(segment.uuid)
-            self.segment_to_derivatives[segment.uuid] = list(derivative_uuids)
+        segments_by_event = {
+            event_uuid: list(segments)
+            for event_uuid, segments in segments_by_event.items()
+        }
+        already_stored = segments_by_event.keys() & self.event_to_segments.keys()
+        if already_stored:
+            raise SegmentStoreEventAlreadyStoredError(already_stored)
+        for event_uuid, segments in segments_by_event.items():
+            self.event_to_segments[event_uuid] = []
+            for segment in segments:
+                self.segments[segment.uuid] = segment
+                self.segment_order.append(segment.uuid)
+                self.event_to_segments[event_uuid].append(segment.uuid)
+                self.segment_to_derivatives[segment.uuid] = []
+        for pending in pending_derivatives:
+            self.pending_derivatives[pending.uuid] = pending
+            for derivative in pending.derivatives:
+                self.segment_to_derivatives[derivative.segment_uuid].append(
+                    derivative.uuid
+                )
+
+    @override
+    async def delete_pending_derivatives(
+        self,
+        pending_derivatives_uuids: Iterable[UUID],
+    ) -> None:
+        for pending_uuid in pending_derivatives_uuids:
+            self.pending_derivatives.pop(pending_uuid, None)
 
     @override
     async def get_segment_contexts(
@@ -131,30 +169,6 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return f"_{field}"
 
     @override
-    async def get_segment_uuids_by_event_uuids(
-        self,
-        event_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        result: dict[UUID, list[UUID]] = {}
-        for event_uuid in event_uuids:
-            segment_uuids = self.event_to_segments.get(event_uuid)
-            if segment_uuids:
-                result[event_uuid] = list(segment_uuids)
-        return result
-
-    @override
-    async def get_derivative_uuids_by_segment_uuids(
-        self,
-        segment_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        result: dict[UUID, list[UUID]] = {}
-        for segment_uuid in segment_uuids:
-            derivative_uuids = self.segment_to_derivatives.get(segment_uuid)
-            if derivative_uuids:
-                result[segment_uuid] = list(derivative_uuids)
-        return result
-
-    @override
     async def get_segment_uuids_by_derivative_uuids(
         self,
         derivative_uuids: Iterable[UUID],
@@ -168,23 +182,34 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         }
 
     @override
-    async def delete_segments(
+    async def forget_events(
         self,
-        segment_uuids: Iterable[UUID],
-    ) -> None:
-        for segment_uuid in set(segment_uuids):
-            segment = self.segments.pop(segment_uuid, None)
-            if segment is None:
-                continue
-            self.segment_order = [
-                uid for uid in self.segment_order if uid != segment_uuid
-            ]
-            event_list = self.event_to_segments.get(segment.event_uuid)
-            if event_list is not None:
-                event_list[:] = [uid for uid in event_list if uid != segment_uuid]
-                if not event_list:
-                    del self.event_to_segments[segment.event_uuid]
-            self.segment_to_derivatives.pop(segment_uuid, None)
+        event_uuids: Iterable[UUID],
+    ) -> Tombstone | None:
+        held_event_uuids = set(event_uuids) & self.event_to_segments.keys()
+        derivative_uuids: list[UUID] = []
+        for event_uuid in held_event_uuids:
+            for segment_uuid in self.event_to_segments.pop(event_uuid):
+                self.segments.pop(segment_uuid)
+                self.segment_order.remove(segment_uuid)
+                derivative_uuids.extend(self.segment_to_derivatives.pop(segment_uuid))
+        for pending_uuid, pending in list(self.pending_derivatives.items()):
+            if pending.event_uuid in held_event_uuids:
+                del self.pending_derivatives[pending_uuid]
+        if not derivative_uuids:
+            return None
+        tombstone = Tombstone(uuid=uuid4(), derivative_uuids=derivative_uuids)
+        self.tombstones[tombstone.uuid] = tombstone
+        return tombstone
+
+    @override
+    async def record_tombstone_first_delete(self, tombstone_uuid: UUID) -> None:
+        if tombstone_uuid in self.tombstones:
+            self.tombstones_awaiting_second_delete.add(tombstone_uuid)
+
+    @override
+    async def require_current(self) -> None:
+        return
 
 
 class FakeReranker(Reranker):
@@ -192,6 +217,36 @@ class FakeReranker(Reranker):
 
     async def score(self, query: str, candidates: list[str]) -> list[float]:
         return [float(len(c)) for c in candidates]
+
+
+async def open_event_memory_partition(
+    *,
+    segment_store_partition: SegmentStorePartition,
+    vector_store_partition: InMemoryVectorStorePartition,
+    segmenter: Segmenter,
+    deriver: Deriver,
+    embedder: Embedder,
+    reranker: Reranker | None = None,
+    metrics_factory: MetricsFactory | None = None,
+) -> EventMemoryPartition:
+    """Open a partition of an EventMemory whose stores hand out the given partitions, with the vector store partition's schema."""
+    segment_store = create_autospec(SegmentStore, instance=True)
+    segment_store.open_or_create_partition.return_value = segment_store_partition
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.open_or_create_partition.return_value = vector_store_partition
+    event_memory = EventMemory(
+        EventMemoryParams(
+            segment_store=segment_store,
+            vector_store=vector_store,
+            store_schema=vector_store_partition._store_schema,
+            segmenter=segmenter,
+            deriver=deriver,
+            embedder=embedder,
+            reranker=reranker,
+            metrics_factory=metrics_factory,
+        )
+    )
+    return await event_memory.open_or_create_partition("partition")
 
 
 # ---------------------------------------------------------------------------
@@ -223,53 +278,47 @@ def fake_vector_store_partition(fake_embedder):
     )
 
 
-@pytest.fixture
-def event_memory(
+@pytest_asyncio.fixture
+async def event_memory_partition(
     fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_partition=fake_vector_store_partition,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
-            embedder=fake_embedder,
-        )
+    return await open_event_memory_partition(
+        segment_store_partition=fake_segment_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=TextSegmenter(),
+        deriver=WholeTextDeriver(),
+        embedder=fake_embedder,
     )
 
 
-@pytest.fixture
-def event_memory_with_reranker(
+@pytest_asyncio.fixture
+async def event_memory_partition_with_reranker(
     fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_partition=fake_vector_store_partition,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
-            embedder=fake_embedder,
-            reranker=FakeReranker(),
-        )
+    return await open_event_memory_partition(
+        segment_store_partition=fake_segment_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=TextSegmenter(),
+        deriver=WholeTextDeriver(),
+        embedder=fake_embedder,
+        reranker=FakeReranker(),
     )
 
 
-@pytest.fixture
-def event_memory_with_sentences(
+@pytest_asyncio.fixture
+async def event_memory_partition_with_sentences(
     fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return EventMemory(
-        EventMemoryParams(
-            segment_store_partition=fake_segment_store_partition,
-            vector_store_partition=fake_vector_store_partition,
-            segmenter=TextSegmenter(),
-            deriver=SentenceTextDeriver(),
-            embedder=fake_embedder,
-        )
+    return await open_event_memory_partition(
+        segment_store_partition=fake_segment_store_partition,
+        vector_store_partition=fake_vector_store_partition,
+        segmenter=TextSegmenter(),
+        deriver=SentenceTextDeriver(),
+        embedder=fake_embedder,
     )

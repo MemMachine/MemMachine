@@ -21,13 +21,8 @@ from memmachine_server.common.filter.filter_parser import (
     map_filter_fields,
     normalize_filter_field,
 )
-from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_graph_store import VectorGraphStore
-from memmachine_server.common.vector_store import (
-    VectorStore,
-    VectorStorePartition,
-)
 from memmachine_server.episodic_memory.declarative_memory import (
     DeclarativeMemory,
     DeclarativeMemoryParams,
@@ -45,16 +40,10 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     QueryResult,
     TextBlock,
 )
-from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
-    EventMemoryParams,
+    EventMemoryPartition,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStore,
-    SegmentStorePartition,
-)
-from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +52,7 @@ logger = logging.getLogger(__name__)
 _EVENT_UUID_NAMESPACE = UUID("8c2c0e0a-3a2f-4b9c-9d1f-9b6c2a3a4f7e")
 
 # Reserved system-defined property keys on the event-backend. Stored on
-# event.properties with the leading underscore so EventMemory's existing
+# event.properties with the leading underscore so EventMemoryPartition's
 # `_to_vector_record_property` translation (bare client-API field -> `_field`)
 # matches the storage layout transparently.
 _EPISODE_UID_FIELD = "_episode_uid"
@@ -121,38 +110,20 @@ class EventBackendParams(BaseModel):
 
     backend: Literal["event"] = "event"
     session_id: str = Field(..., description="Session identifier")
-    vector_store: InstanceOf[VectorStore] = Field(
+    event_memory: InstanceOf[EventMemory] = Field(
         ...,
-        description="Parent VectorStore (for partition lifecycle)",
+        description="EventMemory holding the session's partition",
     )
-    vector_store_partition: InstanceOf[VectorStorePartition] = Field(
+    event_memory_partition: InstanceOf[EventMemoryPartition] = Field(
         ...,
-        description="The session's VectorStore partition",
-    )
-    segment_store: InstanceOf[SegmentStore] = Field(
-        ...,
-        description="Parent SegmentStore (for partition lifecycle)",
-    )
-    segment_store_partition: InstanceOf[SegmentStorePartition] = Field(
-        ...,
-        description="Already-opened SegmentStorePartition",
+        description="The session's EventMemory partition",
     )
     partition_key: str = Field(...)
     episode_storage: InstanceOf[EpisodeStorage] = Field(
         ...,
         description="EpisodeStorage used to hydrate Episodes at query time",
     )
-    embedder: InstanceOf[Embedder] = Field(...)
     reranker: InstanceOf[Reranker] | None = Field(default=None)
-    segmenter: InstanceOf[Segmenter] = Field(...)
-    deriver: InstanceOf[Deriver] = Field(...)
-    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
-        default=None,
-        description=(
-            "Metrics factory handed to EventMemory's OperationTracker. Without "
-            "it the tracker discards every timing it takes, silently."
-        ),
-    )
 
 
 LongTermMemoryParams = Annotated[
@@ -174,12 +145,11 @@ class LongTermMemory:
         # Backend-specific state. Only the relevant slots are populated.
         self._declarative_memory: DeclarativeMemory | None = None
         self._event_memory: EventMemory | None = None
-        self._vector_store: VectorStore | None = None
-        self._segment_store: SegmentStore | None = None
+        self._event_memory_partition: EventMemoryPartition | None = None
         self._partition_key: str | None = None
         self._episode_storage: EpisodeStorage | None = None
-        # Event backend only: whether scores from `EventMemory.query` are
-        # higher-is-better. Matches the same derivation inside EventMemory.query
+        # Event backend only: whether scores from `EventMemoryPartition.query`
+        # are higher-is-better. Matches the same derivation inside it
         # (reranker scores are higher-is-better; raw vector scores depend on the
         # vector store's similarity metric — cosine is higher-is-better, euclidean
         # is lower-is-better). Used to apply `score_threshold` in the correct
@@ -199,24 +169,13 @@ class LongTermMemory:
                     ),
                 )
             case EventBackendParams():
-                self._event_memory = EventMemory(
-                    EventMemoryParams(
-                        segment_store_partition=params.segment_store_partition,
-                        vector_store_partition=params.vector_store_partition,
-                        segmenter=params.segmenter,
-                        deriver=params.deriver,
-                        embedder=params.embedder,
-                        reranker=params.reranker,
-                        metrics_factory=params.metrics_factory,
-                    ),
-                )
-                self._vector_store = params.vector_store
-                self._segment_store = params.segment_store
+                self._event_memory = params.event_memory
+                self._event_memory_partition = params.event_memory_partition
                 self._partition_key = params.partition_key
                 self._episode_storage = params.episode_storage
                 self._score_higher_is_better = (
                     params.reranker is not None
-                    or params.vector_store_partition.store_schema.similarity_metric.higher_is_better
+                    or params.event_memory_partition.similarity_metric.higher_is_better
                 )
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
@@ -409,9 +368,9 @@ class LongTermMemory:
     async def drop_session_partition(self) -> None:
         """Delete all data for this session/partition.
 
-        On the event backend, this drops the session's VectorStore and
-        SegmentStore partitions, and the instance is unusable afterward.
-        Build a fresh LongTermMemory to use the session again.
+        On the event backend, this deletes the session's EventMemory
+        partition, and the instance is unusable afterward. Build a fresh
+        LongTermMemory to use the session again.
         """
         if self._backend == "declarative":
             assert self._declarative_memory is not None
@@ -421,17 +380,14 @@ class LongTermMemory:
             )
             return
 
-        assert self._vector_store is not None
-        assert self._segment_store is not None
+        assert self._event_memory is not None
         assert self._partition_key is not None
-        await self._vector_store.delete_partition(self._partition_key)
-        await self._segment_store.delete_partition(self._partition_key)
+        await self._event_memory.delete_partition(self._partition_key)
         # Drop references to the now-deleted resources so any further
         # add_episodes / search_scored / delete_episodes calls raise
         # rather than silently operating on stale handles.
         self._event_memory = None
-        self._vector_store = None
-        self._segment_store = None
+        self._event_memory_partition = None
 
     async def close(self) -> None:
         # Backends do not own resources we can close at this layer; the
@@ -453,16 +409,16 @@ class LongTermMemory:
             return score >= score_threshold
         return score <= score_threshold
 
-    def _require_event_backend_live(self) -> EventMemory:
-        """Return the EventMemory or raise if the instance was dropped."""
-        if self._event_memory is None:
+    def _require_event_backend_live(self) -> EventMemoryPartition:
+        """Return the EventMemory partition or raise if the instance was dropped."""
+        if self._event_memory_partition is None:
             raise RuntimeError(
                 "LongTermMemory event backend is no longer usable: "
                 "drop_session_partition() deleted the session's partitions. "
                 "Construct a new LongTermMemory to operate "
                 "on this session again."
             )
-        return self._event_memory
+        return self._event_memory_partition
 
     # --- Episode <-> declarative-memory translation (declarative backend) ---
 
@@ -755,7 +711,7 @@ class LongTermMemory:
         - Context: ProducerContext for messages; NullContext otherwise.
         - One TextBlock per event (Episode.content is a string today).
         - Properties: system fields stored with `_` prefix, user filterable
-          metadata stored bare. Matches EventMemory's `_to_vector_record_property`
+          metadata stored bare. Matches EventMemoryPartition's `_to_vector_record_property`
           translation so the client-facing filter API (`producer_id`,
           `m.my_field`) Just Works.
 

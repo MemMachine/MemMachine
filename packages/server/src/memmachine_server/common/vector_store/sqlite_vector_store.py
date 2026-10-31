@@ -40,14 +40,17 @@ from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, MappedColumn, Session, mapped_column
-from sqlalchemy.pool import ConnectionPoolEntry, StaticPool
+from sqlalchemy.pool import ConnectionPoolEntry
 from sqlalchemy.sql.elements import ColumnElement
 
 from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.sql import (
+    require_separate_connections_to_one_database,
+    write_session,
+)
 
 from .data_types import (
     _IDENTIFIER_MAX_BYTES,
@@ -276,11 +279,6 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
         self._index_path = index_path
         self._save_threshold = save_threshold
-
-    @property
-    @override
-    def store_schema(self) -> VectorStoreSchema:
-        return self._store_schema
 
     async def _maybe_save_index(self) -> None:
         """Save the index to disk if applied pending operations exceed the threshold."""
@@ -637,16 +635,7 @@ class SQLiteVectorStoreParams(VectorStoreParams):
     @field_validator("sqlalchemy_engine")
     @classmethod
     def _validate_engine(cls, engine: AsyncEngine) -> AsyncEngine:
-        assert not isinstance(engine.pool, StaticPool), (
-            "Engine uses StaticPool, which shares one connection across sessions. "
-            "Use a multi-connection pool instead."
-        )
-        db = engine.url.database
-        if engine.dialect.name == "sqlite" and (db is None or db == ":memory:"):
-            raise ValueError(
-                "Engine uses ephemeral SQLite, where each connection gets a separate "
-                "database. Use a file path instead."
-            )
+        require_separate_connections_to_one_database(engine)
         return engine
 
 
