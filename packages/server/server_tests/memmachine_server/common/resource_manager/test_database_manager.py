@@ -345,6 +345,53 @@ async def test_qdrant_client_kwargs_forwarded():
     assert call_kwargs["api_key"] == "secret-key"
 
 
+async def _build_qdrant_client_kwargs(qdrant_conf: QdrantConf) -> dict:
+    conf = _qdrant_only_conf()
+    conf.qdrant_confs["qdrant1"] = qdrant_conf
+
+    mock_client = AsyncMock()
+    mock_client.get_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+        ) as mock_store_cls,
+        patch(
+            "qdrant_client.AsyncQdrantClient",
+            return_value=mock_client,
+        ) as mock_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_qdrant_client("qdrant1")
+
+    return mock_cls.call_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_qdrant_pool_size_and_timeout_forwarded():
+    """pool_size and timeout are forwarded to AsyncQdrantClient when configured."""
+    call_kwargs = await _build_qdrant_client_kwargs(
+        QdrantConf(host="localhost", pool_size=64, timeout=30)
+    )
+
+    assert call_kwargs["pool_size"] == 64
+    assert call_kwargs["timeout"] == 30
+
+
+@pytest.mark.asyncio
+async def test_qdrant_pool_size_and_timeout_omitted_by_default():
+    """Unset pool_size and timeout keep the Qdrant client's own defaults."""
+    call_kwargs = await _build_qdrant_client_kwargs(QdrantConf(host="localhost"))
+
+    assert "pool_size" not in call_kwargs
+    assert "timeout" not in call_kwargs
+
+
 @pytest.mark.asyncio
 async def test_qdrant_api_key_omitted_when_empty():
     """api_key is not forwarded when it is the empty default."""
