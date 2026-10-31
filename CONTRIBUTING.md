@@ -126,6 +126,9 @@ follow the style of the surrounding code and these rules:
 - **Tests:** mark tests that need an external service `integration` and
   slow tests `slow`.
 
+Existing code may not match these rules; that is no license for new code to
+break them.
+
 ## Documentation
 
 The documentation site's source is in `docs/`. [docs/README.md](docs/README.md)
