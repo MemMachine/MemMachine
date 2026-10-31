@@ -61,7 +61,7 @@ pytest packages/server/server_tests/memmachine_server/common/test_utils.py::test
 You can also run tests that have a specific keyword in their name using the `-k` flag. This is useful for running a group of related tests.
 
 ```bash
-pytest -k "create_memory"
+pytest -k "add_memory" packages/server/server_tests packages/client/client_tests
 ```
 
 These commands are essential for efficient testing and will also serve as a foundation for automating the unit test process in the future.
