@@ -27,7 +27,7 @@ from memmachine_server.common.errors import (
     VectorStoreConfigurationError,
 )
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
-from memmachine_server.common.sql import write_session
+from memmachine_server.common.sql import write_connection, write_session
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
@@ -134,7 +134,7 @@ async def test_build_sqlite(mock_conf):
 
 
 @pytest.mark.asyncio
-async def test_build_and_validate_sqlite():
+async def test_build_and_validate_sqlite(tmp_path):
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
     conf.nebula_graph_confs = {}
@@ -143,7 +143,7 @@ async def test_build_and_validate_sqlite():
         "sqlite1": SqlAlchemyConf(
             dialect="sqlite",
             driver="aiosqlite",
-            path=":memory:",
+            path=str(tmp_path / "sqlite1.db"),
         )
     }
     builder = DatabaseManager(conf)
@@ -211,13 +211,13 @@ async def test_neo4j_pool_lifecycle_kwargs():
 
 
 @pytest.mark.asyncio
-async def test_sqlalchemy_pool_lifecycle_kwargs():
+async def test_sqlalchemy_pool_lifecycle_kwargs(tmp_path):
     """pool_timeout, pool_recycle, and pool_pre_ping are forwarded to create_async_engine."""
     conf = MagicMock(spec=DatabasesConf)
     sql_conf = SqlAlchemyConf(
         dialect="sqlite",
         driver="aiosqlite",
-        path=":memory:",
+        path=str(tmp_path / "db1.db"),
         pool_timeout=30,
         pool_recycle=3000,
         pool_pre_ping=True,
@@ -227,14 +227,13 @@ async def test_sqlalchemy_pool_lifecycle_kwargs():
     _empty_vector_store_confs(conf)
     conf.relational_db_confs = {"db1": sql_conf}
 
-    mock_engine = MagicMock(spec=AsyncEngine)
-
     with patch(
         "memmachine_server.common.resource_manager.database_manager.create_async_engine",
-        return_value=mock_engine,
+        wraps=create_async_engine,
     ) as mock_create:
         builder = DatabaseManager(conf)
         await builder.async_get_sql_engine("db1")
+        await builder.close()
 
     call_kwargs = mock_create.call_args.kwargs
     assert call_kwargs["pool_timeout"] == 30
@@ -281,27 +280,26 @@ async def test_neo4j_pool_lifecycle_kwargs_none_omitted():
 
 
 @pytest.mark.asyncio
-async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted():
+async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted(tmp_path):
     """When pool lifecycle fields are None, they are not forwarded to create_async_engine."""
     conf = MagicMock(spec=DatabasesConf)
     sql_conf = SqlAlchemyConf(
         dialect="sqlite",
         driver="aiosqlite",
-        path=":memory:",
+        path=str(tmp_path / "db1.db"),
     )
     conf.neo4j_confs = {}
     conf.nebula_graph_confs = {}
     _empty_vector_store_confs(conf)
     conf.relational_db_confs = {"db1": sql_conf}
 
-    mock_engine = MagicMock(spec=AsyncEngine)
-
     with patch(
         "memmachine_server.common.resource_manager.database_manager.create_async_engine",
-        return_value=mock_engine,
+        wraps=create_async_engine,
     ) as mock_create:
         builder = DatabaseManager(conf)
         await builder.async_get_sql_engine("db1")
+        await builder.close()
 
     call_kwargs = mock_create.call_args.kwargs
     assert "pool_timeout" not in call_kwargs
@@ -420,6 +418,7 @@ async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
     conf.qdrant_confs["qdrant1"] = QdrantConf(
         partition_registry="registry",
         tombstone_retention_seconds=3600,
+        max_request_bytes=1048576,
     )
 
     mock_client = AsyncMock()
@@ -460,6 +459,7 @@ async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
     assert kwargs["partition_registry"] is mock_registry_cls.return_value
     assert kwargs["vector_store_name"] == "c"
     assert kwargs["store_schema"] is _SCHEMA
+    assert kwargs["max_request_bytes"] == 1048576
     # Asserted as "not None" rather than pinned to a value: OperationTracker
     # accepts None and then discards every timing without error, so passing the
     # keyword is not the property that matters - passing a factory is.
@@ -693,6 +693,7 @@ async def test_get_vector_store_builds_a_milvus_store(tmp_path):
         request_timeout_seconds=7,
         max_varchar_length=2048,
         purge_batch_size=500,
+        max_request_bytes=2097152,
     )
 
     mock_client = AsyncMock()
@@ -732,6 +733,7 @@ async def test_get_vector_store_builds_a_milvus_store(tmp_path):
         request_timeout_seconds=7,
         max_varchar_length=2048,
         purge_batch_size=500,
+        max_request_bytes=2097152,
         metrics_factory=conf.milvus_confs["milvus1"].get_metrics_factory(),
     )
     mock_store_cls.assert_called_once_with(mock_params_cls.return_value)
@@ -928,6 +930,32 @@ async def test_sqlite_vector_store_creates_store_and_engine():
     mock_store_cls.return_value.startup.assert_awaited_once()
     assert ("vs1", "c") in builder.vector_stores
     assert "vs1" in builder.vector_store_sql_engines
+
+
+@pytest.mark.asyncio
+async def test_a_sqlite_relational_engine_takes_the_write_lock_at_begin(tmp_path):
+    """A relational SQLite engine is set up for write transactions."""
+    path = tmp_path / "relational.db"
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {}
+    conf.nebula_graph_confs = {}
+    _empty_vector_store_confs(conf)
+    conf.relational_db_confs = {
+        "sqlite1": SqlAlchemyConf(dialect="sqlite", driver="aiosqlite", path=str(path))
+    }
+    builder = DatabaseManager(conf)
+    engine = await builder.async_get_sql_engine("sqlite1")
+    other = create_async_engine(
+        f"sqlite+aiosqlite:///{path}", connect_args={"timeout": 0.2}
+    )
+    try:
+        # The write transaction has written nothing, and holds the lock already.
+        async with write_connection(engine), other.connect() as connection:
+            with pytest.raises(OperationalError):
+                await connection.execute(text("CREATE TABLE probe (k INTEGER)"))
+    finally:
+        await other.dispose()
+        await builder.close()
 
 
 @pytest.mark.asyncio

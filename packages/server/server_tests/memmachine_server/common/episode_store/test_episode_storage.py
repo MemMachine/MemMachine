@@ -271,11 +271,14 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
             return returned_rows
 
     class ReorderedSession:
+        async def connection(self, **_kwargs):
+            pass
+
         async def execute(self, *_args):
             return ReorderedResult()
 
-        async def commit(self):
-            pass
+        def begin(self):
+            return self
 
         async def __aenter__(self):
             return self
@@ -285,7 +288,7 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
 
     store = SqlAlchemyEpisodeStore(MagicMock())
     reordered_session = ReorderedSession()
-    with patch.object(store, "_create_session", return_value=reordered_session):
+    with patch.object(store, "_session_factory", return_value=reordered_session):
         episodes = await store.add_episodes("batch-session", entries)
 
     assert [episode.uid for episode in episodes] == [entry.uid for entry in entries]

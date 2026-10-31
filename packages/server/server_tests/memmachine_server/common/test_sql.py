@@ -7,8 +7,14 @@ import pytest_asyncio
 from sqlalchemy import event, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import AsyncAdaptedQueuePool, StaticPool
 
-from memmachine_server.common.sql import enable_sqlite_explicit_begin, write_session
+from memmachine_server.common.sql import (
+    enable_sqlite_explicit_begin,
+    require_separate_connections_to_one_database,
+    write_connection,
+    write_session,
+)
 
 
 @pytest_asyncio.fixture
@@ -141,3 +147,111 @@ async def test_a_write_session_that_raises_rolls_back_its_ddl_too(database):
         ).scalars()
         assert list(tables) == ["t"]
     assert await _keys(engine) == []
+
+
+@pytest.mark.asyncio
+async def test_a_write_connection_can_still_write_after_it_has_read(
+    database, other_writer
+):
+    """A write connection's reads and writes are one atomic unit, as a write transaction's are."""
+    _, engine = database
+    async with write_connection(engine) as connection:
+        await connection.execute(text("SELECT count(*) FROM t"))
+
+        # Another writer takes what it can in the gap and holds it across the
+        # write below.
+        async with other_writer.connect() as blocked:
+            with contextlib.suppress(OperationalError):
+                await blocked.execute(text("INSERT INTO t VALUES (1)"))
+            await connection.execute(text("INSERT INTO t VALUES (2)"))
+            await blocked.rollback()
+
+    assert await _keys(engine) == [2]
+
+
+@pytest.mark.asyncio
+async def test_a_write_connection_commits_when_its_block_exits(database):
+    _, engine = database
+    async with write_connection(engine) as connection:
+        await connection.execute(text("INSERT INTO t VALUES (1)"))
+
+    assert await _keys(engine) == [1]
+
+
+@pytest.mark.asyncio
+async def test_a_write_connection_whose_commit_fails_leaves_nothing_open(
+    database, other_writer
+):
+    _, engine = database
+
+    def fail(_connection) -> None:
+        raise RuntimeError("injected commit failure")
+
+    event.listen(engine.sync_engine, "commit", fail)
+    try:
+        with pytest.raises(RuntimeError, match="injected commit failure"):
+            async with write_connection(engine) as connection:
+                await connection.execute(text("INSERT INTO t VALUES (1)"))
+    finally:
+        event.remove(engine.sync_engine, "commit", fail)
+
+    async with other_writer.connect() as connection:
+        await connection.execute(text("INSERT INTO t VALUES (2)"))
+        await connection.commit()
+    async with write_connection(engine) as connection:
+        await connection.execute(text("INSERT INTO t VALUES (3)"))
+
+    assert await _keys(engine) == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_a_write_connection_that_raises_rolls_back_its_ddl_too(database):
+    _, engine = database
+
+    async def write_then_fail() -> None:
+        async with write_connection(engine) as connection:
+            await connection.execute(text("CREATE TABLE u (k INTEGER)"))
+            await connection.execute(text("INSERT INTO t VALUES (1)"))
+            raise RuntimeError
+
+    with pytest.raises(RuntimeError):
+        await write_then_fail()
+
+    async with engine.connect() as connection:
+        tables = (
+            await connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'table'")
+            )
+        ).scalars()
+        assert list(tables) == ["t"]
+    assert await _keys(engine) == []
+
+
+@pytest.mark.asyncio
+async def test_an_engine_on_a_database_file_is_accepted(database):
+    _, engine = database
+    require_separate_connections_to_one_database(engine)
+
+
+@pytest.mark.asyncio
+async def test_an_engine_sharing_one_connection_is_refused(tmp_path):
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'test.db'}", poolclass=StaticPool
+    )
+    try:
+        with pytest.raises(ValueError, match="StaticPool"):
+            require_separate_connections_to_one_database(engine)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", ["sqlite+aiosqlite://", "sqlite+aiosqlite:///:memory:"])
+async def test_an_engine_on_in_memory_sqlite_is_refused(url):
+    # A queue pool, so the shared-connection check doesn't refuse it first.
+    engine = create_async_engine(url, poolclass=AsyncAdaptedQueuePool)
+    try:
+        with pytest.raises(ValueError, match="in-memory SQLite"):
+            require_separate_connections_to_one_database(engine)
+    finally:
+        await engine.dispose()

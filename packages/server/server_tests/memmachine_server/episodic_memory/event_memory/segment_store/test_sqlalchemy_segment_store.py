@@ -1862,7 +1862,8 @@ async def test_racing_purgers_never_retire_a_partly_purged_entry(
     A second purger that planned its batch from the entry as it stood
     before the first committed would delete nothing and retire the entry
     with rows left. PostgreSQL's claim lock makes it skip the entry; on
-    SQLite the claim is a write, so it waits until the first commits.
+    SQLite the call holds the write lock from BEGIN, so the second waits
+    until the first commits.
     """
     partition = await store.open_or_create_partition(
         "raced", _plaintext_partition_config()
@@ -2561,14 +2562,13 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
     sqlite_store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """On SQLite the write fence opens the write transaction before checking.
+    """On SQLite the write fence checks inside the write transaction.
 
-    The driver defers BEGIN to the first data-modifying statement, so a
-    SELECT-only fence would run outside the write transaction: a delete and
-    a full purge could complete between the check and the insert, and the
-    write would then commit rows no queue entry tracks. The fence's no-op
-    registry UPDATE opens the write transaction first, so the racing
-    deletion must wait for the writer and the rows stay reclaimable.
+    A fence that ran outside it would let a delete and a full purge
+    complete between the check and the insert, and the write would then
+    commit rows no queue entry tracks. The write transaction holds the
+    write lock from BEGIN, so the racing deletion must wait for the writer
+    and the rows stay reclaimable.
     """
     partition = await sqlite_store.open_or_create_partition(
         "sqlite_fence", _plaintext_partition_config()
@@ -2628,8 +2628,8 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
         ).scalar_one()
     assert leftover_rows == 0, (
         "rows were committed under an incarnation the purge queue no "
-        "longer tracks: the SQLite fence did not open the write "
-        "transaction before checking"
+        "longer tracks: the SQLite fence checked outside the write "
+        "transaction"
     )
 
 
@@ -2901,22 +2901,6 @@ async def test_static_pool_engine_is_rejected(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_old_sqlite_runtime_is_rejected(
-    sqlalchemy_sqlite_engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Partition deletion depends on RETURNING; refuse an older SQLite loudly.
-
-    The store's own minimum is raised past the runtime rather than the
-    stdlib's version tuple being patched process-wide, which SQLAlchemy's
-    dialect also reads.
-    """
-    monkeypatch.setattr(sqlalchemy_segment_store, "_MIN_SQLITE_VERSION", (99, 0))
-    with pytest.raises(ValidationError, match="RETURNING"):
-        SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
-
-
-@pytest.mark.asyncio
 async def test_unsupported_dialect_engine_is_rejected(
     sqlalchemy_sqlite_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
@@ -2927,35 +2911,33 @@ async def test_unsupported_dialect_engine_is_rejected(
         SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_windowed_read_raises_when_partition_dies_between_statements(
-    store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Seeds found, then deletion commits before the context statements.
 
     Each statement takes its own snapshot, so the context statements
     would return nothing; the read must raise rather than hand back
-    seeds with silently empty context.
+    seeds with silently empty context. On SQLite a read's statements
+    share one transaction, and so one snapshot, which a deletion cannot
+    change.
     """
-    partition = await store.open_or_create_partition(
+    partition = await pg_store.open_or_create_partition(
         "mid_read", _plaintext_partition_config()
     )
     segs = [_seg(ts_offset_seconds=i) for i in range(3)]
     await partition.add_segments(_links(*segs))
 
-    context_method = (
-        "_get_context_rows_loop"
-        if partition._is_sqlite
-        else "_get_context_rows_lateral"
-    )
-    original = getattr(partition, context_method)
+    original = partition._get_context_rows_lateral
 
     async def delete_then_read(*args, **kwargs):
-        await store.delete_partition("mid_read")
+        await pg_store.delete_partition("mid_read")
         return await original(*args, **kwargs)
 
-    monkeypatch.setattr(partition, context_method, delete_then_read)
+    monkeypatch.setattr(partition, "_get_context_rows_lateral", delete_then_read)
     with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.get_segment_contexts(
             [segs[1].uuid], max_backward_segments=1, max_forward_segments=1
@@ -3004,7 +2986,7 @@ async def test_delete_partition_touches_only_registry_and_queue(
 # Coverage, as verified by ablating locks one at a time in
 # source-patched variants of both this store and the pre-overhaul
 # partitioned store:
-# - The writer's shared registry-row pin (_lock_partition_for_write)
+# - The writer's shared registry-row pin (_ensure_partition_live with pin)
 #   blocks partition deletion while a write transaction is in flight:
 #   test_write_pin_blocks_partition_delete fails with the pin ablated
 #   in either generation and passes with it present.

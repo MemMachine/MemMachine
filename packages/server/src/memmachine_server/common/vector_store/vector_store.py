@@ -62,6 +62,10 @@ class VectorStorePartition(ABC):
         a replaced record holds only the vector and properties it is upserted
         with.
 
+        Cancelling the call stops it from sending further requests to the
+        backend; a request already sent may still be applied, so a cancelled
+        upsert may have written some of the records.
+
         Args:
             records (Iterable[Record]):
                 Iterable of records to upsert.
