@@ -88,6 +88,44 @@ the repository root before you push.
 The TypeScript client in `packages/ts-client/` has its own commands, listed in
 its [README](packages/ts-client/README.md#development).
 
+## Style
+
+Ruff and ty check formatting, lint rules, and types. Beyond what they check,
+follow the style of the surrounding code and these rules:
+
+- **Names:** spell names out (`derivative_uuid`, not `duuid`), private names
+  included. Functions that share a prefix behave alike: `is_*` returns a
+  bool, and `validate_*` raises. Use American spelling in names and text.
+- **Types:** don't use `Any`, `cast`, or `object` as a type unless a
+  third-party library's types leave no other way. Narrow the value or change
+  the code instead.
+- **Suppressions:** don't add `# noqa`, `# type: ignore`, or `# ty: ignore`,
+  except where a third-party library's API forces one. Fix the code, or
+  change the rule in `pyproject.toml` if it is wrong for the whole project.
+- **Libraries:** use only their public, documented API. In async code, use a
+  library's async client when it has one. Declare every package your code
+  imports as a dependency, and import an optional extra's modules only in
+  the code that needs them.
+- **Errors:** catch broad exceptions only at API boundaries, and log them
+  with context.
+- **Comments:** explain what the code can't say itself: why a choice is
+  safe, an ordering or concurrency constraint, a pitfall. State what holds
+  now. Measurements, history, and references to issues or pull requests go
+  in the commit message and the pull request description. A comment
+  describes its own code and what that code uses, not the code that uses it.
+- **Docstrings:** a docstring gives the contract from the caller's side. An
+  abstract method's docstring says when it is called, what implementations
+  must guarantee, and what they may raise, without naming an
+  implementation. A method marked `@override` has no docstring; notes on how
+  it works go in a comment in its body.
+- **Structure:** factor out duplicated code only when the shared piece is
+  one unit whose name says everything it does, and the callers read better
+  for it. Don't wrap a one-line call in a helper. Before caching or
+  memoizing, weigh the work saved against the state it adds, which has to be
+  maintained and kept correct.
+- **Tests:** mark tests that need an external service `integration` and
+  slow tests `slow`.
+
 ## Documentation
 
 The documentation site's source is in `docs/`. [docs/README.md](docs/README.md)
