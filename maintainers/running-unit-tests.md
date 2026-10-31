@@ -4,7 +4,7 @@ This document provides instructions on how to run the PyTest unit tests for the 
 
 ## Prerequisites
 
-Before running the tests, ensure you have set up the project via the instructions in [CONTRIBUTING-CORE.md](https://github.com/MemMachine/MemMachine/blob/main/CONTRIBUTING-CORE.md)
+Before running the tests, ensure you have set up the project via the instructions in [CONTRIBUTING.md](https://github.com/MemMachine/MemMachine/blob/main/CONTRIBUTING.md#setup)
 
 ## Running the Tests
 
@@ -12,14 +12,13 @@ Once your environment is set up, you can run the unit tests using a variety of `
 
 ### Running All Tests
 
-To run the entire test suite, ensure you are in the root of the MemMachine project, then run `pytest` with no arguments:
+To run the entire unit test suite, ensure you are in the root of the MemMachine project, then run `pytest` on the server and client test directories:
 
 ```bash
-pytest
+pytest packages/server/server_tests packages/client/client_tests
 ```
 
-By default, this will discover and run all tests under all packages.
-You can also explicitly specify the directory, which may make it clearer where tests are coming from:
+To run one package's tests, specify only its directory:
 
 ```bash
 pytest packages/server/server_tests/
@@ -62,7 +61,7 @@ pytest packages/server/server_tests/memmachine_server/common/test_utils.py::test
 You can also run tests that have a specific keyword in their name using the `-k` flag. This is useful for running a group of related tests.
 
 ```bash
-pytest -k "create_memory"
+pytest -k "add_memory" packages/server/server_tests packages/client/client_tests
 ```
 
 These commands are essential for efficient testing and will also serve as a foundation for automating the unit test process in the future.

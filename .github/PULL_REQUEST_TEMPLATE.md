@@ -42,7 +42,7 @@ Please describe the tests that you ran to verify your changes. Provide instructi
 [Please delete options that are not relevant.]
 
 - [ ] I have signed the commit(s) within this pull request
-- [ ] My code follows the style guidelines of this project (See STYLE_GUIDE.md)
+- [ ] My code follows the style guidelines of this project (See CONTRIBUTING.md)
 - [ ] I have performed a self-review of my own code
 - [ ] I have commented my code
 - [ ] I have made corresponding changes to the documentation

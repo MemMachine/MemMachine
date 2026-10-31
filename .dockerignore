@@ -9,7 +9,6 @@ CONTRIBUTING*.md
 CODE_OF_CONDUCT.md
 GOVERNANCE.md
 SECURITY.md
-STYLE_GUIDE.md
 
 # Docker files (except the main Dockerfile)
 docker-compose*.yml
