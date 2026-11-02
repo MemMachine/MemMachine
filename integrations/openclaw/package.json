@@ -32,15 +32,18 @@
   },
   "dependencies": {
     "@memmachine/client": "^0.3.4",
-    "@sinclair/typebox": "^0.34.48",
-    "openclaw": "^2026.4.10"
+    "@sinclair/typebox": "^0.34.48"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "jest": "^29.7.0",
+    "openclaw": "~2026.7.35",
     "ts-jest": "^29.4.9",
     "tsup": "^8.5.0",
     "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "openclaw": "^2026.4.10"
   },
   "openclaw": {
     "install": {
