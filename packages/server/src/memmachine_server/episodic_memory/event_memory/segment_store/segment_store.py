@@ -9,10 +9,12 @@ leaves behind.
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Neighborhood,
     Segment,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
@@ -37,6 +39,9 @@ class SegmentStorePartition(ABC):
     A derivative stays linked to its segment until its event is
     forgotten, and a forget records the derivatives it removed in a
     tombstone, so their derived index entries can still be deleted.
+
+    Segments within a partition are in one total order,
+    `(timestamp, event_uuid, index, offset)`.
     """
 
     @property
@@ -99,40 +104,107 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_segment_contexts(
+    async def get_segments(
         self,
-        seed_segment_uuids: Iterable[UUID],
+        segment_uuids: Iterable[UUID],
         *,
-        max_backward_segments: int = 0,
-        max_forward_segments: int = 0,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source_ids: Iterable[str] | None = None,
         property_filter: FilterExpr | None = None,
-    ) -> dict[UUID, list[Segment]]:
+    ) -> dict[UUID, Segment]:
         """
-        Get a window of segments around each of the seed segments.
+        Get segments by UUID.
 
-        An implementation may bound how far from each seed it looks for
-        context, so a side can come back with fewer segments than requested
-        even when more exist further away.
+        A UUID the partition does not hold, or whose segment fails a
+        filter, is excluded from the result.
 
         Args:
-            seed_segment_uuids (Iterable[UUID]):
-                The UUIDs of the seed segments for which to retrieve contexts.
-            max_backward_segments (int):
-                The maximum number of segments to include before each seed segment (default: 0).
-            max_forward_segments (int):
-                The maximum number of segments to include after each seed segment (default: 0).
+            segment_uuids (Iterable[UUID]):
+                The UUIDs of the segments to get.
+            since (datetime | None):
+                Inclusive lower bound on the segments' timestamps, timezone-aware
+                (default: None).
+            until (datetime | None):
+                Exclusive upper bound on the segments' timestamps, timezone-aware,
+                so ranges meet without overlap (default: None).
+            source_ids (Iterable[str] | None):
+                Keep only segments whose source id is one of these; an
+                empty list keeps none, and None keeps every source
+                (default: None).
             property_filter (FilterExpr | None):
                 An optional filter expression to apply to the segments (default: None).
 
         Returns:
-            dict[UUID, list[Segment]]:
-                A mapping from each seed segment UUID to its context segments.
-                A seed that does not match the filter has no entry, and a
-                context holds only segments that match it.
+            dict[UUID, Segment]:
+                A mapping from each UUID found and admitted to its segment.
 
         Raises:
             ValueError:
-                If `property_filter` names an unknown field.
+                If `since` or `until` is naive, or `property_filter` names
+                an unknown field.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_segment_neighborhoods(
+        self,
+        seed_uuids: Iterable[UUID],
+        *,
+        before: int = 0,
+        after: int = 0,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        source_ids: Iterable[str] | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> dict[UUID, Neighborhood]:
+        """
+        Get the segments around each seed segment, excluding the seed itself.
+
+        A walk outward from the seed in the partition's total order. The
+        seed is an address: it is located
+        whether or not it passes any filter, and the filters select the
+        neighbors.
+
+        An implementation may bound how far from each seed it looks for
+        neighbors, so a side can come back with fewer segments than
+        requested even when more exist further away.
+
+        Args:
+            seed_uuids (Iterable[UUID]):
+                The UUIDs of the segments to gather neighbors around.
+            before (int):
+                The maximum number of neighbors before each seed, nonnegative
+                (default: 0).
+            after (int):
+                The maximum number of neighbors after each seed, nonnegative
+                (default: 0).
+            since (datetime | None):
+                Inclusive lower bound on the neighbors' timestamps, timezone-aware
+                (default: None).
+            until (datetime | None):
+                Exclusive upper bound on the neighbors' timestamps, timezone-aware,
+                so ranges meet without overlap (default: None).
+            source_ids (Iterable[str] | None):
+                Keep only neighbors whose source id is one of these; an
+                empty list keeps none, and None keeps every source
+                (default: None).
+            property_filter (FilterExpr | None):
+                An optional filter expression to apply to the neighbors
+                (default: None).
+
+        Returns:
+            dict[UUID, Neighborhood]:
+                A mapping from each known seed to its neighbors: `before`
+                in order ending just before the seed, `after` in order
+                starting just after it. A seed with no neighbors to show
+                maps to two empty lists; an unknown seed is excluded from
+                the result.
+
+        Raises:
+            ValueError:
+                If `before` or `after` is negative, `since` or `until` is
+                naive, or `property_filter` names an unknown field.
         """
         raise NotImplementedError
 
@@ -359,7 +431,7 @@ class SegmentStore(ABC):
 
         The partition becomes unreachable immediately: it can no longer be
         opened, and handles opened on it raise from then on.
-        Implementations may defer physically reclaiming its rows to
+        Implementations may defer physically reclaiming its storage to
         `purge_deleted_partitions`. Idempotent.
 
         Args:
