@@ -108,6 +108,16 @@ All contributions should include unit tests to ensure functionality.
 
 - To run the entire test suite, use: `pytest`
 - To run tests for a specific file, use: `pytest path/to/your_test_file.py`
+- Integration tests are marked `integration`; run them by adding
+  `-m integration`.
+- Tests that call OpenAI, Amazon Bedrock, or Cohere use the real APIs, billed
+  to the keys you give them. They read test-only variables and run only when
+  those are set:
+  - OpenAI: `MEMMACHINE_TEST_OPENAI_API_KEY`
+  - Amazon Bedrock: `MEMMACHINE_TEST_AWS_ACCESS_KEY_ID`,
+    `MEMMACHINE_TEST_AWS_SECRET_ACCESS_KEY`, and `MEMMACHINE_TEST_AWS_REGION`,
+    plus `MEMMACHINE_TEST_AWS_SESSION_TOKEN` for temporary credentials
+  - Cohere: `MEMMACHINE_TEST_COHERE_API_KEY`
 
 ## 5. Submitting a Pull Request
 

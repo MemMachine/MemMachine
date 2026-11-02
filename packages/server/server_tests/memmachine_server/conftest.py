@@ -98,11 +98,13 @@ def mock_llm_embedder():
     return FakeEmbedder()
 
 
+# Tests that call paid APIs read MEMMACHINE_TEST_* variables only, so keys set
+# for other uses never incur spend.
 @pytest.fixture(scope="session")
 def openai_integration_config():
-    open_api_key = os.environ.get("OPENAI_API_KEY")
+    open_api_key = os.environ.get("MEMMACHINE_TEST_OPENAI_API_KEY")
     if not open_api_key:
-        pytest.skip("OPENAI_API_KEY environment variable not set")
+        pytest.skip("MEMMACHINE_TEST_OPENAI_API_KEY environment variable not set")
 
     return {
         "api_key": open_api_key,
@@ -178,12 +180,15 @@ def openai_chat_completions_llm_model(
 
 @pytest.fixture(scope="session")
 def bedrock_integration_config():
-    aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
-    aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-    aws_session_token = os.environ.get("AWS_SESSION_TOKEN")
-    aws_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    aws_access_key_id = os.environ.get("MEMMACHINE_TEST_AWS_ACCESS_KEY_ID")
+    aws_secret_access_key = os.environ.get("MEMMACHINE_TEST_AWS_SECRET_ACCESS_KEY")
+    aws_session_token = os.environ.get("MEMMACHINE_TEST_AWS_SESSION_TOKEN")
+    aws_region = os.environ.get("MEMMACHINE_TEST_AWS_REGION")
     if not aws_access_key_id or not aws_secret_access_key or not aws_region:
-        pytest.skip("AWS credentials not set")
+        pytest.skip(
+            "MEMMACHINE_TEST_AWS_ACCESS_KEY_ID, MEMMACHINE_TEST_AWS_SECRET_ACCESS_KEY,"
+            " or MEMMACHINE_TEST_AWS_REGION environment variable not set"
+        )
 
     return {
         "aws_access_key_id": aws_access_key_id,
@@ -195,9 +200,9 @@ def bedrock_integration_config():
 
 @pytest.fixture(scope="session")
 def cohere_integration_config():
-    cohere_api_key = os.environ.get("COHERE_API_KEY")
+    cohere_api_key = os.environ.get("MEMMACHINE_TEST_COHERE_API_KEY")
     if not cohere_api_key:
-        pytest.skip("COHERE_API_KEY environment variable not set")
+        pytest.skip("MEMMACHINE_TEST_COHERE_API_KEY environment variable not set")
 
     return {
         "api_key": cohere_api_key,

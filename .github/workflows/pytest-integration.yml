@@ -52,10 +52,10 @@ jobs:
 
       - name: Test ${{ matrix.test-paths }} with python ${{ matrix.python-version }}
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{ vars.AWS_REGION }}
+          MEMMACHINE_TEST_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MEMMACHINE_TEST_AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          MEMMACHINE_TEST_AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          MEMMACHINE_TEST_AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             uv run --frozen --all-extras pytest ${{ matrix.test-paths }} -m integration --cov=memmachine_server
