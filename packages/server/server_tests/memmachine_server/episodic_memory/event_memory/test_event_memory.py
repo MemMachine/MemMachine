@@ -39,6 +39,7 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
     WholeTextDeriver,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EVENT_TIMESTAMP_KEY,
     EventMemory,
     EventMemoryParams,
 )
@@ -121,7 +122,7 @@ def _ts(minutes: int) -> datetime.datetime:
 class TestSchema:
     def test_expected_vector_store_indexed_properties_only_has_base_fields(self):
         assert EventMemory.expected_vector_store_indexed_properties() == {
-            "_timestamp": datetime.datetime,
+            EVENT_TIMESTAMP_KEY: datetime.datetime,
         }
 
 
@@ -153,7 +154,7 @@ class TestEncodeEvents:
         assert len(fake_vector_store_partition.records) == 1
         record = next(iter(fake_vector_store_partition.records.values()))
         props = _record_properties(record)
-        assert props["_timestamp"] == event.timestamp
+        assert props[EVENT_TIMESTAMP_KEY] == event.timestamp
         # The segment store maps the derivative to its segment.
         assert "_segment_uuid" not in props
         assert await fake_segment_store_partition.get_segment_uuids_by_derivative_uuids(
@@ -254,7 +255,7 @@ class TestEncodeEvents:
             store_schema=VectorStoreSchema(
                 vector_dimensions=fake_embedder.dimensions,
                 similarity_metric=SimilarityMetric.COSINE,
-                indexed_properties={"_timestamp": datetime.datetime},
+                indexed_properties={EVENT_TIMESTAMP_KEY: datetime.datetime},
             )
         )
         partition = InMemorySegmentStorePartition()
@@ -276,8 +277,18 @@ class TestEncodeEvents:
         assert "_context_type" not in props
         assert "_context_producer" not in props
 
+    async def test_reserved_property_key_is_rejected(self, event_memory: EventMemory):
+        event = _make_event("hi", properties={EVENT_TIMESTAMP_KEY: "spoofed"})
+        with pytest.raises(ValueError, match="reserved"):
+            await event_memory.encode_events([event])
+
+    async def test_illegal_property_key_is_rejected(self, event_memory: EventMemory):
+        event = _make_event("hi", properties={"Color": "red"})
+        with pytest.raises(ValueError, match=r"\[a-z0-9_\]"):
+            await event_memory.encode_events([event])
+
     async def test_init_raises_on_missing_base_field(self, fake_embedder):
-        # A partition without _timestamp — base field required at init.
+        # A partition without the timestamp key — base field required at init.
         vector_store_partition = InMemoryVectorStorePartition(
             store_schema=VectorStoreSchema(
                 vector_dimensions=fake_embedder.dimensions,

@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Iterable, Sequence
-from typing import ClassVar, cast
+from typing import ClassVar, Final, cast
 from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf
@@ -23,6 +23,10 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.metrics_factory import (
     MetricsFactory,
     OperationTracker,
+)
+from memmachine_server.common.property_keys import (
+    reserved_property_key,
+    validate_user_property_key,
 )
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import (
@@ -48,6 +52,10 @@ from .segment_store import SegmentStorePartition
 from .segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
+
+# The key the memory writes into a vector record; `em` names this memory,
+# short because every key shares the identifier budget.
+EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key("em", "timestamp")
 
 
 class EventMemoryParams(BaseModel):
@@ -108,11 +116,8 @@ class EventMemoryParams(BaseModel):
 class EventMemory:
     """Event memory system."""
 
-    # System-defined metadata field names. Reserved.
-    _TIMESTAMP_FIELD_NAME = "_timestamp"
-
     _BASE_EVENT_MEMORY_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {_TIMESTAMP_FIELD_NAME}
+        {EVENT_TIMESTAMP_KEY}
     )
 
     @classmethod
@@ -125,7 +130,7 @@ class EventMemory:
         on any other property applies to the seeds the search returns.
         """
         return {
-            cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
+            EVENT_TIMESTAMP_KEY: cast(type[PropertyValue], datetime.datetime),
         }
 
     def __init__(self, params: EventMemoryParams) -> None:
@@ -180,21 +185,12 @@ class EventMemory:
         """
         Validate a batch of events before encoding.
 
-        Raises ValueError if any event supplies a reserved field name in its properties.
+        Raises ValueError if any event supplies a property key in the
+        reserved namespace or outside the naming contract.
         """
-        events = list(events)
-
-        reserved_fields = {
-            field
-            for event in events
-            for field in event.properties
-            if field in EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES
-        }
-        if reserved_fields:
-            raise ValueError(
-                f"Event properties must not contain reserved fields: "
-                f"{', '.join(sorted(reserved_fields))}"
-            )
+        for event in events:
+            for key in event.properties:
+                validate_user_property_key(key)
 
     async def encode_events(
         self,
@@ -213,7 +209,7 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If any event supplies a reserved field name in its properties.
+                If any event supplies a reserved or illegal property key.
         """
         async with self._tracker("encode_events"):
             await self._encode_events(events, format_options=format_options)
@@ -326,7 +322,7 @@ class EventMemory:
         filter (see `query`).
         """
         properties: dict[str, PropertyValue] = {
-            self._TIMESTAMP_FIELD_NAME: derivative.timestamp,
+            EVENT_TIMESTAMP_KEY: derivative.timestamp,
             **{
                 key: value
                 for key, value in derivative.properties.items()
@@ -345,12 +341,15 @@ class EventMemory:
         """
         Translates canonical filter field name to vector record property.
 
-        Event memory base properties (`foo`) translate to `_foo`.
+        The timestamp (`timestamp`) translates to its reserved key, and
+        other base properties (`foo`) to `_foo`.
         User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
         """
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             return demangle_user_metadata_key(internal_name)
+        if field == "timestamp":
+            return EVENT_TIMESTAMP_KEY
         return f"_{field}"
 
     async def query(
