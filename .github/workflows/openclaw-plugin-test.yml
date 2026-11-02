@@ -1,0 +1,53 @@
+# GitHub Actions workflow to type-check, test, and build the OpenClaw plugin
+
+name: Build and Test OpenClaw Plugin
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'integrations/openclaw/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'integrations/openclaw/**'
+    # ready_for_review is not a default type; it runs the checks a draft skipped.
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # A draft pull request skips CI until it is marked ready for review.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./integrations/openclaw
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22.x'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build and import the built module
+        run: npm run test:smoke
