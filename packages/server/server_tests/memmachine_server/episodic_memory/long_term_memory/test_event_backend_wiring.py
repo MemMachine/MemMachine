@@ -6,9 +6,9 @@ Builds a LongTermMemory(EventBackendParams(...)) using:
 - an EventMemory whose store stand-ins hand out those two partitions
 - a fake embedder
 - a fake EpisodeStorage that satisfies the get_episode(uid) lookup used during
-  search_scored hydration.
+  query hydration.
 
-Verifies that add_episodes / search_scored / delete_episodes all dispatch
+Verifies that add_episodes / query / delete_episodes all dispatch
 correctly through the event backend.
 """
 
@@ -247,7 +247,7 @@ async def test_add_then_search_returns_full_episodes(long_term_memory, episodes)
     await long_term_memory.add_episodes(episodes)
 
     # FakeEmbedder maps query length -> vector; the longest content scores best.
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "george washington",
         num_episodes_limit=3,
     )
@@ -267,7 +267,7 @@ async def test_search_dedupes_by_episode_uid(
     """Even if a single episode produces multiple segments/derivatives, only
     one tuple per episode_uid is returned."""
     await long_term_memory.add_episodes(episodes)
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "powerhouse",
         num_episodes_limit=10,
     )
@@ -293,7 +293,7 @@ async def test_search_warns_on_index_storage_drift(
         logging.WARNING,
         logger="memmachine_server.episodic_memory.long_term_memory.long_term_memory",
     ):
-        scored = await long_term_memory.search_scored(
+        scored = await long_term_memory.query(
             "george washington",
             num_episodes_limit=3,
         )
@@ -359,7 +359,7 @@ async def test_user_metadata_filter_round_trips(
     fake_episode_storage._episodes.update({e.uid: e for e in episodes})
     await long_term_memory.add_episodes(episodes)
 
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "fruit",
         num_episodes_limit=10,
         property_filter=FilterComparison(field="m.color", op="=", value="red"),
@@ -408,7 +408,7 @@ async def test_system_field_filter_round_trips(
 
     monkeypatch.setattr(vector_store_partition, "query", recording_query)
 
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "msg",
         num_episodes_limit=10,
         property_filter=FilterComparison(field="producer_role", op="=", value="user"),
@@ -425,7 +425,7 @@ async def test_system_field_filter_round_trips(
 async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
     """A caller names a system field by its bare name, never by its reserved key."""
     with pytest.raises(ValueError, match="names a reserved key"):
-        await long_term_memory.search_scored(
+        await long_term_memory.query(
             "msg",
             num_episodes_limit=10,
             property_filter=FilterComparison(
@@ -443,7 +443,7 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
     name as an exact JSON property lookup and silently return zero results.
     """
     with pytest.raises(ValueError, match="Unknown filter field 'producre_id'"):
-        await long_term_memory.search_scored(
+        await long_term_memory.query(
             "msg",
             num_episodes_limit=10,
             property_filter=FilterComparison(
@@ -455,7 +455,7 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
 async def test_any_user_metadata_field_is_accepted(long_term_memory):
     """Any `m.<x>` outside the reserved namespace is a valid filter field."""
     # Doesn't raise.
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "msg",
         num_episodes_limit=10,
         property_filter=FilterComparison(field="m.anything", op="=", value="x"),
@@ -467,7 +467,7 @@ async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
     """`timestamp` is a valid bare filter field (segment store has it as a column)."""
     await long_term_memory.add_episodes(episodes)
     # Doesn't raise; whether anything matches depends on the embedder/score path.
-    await long_term_memory.search_scored(
+    await long_term_memory.query(
         "anything",
         num_episodes_limit=10,
         property_filter=FilterComparison(
@@ -528,12 +528,10 @@ async def test_score_threshold_drops_low_scores_under_cosine():
     )
     await ltm.add_episodes(episodes)
 
-    kept_all = await ltm.search_scored("abc", num_episodes_limit=10)
+    kept_all = await ltm.query("abc", num_episodes_limit=10)
     assert {ep.uid for _, ep in kept_all} == {_uid("near"), _uid("far")}
 
-    kept_none = await ltm.search_scored(
-        "abc", num_episodes_limit=10, score_threshold=2.0
-    )
+    kept_none = await ltm.query("abc", num_episodes_limit=10, score_threshold=2.0)
     assert kept_none == []
 
 
@@ -562,8 +560,7 @@ async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
     await ltm.add_episodes(episodes)
 
     scores_by_uid = {
-        ep.uid: score
-        for score, ep in await ltm.search_scored("abc", num_episodes_limit=10)
+        ep.uid: score for score, ep in await ltm.query("abc", num_episodes_limit=10)
     }
     assert scores_by_uid[_uid("near")] < scores_by_uid[_uid("far")], (
         "FakeEmbedder should make the shorter 'near' anchor a closer "
@@ -571,7 +568,7 @@ async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
     )
     midpoint_threshold = (scores_by_uid[_uid("near")] + scores_by_uid[_uid("far")]) / 2
 
-    kept = await ltm.search_scored(
+    kept = await ltm.query(
         "abc", num_episodes_limit=10, score_threshold=midpoint_threshold
     )
     uids = {ep.uid for _, ep in kept}
@@ -593,7 +590,7 @@ async def test_score_threshold_none_keeps_all_results_under_euclidean():
     )
     await ltm.add_episodes(episodes)
 
-    scored = await ltm.search_scored("abc", num_episodes_limit=10)
+    scored = await ltm.query("abc", num_episodes_limit=10)
     assert [ep.uid for _, ep in scored] == [_uid("only")]
 
 
@@ -724,11 +721,11 @@ async def test_expand_context_returns_neighbours_the_search_would_not(
     await timeline_long_term_memory.add_episodes(timeline_episodes)
 
     query = _timeline_token(_MATCH_INDEX)
-    plain = await timeline_long_term_memory.search_scored(
+    plain = await timeline_long_term_memory.query(
         query,
         num_episodes_limit=3,
     )
-    expanded = await timeline_long_term_memory.search_scored(
+    expanded = await timeline_long_term_memory.query(
         query,
         num_episodes_limit=3,
         expand_context=2,
@@ -753,7 +750,7 @@ async def test_expand_context_zero_returns_matches_in_score_order(
     """Without expansion, the result is the search's own matches, best first."""
     await timeline_long_term_memory.add_episodes(timeline_episodes)
 
-    scored = await timeline_long_term_memory.search_scored(
+    scored = await timeline_long_term_memory.query(
         _timeline_token(_MATCH_INDEX),
         num_episodes_limit=3,
     )
@@ -799,7 +796,7 @@ async def test_expand_context_window_stays_within_the_episode_limit(
 
     for num_episodes_limit, expand_context in ((1, -3), (1, 5), (3, 99), (5, 2)):
         windows.clear()
-        scored = await timeline_long_term_memory.search_scored(
+        scored = await timeline_long_term_memory.query(
             _timeline_token(_MATCH_INDEX),
             num_episodes_limit=num_episodes_limit,
             expand_context=expand_context,
@@ -824,7 +821,7 @@ async def test_a_limit_that_is_not_positive_is_refused_before_the_query_is_embed
     monkeypatch.setattr(RankedEmbedder, "search_embed", unexpected)
 
     with pytest.raises(ValueError, match="not positive"):
-        await timeline_long_term_memory.search_scored(
+        await timeline_long_term_memory.query(
             _timeline_token(_MATCH_INDEX), num_episodes_limit=num_episodes_limit
         )
 
@@ -861,7 +858,7 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
     for name, segmenter in segmenters.items():
         ltm = await _make_ltm(RankedEmbedder(), timeline_episodes, segmenter=segmenter)
         await ltm.add_episodes(timeline_episodes)
-        expanded = await ltm.search_scored(
+        expanded = await ltm.query(
             query,
             num_episodes_limit=expand_context + 1,
             expand_context=expand_context,

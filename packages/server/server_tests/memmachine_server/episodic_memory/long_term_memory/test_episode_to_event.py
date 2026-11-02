@@ -139,7 +139,7 @@ def test_episode_to_event_rejects_reserved_user_keys():
 
     Without the check a client could send another producer's or session's
     system field through filterable_metadata, get its content indexed under
-    that spoofed identity, and impersonate it through search_scored's
+    that spoofed identity, and impersonate it through query's
     property_filter.
     """
     episode = _episode(

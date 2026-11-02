@@ -187,7 +187,7 @@ class LongTermMemory:
         events = [LongTermMemory._episode_to_event(episode) for episode in episodes]
         await self._event_memory_partition.encode_events(events)
 
-    async def search_scored(
+    async def query(
         self,
         query: str,
         *,
@@ -213,14 +213,14 @@ class LongTermMemory:
                 f"num_episodes_limit is not positive: {num_episodes_limit}"
             )
         if self._backend == "declarative":
-            return await self._search_scored_declarative(
+            return await self._query_declarative(
                 query,
                 num_episodes_limit=num_episodes_limit,
                 expand_context=expand_context,
                 score_threshold=score_threshold,
                 property_filter=property_filter,
             )
-        return await self._search_scored_event(
+        return await self._query_event(
             query,
             num_episodes_limit=num_episodes_limit,
             expand_context=expand_context,
@@ -228,7 +228,7 @@ class LongTermMemory:
             property_filter=property_filter,
         )
 
-    async def _search_scored_declarative(
+    async def _query_declarative(
         self,
         query: str,
         *,
@@ -255,7 +255,7 @@ class LongTermMemory:
             if score_threshold is None or score >= score_threshold
         ]
 
-    async def _search_scored_event(
+    async def _query_event(
         self,
         query: str,
         *,
@@ -342,7 +342,7 @@ class LongTermMemory:
             # failures during add/delete. Surface it so operators notice;
             # continue with whatever did hydrate.
             logger.warning(
-                "search_scored dropped %d episode(s) found in the event index "
+                "query dropped %d episode(s) found in the event index "
                 "but missing from EpisodeStorage (likely index/storage drift): %s",
                 len(missing),
                 missing,
@@ -584,7 +584,7 @@ class LongTermMemory:
         missing = [uid for uid in episode_scores if uid not in episodes_by_uid]
         if missing:
             logger.warning(
-                "search_scored dropped %d episode(s) found in the event index "
+                "query dropped %d episode(s) found in the event index "
                 "but missing from EpisodeStorage (likely index/storage drift): %s",
                 len(missing),
                 missing,

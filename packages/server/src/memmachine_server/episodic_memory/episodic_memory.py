@@ -327,7 +327,7 @@ class EpisodicMemory:
         if self._long_term_memory is None:
             return []
 
-        return await self._long_term_memory.search_scored(
+        return await self._long_term_memory.query(
             query,
             num_episodes_limit=limit,
             expand_context=expand_context,

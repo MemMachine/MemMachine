@@ -255,7 +255,7 @@ async def test_add_episodes(long_term_memory):
 
     await long_term_memory.add_episodes(episodes)
 
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "first president of the United States",
         num_episodes_limit=10,
     )
@@ -305,7 +305,7 @@ async def test_delete_episodes(long_term_memory):
         [_uid("episode1"), _uid("episode3"), _uid("nonexistent_episode")],
     )
 
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "first president of the United States",
         num_episodes_limit=10,
     )
@@ -344,7 +344,7 @@ async def test_deleting_the_sessions_storage_deletes_its_episodes(
     await long_term_memory.add_episodes(episodes)
     await delete_long_term_memory_storage(_SESSION_CONFIG, resource_manager)
 
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "first president",
         num_episodes_limit=10,
     )
