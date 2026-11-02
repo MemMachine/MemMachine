@@ -77,7 +77,7 @@ on random-UUID collision resistance.
 ### Tenant lifecycle
 
 - **Create**: validate the logical key, mint an incarnation, insert the
-  registry row and re-check the purge queue in one transaction. No DDL, no
+  registry row, and re-check the purge queue in one transaction. No DDL, no
   management lock, microseconds. A committed row under the key raises the
   partition-exists error. Any other integrity rejection, or a minted
   incarnation found in the purge queue, is retried with a fresh incarnation

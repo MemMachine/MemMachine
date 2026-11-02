@@ -182,7 +182,7 @@ MemMachine’s nodes include tracing capabilities for debugging and monitoring, 
 | ------------------ | ------- | ---------------------------- | ------------------------------------------------------------------------------ |
 | tracingEnabled     | boolean | false                        | Whether to enable operation tracing.                                           |
 | traceFormat        | options | json                         | Format for trace output. Possible options: json or human.                      |
-| traceVerbosity     | options | normal                       | Level of detail in trace output. Possible options: minimal, normal or verbose. |
+| traceVerbosity     | options | normal                       | Level of detail in trace output. Possible options: minimal, normal, or verbose. |
 | exportToJaeger     | boolean | false                        | Whether to send traces to Jaeger.                                              |
 | jaegerOtlpEndpoint | string  | http://jaeger:4318/v1/traces | Jaeger OTLP HTTP endpoint URL.                                                 |
 
