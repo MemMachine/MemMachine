@@ -9,7 +9,6 @@ from uuid import UUID, uuid5
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
-from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import (
     ContentType,
     Episode,
@@ -29,11 +28,7 @@ from memmachine_server.common.property_keys import (
     validate_user_property_key,
 )
 from memmachine_server.common.reranker import Reranker
-from memmachine_server.common.vector_graph_store import VectorGraphStore
-from memmachine_server.episodic_memory.declarative_memory import (
-    DeclarativeMemory,
-    DeclarativeMemoryParams,
-)
+from memmachine_server.episodic_memory.declarative_memory import DeclarativeMemory
 from memmachine_server.episodic_memory.declarative_memory.data_types import (
     ContentType as DeclarativeMemoryContentType,
 )
@@ -48,7 +43,6 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
-    EventMemory,
     EventMemoryPartition,
 )
 
@@ -118,10 +112,10 @@ class DeclarativeBackendParams(BaseModel):
 
     backend: Literal["declarative"] = "declarative"
     session_id: str = Field(..., description="Session identifier")
-    vector_graph_store: InstanceOf[VectorGraphStore] = Field(...)
-    embedder: InstanceOf[Embedder] = Field(...)
-    reranker: InstanceOf[Reranker] = Field(...)
-    message_sentence_chunking: bool = Field(False)
+    declarative_memory: InstanceOf[DeclarativeMemory] = Field(
+        ...,
+        description="The session's DeclarativeMemory",
+    )
 
 
 class EventBackendParams(BaseModel):
@@ -129,15 +123,10 @@ class EventBackendParams(BaseModel):
 
     backend: Literal["event"] = "event"
     session_id: str = Field(..., description="Session identifier")
-    event_memory: InstanceOf[EventMemory] = Field(
-        ...,
-        description="EventMemory holding the session's partition",
-    )
     event_memory_partition: InstanceOf[EventMemoryPartition] = Field(
         ...,
         description="The session's EventMemory partition",
     )
-    partition_key: str = Field(...)
     episode_storage: InstanceOf[EpisodeStorage] = Field(
         ...,
         description="EpisodeStorage used to hydrate Episodes at query time",
@@ -163,9 +152,7 @@ class LongTermMemory:
 
         # Backend-specific state. Only the relevant slots are populated.
         self._declarative_memory: DeclarativeMemory | None = None
-        self._event_memory: EventMemory | None = None
         self._event_memory_partition: EventMemoryPartition | None = None
-        self._partition_key: str | None = None
         self._episode_storage: EpisodeStorage | None = None
         # Event backend only: whether scores from `EventMemoryPartition.query`
         # are higher-is-better. Matches the same derivation inside it
@@ -178,19 +165,9 @@ class LongTermMemory:
 
         match params:
             case DeclarativeBackendParams():
-                self._declarative_memory = DeclarativeMemory(
-                    DeclarativeMemoryParams(
-                        session_id=params.session_id,
-                        vector_graph_store=params.vector_graph_store,
-                        embedder=params.embedder,
-                        reranker=params.reranker,
-                        message_sentence_chunking=params.message_sentence_chunking,
-                    ),
-                )
+                self._declarative_memory = params.declarative_memory
             case EventBackendParams():
-                self._event_memory = params.event_memory
                 self._event_memory_partition = params.event_memory_partition
-                self._partition_key = params.partition_key
                 self._episode_storage = params.episode_storage
                 self._score_higher_is_better = (
                     params.reranker is not None
@@ -206,9 +183,9 @@ class LongTermMemory:
             )
             return
 
-        event_memory = self._require_event_backend_live()
+        assert self._event_memory_partition is not None
         events = [LongTermMemory._episode_to_event(episode) for episode in episodes]
-        await event_memory.encode_events(events)
+        await self._event_memory_partition.encode_events(events)
 
     async def search_scored(
         self,
@@ -287,7 +264,7 @@ class LongTermMemory:
         score_threshold: float | None,
         property_filter: FilterExpr | None,
     ) -> list[tuple[float, Episode]]:
-        event_memory = self._require_event_backend_live()
+        assert self._event_memory_partition is not None
         assert self._episode_storage is not None
         self._validate_event_backend_filter(property_filter)
         # `expand_context` is a window of segments, the unit EventMemory and
@@ -309,7 +286,7 @@ class LongTermMemory:
             num_episodes_limit * _EVENT_BACKEND_DEDUP_OVERFETCH,
             num_episodes_limit,
         )
-        result = await event_memory.query(
+        result = await self._event_memory_partition.query(
             query,
             vector_search_limit=vector_search_limit,
             expand_context=expand_context,
@@ -384,38 +361,9 @@ class LongTermMemory:
             await self._declarative_memory.delete_episodes(uids)
             return
 
-        event_memory = self._require_event_backend_live()
+        assert self._event_memory_partition is not None
         event_uuids = {uuid5(_EVENT_UUID_NAMESPACE, str(uid)) for uid in uids}
-        await event_memory.forget_events(event_uuids)
-
-    async def drop_session_partition(self) -> None:
-        """Delete all data for this session/partition.
-
-        On the event backend, this deletes the session's EventMemory
-        partition, and the instance is unusable afterward. Build a fresh
-        LongTermMemory to use the session again.
-        """
-        if self._backend == "declarative":
-            assert self._declarative_memory is not None
-            episodes = await self._declarative_memory.get_matching_episodes()
-            await self._declarative_memory.delete_episodes(
-                episode.uid for episode in episodes
-            )
-            return
-
-        assert self._event_memory is not None
-        assert self._partition_key is not None
-        await self._event_memory.delete_partition(self._partition_key)
-        # Drop references to the now-deleted resources so any further
-        # add_episodes / search_scored / delete_episodes calls raise
-        # rather than silently operating on stale handles.
-        self._event_memory = None
-        self._event_memory_partition = None
-
-    async def close(self) -> None:
-        # Backends do not own resources we can close at this layer; the
-        # ResourceManager handles SegmentStore/VectorStore lifecycle.
-        return
+        await self._event_memory_partition.forget_events(event_uuids)
 
     def _score_passes_threshold(
         self, score: float, score_threshold: float | None
@@ -431,17 +379,6 @@ class LongTermMemory:
         if self._score_higher_is_better:
             return score >= score_threshold
         return score <= score_threshold
-
-    def _require_event_backend_live(self) -> EventMemoryPartition:
-        """Return the EventMemory partition or raise if the instance was dropped."""
-        if self._event_memory_partition is None:
-            raise RuntimeError(
-                "LongTermMemory event backend is no longer usable: "
-                "drop_session_partition() deleted the session's partitions. "
-                "Construct a new LongTermMemory to operate "
-                "on this session again."
-            )
-        return self._event_memory_partition
 
     # --- Episode <-> declarative-memory translation (declarative backend) ---
 

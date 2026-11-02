@@ -145,11 +145,10 @@ async def test_add_memory_episode_when_closed(episodic_memory):
 
 
 @pytest.mark.asyncio
-async def test_close(episodic_memory, mock_short_term_memory, mock_long_term_memory):
+async def test_close(episodic_memory, mock_short_term_memory):
     """Test closing the episodic memory."""
     await episodic_memory.close()
     mock_short_term_memory.close.assert_awaited_once()
-    mock_long_term_memory.close.assert_awaited_once()
     assert episodic_memory._closed
 
 
@@ -174,18 +173,6 @@ async def test_delete_episodes(
     await episodic_memory.delete_episodes([uid1, uid2])
     mock_short_term_memory.delete_episode.assert_has_awaits([call(uid1), call(uid2)])
     mock_long_term_memory.delete_episodes.assert_awaited_once_with([uid1, uid2])
-
-
-@pytest.mark.asyncio
-async def test_delete_session_episodes(
-    episodic_memory,
-    mock_short_term_memory,
-    mock_long_term_memory,
-):
-    """Test deleting all episodes in a session."""
-    await episodic_memory.delete_session_episodes()
-    mock_short_term_memory.clear_memory.assert_awaited_once()
-    mock_long_term_memory.drop_session_partition.assert_awaited_once()
 
 
 @pytest.mark.asyncio

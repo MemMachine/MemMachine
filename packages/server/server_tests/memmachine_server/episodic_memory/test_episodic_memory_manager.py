@@ -1,13 +1,21 @@
 """Tests for the EpisodicMemoryManager class."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 import pytest_asyncio
 from pydantic import JsonValue
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from memmachine_server.common.configuration.episodic_config import EpisodicMemoryConf
+from memmachine_server.common.configuration import Configuration
+from memmachine_server.common.configuration.episodic_config import (
+    EpisodicMemoryConf,
+    EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
+    LongTermMemoryConfPartial,
+)
+from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.errors import (
     EpisodicMemoryManagerClosedError,
     SessionDeletedError,
@@ -20,6 +28,7 @@ from memmachine_server.common.session_manager.session_data_manager_sql_impl impo
     SessionDataManagerSQL,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
+from memmachine_server.common.vector_store import VectorStore
 from memmachine_server.episodic_memory.episodic_memory import (
     EpisodicMemory,
     EpisodicMemoryParams,
@@ -28,6 +37,7 @@ from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,
 )
+from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 
 
 @pytest_asyncio.fixture
@@ -414,10 +424,15 @@ async def test_open_episodic_memory_cached_instance(
 
 
 @pytest.mark.asyncio
+@patch(
+    "memmachine_server.episodic_memory.episodic_memory_manager.delete_episodic_memory_storage"
+)
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_delete_episodic_session_not_in_use(
     mock_episodic_memory_cls,
+    mock_delete_storage,
     manager: EpisodicMemoryManager,
+    mock_resource_manager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
 ):
@@ -438,17 +453,23 @@ async def test_delete_episodic_session_not_in_use(
 
     await manager.delete_episodic_session(session_key)
 
-    # Verify it's gone from cache and storage
+    # The idle instance is closed, and the storage is deleted by key.
     assert await manager._instance_cache.get(session_key) is None
-    mock_episodic_memory_instance.delete_session_episodes.assert_awaited_once()
     mock_episodic_memory_instance.close.assert_awaited_once()
+    mock_delete_storage.assert_awaited_once_with(
+        mock_episodic_memory_conf, mock_resource_manager
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("instance_cache_size", [0, 100])
+@patch(
+    "memmachine_server.episodic_memory.episodic_memory_manager.delete_episodic_memory_storage"
+)
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_delete_episodic_session_in_use_raises_error(
     mock_episodic_memory_cls,
+    mock_delete_storage,
     manager: EpisodicMemoryManager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
@@ -473,6 +494,7 @@ async def test_delete_episodic_session_in_use_raises_error(
         ):
             await manager.delete_episodic_session(session_key)
         assert await manager._instance_cache.get_ref_count(session_key) == 1
+        mock_delete_storage.assert_not_awaited()
 
     expected_ref_count = 0 if instance_cache_size else -1
     assert (
@@ -481,14 +503,19 @@ async def test_delete_episodic_session_in_use_raises_error(
 
     await manager.delete_episodic_session(session_key)
     assert await manager._instance_cache.get(session_key) is None
-    mock_episodic_memory_instance.delete_session_episodes.assert_awaited_once()
+    mock_delete_storage.assert_awaited_once()
 
 
 @pytest.mark.asyncio
+@patch(
+    "memmachine_server.episodic_memory.episodic_memory_manager.delete_episodic_memory_storage"
+)
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_delete_episodic_session_not_in_cache(
     mock_episodic_memory_cls,
+    mock_delete_storage,
     manager: EpisodicMemoryManager,
+    mock_resource_manager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
 ):
@@ -512,10 +539,54 @@ async def test_delete_episodic_session_not_in_cache(
 
     await manager.delete_episodic_session(session_key)
 
-    # Should load from storage to delete
-    mock_episodic_memory_cls.assert_called_once()
-    mock_episodic_memory_instance.delete_session_episodes.assert_awaited_once()
-    mock_episodic_memory_instance.close.assert_awaited_once()
+    # The storage is deleted by key from the stored configuration, without
+    # building the session's memory.
+    mock_episodic_memory_cls.assert_not_called()
+    mock_episodic_memory_instance.close.assert_not_awaited()
+    mock_delete_storage.assert_awaited_once_with(
+        mock_episodic_memory_conf, mock_resource_manager
+    )
+
+
+@pytest.mark.asyncio
+async def test_deleting_an_event_session_creates_none_of_its_partitions(
+    manager: EpisodicMemoryManager,
+    mock_session_storage,
+    mock_resource_manager,
+):
+    """A session with no open instance has its partitions deleted by key, never opened."""
+    session_key = "event_session"
+    mock_resource_manager.config = create_autospec(Configuration, instance=True)
+    mock_resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(
+        long_term_memory=LongTermMemoryConfPartial(
+            backend="event", vector_store="vs", segment_store="ss", embedder="e"
+        )
+    )
+    vector_store = create_autospec(VectorStore, instance=True)
+    segment_store = create_autospec(SegmentStore, instance=True)
+    embedder = create_autospec(Embedder, instance=True)
+    embedder.dimensions = 3
+    embedder.similarity_metric = SimilarityMetric.COSINE
+    mock_resource_manager.get_vector_store.return_value = vector_store
+    mock_resource_manager.get_segment_store.return_value = segment_store
+    mock_resource_manager.get_embedder.return_value = embedder
+    await mock_session_storage.create_or_validate_session(
+        session_key,
+        {},
+        EpisodicMemoryConf(
+            session_key=session_key,
+            long_term_memory=EventLongTermMemoryConf(session_id=session_key),
+        ),
+        "",
+        {},
+    )
+
+    await manager.delete_episodic_session(session_key)
+
+    vector_store.delete_partition.assert_awaited_once_with(session_key)
+    segment_store.delete_partition.assert_awaited_once_with(session_key)
+    vector_store.open_or_create_partition.assert_not_awaited()
+    segment_store.open_or_create_partition.assert_not_awaited()
 
 
 @pytest.mark.asyncio

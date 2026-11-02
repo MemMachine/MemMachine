@@ -8,8 +8,8 @@ Builds a LongTermMemory(EventBackendParams(...)) using:
 - a fake EpisodeStorage that satisfies the get_episode(uid) lookup used during
   search_scored hydration.
 
-Verifies that add_episodes / search_scored / delete_episodes /
-drop_session_partition all dispatch correctly through the event backend.
+Verifies that add_episodes / search_scored / delete_episodes all dispatch
+correctly through the event backend.
 """
 
 import logging
@@ -216,9 +216,7 @@ async def _event_backend_params(
     )
     return EventBackendParams(
         session_id="sess1",
-        event_memory=event_memory,
         event_memory_partition=await event_memory.open_or_create_partition("sess1"),
-        partition_key="sess1",
         episode_storage=episode_storage,
     )
 
@@ -333,35 +331,6 @@ async def test_delete_episodes_removes_from_event_memory(
     assert str(_uid("ep-1")) not in remaining_episode_uids
 
 
-async def test_drop_session_partition_calls_parent_lifecycle_hooks(
-    long_term_memory,
-    vector_store,
-    segment_store,
-):
-    await long_term_memory.drop_session_partition()
-    vector_store.delete_partition.assert_awaited_once_with("sess1")
-    segment_store.delete_partition.assert_awaited_once_with("sess1")
-    # Reclamation is the sweeper's; the delete path never purges.
-    segment_store.purge_deleted_partitions.assert_not_awaited()
-
-
-async def test_event_backend_unusable_after_drop_session_partition(
-    long_term_memory,
-    episodes,
-):
-    """After dropping the partition, the EventMemory partition handle points at
-    deleted resources. Reusing the LongTermMemory must fail loudly rather than
-    silently operate on a stale (or recreated) partition.
-    """
-    await long_term_memory.drop_session_partition()
-    with pytest.raises(RuntimeError, match="drop_session_partition"):
-        await long_term_memory.add_episodes(episodes)
-    with pytest.raises(RuntimeError, match="drop_session_partition"):
-        await long_term_memory.search_scored("anything", num_episodes_limit=1)
-    with pytest.raises(RuntimeError, match="drop_session_partition"):
-        await long_term_memory.delete_episodes([_uid("ep-1")])
-
-
 async def test_user_metadata_filter_round_trips(
     long_term_memory,
     fake_episode_storage,
@@ -465,11 +434,6 @@ async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
                 value="alice",
             ),
         )
-
-
-async def test_close_is_a_noop(long_term_memory):
-    # Should not raise.
-    await long_term_memory.close()
 
 
 async def test_unknown_bare_filter_field_raises(long_term_memory):

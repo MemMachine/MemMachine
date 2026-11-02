@@ -252,12 +252,8 @@ class EpisodicMemory:
         self._closed = True
         if not self._enabled:
             return
-        tasks = []
         if self._short_term_memory:
-            tasks.append(self._short_term_memory.close())
-        if self._long_term_memory:
-            tasks.append(self._long_term_memory.close())
-        await asyncio.gather(*tasks)
+            await self._short_term_memory.close()
 
     async def delete_episodes(self, uids: Iterable[UUID]) -> None:
         """Delete episodes by UID."""
@@ -276,17 +272,6 @@ class EpisodicMemory:
                 self._long_term_memory.delete_episodes(uids)
             )
         await asyncio.gather(*delete_episodes_coroutines)
-
-    async def delete_session_episodes(self) -> None:
-        """Delete all data from both session and declarative memory for this context."""
-        if not self._enabled:
-            return
-        tasks = []
-        if self._short_term_memory:
-            tasks.append(self._short_term_memory.clear_memory())
-        if self._long_term_memory:
-            tasks.append(self._long_term_memory.drop_session_partition())
-        await asyncio.gather(*tasks)
 
     class QueryResponse(BaseModel):
         """Aggregated search results from both long- and short-term memory."""

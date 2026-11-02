@@ -8,6 +8,7 @@ from memmachine_server.common.resource_manager import CommonResourceManager
 from .episodic_memory import EpisodicMemoryParams
 from .long_term_memory.long_term_memory import LongTermMemory
 from .long_term_memory.service_locator import (
+    delete_long_term_memory_storage,
     long_term_memory_params_from_config,
 )
 from .short_term_memory.service_locator import (
@@ -48,3 +49,15 @@ async def episodic_memory_params_from_config(
         short_term_memory=short_term_memory,
         enabled=config.enabled,
     )
+
+
+async def delete_episodic_memory_storage(
+    config: EpisodicMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """Delete a session's long-term memory storage, wherever its configuration builds long-term memory."""
+    if config.long_term_memory and config.long_term_memory_enabled:
+        await delete_long_term_memory_storage(
+            config.long_term_memory,
+            resource_manager,
+        )

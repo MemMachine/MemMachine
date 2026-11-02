@@ -5,6 +5,7 @@ These tests require a live Neo4j or NebulaGraph instance and are marked
 """
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import NonCallableMagicMock, create_autospec
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
@@ -12,14 +13,25 @@ import pytest_asyncio
 from neo4j import AsyncGraphDatabase
 from testcontainers.neo4j import Neo4jContainer
 
+from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
+)
 from memmachine_server.common.episode_store import Episode
+from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
     Neo4jVectorGraphStoreParams,
 )
+from memmachine_server.episodic_memory.declarative_memory import (
+    DeclarativeMemory,
+    DeclarativeMemoryParams,
+)
 from memmachine_server.episodic_memory.long_term_memory import (
     DeclarativeBackendParams,
     LongTermMemory,
+)
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    delete_long_term_memory_storage,
 )
 from server_tests.memmachine_server.conftest import (
     is_docker_available,
@@ -162,11 +174,34 @@ def long_term_memory(embedder, reranker, vector_graph_store):
     return LongTermMemory(
         DeclarativeBackendParams(
             session_id="test_session",
-            embedder=embedder,
-            reranker=reranker,
-            vector_graph_store=vector_graph_store,
+            declarative_memory=DeclarativeMemory(
+                DeclarativeMemoryParams(
+                    session_id="test_session",
+                    embedder=embedder,
+                    reranker=reranker,
+                    vector_graph_store=vector_graph_store,
+                ),
+            ),
         ),
     )
+
+
+@pytest.fixture(scope="module")
+def resource_manager(embedder, reranker, vector_graph_store) -> NonCallableMagicMock:
+    """A resource manager that hands out the memory's store and models."""
+    resource_manager = create_autospec(CommonResourceManager, instance=True)
+    resource_manager.get_vector_graph_store.return_value = vector_graph_store
+    resource_manager.get_embedder.return_value = embedder
+    resource_manager.get_reranker.return_value = reranker
+    return resource_manager
+
+
+_SESSION_CONFIG = DeclarativeLongTermMemoryConf(
+    session_id="test_session",
+    vector_graph_store="vector_graph_store",
+    embedder="embedder",
+    reranker="reranker",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -177,8 +212,8 @@ def setup_nltk_data():
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def clear_long_term_memory(long_term_memory):
-    await long_term_memory.drop_session_partition()
+async def clear_long_term_memory(resource_manager):
+    await delete_long_term_memory_storage(_SESSION_CONFIG, resource_manager)
     yield
 
 
@@ -281,7 +316,9 @@ async def test_delete_episodes(long_term_memory):
 
 @requires_sentence_transformers
 @pytest.mark.asyncio
-async def test_drop_session_partition(long_term_memory):
+async def test_deleting_the_sessions_storage_deletes_its_episodes(
+    long_term_memory, resource_manager
+):
     now = datetime.now(tz=UTC)
     episodes = [
         Episode(
@@ -305,7 +342,7 @@ async def test_drop_session_partition(long_term_memory):
     ]
 
     await long_term_memory.add_episodes(episodes)
-    await long_term_memory.drop_session_partition()
+    await delete_long_term_memory_storage(_SESSION_CONFIG, resource_manager)
 
     scored = await long_term_memory.search_scored(
         "first president",
