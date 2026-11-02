@@ -72,9 +72,9 @@ class SegmentStorePartition(ABC):
             max_forward_segments (int):
                 The maximum number of segments to include after each seed segment (default: 0).
             property_filter (FilterExpr | None):
-                A filter expression over the segments' properties, each
-                named `m.<key>` or `metadata.<key>`, and their `timestamp`
-                (default: None).
+                A filter expression over the segments' properties and
+                timestamp, its fields named as `normalize_filter_field`
+                reads them (default: None).
 
         Returns:
             dict[UUID, list[Segment]]:
@@ -84,7 +84,8 @@ class SegmentStorePartition(ABC):
 
         Raises:
             ValueError:
-                If `property_filter` names another field.
+                If `property_filter` names a field that is neither a
+                property nor the timestamp.
         """
         raise NotImplementedError
 

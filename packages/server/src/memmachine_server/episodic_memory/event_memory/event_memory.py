@@ -17,7 +17,6 @@ from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
     demangle_user_metadata_key,
     extract_filter,
-    filter_fields,
     map_filter_fields,
     normalize_filter_field,
 )
@@ -61,41 +60,6 @@ _EVENT_MEMORY_SYSTEM: Final[str] = "em"
 EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
     _EVENT_MEMORY_SYSTEM, "timestamp"
 )
-
-
-# The filter field naming the event's timestamp; any other field names a
-# property, as `m.<key>` or `metadata.<key>`.
-_TIMESTAMP_FIELD: Final[str] = "timestamp"
-
-
-def _validate_property_filter(property_filter: FilterExpr) -> None:
-    """
-    Raise ValueError unless every field of a filter names a property or the timestamp.
-
-    A filter names the memory's timestamp as `timestamp`, never by its
-    reserved key.
-    """
-    for field in filter_fields(property_filter):
-        if field == _TIMESTAMP_FIELD:
-            continue
-        key = _filter_field_property_key(field)
-        if key is None:
-            raise ValueError(
-                f"Filter field {field!r} names no property: a property is "
-                f"'m.<key>', and {_TIMESTAMP_FIELD!r} is the event's timestamp."
-            )
-        if is_reserved_property_key(key, system=_EVENT_MEMORY_SYSTEM):
-            raise ValueError(
-                f"Filter field {field!r} names a key reserved for the event memory."
-            )
-
-
-def _filter_field_property_key(field: str) -> str | None:
-    """The property key a filter field names; None when it names none."""
-    internal_name, is_user_metadata = normalize_filter_field(field)
-    if not is_user_metadata:
-        return None
-    return demangle_user_metadata_key(internal_name)
 
 
 class EventMemoryParams(BaseModel):
@@ -387,28 +351,21 @@ class EventMemory:
             properties=properties,
         )
 
-    def _vector_store_filter(self, property_filter: FilterExpr) -> FilterExpr | None:
-        """The part of a filter that names the timestamp or declared properties alone; None when there is none.
-
-        A vector record carries the event's timestamp and only the
-        properties the vector store declares, so a condition on any other
-        property is left to the segment store.
+    @classmethod
+    def _to_vector_record_property(cls, field: str) -> str:
         """
-        record_keys: dict[str, str] = {}
-        for field in filter_fields(property_filter):
-            key = (
-                EVENT_TIMESTAMP_KEY
-                if field == _TIMESTAMP_FIELD
-                else _filter_field_property_key(field)
-            )
-            if key is not None and key in self._schema_fields:
-                record_keys[field] = key
-        vector_store_filter = extract_filter(
-            property_filter, allowed_fields=record_keys.keys()
-        )
-        if vector_store_filter is None:
-            return None
-        return map_filter_fields(vector_store_filter, record_keys.__getitem__)
+        Translates canonical filter field name to vector record property.
+
+        The timestamp (`timestamp`) translates to its reserved key.
+        User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
+        Any other name translates unchanged.
+        """
+        internal_name, is_user_metadata = normalize_filter_field(field)
+        if is_user_metadata:
+            return demangle_user_metadata_key(internal_name)
+        if field == "timestamp":
+            return EVENT_TIMESTAMP_KEY
+        return field
 
     async def query(
         self,
@@ -434,8 +391,7 @@ class EventMemory:
                 around each matched segment for additional context
                 (default: 0).
             property_filter (FilterExpr | None):
-                A filter over the segments' properties, each named
-                `m.<key>` or `metadata.<key>`, and their `timestamp`
+                A filter over the segments' properties and timestamp
                 (default: None).
                 The vector search applies only the part of the filter
                 that names the timestamp or declared properties alone
@@ -450,15 +406,7 @@ class EventMemory:
             QueryResult:
                 The query result.
 
-        Raises:
-            ValueError:
-                If `property_filter` names a field that is neither a
-                property nor the timestamp, or a key reserved for the
-                memory.
-
         """
-        if property_filter is not None:
-            _validate_property_filter(property_filter)
         async with self._tracker("query"):
             return await self._query(
                 query,
@@ -492,7 +440,10 @@ class EventMemory:
         # property, gets the whole filter below and narrows it back.
         vector_store_filter = None
         if property_filter is not None:
-            vector_store_filter = self._vector_store_filter(property_filter)
+            vector_store_filter = extract_filter(
+                map_filter_fields(property_filter, self._to_vector_record_property),
+                allowed_fields=self._schema_fields,
+            )
 
         [query_result] = await self._vector_store_partition.query(
             query_vectors=[query_embedding],

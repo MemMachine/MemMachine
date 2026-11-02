@@ -1154,31 +1154,6 @@ class TestQueryWithFilter:
         )
         assert result.scored_segment_contexts == []
 
-    @pytest.mark.parametrize("field", ["context.producer", "episode_uid"])
-    async def test_a_filter_field_naming_no_property_is_refused(
-        self, event_memory: EventMemory, field: str
-    ):
-        """A property is named `m.<key>`; context is never filterable."""
-        event = _make_event("hi", context=ProducerContext(producer="Alice"))
-        await event_memory.encode_events([event])
-
-        with pytest.raises(ValueError, match="names no property"):
-            await event_memory.query(
-                "hi", property_filter=Comparison(field=field, op="=", value="Alice")
-            )
-
-    async def test_a_filter_on_the_memory_s_own_key_is_refused(
-        self, event_memory: EventMemory
-    ):
-        """The memory's own keys are not properties; the timestamp is `timestamp`."""
-        await event_memory.encode_events([_make_event("hi", timestamp=_ts(0))])
-        property_filter = Comparison(
-            field=f"m.{EVENT_TIMESTAMP_KEY}", op=">=", value=_ts(0)
-        )
-
-        with pytest.raises(ValueError, match="reserved for the event memory"):
-            await event_memory.query("hi", property_filter=property_filter)
-
 
 # ===================================================================
 # Queries with and without the vector store's part of the filter
