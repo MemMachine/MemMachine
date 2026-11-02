@@ -108,7 +108,7 @@ For a no-code approach, use the OpenClaw Gateway Dashboard to toggle features an
 | `orgId` | Organization ID | Your unique organization identifier. |
 | `projectId` | Project ID | Your unique project identifier. |
 | `userId` | Default User ID | User identifier used for scoping memories. |
-| `searchThreshold` | Search score Threshold | Minimum reranking score for search results (0-1). |
+| `searchThreshold` | Search score Threshold | Score cutoff for search results, applied in the direction of the similarity metric (a floor for higher-is-better metrics, a ceiling for distances). |
 | `topK` | Top K Results | Maximum number of memories to retrieve per turn. |
 
 <Note>

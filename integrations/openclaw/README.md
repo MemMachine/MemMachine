@@ -102,7 +102,7 @@ Here are the required configuration entries:
 - `autoRecall`: Enable automatic memory recall.
 - `orgId`: Organization identifier.
 - `projectId`: Project identifier.
-- `searchThreshold`: Minimum similarity score for recall.
+- `searchThreshold`: Score cutoff for recall, applied in the direction of the similarity metric (a floor for higher-is-better metrics, a ceiling for distances).
 - `topK`: Maximum number of memories to return.
 - `userId`: User identifier for memory scoping.
 
