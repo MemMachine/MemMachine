@@ -111,7 +111,7 @@
             "type": "object"
           }
         ],
-        "description": "Specification model for creating a new project.\n\nThe project ID must be unique for the authenticated user.\n",
+        "description": "Specification model for creating a new project.\n\nA project ID names one project for the authenticated user. Creating an\nexisting one again succeeds only when the configuration matches, as\ncreate_project describes.\n",
         "title": "CreateProjectSpec"
       },
       "DeleteEpisodicMemorySpec": {
@@ -122,10 +122,10 @@
           {
             "properties": {
               "episodic_ids": {
-                "description": "A list of unique IDs of episodic memories to delete.\n",
+                "description": "A list of unique IDs of episodic memories to delete.\nEpisodic memory IDs are UUIDs.\n",
                 "example": [
-                  "123",
-                  "345"
+                  "6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e",
+                  "0b8e7a52-91d4-4f3a-a6c2-5d9e1f7b3c08"
                 ],
                 "items": {
                   "type": "string"
@@ -232,6 +232,12 @@
             "description": "Role of the producer (e.g., user/assistant/system).",
             "title": "Producer Role",
             "type": "string"
+          },
+          "sequence_num": {
+            "default": 0,
+            "description": "Sequence number within the session.",
+            "title": "Sequence Num",
+            "type": "integer"
           },
           "session_key": {
             "description": "Session key associated with the episode.",
@@ -886,7 +892,7 @@
     },
     "/v2/memories": {
       "post": {
-        "description": "Add memory messages to a project.\n\nThe `types` field in the request specifies which memory types to add to:\n- If `types` is empty or not provided, memories are added to all types (episodic and semantic)\n- If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n- If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n- If `types` contains both, memories are added to both types\n\nEach memory message represents a discrete piece of information to be stored\nin the project's memory system. Messages can include content, metadata,\ntimestamps, and other contextual details.\n\nThe producer field indicates who created the message, while the\nproduced_for field specifies the intended recipient. These fields help\nprovide context for the memory and if provided should be user-friendly names.\n\nThe endpoint accepts a batch of messages to be added in a single request.\n",
+        "description": "Add memory messages to a project.\n\nThe `types` field in the request specifies which memory types to add to:\n- If `types` is empty or not provided, memories are added to all types (episodic and semantic)\n- If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n- If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n- If `types` contains both, memories are added to both types\n\nWhere semantic memory is disabled, a request whose `types` names only `\"semantic\"`\nis refused with a 400 saying so, and one that names episodic memory too is served\nfrom episodic memory alone.\n\nOnce a project is deleted, adds to it are refused with a 404 until it is created\nagain, which succeeds once its deletion has finished. An add to the default project\ncreates it again itself, once its deletion has finished; until then it fails with a\n503 whose message says the project is still being deleted.\n\nEach memory message represents a discrete piece of information to be stored\nin the project's memory system. Messages can include content, metadata,\ntimestamps, and other contextual details.\n\nThe producer field indicates who created the message, while the\nproduced_for field specifies the intended recipient. These fields help\nprovide context for the memory and if provided should be user-friendly names.\n\nThe endpoint accepts a batch of messages to be added in a single request.\n",
         "operationId": "AddMemories",
         "requestBody": {
           "content": {
@@ -955,7 +961,7 @@
     },
     "/v2/memories/list": {
       "post": {
-        "description": "List memories within a project.\n\nSystem returns a paginated list of memories stored in the project.\nThe page_size and page_num fields control pagination.\n\nThe filter field allows for filtering based on metadata key-value pairs.\nThe type field allows specifying which memory type to list.\n",
+        "description": "List memories within a project.\n\nSystem returns a paginated list of memories stored in the project.\nThe page_size and page_num fields control pagination.\n\nThe filter field allows for filtering based on metadata key-value pairs.\nThe type field allows specifying which memory type to list.\nWhere semantic memory is disabled, listing type `\"semantic\"` is refused with a 400\nsaying so.\n",
         "operationId": "ListMemories",
         "requestBody": {
           "content": {
@@ -993,7 +999,7 @@
     },
     "/v2/memories/search": {
       "post": {
-        "description": "Search memories within a project.\n\nSystem returns the top K relevant memories matching the natural language query.\nThe result is sorted by timestamp to help with context.\n\nThe filter field allows for filtering based on metadata key-value pairs.\nThe types field allows specifying which memory types to include in the search.\n",
+        "description": "Search memories within a project.\n\nSystem returns the top K relevant memories matching the natural language query.\nThe result is sorted by timestamp to help with context.\n\nThe filter field allows for filtering based on metadata key-value pairs.\nThe types field allows specifying which memory types to include in the search.\n\nWhere semantic memory is disabled, a request whose `types` names only `\"semantic\"`\nis refused with a 400 saying so, and one that names episodic memory too is served\nfrom episodic memory alone.\n",
         "operationId": "SearchMemories",
         "requestBody": {
           "content": {
@@ -1031,7 +1037,7 @@
     },
     "/v2/memories/semantic/delete": {
       "post": {
-        "description": "Delete semantic memories from a project.\n\nThis operation permanently removes one or more semantic memories from the\nspecified project. Provide `semantic_ids` with the list of memory IDs to delete.\nThis action cannot be undone.\n\nIf any of the specified semantic memories do not exist, a not-found error\nis returned for those entries.\n",
+        "description": "Delete semantic memories from a project.\n\nThis operation permanently removes one or more semantic memories from the\nspecified project. Provide `semantic_ids` with the list of memory IDs to delete.\nThis action cannot be undone.\n\nIDs that name no semantic memory are ignored, so repeating a delete succeeds.\nEach ID must be written as the list returns it: a decimal number with no sign,\nspaces or leading zeros. Any other ID gets a not-found error, and nothing is deleted.\nIf any ID names a semantic memory outside the specified project, a not-found\nerror is returned and nothing is deleted. Each ID is checked separately, so a\nvery large batch can time out with nothing deleted; splitting it into smaller\nrequests works.\n\nWhere semantic memory is disabled, every semantic delete is refused with a 400\nsaying so.\n",
         "operationId": "DeleteSemanticMemory",
         "requestBody": {
           "content": {
@@ -1060,36 +1066,9 @@
         }
       }
     },
-    "/v2/metrics": {
-      "get": {
-        "description": "Expose Prometheus metrics.",
-        "operationId": "Metrics",
-        "responses": {
-          "200": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Prometheus metrics"
-          },
-          "default": {
-            "$ref": "#/components/responses/UnexpectedError"
-          }
-        },
-        "security": [],
-        "summary": "Metrics",
-        "tags": [
-          "Metrics"
-        ],
-        "x-internal": true
-      }
-    },
     "/v2/projects": {
       "post": {
-        "description": "Create a new project.\n\nThis endpoint creates a new project with the given identifier and\nconfiguration. The `project_id` follows the rules: no slashes; only\nletters, numbers, underscores, hyphens, colon, and Unicode characters.\n\nEach project acts as an isolated memory namespace. All memories (episodes)\ninserted into a project belong exclusively to that project. Queries,\nlistings, and any background operations such as memory summarization or\nknowledge extraction only access data within the same project. No\ncross-project memory access is allowed.\n\nIf a project with the same ID already exists, the request will fail\nwith an error.\n\nReturns the fully resolved project record, including configuration defaults\napplied by the system.\n",
+        "description": "Create a new project.\n\nThis endpoint creates a new project with the given identifier and\nconfiguration. The `project_id` follows the rules: no slashes; only\nletters, numbers, underscores, hyphens, colon, and Unicode characters.\n\nEach project acts as an isolated memory namespace. All memories (episodes)\ninserted into a project belong exclusively to that project. Queries,\nlistings, and any background operations such as memory summarization or\nknowledge extraction only access data within the same project. No\ncross-project memory access is allowed.\n\nIf a project with the same ID already exists, the request succeeds when\nits configuration matches the existing project's. That project is left\nunchanged, its description included, although the response repeats the\ndescription the request sent. Otherwise the request fails with an error.\nCreating an ID again while that project's deletion is still pending fails\nwith a 503 whose message says the project is still being deleted; retry\nlater. The memory service itself answers such a create with a conflict or\na server error (MemMachine/MemMachine#1769), and a deletion can stay\npending until it restarts (MemMachine/MemMachine#1577).\n\nReturns the fully resolved project record, including configuration defaults\napplied by the system.\n",
         "operationId": "CreateProject",
         "requestBody": {
           "content": {
@@ -1127,7 +1106,7 @@
     },
     "/v2/projects/delete": {
       "post": {
-        "description": "Delete a project.\n\nDeletes the specified project identified by `project_id`.\n\nThis operation removes the project and all associated memories (episodes)\npermanently from the system. It cannot be undone.\n\nIf the project does not exist, a not-found error is returned.\n",
+        "description": "Delete a project.\n\nDeletes the specified project identified by `project_id`.\n\nThis operation removes the project and all associated memories (episodes)\npermanently from the system. It cannot be undone.\n\nDeleting a project that does not exist succeeds, so a failed delete can\nbe retried.\n",
         "operationId": "DeleteProject",
         "requestBody": {
           "content": {
