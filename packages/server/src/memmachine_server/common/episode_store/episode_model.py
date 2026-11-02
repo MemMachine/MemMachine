@@ -4,10 +4,12 @@ import datetime
 import json
 from collections.abc import Iterable
 from enum import Enum
+from typing import Annotated, get_args
 from uuid import UUID, uuid4
 
 from memmachine_common.api import EpisodeType
-from pydantic import AwareDatetime, BaseModel, Field, JsonValue
+from memmachine_common.api.spec import PropertyStr, validate_property_value
+from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
 
@@ -19,6 +21,16 @@ class ContentType(Enum):
     # Other content types like 'vector', 'image' could be added here.
 
 
+def _validate_metadata_property_values(
+    metadata: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
+    """Check the metadata values that are property values against their domain."""
+    for value in metadata.values():
+        if isinstance(value, get_args(PropertyValue)):
+            validate_property_value(value)
+    return metadata
+
+
 class EpisodeEntry(BaseModel):
     """Payload used when creating a new episode entry."""
 
@@ -26,13 +38,21 @@ class EpisodeEntry(BaseModel):
     uid: UUID = Field(default_factory=uuid4)
     content: str
 
-    producer_id: str
-    producer_role: str
+    producer_id: PropertyStr
+    producer_role: PropertyStr
 
-    produced_for_id: str | None = None
+    produced_for_id: PropertyStr | None = None
     episode_type: EpisodeType | None = None
-    metadata: dict[str, JsonValue] | None = None
-    created_at: AwareDatetime | None = None
+    metadata: (
+        Annotated[
+            dict[PropertyStr, JsonValue],
+            AfterValidator(_validate_metadata_property_values),
+        ]
+        | None
+    ) = None
+    created_at: (
+        Annotated[AwareDatetime, AfterValidator(validate_property_value)] | None
+    ) = None
 
 
 class EpisodeResponse(EpisodeEntry):
