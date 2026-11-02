@@ -60,7 +60,7 @@ cd evaluation/retrieval_agent
 
 ```yaml
 episode_store:
-  database: profile_storage
+  database: relational_db
   with_count_cache: true
 
 episodic_memory:
@@ -86,7 +86,7 @@ retrieval_agent:
 
 semantic_memory:
   enabled: false
-  config_database: profile_storage
+  config_database: relational_db
 
 resources:
   databases:
@@ -97,7 +97,7 @@ resources:
         user: neo4j
         password: neo4j_password
 
-    profile_storage:
+    relational_db:
       provider: postgres
       config:
         dialect: postgresql
@@ -135,7 +135,7 @@ resources:
         model_id: amazon.rerank-v1:0
 
 session_manager:
-  database: profile_storage
+  database: relational_db
 ```
 
 ---
@@ -227,7 +227,7 @@ session_manager:
 
 ```yaml
 episode_store:
-  database: profile_storage
+  database: relational_db
   with_count_cache: true
 
 episodic_memory:
@@ -253,7 +253,7 @@ retrieval_agent:
 
 semantic_memory:
   enabled: false
-  config_database: profile_storage
+  config_database: relational_db
 
 resources:
   databases:
@@ -264,7 +264,7 @@ resources:
         user: neo4j
         password: neo4j_password
 
-    profile_storage:
+    relational_db:
       provider: postgres
       config:
         dialect: postgresql
@@ -303,7 +303,7 @@ resources:
         model_id: amazon.rerank-v1:0
 
 session_manager:
-  database: profile_storage
+  database: relational_db
 ```
 
 ---
@@ -426,8 +426,8 @@ retrieval_agent:
 semantic_memory:
   llm_model: openai_compatible_model
   embedding_model: openai_compatible_embedder
-  database: profile_storage
-  config_database: profile_storage
+  database: relational_db
+  config_database: relational_db
 
 resources:
   databases:

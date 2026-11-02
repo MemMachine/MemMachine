@@ -37,7 +37,7 @@ For the `declarative` backend, start from `sample_configs/episodic_memory_config
 (or `.gpu.sample`) and update:
 - Replace `<YOUR_API_KEY>` with your OpenAI API key
 - Change database hosts from `localhost` to the service names `postgres` and `neo4j`
-- Under `profile_storage` (PostgreSQL), match `POSTGRES_*` in `.env`: set
+- Under `relational_db` (PostgreSQL), match `POSTGRES_*` in `.env`: set
   `user` and `db_name` to `memmachine` (or your `POSTGRES_USER` and
   `POSTGRES_DB`) and `password` to `$POSTGRES_PASSWORD`
 - Under the Neo4j store, set `user` to your `NEO4J_USER` (default `neo4j`) and
