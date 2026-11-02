@@ -710,6 +710,25 @@ class TestRoundTrips:
         assert "textbook:" in context_string
         assert "The mitochondria is the powerhouse of the cell." in context_string
 
+    async def test_split_event_renders_its_text_exactly(
+        self, event_memory: EventMemory
+    ):
+        """A context holding every segment of a split event renders its text."""
+        text = (
+            " ".join(f"Sentence number {i} ends here." for i in range(40))
+            + "\n\nA final paragraph.\n"
+        )
+        await event_memory.encode_events([_make_event(text, timestamp=_ts(0))])
+
+        result = await event_memory.query(
+            "sentence", vector_search_limit=1, expand_context=100
+        )
+        segments = EventMemory.build_query_result_context(result, max_num_segments=100)
+        context_string = EventMemory.string_from_segment_context(segments)
+
+        assert len(segments) > 1
+        assert json.dumps(text, ensure_ascii=False) in context_string
+
 
 # ===================================================================
 # Filtering round-trip tests
