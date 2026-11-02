@@ -279,7 +279,7 @@ async def test_a_query_deletes_the_unlinked_records_it_finds(
 
     result = await partition.query("hello")
 
-    assert len(result.scored_segment_contexts) == 1
+    assert len(result) == 1
     await asyncio.wait_for(vector_store_partition.deleted.wait(), 30)
     assert unlinked_uuid not in vector_store_partition.records
 
@@ -307,7 +307,7 @@ async def test_a_query_does_not_wait_for_its_cleanup_of_unlinked_records(
 
     result = await asyncio.wait_for(partition.query("hello"), 30)
 
-    assert len(result.scored_segment_contexts) == 1
+    assert len(result) == 1
     assert unlinked_uuid in vector_store_partition.records
     await asyncio.wait_for(event_memory.shutdown(), 30)
     assert event_memory._unlinked_record_deletions == set()
@@ -332,7 +332,7 @@ async def test_a_failed_cleanup_of_unlinked_records_leaves_the_query_answered(
 
     result = await partition.query("hello")
 
-    assert len(result.scored_segment_contexts) == 1
+    assert len(result) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -457,7 +457,7 @@ async def test_background_work_writes_the_derivatives_an_encode_left_pending(
     assert len(vector_store_partition.records) == 1
     assert not await event_memory._finish_pending_write()
     result = await partition.query("hello")
-    assert len(result.scored_segment_contexts) == 1
+    assert len(result) == 1
 
 
 async def test_background_work_retries_pending_writes_after_a_failed_write(

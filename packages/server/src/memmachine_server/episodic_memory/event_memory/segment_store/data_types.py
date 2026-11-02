@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, field_validator
 
+from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PayloadCodecConfig,
     PlaintextPayloadCodecConfig,
@@ -107,6 +108,9 @@ class PendingWrite(BaseModel):
             UUID of this record, chosen by its writer.
         event_uuid (UUID):
             UUID of the event the derivatives come from.
+        properties (dict[str, PropertyValue]):
+            The event's properties, which every one of its segments carries
+            and its derivatives' vector records take their declared keys from.
         derivatives (list[Derivative]):
             The derivatives.
     """
@@ -114,6 +118,13 @@ class PendingWrite(BaseModel):
     uuid: UUID = Field(..., description="UUID of this record, chosen by its writer")
     event_uuid: UUID = Field(
         ..., description="UUID of the event the derivatives come from"
+    )
+    properties: dict[str, PropertyValue] = Field(
+        ...,
+        description=(
+            "The event's properties, which every one of its segments carries "
+            "and its derivatives' vector records take their declared keys from"
+        ),
     )
     derivatives: list[Derivative] = Field(..., description="The derivatives")
 

@@ -178,11 +178,6 @@ async def event_memory_from_config(
     deployment = resource_manager.config.episodic_memory.long_term_memory
     assert deployment is not None
     embedder = await resource_manager.get_embedder(embedder_id, validate=True)
-    reranker = (
-        await resource_manager.get_reranker(deployment.reranker, validate=True)
-        if deployment.reranker is not None
-        else None
-    )
     return EventMemory(
         EventMemoryParams(
             segment_store=await resource_manager.get_segment_store(segment_store_id),
@@ -198,7 +193,6 @@ async def event_memory_from_config(
                 else WholeTextDeriverConf()
             ),
             embedder=embedder,
-            reranker=reranker,
             metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
         )
     )
