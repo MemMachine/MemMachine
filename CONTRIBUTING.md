@@ -130,7 +130,7 @@ break them.
 ## Documentation
 
 The documentation site's source is in `docs/`. [docs/README.md](docs/README.md)
-explains how to preview it locally.
+explains how to preview and check it locally.
 
 ## Pull Requests
 
