@@ -19,6 +19,7 @@ from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.session_manager.session_data_manager_sql_impl import (
     SessionDataManagerSQL,
 )
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.episodic_memory.episodic_memory import (
     EpisodicMemory,
     EpisodicMemoryParams,
@@ -33,6 +34,7 @@ from memmachine_server.episodic_memory.episodic_memory_manager import (
 async def db_engine():
     """Fixture for an in-memory SQLite async engine."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    enable_sqlite_explicit_begin(engine)
     yield engine
     await engine.dispose()
 

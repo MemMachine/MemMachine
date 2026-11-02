@@ -44,9 +44,8 @@ through SQLAlchemy. The backend keeps only records, each carrying the
 - `Reservation` and `Registration` are handles on one life of a partition (see
   [Reservations and registrations](#reservations-and-registrations)).
 - `SQLAlchemyVectorStorePartitionRegistry` is the one implementation. It
-  supports PostgreSQL and SQLite 3.35 or newer (for `RETURNING`), as the
-  segment store does, and its params refuse any other dialect or an older
-  SQLite.
+  supports PostgreSQL and SQLite 3.35 or newer (for `RETURNING`), and its
+  params refuse any other dialect or an older SQLite.
 - `RegistryBackedVectorStore` (`common/vector_store/registry_backed_vector_store.py`)
   is the base of the Qdrant and Milvus stores and makes every registry call
   they make: create, open-or-create, open, delete, the purge round, and a

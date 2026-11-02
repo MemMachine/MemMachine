@@ -586,6 +586,11 @@ class SqlAlchemyConf(MetricsFactoryIdMixin, YamlSerializableMixin, PasswordMixin
     def validate_sqlite(self) -> Self:
         if self.dialect == "sqlite" and not self.path:
             raise ValueError("SQLite requires a non-empty 'path'")
+        if self.dialect == "sqlite" and self.path == ":memory:":
+            raise ValueError(
+                "SQLite requires the 'path' of a database file: each connection "
+                "to in-memory SQLite gets a separate database"
+            )
         return self
 
 

@@ -34,6 +34,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     QueryResult,
     Record,
@@ -134,6 +135,7 @@ def any_qdrant_client(request):
 async def registry_engine(tmp_path):
     """The relational database holding the partition registry, one per test."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
+    enable_sqlite_explicit_begin(engine)
     yield engine
     await engine.dispose()
 
@@ -1871,6 +1873,8 @@ async def sqlite_registry_engines(tmp_path):
     """Two engines on one SQLite registry file, as two processes open it."""
     url = f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
     engines = [create_async_engine(url) for _ in range(2)]
+    for engine in engines:
+        enable_sqlite_explicit_begin(engine)
     yield engines
     for engine in engines:
         await engine.dispose()

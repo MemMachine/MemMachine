@@ -70,6 +70,11 @@ def test_sqlite_without_path_raises():
         SupportedDB.SQLITE.build_config({"uri": "sqlite.db"})
 
 
+def test_sqlite_in_memory_path_raises():
+    with pytest.raises(ValueError, match="in-memory SQLite"):
+        SupportedDB.SQLITE.build_config({"path": ":memory:"})
+
+
 def test_sqlite_with_path_succeeds():
     config = SupportedDB.SQLITE.build_config({"path": "sqlite.db"})
     assert isinstance(config, SqlAlchemyConf)
