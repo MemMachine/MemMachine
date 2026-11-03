@@ -178,7 +178,9 @@ class MemMachineMemory(BaseMemory):
             query: Search query string.
             user_id: Optional override for user ID in metadata.
             limit: Maximum number of results.
-            score_threshold: Minimum score to include in results.
+            score_threshold: Score cutoff for results, applied in the direction
+                of the similarity metric (a floor for higher-is-better metrics,
+                a ceiling for distances).
             filter_dict: Optional additional filters.
 
         Returns:

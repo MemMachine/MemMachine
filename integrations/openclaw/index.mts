@@ -93,7 +93,7 @@ const PluginConfigUiHints = {
   searchThreshold: {
     label: "Search Score Threshold",
     placeholder: "0.5",
-    help: "Minimum search score required for automatic recall and search results.",
+    help: "Search score cutoff for automatic recall and search results, applied in the direction of the similarity metric (a floor for higher-is-better metrics, a ceiling for distances).",
   },
   topK: {
     label: "Top K Results",
@@ -106,7 +106,7 @@ const MemorySearchSchema = Type.Object({
   query: Type.String({ description: "Search query" }),
   scope: Type.Optional(Type.Union([Type.Literal("session"), Type.Literal("all")])),
   limit: Type.Optional(Type.Number({ description: "Max results" })),
-  minScore: Type.Optional(Type.Number({ description: "Minimum score (0-1)" })),
+  minScore: Type.Optional(Type.Number({ description: "Score cutoff, applied in the direction of the similarity metric" })),
 });
 
 const MemoryStoreSchema = Type.Object({

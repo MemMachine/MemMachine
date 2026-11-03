@@ -96,7 +96,7 @@ Retrieves historical context to inject into an LLM prompt.
 | **types**             | multiOptions | -                  | **Required.** Memory types to use (episodic, semantic).      |
 | **query**             | String       | -                  | **Required.** Natural language query for semantic search.    |
 | **limit**             | Number       | 50                 | Maximum number of memory results to return.                  |
-| **scoreThreshold**    | Number       | -                  | Minimum relevance score required to include a memory.        |
+| **scoreThreshold**    | Number       | -                  | Score cutoff for a memory to be included, applied in the direction of the similarity metric (a floor for higher-is-better metrics, a ceiling for distances). |
 | **filter**            | String       | -                  | Filter expression to refine memory search results. Prefix user metadata fields with `m.` / `metadata.` (for example `m.user_id = '123'`). String literals must be single-quoted. Unknown or misspelled user metadata fields return a 400 error.           |
 | **expandContext**     | Number       | 0                  | Number of extra episodes to include for context.             |
 | **sessionId**         | String       | -                  | **Required.** Unique session identifier.                     |

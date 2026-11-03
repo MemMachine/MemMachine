@@ -108,7 +108,7 @@ The Main Node provides two actions: Store a message and Enrich with context.
   | limit           | number       | 50                       | Maximum number of results to return.                                       |
   | filter          | string       | -                        | Filter expression to refine memory search results. Prefix user metadata fields with `m.` / `metadata.` (for example `m.user_id = '123'`). String literals must be single-quoted. Unknown or misspelled user metadata fields now return a 400 error. |
   | expandContext   | number       | 0                        | Number of extra episodes to include for context.                           |
-  | scoreThreshold  | number       | -                        | Minimum relevance score required to include a memory.                      |
+  | scoreThreshold  | number       | -                        | Score cutoff for a memory to be included, applied in the direction of the similarity metric (a floor for higher-is-better metrics, a ceiling for distances). |
   | sessionId       | string       | -                        | **Required.** Unique session identifier.                                   |
   | groupId         | string       | default                  | **Required.** Unique group identifier.                                     |
   | agentId         | string       | -                        | **Required.** Unique AI agent identifier.                                  |

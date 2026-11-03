@@ -384,7 +384,9 @@ class Memory:
             limit: Maximum number of results to return
             expand_context: The number of additional episodes to include
                             around each matched episode from long term memory.
-            score_threshold: Minimum score to include in results.
+            score_threshold: Score cutoff for results, applied in the direction
+                of the similarity metric (a floor for higher-is-better metrics,
+                a ceiling for distances).
             filter_dict: Additional metadata filters for the search (key-value pairs as strings).
                         User metadata keys must be prefixed with `m.` / `metadata.`.
                         These filters will be merged with built-in filters from metadata.

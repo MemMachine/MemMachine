@@ -39,7 +39,7 @@ class QueryParam(BaseModel):
     query: str
     limit: int = 0
     expand_context: int = 0
-    score_threshold: float = -float("inf")
+    score_threshold: float | None = None
     property_filter: FilterExpr | None = None
     memory: InstanceOf[EpisodicMemory]
 

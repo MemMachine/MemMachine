@@ -47,7 +47,7 @@
     "searchThreshold": {
       "label": "Search Score Threshold",
       "placeholder": "0.5",
-      "help": "Minimum search score required for automatic recall and search results."
+      "help": "Search score cutoff for automatic recall and search results, applied in the direction of the similarity metric (a floor for higher-is-better metrics, a ceiling for distances)."
     },
     "topK": {
       "label": "Top K Results",
