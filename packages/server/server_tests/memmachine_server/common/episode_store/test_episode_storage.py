@@ -491,13 +491,10 @@ async def test_history_metadata_filter(episode_storage: EpisodeStorage):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "name", [*EPISODE_STORAGE_FILTER_FIELD_TYPES, "Producer_ID", "SESSION"]
-)
+@pytest.mark.parametrize("name", list(EPISODE_STORAGE_FILTER_FIELD_TYPES))
 async def test_history_filters_on_every_system_field(
     episode_storage: EpisodeStorage, name: str
 ):
-    """Every system field resolves, by a name of any case."""
     created_at = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
     uid = await create_history_entry(
         episode_storage,
@@ -523,11 +520,26 @@ async def test_history_filters_on_every_system_field(
     }
 
     results = await episode_storage.get_episode_messages(
-        filter_expr=Equals(SystemField(name), values[name.lower()])
+        filter_expr=Equals(SystemField(name), values[name])
     )
     assert [entry.uid for entry in results] == [uid]
 
     await episode_storage.delete_episodes([uid])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["Producer_ID", "SESSION", "Created_At"])
+async def test_history_refuses_a_system_field_name_of_another_case(
+    episode_storage: EpisodeStorage, name: str
+):
+    with pytest.raises(ValueError, match=f"Unknown filter field: {name!r}"):
+        await episode_storage.get_episode_messages(
+            filter_expr=Equals(SystemField(name), "alice")
+        )
+    with pytest.raises(ValueError, match=f"Unknown filter field: {name!r}"):
+        await episode_storage.get_episode_messages_count(
+            filter_expr=Equals(SystemField(name), "alice")
+        )
 
 
 @pytest.mark.asyncio
