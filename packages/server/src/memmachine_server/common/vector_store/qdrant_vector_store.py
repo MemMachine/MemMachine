@@ -43,6 +43,7 @@ from .registry_backed_vector_store import (
     RegistryBackedVectorStoreParams,
     RegistryBackedVectorStorePartition,
 )
+from .utils import property_key
 
 # Point payload keys (stored on every Qdrant point).
 # System keys start with _SYSTEM_KEY_PREFIX, whose hyphen no property key may
@@ -92,8 +93,9 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
             case Equals() | Ordering() | In():
                 return QdrantVectorStorePartition._leaf_filter(expr)
             case IsNull(field):
+                key = property_key(field)
                 return models.Filter(
-                    must=[QdrantVectorStorePartition._missing_condition(field)]
+                    must=[QdrantVectorStorePartition._missing_condition(key)]
                 )
             case Not(operand):
                 return models.Filter(must_not=[build(operand)])
@@ -105,16 +107,17 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
     @staticmethod
     def _leaf_filter(expr: Equals | Ordering | In) -> models.Filter:
         """The leaf as a Qdrant Filter."""
+        key = property_key(expr.field)
         match expr:
-            case Equals(field, value):
-                condition = QdrantVectorStorePartition._eq_condition(field, value)
-            case Ordering(field, op, value):
+            case Equals(value=value):
+                condition = QdrantVectorStorePartition._eq_condition(key, value)
+            case Ordering(op=op, value=value):
                 condition = QdrantVectorStorePartition._range_condition(
-                    field, value, QdrantVectorStorePartition._RANGE_OPERATORS[op]
+                    key, value, QdrantVectorStorePartition._RANGE_OPERATORS[op]
                 )
-            case In(field, values):
+            case In(values=values):
                 condition = models.FieldCondition(
-                    key=field, match=models.MatchAny(any=list(values))
+                    key=key, match=models.MatchAny(any=list(values))
                 )
         return models.Filter(must=[condition])
 

@@ -17,6 +17,7 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    SystemField,
 )
 from memmachine_server.common.metrics_factory.prometheus_metrics_factory import (
     PrometheusMetricsFactory,
@@ -1608,6 +1609,13 @@ async def test__create_vector_index_if_not_exists(
     updated_indexes = {record["name"] for record in records}
 
     assert len(updated_indexes) == len(existing_indexes) + 8
+
+
+def test_a_filter_on_a_system_field_is_refused():
+    with pytest.raises(ValueError, match="system field 'uid'"):
+        Neo4jVectorGraphStore._render_filter_expr(
+            "n", "filter_params", Equals(SystemField("uid"), "x")
+        )
 
 
 def test__sanitize_desanitize_name():

@@ -15,13 +15,14 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
+    SystemField,
     extract_filter,
     filter_fields,
     map_filter_fields,
 )
 from memmachine_server.common.filter.filter_parser import (
     FilterParseError,
-    normalize_filter_field,
     parse_filter,
     to_property_filter,
 )
@@ -474,38 +475,33 @@ def test_parse_filter_not_without_in_raises() -> None:
         parse_filter("status NOT 'CLOSED'")
 
 
-# --- normalize_filter_field tests ---
+# --- field reference tests ---
 
 
-def test_normalize_filter_field_user_property_m_prefix() -> None:
-    internal_name, is_user_property = normalize_filter_field("m.foo")
-    assert internal_name == "metadata.foo"
-    assert is_user_property is True
+@pytest.mark.parametrize(
+    ("spec", "field"),
+    [
+        ("m.foo = 1", Property("foo")),
+        ("metadata.foo = 1", Property("foo")),
+        ("m.MyKey = 1", Property("MyKey")),
+        ("metadata.m.foo = 1", Property("m.foo")),
+        ("producer_id = 1", SystemField("producer_id")),
+        ("Producer_Id = 1", SystemField("Producer_Id")),
+        ("context.producer = 1", SystemField("context.producer")),
+    ],
+)
+def test_a_field_name_resolves_to_a_property_or_a_system_field(
+    spec: str, field: SystemField | Property
+) -> None:
+    """A property prefix names the property after it; any other name is a system field, as written."""
+    assert parse_filter(spec) == Equals(field, 1)
 
 
-def test_normalize_filter_field_user_property_metadata_prefix() -> None:
-    internal_name, is_user_property = normalize_filter_field("metadata.bar")
-    assert internal_name == "metadata.bar"
-    assert is_user_property is True
-
-
-def test_normalize_filter_field_system_field() -> None:
-    internal_name, is_user_property = normalize_filter_field("producer_id")
-    assert internal_name == "producer_id"
-    assert is_user_property is False
-
-
-def test_normalize_filter_field_system_field_with_underscore() -> None:
-    internal_name, is_user_property = normalize_filter_field("producer_role")
-    assert internal_name == "producer_role"
-    assert is_user_property is False
-
-
-def test_normalize_filter_field_preserves_case() -> None:
-    # User property keys should preserve their original case
-    internal_name, is_user_property = normalize_filter_field("m.MyKey")
-    assert internal_name == "metadata.MyKey"
-    assert is_user_property is True
+def test_legacy_mapping_keys_a_property_by_its_key() -> None:
+    assert to_property_filter(parse_filter("m.topic = alpha AND owner = bob")) == {
+        "topic": "alpha",
+        "owner": "bob",
+    }
 
 
 # --- map_filter_fields tests ---
@@ -575,17 +571,6 @@ def test_parse_filter_in_rejects_float() -> None:
 def test_parse_filter_in_rejects_mixed_types() -> None:
     with pytest.raises(FilterParseError, match="Mixed types in IN list"):
         parse_filter("x IN (1, 'two')")
-
-
-def test_map_filter_fields_with_normalize() -> None:
-    """Test map_filter_fields combined with normalize_filter_field."""
-    expr = And(
-        (Equals(field="m.foo", value="bar"), Equals(field="producer_id", value="alice"))
-    )
-    result = map_filter_fields(expr, lambda f: normalize_filter_field(f)[0])
-    assert isinstance(result, And)
-    assert result.operands[0] == Equals(field="metadata.foo", value="bar")
-    assert result.operands[1] == Equals(field="producer_id", value="alice")
 
 
 def test_filter_fields_names_every_field_under_every_node() -> None:

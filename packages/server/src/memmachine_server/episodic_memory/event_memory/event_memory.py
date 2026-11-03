@@ -19,12 +19,10 @@ from memmachine_server.common.data_types import (
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter import (
     FilterExpr,
+    Property,
+    SystemField,
     extract_filter,
     map_filter_fields,
-)
-from memmachine_server.common.filter.filter_parser import (
-    demangle_user_metadata_key,
-    normalize_filter_field,
 )
 from memmachine_server.common.metrics_factory import (
     MetricsFactory,
@@ -674,22 +672,6 @@ class EventMemoryPartition:
             properties=properties,
         )
 
-    @classmethod
-    def _to_vector_record_property(cls, field: str) -> str:
-        """
-        Translates canonical filter field name to vector record property.
-
-        Event memory base properties (`foo`) translate to their reserved keys.
-        User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
-        Any other name translates unchanged.
-        """
-        internal_name, is_user_metadata = normalize_filter_field(field)
-        if is_user_metadata:
-            return demangle_user_metadata_key(internal_name)
-        if field == "timestamp":
-            return EVENT_TIMESTAMP_KEY
-        return field
-
     async def query(
         self,
         query: str,
@@ -730,6 +712,11 @@ class EventMemoryPartition:
             QueryResult:
                 The query result.
 
+        Raises:
+            ValueError:
+                If the filter names a system field the memory does not
+                define.
+
         """
         async with self._tracker("query"):
             return await self._query(
@@ -765,8 +752,8 @@ class EventMemoryPartition:
         vector_store_filter = None
         if property_filter is not None:
             vector_store_filter = extract_filter(
-                map_filter_fields(property_filter, self._to_vector_record_property),
-                allowed_fields=self._schema_fields,
+                map_filter_fields(property_filter, self._vector_record_field),
+                allowed_fields={Property(key) for key in self._schema_fields},
             )
 
         [query_result] = await self._vector_store_partition.query(
@@ -879,6 +866,20 @@ class EventMemoryPartition:
                 self._query_phase_seconds.observe(duration, labels={"phase": phase})
 
         return QueryResult(scored_segment_contexts=scored_segment_contexts)
+
+    @staticmethod
+    def _vector_record_field(field: SystemField | Property) -> Property:
+        """The vector record property a filter's field compares: an event memory base field's reserved key, or the property itself."""
+        match field:
+            case SystemField(name="timestamp"):
+                return Property(EVENT_TIMESTAMP_KEY)
+            case Property():
+                return field
+            case SystemField(name=name):
+                raise ValueError(
+                    f"EventMemory filters on properties and the timestamp only, "
+                    f"not the system field {name!r}"
+                )
 
     async def _score_segment_contexts(
         self,

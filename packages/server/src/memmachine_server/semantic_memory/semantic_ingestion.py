@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, InstanceOf, TypeAdapter
 
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import Episode, EpisodeStorage
-from memmachine_server.common.filter import And, Equals
+from memmachine_server.common.filter import And, Equals, SystemField
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.semantic_memory.semantic_llm import (
     LLMReducedFeature,
@@ -217,8 +217,10 @@ class IngestionService:
             for message in messages:
                 filter_expr = And(
                     (
-                        Equals(field="set_id", value=set_id),
-                        Equals(field="category", value=semantic_category.name),
+                        Equals(field=SystemField("set_id"), value=set_id),
+                        Equals(
+                            field=SystemField("category"), value=semantic_category.name
+                        ),
                     )
                 )
 
@@ -325,10 +327,12 @@ class IngestionService:
                 case SemanticCommandType.DELETE:
                     filter_expr = And(
                         (
-                            Equals(field="set_id", value=set_id),
-                            Equals(field="category_name", value=category_name),
-                            Equals(field="feature", value=command.feature),
-                            Equals(field="tag", value=command.tag),
+                            Equals(field=SystemField("set_id"), value=set_id),
+                            Equals(
+                                field=SystemField("category_name"), value=category_name
+                            ),
+                            Equals(field=SystemField("feature"), value=command.feature),
+                            Equals(field=SystemField("tag"), value=command.tag),
                         )
                     )
 
@@ -350,8 +354,10 @@ class IngestionService:
         ) -> None:
             filter_expr = And(
                 (
-                    Equals(field="set_id", value=set_id),
-                    Equals(field="category_name", value=semantic_category.name),
+                    Equals(field=SystemField("set_id"), value=set_id),
+                    Equals(
+                        field=SystemField("category_name"), value=semantic_category.name
+                    ),
                 )
             )
 

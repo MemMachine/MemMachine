@@ -36,6 +36,7 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    SystemField,
 )
 from memmachine_server.common.filter.filter_parser import (
     parse_filter,
@@ -693,7 +694,7 @@ async def test_a_filter_on_the_context_is_refused(
     )
     await partition.add_segments(_links(s0))
 
-    filt = Equals(field=field, value="Alice")
+    filt = Equals(field=SystemField(field), value="Alice")
     with pytest.raises(ValueError, match="names no segment property"):
         await partition.get_segment_contexts(
             [s0.uuid],

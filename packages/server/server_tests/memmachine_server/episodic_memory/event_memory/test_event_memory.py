@@ -21,6 +21,8 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
+    SystemField,
     map_filter_fields,
 )
 from memmachine_server.common.property_keys import reserved_property_key
@@ -1195,6 +1197,23 @@ class TestQueryWithFilter:
             property_filter=Equals(field="m.color", value="purple"),
         )
         assert result.scored_segment_contexts == []
+
+    async def test_a_system_field_other_than_the_timestamp_raises(
+        self, event_memory_partition: EventMemoryPartition
+    ):
+        event = _make_event("hi", context=ProducerContext(producer="Alice"))
+        await event_memory_partition.encode_events([event])
+
+        with pytest.raises(ValueError, match=r"system field 'context\.producer'"):
+            await event_memory_partition.query(
+                "hi",
+                property_filter=Or(
+                    (
+                        Equals(Property("color"), "red"),
+                        Equals(SystemField("context.producer"), "Alice"),
+                    )
+                ),
+            )
 
 
 # ===================================================================

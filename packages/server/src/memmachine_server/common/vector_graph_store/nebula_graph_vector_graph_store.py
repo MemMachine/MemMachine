@@ -32,6 +32,8 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
+    SystemField,
 )
 
 from .data_types import (
@@ -1522,8 +1524,17 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
         if filter_expr is None:
             return ""
 
-        def prop_ref(field: str) -> str:
-            return f"{node_alias}.{self._sanitize_name(mangle_property_name(field))}"
+        def prop_ref(field: SystemField | Property) -> str:
+            match field:
+                case Property(key=key):
+                    return (
+                        f"{node_alias}.{self._sanitize_name(mangle_property_name(key))}"
+                    )
+                case SystemField(name=name):
+                    raise ValueError(
+                        f"A graph store filters on properties only, "
+                        f"not the system field {name!r}"
+                    )
 
         def render(expr: FilterExpr) -> str:
             match expr:

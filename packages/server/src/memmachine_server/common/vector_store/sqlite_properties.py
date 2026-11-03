@@ -43,6 +43,8 @@ from memmachine_server.common.filter import (
 from memmachine_server.common.filter.sql_filter_util import ORDERING_OPS
 from memmachine_server.common.utils import ensure_tz_aware
 
+from .utils import property_key
+
 PROPERTY_COLUMN_PREFIX = "p_"
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -133,7 +135,7 @@ def compile_property_filter(expr: FilterExpr, table: Table) -> ColumnElement[boo
 def _compile_leaf(
     expr: Equals | Ordering | In | IsNull, table: Table
 ) -> ColumnElement[bool]:
-    column = table.c[property_column_name(expr.field)]
+    column = table.c[property_column_name(property_key(expr.field))]
     match expr:
         case IsNull():
             return column.is_(None)

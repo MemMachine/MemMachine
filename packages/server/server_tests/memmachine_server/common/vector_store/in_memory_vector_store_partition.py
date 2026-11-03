@@ -19,6 +19,8 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store import (
@@ -57,35 +59,59 @@ def _same_type(held: PropertyValue, value: PropertyValue) -> bool:
     return type(held) is type(value)
 
 
-def evaluate_filter(expr: FilterExpr, properties: Mapping[str, PropertyValue]) -> bool:
-    """Evaluate a FilterExpr against a properties mapping, by the language's semantics."""
+def evaluate_filter(
+    expr: FilterExpr,
+    properties: Mapping[str, PropertyValue],
+    system_fields: Mapping[str, PropertyValue] | None = None,
+) -> bool:
+    """
+    Evaluate a FilterExpr against a record's properties, by the language's semantics.
+
+    A system field compares the record's value in `system_fields`; one the
+    record does not have raises ValueError, as a store refuses a system field
+    it does not define.
+    """
     match expr:
         case Equals(field, value):
-            held = properties.get(field)
+            held = _held(field, properties, system_fields)
             return (
                 held is not None
                 and _same_type(held, value)
                 and _comparable(held) == _comparable(value)
             )
         case Ordering(field, op, value):
-            held = properties.get(field)
+            held = _held(field, properties, system_fields)
             if held is None or not _same_type(held, value):
                 return False
             return bool(_ORDERING_OPS[op](_comparable(held), _comparable(value)))
         case In(field, values):
-            held = properties.get(field)
+            held = _held(field, properties, system_fields)
             return any(
                 held is not None and _same_type(held, value) and held == value
                 for value in values
             )
         case IsNull(field):
-            return field not in properties
+            return _held(field, properties, system_fields) is None
         case And(operands):
-            return all(evaluate_filter(o, properties) for o in operands)
+            return all(evaluate_filter(o, properties, system_fields) for o in operands)
         case Or(operands):
-            return any(evaluate_filter(o, properties) for o in operands)
+            return any(evaluate_filter(o, properties, system_fields) for o in operands)
         case Not(operand):
-            return not evaluate_filter(operand, properties)
+            return not evaluate_filter(operand, properties, system_fields)
+
+
+def _held(
+    field: SystemField | Property,
+    properties: Mapping[str, PropertyValue],
+    system_fields: Mapping[str, PropertyValue] | None,
+) -> PropertyValue | None:
+    match field:
+        case Property(key=key):
+            return properties.get(key)
+        case SystemField(name=name):
+            if system_fields is None or name not in system_fields:
+                raise ValueError(f"No system field {name!r}")
+            return system_fields[name]
 
 
 # ---------------------------------------------------------------------------

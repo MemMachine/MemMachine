@@ -36,10 +36,8 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
-)
-from memmachine_server.common.filter.filter_parser import (
-    demangle_user_metadata_key,
-    normalize_filter_field,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.session_manager.session_data_manager import (
@@ -339,25 +337,26 @@ class ShortTermMemory:
             case Not(operand):
                 return not self._check_filter(episode, operand)
 
-    def _resolve_field(self, episode: Episode, field: str) -> PropertyValue | None:
-        """Resolve a field name to its value from an episode."""
-        internal_name, is_user_metadata = normalize_filter_field(field)
-        if is_user_metadata:
-            key = demangle_user_metadata_key(internal_name)
-            if episode.filterable_metadata and isinstance(
-                episode.filterable_metadata, dict
-            ):
-                return episode.filterable_metadata.get(key)
-            return None
-        match internal_name:
-            case "producer_id":
+    def _resolve_field(
+        self, episode: Episode, field: SystemField | Property
+    ) -> PropertyValue | None:
+        """Resolve a field to its value from an episode."""
+        match field:
+            case Property(key=key):
+                if episode.filterable_metadata and isinstance(
+                    episode.filterable_metadata, dict
+                ):
+                    return episode.filterable_metadata.get(key)
+                return None
+            case SystemField(name="producer_id"):
                 return episode.producer_id
-            case "produced_for_id":
+            case SystemField(name="produced_for_id"):
                 return episode.produced_for_id
-            case "producer_role":
+            case SystemField(name="producer_role"):
                 return episode.producer_role
-        logger.warning("Unsupported filter field: %s", field)
-        return None
+            case SystemField(name=name):
+                logger.warning("Unsupported filter field: %s", name)
+                return None
 
     def _compare(
         self,

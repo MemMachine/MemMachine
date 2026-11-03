@@ -44,11 +44,7 @@ from memmachine_server.common.errors import (
     ConfigurationError,
     InvalidArgumentError,
 )
-from memmachine_server.common.filter import FilterExpr
-from memmachine_server.common.filter.filter_parser import (
-    demangle_user_metadata_key,
-    normalize_filter_field,
-)
+from memmachine_server.common.filter import FilterExpr, Property, SystemField
 from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
@@ -325,34 +321,33 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
     @staticmethod
     def _resolve_episode_field(
-        field: str,
+        field: SystemField | Property,
     ) -> tuple[ColumnElement, FieldEncoding]:
-        internal_name, is_user_metadata = normalize_filter_field(field)
-        if is_user_metadata:
-            key = demangle_user_metadata_key(internal_name)
-            return Episode.json_metadata[key], "json"
+        match field:
+            case Property(key=key):
+                return Episode.json_metadata[key], "json"
+            case SystemField(name=name):
+                # Check for system field mappings (case-insensitive)
+                normalized = name.lower()
+                field_mapping: dict[str, ColumnElement] = {
+                    "uid": Episode.uid.expression,
+                    "id": Episode.uid.expression,
+                    "session_key": Episode.session_key.expression,
+                    "session": Episode.session_key.expression,
+                    "producer_id": Episode.producer_id.expression,
+                    "producer_role": Episode.producer_role.expression,
+                    "produced_for_id": Episode.produced_for_id.expression,
+                    "episode_type": Episode.episode_type.expression,
+                    "content": Episode.content.expression,
+                    "created_at": Episode.created_at.expression,
+                }
 
-        # Check for system field mappings (case-insensitive)
-        normalized = internal_name.lower()
-        field_mapping: dict[str, ColumnElement] = {
-            "uid": Episode.uid.expression,
-            "id": Episode.uid.expression,
-            "session_key": Episode.session_key.expression,
-            "session": Episode.session_key.expression,
-            "producer_id": Episode.producer_id.expression,
-            "producer_role": Episode.producer_role.expression,
-            "produced_for_id": Episode.produced_for_id.expression,
-            "episode_type": Episode.episode_type.expression,
-            "content": Episode.content.expression,
-            "created_at": Episode.created_at.expression,
-        }
+                if normalized in field_mapping:
+                    return field_mapping[normalized], (
+                        "uuid" if normalized in {"uid", "id"} else "column"
+                    )
 
-        if normalized in field_mapping:
-            return field_mapping[normalized], (
-                "uuid" if normalized in {"uid", "id"} else "column"
-            )
-
-        raise ValueError(f"Unknown filter field: {field!r}")
+                raise ValueError(f"Unknown filter field: {name!r}")
 
     @timed("get_episode_messages")
     async def get_episode_messages(

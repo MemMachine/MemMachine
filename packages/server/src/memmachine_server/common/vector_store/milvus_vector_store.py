@@ -42,6 +42,7 @@ from .registry_backed_vector_store import (
     RegistryBackedVectorStoreParams,
     RegistryBackedVectorStorePartition,
 )
+from .utils import property_key
 
 _COLLECTION_NAME_PREFIX = "sys_"
 """The prefix of the native collection's name, before the vector store name.
@@ -127,7 +128,7 @@ def _condition_expression(expr: Equals | Ordering | In) -> str:
     values = list(expr.values) if isinstance(expr, In) else [expr.value]
     if not values:
         return _FALSE_EXPR
-    target = f"{_DECLARED_FIELD_PREFIX}{expr.field}"
+    target = f"{_DECLARED_FIELD_PREFIX}{property_key(expr.field)}"
     match expr:
         case In():
             return f"{target} in [{', '.join(_declared_property_value_literal(value) for value in values)}]"
@@ -156,12 +157,12 @@ def _filter_expression(expr: FilterExpr, *, negate: bool = False) -> str:
                 for operand in operands
             )
         case IsNull(field):
-            absent = _property_absent_expression(field)
+            absent = _property_absent_expression(property_key(field))
             return f"not ({absent})" if negate else absent
         case Equals() | Ordering() | In():
             condition = _condition_expression(expr)
             if negate:
-                return f"(not ({condition})) || ({_property_absent_expression(expr.field)})"
+                return f"(not ({condition})) || ({_property_absent_expression(property_key(expr.field))})"
             return condition
 
 

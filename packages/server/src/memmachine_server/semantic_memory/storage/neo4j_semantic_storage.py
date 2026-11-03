@@ -35,6 +35,8 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.neo4j_utils import (
     coerce_datetime_to_timestamp,
@@ -1113,7 +1115,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         if expr is None:
             return None
 
-        values = self._collect_field_values(expr, target_field="set_id")
+        values = self._collect_field_values(expr, target_field=SystemField("set_id"))
         if values is None:
             return None
         return [str(v) for v in values]
@@ -1122,7 +1124,7 @@ class Neo4jSemanticStorage(SemanticStorage):
         self,
         expr: FilterExpr,
         *,
-        target_field: str,
+        target_field: SystemField,
     ) -> set[str] | None:
         match expr:
             case Equals(field, value):
@@ -1212,19 +1214,20 @@ class Neo4jSemanticStorage(SemanticStorage):
     def _resolve_field_reference(
         self,
         alias: str,
-        field: str,
+        field: SystemField | Property,
     ) -> tuple[str, Callable[[FilterValue], Any] | None]:
-        if field in {"created_at", "created_at_ts"}:
-            return f"{alias}.created_at_ts", coerce_datetime_to_timestamp
-        if field in {"updated_at", "updated_at_ts"}:
-            return f"{alias}.updated_at_ts", coerce_datetime_to_timestamp
-        if field.startswith(("m.", "metadata.")):
-            key = field.split(".", 1)[1]
-            prop_name = self._metadata_property_name(key)
-            return f"{alias}.{prop_name}", None
-        if field in self._KNOWN_FIELDS:
-            return f"{alias}.{field}", None
-        raise ValueError(f"Unknown filter field: {field!r}")
+        match field:
+            case Property(key=key):
+                prop_name = self._metadata_property_name(key)
+                return f"{alias}.{prop_name}", None
+            case SystemField(name=name):
+                if name in {"created_at", "created_at_ts"}:
+                    return f"{alias}.created_at_ts", coerce_datetime_to_timestamp
+                if name in {"updated_at", "updated_at_ts"}:
+                    return f"{alias}.updated_at_ts", coerce_datetime_to_timestamp
+                if name in self._KNOWN_FIELDS:
+                    return f"{alias}.{name}", None
+                raise ValueError(f"Unknown filter field: {name!r}")
 
     def _next_filter_param(self) -> str:
         self._filter_param_counter += 1

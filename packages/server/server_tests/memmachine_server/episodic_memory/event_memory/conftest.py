@@ -10,14 +10,7 @@ import pytest
 import pytest_asyncio
 
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.filter import (
-    FilterExpr,
-    map_filter_fields,
-)
-from memmachine_server.common.filter.filter_parser import (
-    demangle_user_metadata_key,
-    normalize_filter_field,
-)
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
@@ -92,21 +85,11 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         max_forward_segments: int = 0,
         property_filter: FilterExpr | None = None,
     ) -> dict[UUID, list[Segment]]:
-        # Normalize canonical field names (e.g. "m.color" → "color") to
-        # match the raw keys stored in segment.properties.
-        normalized_filter = (
-            map_filter_fields(property_filter, self._normalize_segment_field)
-            if property_filter is not None
-            else None
-        )
         result: dict[UUID, list[Segment]] = {}
         for seed_uuid in seed_segment_uuids:
             if seed_uuid not in self.segments:
                 continue
-            seed = self.segments[seed_uuid]
-            if normalized_filter is not None and not evaluate_filter(
-                normalized_filter, {**seed.properties, "timestamp": seed.timestamp}
-            ):
+            if not self._matches(self.segments[seed_uuid], property_filter):
                 continue
             try:
                 pos = self.segment_order.index(seed_uuid)
@@ -118,36 +101,18 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 self.segments[uid]
                 for uid in self.segment_order[start:end]
                 if uid in self.segments
-                and (
-                    normalized_filter is None
-                    or evaluate_filter(
-                        normalized_filter,
-                        {
-                            **self.segments[uid].properties,
-                            "timestamp": self.segments[uid].timestamp,
-                        },
-                    )
-                )
+                and self._matches(self.segments[uid], property_filter)
             ]
             if context:
                 result[seed_uuid] = context
         return result
 
     @staticmethod
-    def _normalize_segment_field(field: str) -> str:
-        """Translate canonical filter field names to raw segment property keys.
-
-        Mirrors SQLAlchemySegmentStorePartition._resolve_segment_field:
-        - `timestamp` -> the segment's own timestamp.
-        - `m.<key>` / `metadata.<key>` -> the property, bare key.
-        - any other name -> ValueError.
-        """
-        if field == "timestamp":
-            return field
-        internal_name, is_user_metadata = normalize_filter_field(field)
-        if not is_user_metadata:
-            raise ValueError(f"Filter field {field!r} names no segment property.")
-        return demangle_user_metadata_key(internal_name)
+    def _matches(segment: Segment, property_filter: FilterExpr | None) -> bool:
+        """Whether a segment matches the filter, its timestamp the one system field."""
+        return property_filter is None or evaluate_filter(
+            property_filter, segment.properties, {"timestamp": segment.timestamp}
+        )
 
     @override
     async def get_segment_uuids_by_event_uuids(
