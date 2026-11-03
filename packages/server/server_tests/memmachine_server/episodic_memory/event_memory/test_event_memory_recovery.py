@@ -102,11 +102,12 @@ def vector_store_partition(store_schema) -> _FailingVectorStorePartition:
 
 @pytest_asyncio.fixture
 async def partition(
-    fake_segment_store_partition, vector_store_partition, fake_embedder
+    fake_segment_store_partition, vector_store_partition, store_schema, fake_embedder
 ) -> EventMemoryPartition:
     return await open_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=vector_store_partition,
+        store_schema=store_schema,
         segmenter=TextSegmenter(),
         deriver=WholeTextDeriver(),
         embedder=fake_embedder,
