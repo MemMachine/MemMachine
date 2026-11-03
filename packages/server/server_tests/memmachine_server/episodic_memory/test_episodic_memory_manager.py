@@ -435,7 +435,6 @@ async def test_delete_episodic_session_not_in_use(
     mock_episodic_memory_cls,
     mock_delete_storage,
     manager: EpisodicMemoryManager,
-    mock_resource_manager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
 ):
@@ -516,7 +515,6 @@ async def test_delete_episodic_session_not_in_cache(
     mock_episodic_memory_cls,
     mock_delete_storage,
     manager: EpisodicMemoryManager,
-    mock_resource_manager,
     mock_episodic_memory_conf,
     mock_episodic_memory_instance,
 ):
