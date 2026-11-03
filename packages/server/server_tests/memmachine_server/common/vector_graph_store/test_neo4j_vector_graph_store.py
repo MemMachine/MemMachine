@@ -1289,6 +1289,42 @@ async def test_search_matching_nodes_extended_filters(vector_graph_store):
 
 
 @pytest.mark.asyncio
+async def test_negation_is_the_complement(vector_graph_store):
+    """A node missing the compared property matches a negated condition."""
+    nodes = {
+        "alice": Node(
+            uid=str(uuid4()), properties={"age": 30, "city": "San Francisco"}
+        ),
+        "bob": Node(uid=str(uuid4()), properties={"age": 25, "city": "Los Angeles"}),
+        "charlie": Node(uid=str(uuid4()), properties={"city": "New York"}),
+        "david": Node(uid=str(uuid4()), properties={"age": 30, "city": "New York"}),
+        "erin": Node(uid=str(uuid4()), properties={"name": "erin"}),
+    }
+    await vector_graph_store.add_nodes(collection="Person", nodes=list(nodes.values()))
+    names = {node.uid: name for name, node in nodes.items()}
+
+    async def matching(property_filter):
+        results = await vector_graph_store.search_matching_nodes(
+            collection="Person", property_filter=property_filter
+        )
+        return {names[node.uid] for node in results}
+
+    older = Ordering(field=Property("age"), op=">", value=25)
+    in_new_york = Equals(field=Property("city"), value="New York")
+    for property_filter, admitted in [
+        (older, {"alice", "david"}),
+        (in_new_york, {"charlie", "david"}),
+        (IsNull(field=Property("age")), {"charlie", "erin"}),
+        (And((older, in_new_york)), {"david"}),
+        (Or((older, in_new_york)), {"alice", "charlie", "david"}),
+    ]:
+        assert await matching(property_filter) == admitted, property_filter
+        assert await matching(Not(property_filter)) == set(nodes) - admitted, (
+            property_filter
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_float_and_a_datetime_equal_only_themselves(vector_graph_store):
     base = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
     readings = [
