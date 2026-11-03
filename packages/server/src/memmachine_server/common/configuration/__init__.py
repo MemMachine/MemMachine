@@ -12,6 +12,7 @@ from typing import Any, TypeGuard, cast
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from memmachine_server.common.concurrency_scope import ConcurrencyScope
 from memmachine_server.common.configuration.database_conf import DatabasesConf
 from memmachine_server.common.configuration.embedder_conf import EmbeddersConf
 from memmachine_server.common.configuration.episodic_config import (
@@ -376,6 +377,21 @@ class ServerConf(YamlSerializableMixin):
         gt=0,
         lt=65536,
     )
+    concurrency_scope: ConcurrencyScope = Field(
+        default=ConcurrencyScope.PROCESS,
+        description="The concurrency boundary of this server deployment",
+    )
+
+    @property
+    def effective_concurrency_scope(self) -> ConcurrencyScope:
+        """Account for multiple HTTP workers sharing a host."""
+        try:
+            workers = int(os.getenv("MEMMACHINE_WORKERS", "1"))
+        except ValueError:
+            workers = 1
+        if workers > 1 and self.concurrency_scope == ConcurrencyScope.PROCESS:
+            return ConcurrencyScope.HOST
+        return self.concurrency_scope
 
     @model_validator(mode="before")
     @classmethod
@@ -389,6 +405,10 @@ class ServerConf(YamlSerializableMixin):
         port = os.getenv("PORT")
         if port:
             data["port"] = port
+
+        scope = os.getenv("MEMMACHINE_CONCURRENCY_SCOPE")
+        if scope:
+            data["concurrency_scope"] = scope.strip().lower()
 
         return data
 
@@ -407,7 +427,7 @@ class Configuration(BaseModel):
     session_manager: SessionManagerConf
     resources: ResourcesConf
     episode_store: EpisodeStoreConf
-    server: ServerConf = ServerConf()
+    server: ServerConf = Field(default_factory=ServerConf)
 
     # Path to the configuration file (set when loaded from file)
     _config_file_path: str | None = None

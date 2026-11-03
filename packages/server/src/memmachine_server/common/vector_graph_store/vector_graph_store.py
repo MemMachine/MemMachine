@@ -7,7 +7,9 @@ and deleting nodes and edges.
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from typing import ClassVar
 
+from memmachine_server.common.concurrency_scope import ConcurrencyScope
 from memmachine_server.common.data_types import OrderedValue, SimilarityMetric
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
@@ -18,6 +20,8 @@ from .data_types import Edge, Node
 
 class VectorGraphStore(ABC):
     """Abstract base class for a vector graph store."""
+
+    CONCURRENCY_SCOPE: ClassVar[ConcurrencyScope] = ConcurrencyScope.PROCESS
 
     @abstractmethod
     async def add_nodes(

@@ -176,7 +176,10 @@ class ResourceManagerImpl:
 
     async def get_vector_graph_store(self, name: str) -> VectorGraphStore:
         """Return a vector graph store by name."""
-        return await self._database_manager.get_vector_graph_store(name)
+        return await self._database_manager.get_vector_graph_store(
+            name,
+            deployment_scope=self._conf.server.effective_concurrency_scope,
+        )
 
     async def get_vector_store(self, name: str) -> VectorStore:
         """Return a vector store by name."""
@@ -314,6 +317,7 @@ class ResourceManagerImpl:
                         prompt_conf=self._conf.prompt,
                         resource_manager=self,
                         episode_storage=episode_storage,
+                        deployment_scope=self._conf.server.effective_concurrency_scope,
                     )
         assert self._semantic_manager is not None
         return self._semantic_manager

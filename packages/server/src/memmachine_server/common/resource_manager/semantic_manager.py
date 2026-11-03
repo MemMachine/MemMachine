@@ -5,6 +5,10 @@ from typing import cast
 
 from pydantic import InstanceOf
 
+from memmachine_server.common.concurrency_scope import (
+    ConcurrencyScope,
+    validate_component_scope,
+)
 from memmachine_server.common.configuration import (
     PromptConf,
     SemanticMemoryConf,
@@ -61,12 +65,14 @@ class SemanticResourceManager:
         prompt_conf: PromptConf,
         resource_manager: InstanceOf[CommonResourceManager],
         episode_storage: EpisodeStorage,
+        deployment_scope: ConcurrencyScope = ConcurrencyScope.PROCESS,
     ) -> None:
         """Store configuration and supporting managers."""
         self._resource_manager = resource_manager
         self._conf = semantic_conf
         self._prompt_conf = prompt_conf
         self._episode_storage = episode_storage
+        self._deployment_scope = deployment_scope
 
         self._semantic_service: SemanticService | None = None
         self._semantic_session_manager: SemanticSessionManager | None = None
@@ -91,6 +97,7 @@ class SemanticResourceManager:
                 "No database configured for semantic storage.", "semantic_memory"
             )
 
+        storage: SemanticStorage
         if self._conf.storage_backend == SemanticMemoryStorageBackend.PGVECTOR:
             sql_engine = await self._resource_manager.get_sql_engine(
                 database, validate=True
@@ -100,28 +107,29 @@ class SemanticResourceManager:
             return storage
 
         if self._conf.storage_backend == SemanticMemoryStorageBackend.NEO4J:
-            neo4j_engine = await self._resource_manager.get_neo4j_driver(
-                database, validate=True
-            )
-            storage = Neo4jSemanticStorage(neo4j_engine)
-            await storage.startup()
-            return storage
-
-        storage: SemanticStorage
-        try:
-            sql_engine = await self._resource_manager.get_sql_engine(
-                database, validate=True
-            )
-            storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
-        except ValueError:
-            # try graph store
-            neo4j_engine = await self._resource_manager.get_neo4j_driver(
-                database, validate=True
-            )
-            storage = Neo4jSemanticStorage(neo4j_engine)
+            storage = await self._build_neo4j_semantic_storage(database)
+        else:
+            try:
+                sql_engine = await self._resource_manager.get_sql_engine(
+                    database, validate=True
+                )
+                storage = SqlAlchemyPgVectorSemanticStorage(sql_engine)
+            except ValueError:
+                storage = await self._build_neo4j_semantic_storage(database)
 
         await storage.startup()
         return storage
+
+    async def _build_neo4j_semantic_storage(
+        self, database: str
+    ) -> Neo4jSemanticStorage:
+        validate_component_scope(
+            f"Neo4jSemanticStorage '{database}'",
+            Neo4jSemanticStorage.CONCURRENCY_SCOPE,
+            self._deployment_scope,
+        )
+        driver = await self._resource_manager.get_neo4j_driver(database, validate=True)
+        return Neo4jSemanticStorage(driver)
 
     async def _get_vector_store_semantic_storage(self) -> SemanticStorage:
         feature_store_name = self._conf.feature_store

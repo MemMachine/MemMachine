@@ -250,6 +250,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       server:
         host: localhost
         port: 8080
+        concurrency_scope: process
       ```
       </Tab>
       <Tab title="With Comments">
@@ -257,6 +258,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       server:
         host: localhost # host to bind MemMachine API server
         port: 8080 # port to bind MemMachine API server
+        concurrency_scope: process # process, host, or cluster
       ```
       </Tab>
     </Tabs>
@@ -266,6 +268,17 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     |-----------|-------------|---------|
     | `host`    | API server interface host. | `localhost` |
     | `port`    | API server port. | `8080` |
+    | `concurrency_scope` | Deployment boundary: `process`, `host` (multiple processes on one host), or `cluster` (multiple hosts). | `process` |
+
+    `MEMMACHINE_CONCURRENCY_SCOPE` overrides this setting. More than one
+    `MEMMACHINE_WORKERS` requires at least `host` scope. Deployments spanning
+    multiple hosts must declare `cluster`.
+
+    Neo4j and NebulaGraph declarative memory and Neo4j semantic storage support
+    `process` scope because they retain local caches. Startup rejects these
+    enabled components in wider deployments, and session overrides cannot
+    enable them there. Disable the affected memory component or use a single
+    server process. Other components may have additional concurrency limits.
   </Accordion>
 
   <Accordion title="Prompt">
