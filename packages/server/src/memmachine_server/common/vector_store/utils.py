@@ -182,10 +182,12 @@ def _validate_value(key: str, value: PropertyValue, declared: PropertyType) -> N
     """Raise unless the value is of its key's declared type, an int counting as a float."""
     # `bool` is an `int` at runtime and is its own property type here.
     if type(value) is int and not MIN_INT_VALUE <= value <= MAX_INT_VALUE:
-        raise PropertyTypeMismatchError(key, declared, value)
+        raise PropertyTypeMismatchError(
+            key, declared, value, "outside the 64-bit signed range"
+        )
     if declared is float and type(value) is int:
         return
-    if type(value) is not declared or (
-        isinstance(value, float) and not math.isfinite(value)
-    ):
+    if type(value) is not declared:
         raise PropertyTypeMismatchError(key, declared, value)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise PropertyTypeMismatchError(key, declared, value, "not finite")
