@@ -63,11 +63,29 @@ def bind_record(
     undeclared = record.properties.keys() - indexed_properties.keys()
     if undeclared:
         raise UndeclaredPropertyKeyError(undeclared, indexed_properties.keys())
-    properties = {
-        key: _bound_value(key, value, indexed_properties[key])
-        for key, value in record.properties.items()
-    }
+    properties = bind_properties(record.properties, indexed_properties)
     return record.model_copy(update={"properties": properties})
+
+
+def bind_properties(
+    properties: Mapping[str, PropertyValue],
+    indexed_properties: Mapping[str, PropertyType],
+) -> dict[str, PropertyValue]:
+    """
+    Bind properties to the declared schema: each declared key's value as its type holds it.
+
+    Raises PropertyTypeMismatchError unless each declared key holds a value
+    of its type, by the rules `bind_record` states; a key the schema does
+    not declare keeps its value.
+    """
+    return {
+        key: (
+            _bound_value(key, value, indexed_properties[key])
+            if key in indexed_properties
+            else value
+        )
+        for key, value in properties.items()
+    }
 
 
 def validate_query_vector(query_vector: Sequence[float], dimensions: int) -> None:

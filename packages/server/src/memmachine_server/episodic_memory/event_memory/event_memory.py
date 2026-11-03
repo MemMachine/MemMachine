@@ -5,7 +5,7 @@ import datetime
 import json
 import logging
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Final, cast
 from uuid import UUID
 
@@ -40,6 +40,7 @@ from memmachine_server.common.vector_store import (
     VectorStorePartition,
 )
 from memmachine_server.common.vector_store.data_types import is_valid_identifier
+from memmachine_server.common.vector_store.utils import bind_properties
 
 from .data_types import (
     Block,
@@ -165,9 +166,11 @@ class EventMemory:
         """
         self._params = params
         store_schema = params.vector_store.store_schema
-        self._schema_fields = frozenset(store_schema.indexed_properties)
+        self._indexed_properties = store_schema.indexed_properties
 
-        missing_base_fields = _BASE_EVENT_MEMORY_FIELD_NAMES - self._schema_fields
+        missing_base_fields = (
+            _BASE_EVENT_MEMORY_FIELD_NAMES - self._indexed_properties.keys()
+        )
         if missing_base_fields:
             raise ValueError(
                 f"Vector store schema missing fields required by EventMemory: "
@@ -206,7 +209,7 @@ class EventMemory:
             self._params,
             segment_store_partition=segment_store_partition,
             vector_store_partition=vector_store_partition,
-            schema_fields=self._schema_fields,
+            indexed_properties=self._indexed_properties,
             similarity_metric=self._similarity_metric,
         )
 
@@ -455,7 +458,7 @@ class EventMemoryPartition:
         *,
         segment_store_partition: SegmentStorePartition,
         vector_store_partition: VectorStorePartition,
-        schema_fields: frozenset[str],
+        indexed_properties: Mapping[str, PropertyType],
         similarity_metric: SimilarityMetric,
     ) -> None:
         """
@@ -468,8 +471,8 @@ class EventMemoryPartition:
                 The partition's segment store partition.
             vector_store_partition (VectorStorePartition):
                 The partition's vector store partition.
-            schema_fields (frozenset[str]):
-                The properties the vector store declares.
+            indexed_properties (Mapping[str, PropertyType]):
+                The properties the vector store declares, each to its type.
             similarity_metric (SimilarityMetric):
                 The metric the vector store scores matches by.
         """
@@ -485,7 +488,7 @@ class EventMemoryPartition:
             prefix="event_memory",
         )
 
-        self._schema_fields = schema_fields
+        self._indexed_properties = indexed_properties
         self._similarity_metric = similarity_metric
 
         self._encode_events_phase_seconds: MetricsFactory.Histogram | None = None
@@ -507,15 +510,20 @@ class EventMemoryPartition:
         """Similarity metric by which the vector search scores matches."""
         return self._similarity_metric
 
-    def _validate_events(self, events: Iterable[Event]) -> None:
+    def _validate_events(self, events: Iterable[Event]) -> list[Event]:
         """
-        Validate a batch of events before encoding.
+        Validate a batch of events before encoding: the events encoded in their place.
 
         Raises ValueError if any event supplies a property key outside the
         naming contract or under the memory's own reserved keys. A key
         reserved for another system belongs to the component that embeds
-        the memory and is kept as given.
+        the memory and is kept as given. Each property the vector store
+        declares is bound to its declared type (`bind_properties`), so the
+        segment store holds the value the vector record holds; a value its
+        type does not hold raises PropertyTypeMismatchError before anything
+        is written.
         """
+        events = list(events)
         for event in events:
             for key in event.properties:
                 if not is_valid_identifier(key):
@@ -527,6 +535,17 @@ class EventMemoryPartition:
                     raise ValueError(
                         f"Property key {key!r} is reserved for the event memory."
                     )
+
+        return [
+            event.model_copy(
+                update={
+                    "properties": bind_properties(
+                        event.properties, self._indexed_properties
+                    )
+                }
+            )
+            for event in events
+        ]
 
     async def encode_events(
         self,
@@ -547,6 +566,9 @@ class EventMemoryPartition:
             ValueError:
                 If any event supplies an illegal property key, or one of
                 the memory's own reserved keys.
+            PropertyTypeMismatchError:
+                If an event's property the vector store declares holds a
+                value its declared type does not, an int counting as a float.
         """
         async with self._tracker("encode_events"):
             await self._encode_events(events, format_options=format_options)
@@ -559,8 +581,7 @@ class EventMemoryPartition:
     ) -> None:
         t_start = time.monotonic()
 
-        events = list(events)
-        self._validate_events(events)
+        events = self._validate_events(events)
 
         segment_lists = await asyncio.gather(
             *(
@@ -663,7 +684,7 @@ class EventMemoryPartition:
             **{
                 key: value
                 for key, value in derivative.properties.items()
-                if key in self._schema_fields
+                if key in self._indexed_properties
             },
         }
 
@@ -754,7 +775,8 @@ class EventMemoryPartition:
                 allowed_fields={
                     field
                     for field in filter_fields(vector_record_filter)
-                    if isinstance(field, Property) and field.key in self._schema_fields
+                    if isinstance(field, Property)
+                    and field.key in self._indexed_properties
                 },
             )
 

@@ -10,7 +10,11 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import (
+    PropertyType,
+    PropertyValue,
+    SimilarityMetric,
+)
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.filter import (
     And,
@@ -25,7 +29,10 @@ from memmachine_server.common.filter import (
     SystemField,
 )
 from memmachine_server.common.property_keys import reserved_property_key
-from memmachine_server.common.vector_store import VectorStoreSchema
+from memmachine_server.common.vector_store import (
+    PropertyTypeMismatchError,
+    VectorStoreSchema,
+)
 from memmachine_server.common.vector_store.data_types import (
     Record,
 )
@@ -352,6 +359,70 @@ class TestEncodeEvents:
         # One segment, but multiple derivatives (one per sentence).
         assert len(fake_segment_store_partition.segments) == 1
         assert len(fake_vector_store_partition.records) > 1
+
+    async def test_a_declared_property_is_bound_before_any_write(
+        self,
+        fake_embedder: FakeEmbedder,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        """Both stores hold an int written to a float key as the float it equals."""
+        event_memory_partition, vector_store_partition = await _partition_declaring(
+            fake_embedder, fake_segment_store_partition, score=float
+        )
+
+        await event_memory_partition.encode_events(
+            [_make_event("thing", properties={"score": 3, "note": 1})]
+        )
+
+        [segment] = fake_segment_store_partition.segments.values()
+        [record] = vector_store_partition.records.values()
+        assert type(segment.properties["score"]) is float
+        assert segment.properties["score"] == 3.0
+        assert type(segment.properties["note"]) is int
+        assert type(_record_properties(record)["score"]) is float
+
+    async def test_a_declared_property_of_another_type_raises_before_any_write(
+        self,
+        fake_embedder: FakeEmbedder,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        event_memory_partition, vector_store_partition = await _partition_declaring(
+            fake_embedder, fake_segment_store_partition, score=float
+        )
+
+        with pytest.raises(PropertyTypeMismatchError, match="score"):
+            await event_memory_partition.encode_events(
+                [_make_event("thing", properties={"score": "high"})]
+            )
+
+        assert fake_segment_store_partition.segments == {}
+        assert vector_store_partition.records == {}
+
+
+async def _partition_declaring(
+    embedder: FakeEmbedder,
+    segment_store_partition: InMemorySegmentStorePartition,
+    **declared: PropertyType,
+) -> tuple[EventMemoryPartition, InMemoryVectorStorePartition]:
+    """A partition whose vector store declares `declared` too, and its vector store partition."""
+    store_schema = VectorStoreSchema(
+        vector_dimensions=embedder.dimensions,
+        similarity_metric=embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            **declared,
+        },
+    )
+    vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
+    event_memory_partition = await open_event_memory_partition(
+        segment_store_partition=segment_store_partition,
+        vector_store_partition=vector_store_partition,
+        store_schema=store_schema,
+        segmenter=TextSegmenter(),
+        deriver=WholeTextDeriver(),
+        embedder=embedder,
+    )
+    return event_memory_partition, vector_store_partition
 
 
 # ===================================================================
