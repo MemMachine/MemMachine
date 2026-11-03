@@ -54,9 +54,13 @@ def _comparable(value: PropertyValue) -> PropertyValue:
 
 
 def _same_type(held: PropertyValue, value: PropertyValue) -> bool:
-    # A predicate matches only a value of the compared type; `bool` is an
-    # `int` at runtime and its own type here.
-    return type(held) is type(value)
+    # A predicate matches only a value of the compared type, an int and a
+    # float being one numeric type; `bool` is an `int` at runtime and its own
+    # type here.
+    numbers = (int, float)
+    return type(held) is type(value) or (
+        type(held) in numbers and type(value) in numbers
+    )
 
 
 def evaluate_filter(

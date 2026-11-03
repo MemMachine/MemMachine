@@ -860,6 +860,31 @@ async def test_filter_by_metadata_nullity(semantic_storage: SemanticStorage):
 
 
 @pytest.mark.asyncio
+async def test_metadata_numbers_compare_by_value(semantic_storage: SemanticStorage):
+    embed = np.array([1.0], dtype=float)
+    for value, number in (("three", 3), ("three and a half", 3.5), ("big", 2**53 + 1)):
+        await semantic_storage.add_feature(
+            set_id="user",
+            category_name="default",
+            feature="note",
+            value=value,
+            tag="misc",
+            metadata={"n": number},
+            embedding=embed,
+        )
+
+    async def values(spec: str) -> set[str]:
+        features = await _collect_feature_set(semantic_storage, filter_expr=_expr(spec))
+        return {feature.value for feature in features}
+
+    assert await values("m.n = 3.0") == {"three"}
+    assert await values("m.n = 3.5") == {"three and a half"}
+    assert await values("m.n > 3") == {"three and a half", "big"}
+    assert await values("m.n IN (3)") == {"three"}
+    assert await values("m.n > 9007199254740992.0") == {"big"}
+
+
+@pytest.mark.asyncio
 async def test_get_feature_set_unknown_filter_column_errors(
     semantic_storage: SemanticStorage,
 ):

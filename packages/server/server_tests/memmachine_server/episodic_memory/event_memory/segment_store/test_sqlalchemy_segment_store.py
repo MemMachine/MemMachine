@@ -430,6 +430,28 @@ async def test_a_float_and_a_timestamp_equal_only_themselves(
 
 
 @pytest.mark.asyncio
+async def test_a_number_compares_by_value_whatever_its_type(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """An int literal matches a held float, and a float literal a held int."""
+    as_float, as_int = (
+        _seg(ts_offset_seconds=0, properties={"score": 3.5}),
+        _seg(ts_offset_seconds=1, properties={"score": 3}),
+    )
+    await partition.add_segments(_links(as_float, as_int))
+    seeds = [as_float.uuid, as_int.uuid]
+
+    above_three = await partition.get_segment_contexts(
+        seeds, property_filter=Ordering(Property("score"), ">", 3)
+    )
+    three = await partition.get_segment_contexts(
+        seeds, property_filter=Equals(Property("score"), 3.0)
+    )
+    assert set(above_three) == {as_float.uuid}
+    assert set(three) == {as_int.uuid}
+
+
+@pytest.mark.asyncio
 async def test_add_segments_empty(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
