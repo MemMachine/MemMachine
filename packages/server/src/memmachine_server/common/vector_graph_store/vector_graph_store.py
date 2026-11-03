@@ -90,7 +90,7 @@ class VectorGraphStore(ABC):
                 If None, return as many similar nodes as possible
                 (default: 100).
             property_filter (FilterExpr | None):
-                Filter expression tree.
+                Filter expression tree over properties, each a `Property`.
                 If None or empty, no property filtering is applied
                 (default: None).
 
@@ -143,11 +143,11 @@ class VectorGraphStore(ABC):
                 If None, return as many related nodes as possible
                 (default: None).
             edge_property_filter (FilterExpr | None):
-                Filter expression tree for edge properties.
+                Filter expression tree over edge properties, each a `Property`.
                 If None or empty, no property filtering is applied
                 (default: None).
             node_property_filter (FilterExpr | None):
-                Filter expression tree for node properties.
+                Filter expression tree over node properties, each a `Property`.
                 If None or empty, no property filtering is applied
                 (default: None).
 
@@ -193,7 +193,7 @@ class VectorGraphStore(ABC):
                 If None, return as many matching nodes as possible
                 (default: 1).
             property_filter (FilterExpr | None):
-                Filter expression tree.
+                Filter expression tree over properties, each a `Property`.
                 If None or empty, no property filtering is applied
                 (default: None).
 
@@ -223,7 +223,7 @@ class VectorGraphStore(ABC):
                 If None, return as many matching nodes as possible
                 (default: None).
             property_filter (FilterExpr | None):
-                Filter expression tree.
+                Filter expression tree over properties, each a `Property`.
                 If None or empty, no property filtering is applied
                 (default: None).
 

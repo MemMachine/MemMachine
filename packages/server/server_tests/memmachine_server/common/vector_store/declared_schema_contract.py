@@ -31,6 +31,7 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    SystemField,
 )
 from memmachine_server.common.vector_store import (
     PropertyTypeMismatchError,
@@ -213,6 +214,13 @@ class DeclaredSchemaContract:
                 partition,
                 And((Equals(field="name", value="a"), IsNull(field="color"))),
             )
+
+    @pytest.mark.asyncio
+    async def test_query_rejects_a_system_field(self, partition):
+        with pytest.raises(ValueError, match="system field 'name'"):
+            await _admitted(partition, Equals(SystemField("name"), "alice"))
+        with pytest.raises(ValueError, match="system field 'name'"):
+            await _admitted(partition, Not(IsNull(SystemField("name"))))
 
     @pytest.mark.asyncio
     async def test_every_node_admits_the_matching_records(self, partition):

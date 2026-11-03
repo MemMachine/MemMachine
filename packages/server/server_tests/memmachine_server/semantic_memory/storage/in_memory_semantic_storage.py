@@ -21,10 +21,8 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
-)
-from memmachine_server.common.filter.filter_parser import (
-    USER_METADATA_STORAGE_PREFIX,
-    normalize_filter_field,
+    Property,
+    SystemField,
 )
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
@@ -710,32 +708,31 @@ class InMemorySemanticStorage(SemanticStorage):
     def _resolve_entry_field(
         self,
         entry: _FeatureEntry,
-        field: str,
+        field: SystemField | Property,
     ) -> tuple[Any, bool]:
-        internal_name, is_user_metadata = normalize_filter_field(field)
-        if is_user_metadata:
-            key = internal_name.removeprefix(USER_METADATA_STORAGE_PREFIX)
-            metadata = entry.metadata or {}
-            return metadata.get(key), True
+        match field:
+            case Property(key=key):
+                metadata = entry.metadata or {}
+                return metadata.get(key), True
+            case SystemField(name=name):
+                field_mapping: dict[str, Any] = {
+                    "set_id": entry.set_id,
+                    "set": entry.set_id,
+                    "semantic_category_id": entry.semantic_type_id,
+                    "category_name": entry.semantic_type_id,
+                    "category": entry.semantic_type_id,
+                    "tag_id": entry.tag,
+                    "tag": entry.tag,
+                    "feature": entry.feature,
+                    "feature_name": entry.feature,
+                    "value": entry.value,
+                    "created_at": entry.created_at,
+                    "updated_at": entry.updated_at,
+                }
+                if name in field_mapping:
+                    return field_mapping[name], False
 
-        field_mapping: dict[str, Any] = {
-            "set_id": entry.set_id,
-            "set": entry.set_id,
-            "semantic_category_id": entry.semantic_type_id,
-            "category_name": entry.semantic_type_id,
-            "category": entry.semantic_type_id,
-            "tag_id": entry.tag,
-            "tag": entry.tag,
-            "feature": entry.feature,
-            "feature_name": entry.feature,
-            "value": entry.value,
-            "created_at": entry.created_at,
-            "updated_at": entry.updated_at,
-        }
-        if internal_name in field_mapping:
-            return field_mapping[internal_name], False
-
-        raise ValueError(f"Unknown filter field: {field!r}")
+                raise ValueError(f"Unknown filter field: {name!r}")
 
     def _apply_vector_filter(
         self,

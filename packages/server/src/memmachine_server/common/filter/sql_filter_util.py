@@ -34,20 +34,22 @@ from .filter_expression import (
     Or,
     Ordering,
     OrderingOp,
+    Property,
+    SystemField,
 )
 
 type _LeafExpr = Equals | Ordering | In | IsNull
 
 FieldEncoding = Literal["column", "json", "properties_json", "uuid"]
 
-FieldResolver = Callable[[str], tuple[ColumnElement, FieldEncoding]]
+FieldResolver = Callable[[SystemField | Property], tuple[ColumnElement, FieldEncoding]]
 """
-Maps a filter field name to a ``(column, kind)`` pair.
+Maps a filter field to a ``(column, kind)`` pair.
 
 Resolvers should call ``.expression`` on ORM ``InstrumentedAttribute``
 values to obtain a ``ColumnElement``.
 
-Raises `ValueError` for unrecognised fields.
+Raises `ValueError` for unrecognized fields.
 """
 
 
@@ -204,7 +206,7 @@ def compile_sql_filter(
     """
     Compile a FilterExpr tree into a SQLAlchemy boolean expression.
 
-    The `resolve_field` callback maps each field name to a
+    The `resolve_field` callback maps each field to a
     `(column, FieldEncoding)` pair and raises `ValueError` for unknown fields.
 
     Datetime values arrive already normalized -- a node converts them to

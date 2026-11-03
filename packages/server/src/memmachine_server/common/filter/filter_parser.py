@@ -3,7 +3,9 @@ The server's textual filter language, parsed into filter expression trees.
 
 The HTTP API still speaks this language, so the parser stays as the server's
 translation into the tree in `filter_expression`; the tree is what every
-store compiles, and nothing below the API boundary parses text.
+store compiles, and nothing below the API boundary parses text. The parser
+resolves each field name once: `m.<key>` and `metadata.<key>` name the
+property `<key>`, and any other name is a system field.
 """
 
 import re
@@ -22,6 +24,8 @@ from .filter_expression import (
     Or,
     Ordering,
     OrderingOp,
+    Property,
+    SystemField,
 )
 
 
@@ -164,8 +168,8 @@ class _Parser:
         # - "NOT field IN (...)" is handled in _parse_primary via Not(parse_primary())
         # - "field NOT IN (...)" is handled below as a special case
         # Both produce Not(In(...)).
-        field_tok = self._expect("IDENT")
-        field = field_tok.value
+        name = self._expect("IDENT").value
+        field = _field_reference(name)
 
         if self._accept("EQ"):
             return Equals(field, self._parse_value())
@@ -182,7 +186,7 @@ class _Parser:
             expr: FilterExpr = In(field, values)
             return Not(expr) if negate else expr
         if negate:
-            raise FilterParseError(f"Expected IN after NOT for field {field}")
+            raise FilterParseError(f"Expected IN after NOT for field {name}")
 
         # IS NULL / IS NOT NULL
         if self._accept("IS"):
@@ -196,7 +200,7 @@ class _Parser:
             return Not(expr) if negate else expr
 
         raise FilterParseError(
-            f"Expected operator after field {field}: "
+            f"Expected operator after field {name}: "
             "comparison (=, !=, <>, >, <, >=, <=), "
             "membership (IN, NOT IN), or nullity (IS NULL, IS NOT NULL)"
         )
@@ -262,51 +266,22 @@ class _Parser:
         return raw
 
 
+_PROPERTY_PREFIXES = ("m.", "metadata.")
+
+
+def _field_reference(name: str) -> SystemField | Property:
+    """The field a name denotes: a property after a property prefix, else a system field."""
+    for prefix in _PROPERTY_PREFIXES:
+        if name.startswith(prefix):
+            return Property(name.removeprefix(prefix))
+    return SystemField(name)
+
+
 def _looks_like_float(value: str) -> bool:
     if value.count(".") != 1:
         return False
     left, right = value.split(".")
     return bool(left) and bool(right) and left.isdigit() and right.isdigit()
-
-
-# ---------------------------------------------------------------------------
-# Centralized field name normalization utilities
-# ---------------------------------------------------------------------------
-
-# Query language prefixes for user-defined metadata
-USER_METADATA_QUERY_PREFIXES = ("m.", "metadata.")
-
-# Internal storage prefix for user metadata
-USER_METADATA_STORAGE_PREFIX = "metadata."
-
-
-def normalize_filter_field(field: str) -> tuple[str, bool]:
-    """Normalize a query field name to internal storage name.
-
-    Returns (internal_name, is_user_metadata).
-    - User metadata (m.foo, metadata.foo): returns ("metadata.foo", True)
-    - System field (producer_id): returns ("producer_id", False)
-    """
-    for prefix in USER_METADATA_QUERY_PREFIXES:
-        if field.startswith(prefix):
-            key = field.removeprefix(prefix)
-            return f"{USER_METADATA_STORAGE_PREFIX}{key}", True
-    return field, False
-
-
-def mangle_user_metadata_key(key: str) -> str:
-    """Add user metadata prefix to a key for storage."""
-    return USER_METADATA_STORAGE_PREFIX + key
-
-
-def demangle_user_metadata_key(mangled_key: str) -> str:
-    """Remove user metadata prefix from a storage key."""
-    return mangled_key.removeprefix(USER_METADATA_STORAGE_PREFIX)
-
-
-def is_user_metadata_key(candidate_key: str) -> bool:
-    """Check if a key has the user metadata prefix."""
-    return candidate_key.startswith(USER_METADATA_STORAGE_PREFIX)
 
 
 def parse_filter(spec: str | None) -> FilterExpr | None:
@@ -323,7 +298,7 @@ def parse_filter(spec: str | None) -> FilterExpr | None:
 def to_property_filter(
     expr: FilterExpr | None,
 ) -> dict[str, PropertyValue | None] | None:
-    """Convert a filter expression into a legacy equality mapping."""
+    """Convert a filter expression into a legacy equality mapping, keyed by each field's name or key."""
     if expr is None:
         return None
 
@@ -331,7 +306,12 @@ def to_property_filter(
     if not equalities:
         return None
 
-    return {equality.field: equality.value for equality in equalities}
+    mapping: dict[str, PropertyValue | None] = {}
+    for equality in equalities:
+        match equality.field:
+            case SystemField(name=key) | Property(key=key):
+                mapping[key] = equality.value
+    return mapping
 
 
 def _flatten_conjunction(expr: FilterExpr) -> list[Equals]:

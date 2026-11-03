@@ -31,6 +31,8 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.neo4j_utils import (
@@ -1319,8 +1321,17 @@ class Neo4jVectorGraphStore(VectorGraphStore):
         _render = Neo4jVectorGraphStore._render_filter_expr
         _sanitize = Neo4jVectorGraphStore._sanitize_name
 
-        def field_ref(field: str) -> str:
-            return f"{entity_query_alias}.{_sanitize(mangle_property_name(field))}"
+        def field_ref(field: SystemField | Property) -> str:
+            match field:
+                case Property(key=key):
+                    return (
+                        f"{entity_query_alias}.{_sanitize(mangle_property_name(key))}"
+                    )
+                case SystemField(name=name):
+                    raise ValueError(
+                        f"A graph store filters on properties only, "
+                        f"not the system field {name!r}"
+                    )
 
         match expr:
             case IsNull(field):

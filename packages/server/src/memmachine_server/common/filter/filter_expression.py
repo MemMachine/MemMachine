@@ -7,6 +7,9 @@ written as a `match` with no default arm is checked for exhaustiveness:
 adding a node here fails type checking in every store rather than raising on
 whichever query first reaches the new node.
 
+A leaf compares a field, a reference rather than a name: a `SystemField`,
+which the consuming system defines, or a `Property`, by key.
+
 The grammar is two-valued. A predicate matches a record only when the field
 holds a value of the compared type; a record that does not carry the field,
 or carries it with a different type, is not a match, and `IsNull` on such a
@@ -27,7 +30,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from memmachine_server.common.data_types import OrderedValue, PropertyValue
+from memmachine_server.common.data_types import (
+    OrderedValue,
+    PropertyType,
+    PropertyValue,
+)
 from memmachine_server.common.utils import ensure_tz_aware
 
 type FilterExpr = Equals | Ordering | In | IsNull | And | Or | Not
@@ -41,10 +48,29 @@ def _utc_instant(value: datetime) -> datetime:
 
 
 @dataclass(frozen=True)
+class SystemField:
+    """A field the consuming system defines, by name."""
+
+    name: str
+
+
+@dataclass(frozen=True)
+class Property:
+    """
+    A property, by key.
+
+    `type` is the key's declared type where a schema declares one, else None.
+    """
+
+    key: str
+    type: PropertyType | None = None
+
+
+@dataclass(frozen=True)
 class Equals:
     """Field holds a value equal to `value`."""
 
-    field: str
+    field: SystemField | Property
     value: PropertyValue
 
     def __post_init__(self) -> None:
@@ -64,7 +90,7 @@ class Ordering:
     encode the value. Equality on those types is expressed with `Equals`.
     """
 
-    field: str
+    field: SystemField | Property
     op: OrderingOp
     value: OrderedValue
 
@@ -88,7 +114,7 @@ class In:
     values came out empty can still say so.
     """
 
-    field: str
+    field: SystemField | Property
     values: tuple[int, ...] | tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -111,7 +137,7 @@ class IsNull:
     never null, so a missing key is the only no-value state.
     """
 
-    field: str
+    field: SystemField | Property
 
 
 @dataclass(frozen=True)
@@ -157,9 +183,9 @@ class Not:
 
 def map_filter_fields(
     expr: FilterExpr,
-    transform: Callable[[str], str],
+    transform: Callable[[SystemField | Property], SystemField | Property],
 ) -> FilterExpr:
-    """Apply a field name transformation to every field in a filter tree."""
+    """Apply a field transformation to every field in a filter tree."""
     match expr:
         case Equals(field, value):
             return Equals(transform(field), value)
@@ -177,8 +203,8 @@ def map_filter_fields(
             return Not(map_filter_fields(operand, transform))
 
 
-def filter_fields(expr: FilterExpr) -> frozenset[str]:
-    """Every field name a filter tree addresses."""
+def filter_fields(expr: FilterExpr) -> frozenset[SystemField | Property]:
+    """Every field a filter tree addresses."""
     match expr:
         case Equals(field) | Ordering(field) | In(field) | IsNull(field):
             return frozenset((field,))
@@ -189,7 +215,7 @@ def filter_fields(expr: FilterExpr) -> frozenset[str]:
 
 
 def extract_filter(
-    expr: FilterExpr, *, allowed_fields: AbstractSet[str]
+    expr: FilterExpr, *, allowed_fields: AbstractSet[SystemField | Property]
 ) -> FilterExpr | None:
     """The part of a filter that names only the allowed fields; None when no part does.
 
@@ -199,7 +225,10 @@ def extract_filter(
 
 
 def _extract_filter(
-    expr: FilterExpr, allowed_fields: AbstractSet[str], *, negated: bool
+    expr: FilterExpr,
+    allowed_fields: AbstractSet[SystemField | Property],
+    *,
+    negated: bool,
 ) -> FilterExpr | None:
     """The part of a filter under an odd number of negations when `negated`.
 

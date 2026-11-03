@@ -179,8 +179,8 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
 
         Called after a liveness check, with at least one query vector and a
         positive limit, the vectors, threshold, and filter already checked: the
-        filter is the one `bind_filter` returns, naming declared keys only and
-        holding values of their keys' declared types only.
+        filter is the one `bind_filter` returns, naming declared properties
+        only and holding values of their keys' declared types only.
 
         Args:
             query_vectors (list[list[float]]): The vectors to search for.

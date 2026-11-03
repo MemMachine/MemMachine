@@ -101,10 +101,10 @@ class VectorStorePartition(ABC):
                 similarity metric; a match scoring exactly the threshold is
                 returned (default: None).
             property_filter (FilterExpr | None):
-                Filter expression tree over declared keys, each compared
-                with values of its declared type, evaluated during the
-                search; an int for a float key is the float it equals. The
-                filter is checked before anything is sent.
+                Filter expression tree over declared properties, each
+                compared with values of its key's declared type, evaluated
+                during the search; an int for a float key is the float it
+                equals. The filter is checked before anything is sent.
                 If None, no property filtering is applied
                 (default: None).
 
@@ -124,7 +124,8 @@ class VectorStorePartition(ABC):
             ValueError:
                 If the limit is not positive, a query vector does not have
                 the store's dimensions or has a coordinate that is not
-                finite, or the score threshold is not finite.
+                finite, the score threshold is not finite, or the filter
+                names a system field.
         """
         raise NotImplementedError
 

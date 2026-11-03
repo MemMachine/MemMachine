@@ -25,7 +25,7 @@ from memmachine_server.common.errors import (
     CategoryNotFoundError,
     InvalidSetIdConfigurationError,
 )
-from memmachine_server.common.filter import And, Equals, FilterExpr, In
+from memmachine_server.common.filter import And, Equals, FilterExpr, In, SystemField
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.utils import merge_async_iterators
 
@@ -72,7 +72,7 @@ def with_has_set_ids(
         return filter_expr
 
     set_expr = In(
-        field="set_id",
+        field=SystemField("set_id"),
         values=tuple(set_ids),
     )
 
@@ -740,7 +740,7 @@ class SemanticService:
             await self.delete_feature_set(
                 set_ids=set_ids,
                 filter_expr=Equals(
-                    field="category_name",
+                    field=SystemField("category_name"),
                     value=category.name,
                 ),
             )

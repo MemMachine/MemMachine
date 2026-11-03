@@ -13,6 +13,7 @@ from memmachine_server.common.filter import (
     IsNull,
     Not,
     Or,
+    SystemField,
 )
 from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
@@ -797,6 +798,13 @@ async def test_delete_episodes(declarative_memory):
     all_episodes = await declarative_memory.get_matching_episodes()
     assert len(all_episodes) == 40
     assert all(episode not in all_episodes for episode in special_episodes)
+
+
+def test_a_filter_on_a_system_field_is_refused():
+    with pytest.raises(ValueError, match="system field 'project'"):
+        DeclarativeMemory._mangle_property_filter(
+            Equals(SystemField("project"), "memmachine")
+        )
 
 
 @requires_sentence_transformers

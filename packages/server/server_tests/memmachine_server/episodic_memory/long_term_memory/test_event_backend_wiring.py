@@ -31,8 +31,11 @@ from memmachine_server.common.episode_store import (
     EpisodeStorage,
 )
 from memmachine_server.common.filter import (
+    And,
     Equals,
     Ordering,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.property_keys import reserved_property_key
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
@@ -440,6 +443,44 @@ async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
                 value="alice",
             ),
         )
+
+
+async def test_event_memory_gets_each_system_field_as_its_stored_property(
+    long_term_memory, monkeypatch
+):
+    """The timestamp is EventMemory's own, and a caller's property is unchanged."""
+    seen = []
+    event_memory_partition = long_term_memory._memory
+    query = event_memory_partition.query
+
+    async def spy(*args, **kwargs):
+        seen.append(kwargs["property_filter"])
+        return await query(*args, **kwargs)
+
+    monkeypatch.setattr(event_memory_partition, "query", spy)
+    instant = datetime(2000, 1, 1, tzinfo=UTC)
+
+    await long_term_memory.query(
+        "msg",
+        num_episodes_limit=10,
+        property_filter=And(
+            (
+                Equals(SystemField("producer_id"), "alice"),
+                Ordering(SystemField("timestamp"), ">=", instant),
+                Equals(Property("color"), "red"),
+            )
+        ),
+    )
+
+    assert seen == [
+        And(
+            (
+                Equals(Property(reserved_property_key("ltm", "producer_id")), "alice"),
+                Ordering(SystemField("timestamp"), ">=", instant),
+                Equals(Property("color"), "red"),
+            )
+        )
+    ]
 
 
 async def test_unknown_bare_filter_field_raises(long_term_memory):

@@ -13,6 +13,8 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
+    SystemField,
     filter_fields,
 )
 
@@ -117,10 +119,23 @@ def bind_filter(
     float key is compared with finite floats only, and any key with ints in
     64 signed bits only.
     """
-    undeclared = filter_fields(property_filter) - indexed_properties.keys()
+    keys = {property_key(field) for field in filter_fields(property_filter)}
+    undeclared = keys - indexed_properties.keys()
     if undeclared:
         raise UndeclaredPropertyKeyError(undeclared, indexed_properties.keys())
     return _bound_filter(property_filter, indexed_properties)
+
+
+def property_key(field: SystemField | Property) -> str:
+    """The key a filter's field names; raises ValueError for a system field, since a vector store defines none."""
+    match field:
+        case Property(key=key):
+            return key
+        case SystemField(name=name):
+            raise ValueError(
+                f"A vector store filters on properties only, "
+                f"not the system field {name!r}"
+            )
 
 
 def _bound_filter(
@@ -136,15 +151,18 @@ def _bound_filter(
         case IsNull():
             return expr
         case Equals(field, value):
-            return Equals(field, _bound_value(field, value, indexed_properties[field]))
+            key = property_key(field)
+            return Equals(field, _bound_value(key, value, indexed_properties[key]))
         case Ordering(field, op, value):
+            key = property_key(field)
             return Ordering(
-                field, op, _bound_value(field, value, indexed_properties[field])
+                field, op, _bound_value(key, value, indexed_properties[key])
             )
         case In(field, values):
-            declared = indexed_properties[field]
+            key = property_key(field)
+            declared = indexed_properties[key]
             for value in values:
-                _validate_value(field, value, declared)
+                _validate_value(key, value, declared)
             if declared is float and values:
                 return Or(tuple(Equals(field, float(value)) for value in values))
             return expr
