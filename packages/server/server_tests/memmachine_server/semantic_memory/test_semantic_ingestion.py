@@ -36,7 +36,10 @@ from memmachine_server.semantic_memory.semantic_model import (
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
-from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+    SemanticStorage,
+)
 from server_tests.memmachine_server.semantic_memory.mock_semantic_memory_objects import (
     MockEmbedder,
     MockResourceRetriever,
@@ -133,7 +136,10 @@ async def test_process_single_set_returns_when_no_messages(
     assert (
         await _collect(
             semantic_storage.get_feature_set(
-                filter_expr=parse_filter("set_id IN ('user-123')")
+                filter_expr=parse_filter(
+                    "set_id IN ('user-123')",
+                    system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+                )
             )
         )
         == []
@@ -198,7 +204,9 @@ async def test_process_single_set_applies_commands(
     )
     features = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             load_citations=True,
         )
     )
@@ -213,7 +221,9 @@ async def test_process_single_set_applies_commands(
     filter_str = "set_id IN ('user-123') AND feature_name IN ('favorite_motorcycle')"
     remaining = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
         )
     )
     assert remaining == []
@@ -305,7 +315,11 @@ async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
     await ingestion_service._process_single_set("colors")
 
     features = await _collect(
-        semantic_storage.get_feature_set(filter_expr=parse_filter("set_id = 'colors'"))
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(
+                "set_id = 'colors'", system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+        )
     )
     expected_colors = list(reversed(colors)) if same_timestamp else colors
     assert [feature.value for feature in features] == [expected_colors[-1]]
@@ -559,7 +573,9 @@ async def test_deduplicate_features_merges_and_relabels(
     )
     memories = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             load_citations=True,
         )
     )
@@ -600,7 +616,9 @@ async def test_deduplicate_features_merges_and_relabels(
 
     all_features = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             load_citations=True,
         )
     )
@@ -926,7 +944,9 @@ async def test_consolidation_deletes_features_not_in_keep_list(
     )
     memories = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             load_citations=True,
         )
     )
@@ -994,7 +1014,9 @@ async def test_empty_keep_memories_deletes_all_features(
     )
     memories = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             load_citations=True,
         )
     )
@@ -1025,7 +1047,9 @@ async def test_empty_keep_memories_deletes_all_features(
 
     remaining = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
         )
     )
     assert len(remaining) == 1
@@ -1070,7 +1094,9 @@ async def test_consolidation_rejects_llm_tag_rename(
     )
     memories = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             load_citations=True,
         )
     )
@@ -1101,7 +1127,9 @@ async def test_consolidation_rejects_llm_tag_rename(
 
     remaining = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
         )
     )
     bugfix_features = [f for f in remaining if f.tag == "bugfix"]
@@ -1209,7 +1237,9 @@ async def test_user_tags_preserved_after_ingestion_and_consolidation(
     )
     remaining = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
         )
     )
     remaining_tags = {f.tag for f in remaining}
@@ -1263,7 +1293,9 @@ async def test_consolidation_retries_on_none_response(
     filter_str = f"set_id IN ('user-retry-none') AND category_name IN ('{semantic_category.name}')"
     memories = await _collect(
         semantic_storage.get_feature_set(
-            filter_expr=parse_filter(filter_str),
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             load_citations=True,
         )
     )
@@ -1291,7 +1323,11 @@ async def test_consolidation_retries_on_none_response(
     assert await semantic_storage.get_feature(id1) is None
     assert await semantic_storage.get_feature(id2) is None
     remaining = await _collect(
-        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+        )
     )
     assert len(remaining) == 1
     assert remaining[0].value == "combined x+y"
@@ -1327,7 +1363,11 @@ async def test_consolidation_exhausts_retries_and_returns(
 
     filter_str = f"set_id IN ('user-retry-exhaust') AND category_name IN ('{semantic_category.name}')"
     memories = await _collect(
-        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+        )
     )
 
     llm_mock = AsyncMock(return_value=None)
@@ -1382,7 +1422,11 @@ async def test_consolidation_skips_context_length_error(
 
     filter_str = f"set_id IN ('user-consolidate-ctx') AND category_name IN ('{semantic_category.name}')"
     memories = await _collect(
-        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+        )
     )
 
     async def raise_ctx_error(*args, **kwargs):
@@ -1553,7 +1597,11 @@ async def test_deduplicate_features_context_length_does_not_raise_in_debug_mode(
         f"set_id IN ('user-ctx-loud') AND category_name IN ('{semantic_category.name}')"
     )
     memories = await _collect(
-        semantic_storage.get_feature_set(filter_expr=parse_filter(filter_str))
+        semantic_storage.get_feature_set(
+            filter_expr=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+        )
     )
 
     async def raise_ctx_error(*args, **kwargs):

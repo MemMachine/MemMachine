@@ -10,6 +10,7 @@ import pytest_asyncio
 from pydantic import JsonValue
 
 from memmachine_server.common.episode_store import (
+    EPISODE_STORAGE_FILTER_FIELD_TYPES,
     EpisodeEntry,
     EpisodeStorage,
     EpisodeType,
@@ -670,6 +671,6 @@ async def test_number_no_filter_returns_all(episode_storage: EpisodeStorage):
 
 
 def _filter(spec: str) -> FilterExpr:
-    expr = parse_filter(spec)
+    expr = parse_filter(spec, system_fields=EPISODE_STORAGE_FILTER_FIELD_TYPES)
     assert expr is not None
     return expr

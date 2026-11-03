@@ -50,22 +50,24 @@ def _flatten_and(expr: And) -> list[Equals | Ordering]:
 
 
 def test_parse_filter_empty_string() -> None:
-    assert parse_filter("") is None
-    assert parse_filter(None) is None
+    assert parse_filter("", system_fields={}) is None
+    assert parse_filter(None, system_fields={}) is None
 
 
 def test_parse_filter_simple_equality() -> None:
-    expr = parse_filter("owner = 'alice'")
+    expr = parse_filter("owner = 'alice'", system_fields={})
     assert expr == Equals(field=SystemField("owner"), value="alice")
 
 
 def test_parse_filter_in_clause() -> None:
-    expr = parse_filter("priority in (HIGH,LOW)")
+    expr = parse_filter("priority in (HIGH,LOW)", system_fields={})
     assert expr == In(field=SystemField("priority"), values=("HIGH", "LOW"))
 
 
 def test_parse_filter_boolean_and_numeric_values() -> None:
-    expr = parse_filter("count = 10 AND pi = 3.14 AND done = true AND flag = FALSE")
+    expr = parse_filter(
+        "count = 10 AND pi = 3.14 AND done = true AND flag = FALSE", system_fields={}
+    )
     assert isinstance(expr, And)
     children = _flatten_and(expr)
     assert children[0] == Equals(field=SystemField("count"), value=10)
@@ -75,7 +77,7 @@ def test_parse_filter_boolean_and_numeric_values() -> None:
 
 
 def test_parse_filter_greater_and_less_than() -> None:
-    expr = parse_filter("count > 10 AND pi < 3.14")
+    expr = parse_filter("count > 10 AND pi < 3.14", system_fields={})
     assert isinstance(expr, And)
     children = _flatten_and(expr)
     assert children[0] == Ordering(field=SystemField("count"), op=">", value=10)
@@ -83,7 +85,7 @@ def test_parse_filter_greater_and_less_than() -> None:
 
 
 def test_parse_filter_greater_equal_and_less_equal() -> None:
-    expr = parse_filter("count >= 10 AND pi <= 3.14")
+    expr = parse_filter("count >= 10 AND pi <= 3.14", system_fields={})
     assert isinstance(expr, And)
     children = _flatten_and(expr)
     assert children[0] == Ordering(field=SystemField("count"), op=">=", value=10)
@@ -91,7 +93,9 @@ def test_parse_filter_greater_equal_and_less_equal() -> None:
 
 
 def test_parse_filter_and_or_precedence() -> None:
-    expr = parse_filter("owner = alice OR priority = HIGH AND status = OPEN")
+    expr = parse_filter(
+        "owner = alice OR priority = HIGH AND status = OPEN", system_fields={}
+    )
     assert isinstance(expr, Or)
     left = expr.operands[0]
     right = expr.operands[1]
@@ -104,7 +108,9 @@ def test_parse_filter_and_or_precedence() -> None:
 
 
 def test_parse_filter_grouping_changes_precedence() -> None:
-    expr = parse_filter("(owner = alice OR priority = HIGH) AND status = OPEN")
+    expr = parse_filter(
+        "(owner = alice OR priority = HIGH) AND status = OPEN", system_fields={}
+    )
     assert isinstance(expr, And)
     left = expr.operands[0]
     right = expr.operands[1]
@@ -116,7 +122,8 @@ def test_parse_filter_grouping_changes_precedence() -> None:
 
 def test_parse_filter_complex_parentheses_precedence() -> None:
     expr = parse_filter(
-        "status = OPEN AND (project = memmachine OR project = memguard) OR owner = bob"
+        "status = OPEN AND (project = memmachine OR project = memguard) OR owner = bob",
+        system_fields={},
     )
     assert isinstance(expr, Or)
     assert isinstance(expr.operands[0], And)
@@ -135,7 +142,8 @@ def test_parse_filter_complex_parentheses_precedence() -> None:
 
 def test_parse_filter_deeply_nested_groups() -> None:
     expr = parse_filter(
-        "((project = 'memmachine' AND owner = 'alice') OR (priority = 'HIGH' AND (status = 'OPEN' OR status = 'NEW'))) AND flag = TRUE"
+        "((project = 'memmachine' AND owner = 'alice') OR (priority = 'HIGH' AND (status = 'OPEN' OR status = 'NEW'))) AND flag = TRUE",
+        system_fields={},
     )
     assert isinstance(expr, And)
     assert expr.operands[1] == Equals(field=SystemField("flag"), value=True)
@@ -165,13 +173,14 @@ def test_parse_filter_deeply_nested_groups() -> None:
 
 
 def test_parse_filter_is_null_operator() -> None:
-    expr = parse_filter("metadata.note IS NULL")
+    expr = parse_filter("metadata.note IS NULL", system_fields={})
     assert expr == IsNull(field=Property("note"))
 
 
 def test_parse_filter_is_not_null_and_or_combination() -> None:
     expr = parse_filter(
-        "(metadata.note IS NOT NULL AND status = 'OPEN') OR owner IS NULL"
+        "(metadata.note IS NOT NULL AND status = 'OPEN') OR owner IS NULL",
+        system_fields={},
     )
     assert isinstance(expr, Or)
     assert isinstance(expr.operands[0], And)
@@ -183,14 +192,16 @@ def test_parse_filter_is_not_null_and_or_combination() -> None:
 
 
 def test_keywords_case_insensitive() -> None:
-    expr = parse_filter("Owner In ('Alice', 'Bob') or PRIORITY = high")
+    expr = parse_filter(
+        "Owner In ('Alice', 'Bob') or PRIORITY = high", system_fields={}
+    )
     assert isinstance(expr, Or)
     assert expr.operands[0] == In(field=SystemField("Owner"), values=("Alice", "Bob"))
     assert expr.operands[1] == Equals(field=SystemField("PRIORITY"), value="high")
 
 
 def test_legacy_mapping_generation() -> None:
-    expr = parse_filter("owner = alice AND project = memmachine")
+    expr = parse_filter("owner = alice AND project = memmachine", system_fields={})
     assert to_property_filter(expr) == {
         "owner": "alice",
         "project": "memmachine",
@@ -200,9 +211,11 @@ def test_legacy_mapping_generation() -> None:
 def test_legacy_mapping_rejects_or_and_in() -> None:
     error_msg = "Legacy property filters"
     with pytest.raises(TypeError, match=error_msg):
-        to_property_filter(parse_filter("owner = alice OR owner = bob"))
+        to_property_filter(
+            parse_filter("owner = alice OR owner = bob", system_fields={})
+        )
     with pytest.raises(TypeError, match=error_msg):
-        to_property_filter(parse_filter("owner IN ('alice', 'bob')"))
+        to_property_filter(parse_filter("owner IN ('alice', 'bob')", system_fields={}))
 
 
 def test_to_property_filter_returns_none_for_empty_expr() -> None:
@@ -211,7 +224,7 @@ def test_to_property_filter_returns_none_for_empty_expr() -> None:
 
 def test_parse_filter_raises_custom_error() -> None:
     with pytest.raises(FilterParseError):
-        parse_filter("owner =")
+        parse_filter("owner =", system_fields={})
 
 
 @pytest.fixture(
@@ -227,7 +240,9 @@ def valid_filters(request) -> str:
 
 
 def test_datetime_parsing() -> None:
-    expr = parse_filter("created_at < date('2026-01-19T01:56:41.513342Z')")
+    expr = parse_filter(
+        "created_at < date('2026-01-19T01:56:41.513342Z')", system_fields={}
+    )
     assert expr is not None
     assert expr == Ordering(
         field=SystemField("created_at"),
@@ -237,7 +252,9 @@ def test_datetime_parsing() -> None:
 
 
 def test_datetime_parsing_with_and_expression() -> None:
-    expr = parse_filter("name='test' AND created_at >= date('2025-01-01T00:00:00')")
+    expr = parse_filter(
+        "name='test' AND created_at >= date('2025-01-01T00:00:00')", system_fields={}
+    )
     assert isinstance(expr, And)
     children = _flatten_and(expr)
     assert children[0] == Equals(field=SystemField("name"), value="test")
@@ -249,7 +266,7 @@ def test_datetime_parsing_with_and_expression() -> None:
 
 
 def test_datetime_parsing_with_equality() -> None:
-    expr = parse_filter("created_at = date('2026-01-19T01:56:41Z')")
+    expr = parse_filter("created_at = date('2026-01-19T01:56:41Z')", system_fields={})
     assert expr == Equals(
         field=SystemField("created_at"),
         value=datetime.datetime.fromisoformat("2026-01-19T01:56:41Z"),
@@ -300,7 +317,9 @@ def test_comparison_normalizes_datetime_values_at_construction() -> None:
 
 def test_parsed_date_literals_carry_utc_instants() -> None:
     """A date() literal's offset is consumed into a UTC instant."""
-    expr = parse_filter("created_at >= date('2024-01-01T13:30:45-08:00')")
+    expr = parse_filter(
+        "created_at >= date('2024-01-01T13:30:45-08:00')", system_fields={}
+    )
     assert isinstance(expr, Ordering)
     assert isinstance(expr.value, datetime.datetime)
     assert expr.value == datetime.datetime(2024, 1, 1, 21, 30, 45, tzinfo=datetime.UTC)
@@ -309,11 +328,11 @@ def test_parsed_date_literals_carry_utc_instants() -> None:
 
 def test_datetime_parsing_invalid_format() -> None:
     with pytest.raises(FilterParseError, match="Invalid ISO format date string"):
-        parse_filter("created_at<date('invalid-date')")
+        parse_filter("created_at<date('invalid-date')", system_fields={})
 
 
 def test_valid_fixtures_return(valid_filters) -> None:
-    expr = parse_filter(valid_filters)
+    expr = parse_filter(valid_filters, system_fields={})
     assert expr is not None
 
 
@@ -321,34 +340,34 @@ def test_valid_fixtures_return(valid_filters) -> None:
 
 
 def test_parse_filter_ne_bang_equal() -> None:
-    expr = parse_filter("status != 'CLOSED'")
+    expr = parse_filter("status != 'CLOSED'", system_fields={})
     assert expr == Not(Equals(field=SystemField("status"), value="CLOSED"))
 
 
 def test_parse_filter_ne_diamond() -> None:
-    expr = parse_filter("status <> 'CLOSED'")
+    expr = parse_filter("status <> 'CLOSED'", system_fields={})
     assert expr == Not(Equals(field=SystemField("status"), value="CLOSED"))
 
 
 def test_parse_filter_ne_numeric() -> None:
-    expr = parse_filter("count != 0")
+    expr = parse_filter("count != 0", system_fields={})
     assert expr == Not(Equals(field=SystemField("count"), value=0))
 
 
 def test_parse_filter_ne_boolean() -> None:
-    expr = parse_filter("active <> false")
+    expr = parse_filter("active <> false", system_fields={})
     assert expr == Not(Equals(field=SystemField("active"), value=False))
 
 
 def test_parse_filter_ne_in_conjunction() -> None:
-    expr = parse_filter("owner = 'alice' AND status != 'CLOSED'")
+    expr = parse_filter("owner = 'alice' AND status != 'CLOSED'", system_fields={})
     assert isinstance(expr, And)
     assert expr.operands[0] == Equals(field=SystemField("owner"), value="alice")
     assert expr.operands[1] == Not(Equals(field=SystemField("status"), value="CLOSED"))
 
 
 def test_parse_filter_ne_in_disjunction() -> None:
-    expr = parse_filter("status <> 'CLOSED' OR priority != 'LOW'")
+    expr = parse_filter("status <> 'CLOSED' OR priority != 'LOW'", system_fields={})
     assert isinstance(expr, Or)
     assert expr.operands[0] == Not(Equals(field=SystemField("status"), value="CLOSED"))
     assert expr.operands[1] == Not(Equals(field=SystemField("priority"), value="LOW"))
@@ -356,20 +375,22 @@ def test_parse_filter_ne_in_disjunction() -> None:
 
 def test_legacy_mapping_rejects_ne() -> None:
     with pytest.raises(TypeError, match="Legacy property filters"):
-        to_property_filter(parse_filter("status != 'CLOSED'"))
+        to_property_filter(parse_filter("status != 'CLOSED'", system_fields={}))
 
 
 # --- NOT (unary logical negation) tests ---
 
 
 def test_parse_filter_not_simple() -> None:
-    expr = parse_filter("NOT status = 'CLOSED'")
+    expr = parse_filter("NOT status = 'CLOSED'", system_fields={})
     assert isinstance(expr, Not)
     assert expr.operand == Equals(field=SystemField("status"), value="CLOSED")
 
 
 def test_parse_filter_not_with_parenthesized_or() -> None:
-    expr = parse_filter("NOT (status = 'CLOSED' OR status = 'ARCHIVED')")
+    expr = parse_filter(
+        "NOT (status = 'CLOSED' OR status = 'ARCHIVED')", system_fields={}
+    )
     assert isinstance(expr, Not)
     inner = expr.operand
     assert isinstance(inner, Or)
@@ -379,7 +400,7 @@ def test_parse_filter_not_with_parenthesized_or() -> None:
 
 def test_parse_filter_not_binds_tighter_than_and() -> None:
     # NOT x = 1 AND y = 2  =>  (NOT (x = 1)) AND (y = 2)
-    expr = parse_filter("NOT x = 1 AND y = 2")
+    expr = parse_filter("NOT x = 1 AND y = 2", system_fields={})
     assert isinstance(expr, And)
     assert isinstance(expr.operands[0], Not)
     assert expr.operands[0].operand == Equals(field=SystemField("x"), value=1)
@@ -388,7 +409,7 @@ def test_parse_filter_not_binds_tighter_than_and() -> None:
 
 def test_parse_filter_not_binds_tighter_than_or() -> None:
     # NOT x = 1 OR y = 2  =>  (NOT (x = 1)) OR (y = 2)
-    expr = parse_filter("NOT x = 1 OR y = 2")
+    expr = parse_filter("NOT x = 1 OR y = 2", system_fields={})
     assert isinstance(expr, Or)
     assert isinstance(expr.operands[0], Not)
     assert expr.operands[0].operand == Equals(field=SystemField("x"), value=1)
@@ -396,40 +417,40 @@ def test_parse_filter_not_binds_tighter_than_or() -> None:
 
 
 def test_parse_filter_double_not() -> None:
-    expr = parse_filter("NOT NOT status = 'OPEN'")
+    expr = parse_filter("NOT NOT status = 'OPEN'", system_fields={})
     assert isinstance(expr, Not)
     assert isinstance(expr.operand, Not)
     assert expr.operand.operand == Equals(field=SystemField("status"), value="OPEN")
 
 
 def test_parse_filter_not_with_in() -> None:
-    expr = parse_filter("NOT priority IN ('LOW', 'MEDIUM')")
+    expr = parse_filter("NOT priority IN ('LOW', 'MEDIUM')", system_fields={})
     assert isinstance(expr, Not)
     assert expr.operand == In(field=SystemField("priority"), values=("LOW", "MEDIUM"))
 
 
 def test_parse_filter_not_with_is_null() -> None:
-    expr = parse_filter("NOT owner IS NULL")
+    expr = parse_filter("NOT owner IS NULL", system_fields={})
     assert isinstance(expr, Not)
     assert expr.operand == IsNull(field=SystemField("owner"))
 
 
 def test_parse_filter_not_with_ne() -> None:
     # NOT status != 'OPEN'  =>  NOT(NOT(status = 'OPEN'))
-    expr = parse_filter("NOT status != 'OPEN'")
+    expr = parse_filter("NOT status != 'OPEN'", system_fields={})
     assert isinstance(expr, Not)
     assert expr.operand == Not(Equals(field=SystemField("status"), value="OPEN"))
 
 
 def test_parse_filter_not_case_insensitive() -> None:
-    expr = parse_filter("not status = 'CLOSED'")
+    expr = parse_filter("not status = 'CLOSED'", system_fields={})
     assert isinstance(expr, Not)
     assert expr.operand == Equals(field=SystemField("status"), value="CLOSED")
 
 
 def test_parse_filter_not_and_or_full_precedence() -> None:
     # NOT a = 1 OR b = 2 AND c = 3  =>  (NOT (a = 1)) OR ((b = 2) AND (c = 3))
-    expr = parse_filter("NOT a = 1 OR b = 2 AND c = 3")
+    expr = parse_filter("NOT a = 1 OR b = 2 AND c = 3", system_fields={})
     assert isinstance(expr, Or)
     assert isinstance(expr.operands[0], Not)
     assert expr.operands[0].operand == Equals(field=SystemField("a"), value=1)
@@ -440,7 +461,7 @@ def test_parse_filter_not_and_or_full_precedence() -> None:
 
 def test_parse_filter_not_inside_and_or_chain() -> None:
     # a = 1 AND NOT b = 2 OR c = 3  =>  ((a = 1) AND (NOT (b = 2))) OR (c = 3)
-    expr = parse_filter("a = 1 AND NOT b = 2 OR c = 3")
+    expr = parse_filter("a = 1 AND NOT b = 2 OR c = 3", system_fields={})
     assert isinstance(expr, Or)
     assert isinstance(expr.operands[0], And)
     assert expr.operands[0].operands[0] == Equals(field=SystemField("a"), value=1)
@@ -453,7 +474,7 @@ def test_parse_filter_not_inside_and_or_chain() -> None:
 
 def test_parse_filter_multiple_nots_in_expression() -> None:
     # NOT a = 1 AND NOT b = 2  =>  (NOT (a = 1)) AND (NOT (b = 2))
-    expr = parse_filter("NOT a = 1 AND NOT b = 2")
+    expr = parse_filter("NOT a = 1 AND NOT b = 2", system_fields={})
     assert isinstance(expr, And)
     assert isinstance(expr.operands[0], Not)
     assert expr.operands[0].operand == Equals(field=SystemField("a"), value=1)
@@ -463,29 +484,31 @@ def test_parse_filter_multiple_nots_in_expression() -> None:
 
 def test_legacy_mapping_rejects_not() -> None:
     with pytest.raises(TypeError, match="Legacy property filters"):
-        to_property_filter(parse_filter("NOT status = 'CLOSED'"))
+        to_property_filter(parse_filter("NOT status = 'CLOSED'", system_fields={}))
 
 
 # --- NOT IN (field NOT IN (...)) tests ---
 
 
 def test_parse_filter_not_in_simple() -> None:
-    expr = parse_filter("priority NOT IN ('LOW', 'MEDIUM')")
+    expr = parse_filter("priority NOT IN ('LOW', 'MEDIUM')", system_fields={})
     assert expr == Not(In(field=SystemField("priority"), values=("LOW", "MEDIUM")))
 
 
 def test_parse_filter_not_in_single_value() -> None:
-    expr = parse_filter("status NOT IN ('CLOSED')")
+    expr = parse_filter("status NOT IN ('CLOSED')", system_fields={})
     assert expr == Not(In(field=SystemField("status"), values=("CLOSED",)))
 
 
 def test_parse_filter_not_in_numeric_values() -> None:
-    expr = parse_filter("code NOT IN (1, 2, 3)")
+    expr = parse_filter("code NOT IN (1, 2, 3)", system_fields={})
     assert expr == Not(In(field=SystemField("code"), values=(1, 2, 3)))
 
 
 def test_parse_filter_not_in_with_and() -> None:
-    expr = parse_filter("owner = 'alice' AND status NOT IN ('CLOSED', 'ARCHIVED')")
+    expr = parse_filter(
+        "owner = 'alice' AND status NOT IN ('CLOSED', 'ARCHIVED')", system_fields={}
+    )
     assert isinstance(expr, And)
     assert expr.operands[0] == Equals(field=SystemField("owner"), value="alice")
     assert expr.operands[1] == Not(
@@ -494,20 +517,20 @@ def test_parse_filter_not_in_with_and() -> None:
 
 
 def test_parse_filter_not_in_with_or() -> None:
-    expr = parse_filter("priority NOT IN ('LOW') OR owner = 'bob'")
+    expr = parse_filter("priority NOT IN ('LOW') OR owner = 'bob'", system_fields={})
     assert isinstance(expr, Or)
     assert expr.operands[0] == Not(In(field=SystemField("priority"), values=("LOW",)))
     assert expr.operands[1] == Equals(field=SystemField("owner"), value="bob")
 
 
 def test_parse_filter_not_in_case_insensitive() -> None:
-    expr = parse_filter("status not in ('CLOSED', 'ARCHIVED')")
+    expr = parse_filter("status not in ('CLOSED', 'ARCHIVED')", system_fields={})
     assert expr == Not(In(field=SystemField("status"), values=("CLOSED", "ARCHIVED")))
 
 
 def test_parse_filter_not_without_in_raises() -> None:
     with pytest.raises(FilterParseError, match="Expected IN after NOT"):
-        parse_filter("status NOT 'CLOSED'")
+        parse_filter("status NOT 'CLOSED'", system_fields={})
 
 
 # --- field reference tests ---
@@ -529,7 +552,7 @@ def test_a_field_name_resolves_to_a_property_or_a_system_field(
     spec: str, field: SystemField | Property
 ) -> None:
     """A property prefix names the property after it; any other name is a system field, as written."""
-    assert parse_filter(spec) == Equals(field, 1)
+    assert parse_filter(spec, system_fields={}) == Equals(field, 1)
 
 
 _TYPED_FIELDS: dict[str, PropertyType] = {
@@ -600,7 +623,9 @@ def test_a_literal_its_system_field_cannot_hold_is_a_parse_error(
 
 
 def test_legacy_mapping_keys_a_property_by_its_key() -> None:
-    assert to_property_filter(parse_filter("m.topic = alpha AND owner = bob")) == {
+    assert to_property_filter(
+        parse_filter("m.topic = alpha AND owner = bob", system_fields={})
+    ) == {
         "topic": "alpha",
         "owner": "bob",
     }
@@ -688,22 +713,23 @@ def test_map_filter_fields_nested() -> None:
 
 def test_parse_filter_in_rejects_bool() -> None:
     with pytest.raises(FilterParseError, match="IN lists only support int and str"):
-        parse_filter("flag IN (true, false)")
+        parse_filter("flag IN (true, false)", system_fields={})
 
 
 def test_parse_filter_in_rejects_float() -> None:
     with pytest.raises(FilterParseError, match="IN lists only support int and str"):
-        parse_filter("x IN (1.5, 2.5)")
+        parse_filter("x IN (1.5, 2.5)", system_fields={})
 
 
 def test_parse_filter_in_rejects_mixed_types() -> None:
     with pytest.raises(FilterParseError, match="Mixed types in IN list"):
-        parse_filter("x IN (1, 'two')")
+        parse_filter("x IN (1, 'two')", system_fields={})
 
 
 def test_filter_fields_names_every_field_under_every_node() -> None:
     expr = parse_filter(
-        "m.color = 'red' AND (age > 3 OR NOT tag IN ('a')) AND name IS NULL"
+        "m.color = 'red' AND (age > 3 OR NOT tag IN ('a')) AND name IS NULL",
+        system_fields={},
     )
     assert expr is not None
     assert filter_fields(expr) == frozenset(
@@ -718,9 +744,9 @@ def test_filter_fields_names_every_field_under_every_node() -> None:
 
 def test_parse_filter_ordering_takes_a_number_or_a_date() -> None:
     with pytest.raises(FilterParseError, match="take a number or a date"):
-        parse_filter("age > 'x'")
+        parse_filter("age > 'x'", system_fields={})
     with pytest.raises(FilterParseError, match="take a number or a date"):
-        parse_filter("age >= true")
+        parse_filter("age >= true", system_fields={})
 
 
 # --- extract_filter tests ---

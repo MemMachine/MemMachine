@@ -20,6 +20,9 @@ from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+)
 from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (
     SpyEmbedder,
 )
@@ -323,11 +326,17 @@ async def test_add_feature_isolation(
     # When retrieving features for each set id
     a_features = await _collect_feature_set(
         semantic_storage,
-        filter_expr=parse_filter(f"set_id IN ('{set_id_a}')"),
+        filter_expr=parse_filter(
+            f"set_id IN ('{set_id_a}')",
+            system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+        ),
     )
     b_features = await _collect_feature_set(
         semantic_storage,
-        filter_expr=parse_filter(f"set_id IN ('{set_id_b}')"),
+        filter_expr=parse_filter(
+            f"set_id IN ('{set_id_b}')",
+            system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+        ),
     )
 
     # Then only the profile receives the new feature and embeddings were generated
@@ -374,7 +383,9 @@ async def test_delete_feature_set_removes_filtered_entries(
     )
 
     # When deleting only the profile-tagged features
-    property_filter = parse_filter("tag IN ('profile_tag')")
+    property_filter = parse_filter(
+        "tag IN ('profile_tag')", system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+    )
     await session_manager.delete_feature_set(
         session_data=session_data,
         property_filter=property_filter,
@@ -383,11 +394,17 @@ async def test_delete_feature_set_removes_filtered_entries(
     # Then profile features are cleared while session-scoped entries remain
     org_features = await _collect_feature_set(
         semantic_storage,
-        filter_expr=parse_filter(f"set_id IN ('{set_type_id}')"),
+        filter_expr=parse_filter(
+            f"set_id IN ('{set_type_id}')",
+            system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+        ),
     )
     project_features = await _collect_feature_set(
         semantic_storage,
-        filter_expr=parse_filter(f"set_id IN ('{project_set_id}')"),
+        filter_expr=parse_filter(
+            f"set_id IN ('{project_set_id}')",
+            system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+        ),
     )
 
     assert org_features == []
@@ -497,7 +514,9 @@ async def test_search_passes_set_ids_and_filters(
         mock_session_manager.search(
             message="Find alpha info",
             session_data=session_data,
-            search_filter=parse_filter(filter_str),
+            search_filter=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             limit=5,
             load_citations=True,
         )
@@ -627,7 +646,9 @@ async def test_get_set_features_wraps_opts(
     result = await _collect_async(
         mock_session_manager.get_set_features(
             session_data=session_data,
-            search_filter=parse_filter(filter_str),
+            search_filter=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
             page_size=7,
             load_citations=True,
         )
@@ -1007,7 +1028,9 @@ async def test_search_with_time_filter_str(
         session_manager.search(
             message="Find alpha info",
             session_data=session_data,
-            search_filter=parse_filter(filter_str),
+            search_filter=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
         )
     )
 
@@ -1032,7 +1055,9 @@ async def test_search_with_time_filter_str(
         session_manager.search(
             message="Find alpha info",
             session_data=session_data,
-            search_filter=parse_filter(filter_str),
+            search_filter=parse_filter(
+                filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            ),
         )
     )
 

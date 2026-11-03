@@ -402,7 +402,7 @@ async def test_timestamp_filter_compares_instants_not_wall_clocks(
     result = await partition.get_segment_contexts(
         [early.uuid],
         max_forward_segments=5,
-        property_filter=parse_filter(f"timestamp <= date('{bound}')"),
+        property_filter=parse_filter(f"timestamp <= date('{bound}')", system_fields={}),
     )
     assert [s.uuid for s in result[early.uuid]] == [early.uuid]
 
