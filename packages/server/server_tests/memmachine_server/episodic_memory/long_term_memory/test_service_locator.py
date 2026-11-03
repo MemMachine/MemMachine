@@ -263,6 +263,8 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without
     segment_store.delete_partition.assert_awaited_once_with("s")
     vector_store.open_or_create_partition.assert_not_awaited()
     segment_store.open_or_create_partition.assert_not_awaited()
+    # Reclamation is the sweeper's; the delete path never purges.
+    segment_store.purge_deleted_partitions.assert_not_awaited()
 
 
 @pytest.mark.asyncio

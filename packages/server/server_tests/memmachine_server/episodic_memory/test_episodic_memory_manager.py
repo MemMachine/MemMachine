@@ -583,6 +583,44 @@ async def test_deleting_a_session_deletes_its_long_term_storage_when_it_builds_l
 
 
 @pytest.mark.asyncio
+@patch(
+    "memmachine_server.episodic_memory.episodic_memory_manager.delete_long_term_memory_storage"
+)
+@patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
+@patch(
+    "memmachine_server.episodic_memory.episodic_memory_manager.episodic_memory_params_from_config"
+)
+async def test_deleting_a_cached_idle_session_closes_it_and_deletes_its_long_term_storage(
+    mock_params_from_config,
+    mock_episodic_memory_cls,
+    mock_delete_storage,
+    manager: EpisodicMemoryManager,
+    mock_resource_manager,
+    mock_episodic_memory_instance,
+):
+    """A cached idle instance is closed, and the long-term storage its stored configuration names is deleted."""
+    session_key = "cached_session"
+    long_term_memory = EventLongTermMemoryConf(session_id=session_key)
+    mock_episodic_memory_cls.return_value = mock_episodic_memory_instance
+    async with manager.create_episodic_memory(
+        session_key,
+        EpisodicMemoryConf(session_key=session_key, long_term_memory=long_term_memory),
+        "",
+        {},
+    ):
+        pass
+    assert await manager._instance_cache.get_ref_count(session_key) == 0
+
+    await manager.delete_episodic_session(session_key)
+
+    assert await manager._instance_cache.get(session_key) is None
+    mock_episodic_memory_instance.close.assert_awaited_once()
+    mock_delete_storage.assert_awaited_once_with(
+        long_term_memory, mock_resource_manager
+    )
+
+
+@pytest.mark.asyncio
 async def test_deleting_an_event_session_creates_none_of_its_partitions(
     manager: EpisodicMemoryManager,
     mock_session_storage,
