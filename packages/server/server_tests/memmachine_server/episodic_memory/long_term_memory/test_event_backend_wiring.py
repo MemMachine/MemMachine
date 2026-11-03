@@ -429,7 +429,8 @@ async def test_system_field_filter_round_trips(
     assert {ep.uid for _, ep in scored} == {_uid("s-1")}
     assert seen == [
         Equals(
-            field=Property(reserved_property_key("ltm", "producer_role")), value="user"
+            field=Property(reserved_property_key("ltm", "producer_role"), str),
+            value="user",
         )
     ]
 
@@ -477,7 +478,9 @@ async def test_event_memory_gets_each_system_field_as_its_stored_property(
     assert seen == [
         And(
             (
-                Equals(Property(reserved_property_key("ltm", "producer_id")), "alice"),
+                Equals(
+                    Property(reserved_property_key("ltm", "producer_id"), str), "alice"
+                ),
                 Ordering(SystemField("timestamp"), ">=", instant),
                 Equals(Property("color"), "red"),
             )

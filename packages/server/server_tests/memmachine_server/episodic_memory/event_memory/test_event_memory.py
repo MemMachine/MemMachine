@@ -853,7 +853,11 @@ class TestQueryWithFilter:
         )
 
         assert seen == [
-            Ordering(field=Property(EVENT_TIMESTAMP_KEY), op=">=", value=_ts(5))
+            Ordering(
+                field=Property(EVENT_TIMESTAMP_KEY, datetime.datetime),
+                op=">=",
+                value=_ts(5),
+            )
         ]
         all_texts = {
             seg.block.text
@@ -1204,11 +1208,21 @@ class TestQueryWithFilter:
         )
         assert result.scored_segment_contexts == []
 
-    async def test_a_system_field_other_than_the_timestamp_raises(
-        self, event_memory_partition: EventMemoryPartition
+    async def test_a_system_field_other_than_the_timestamp_raises_before_the_query_is_embedded(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_embedder: FakeEmbedder,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         event = _make_event("hi", context=ProducerContext(producer="Alice"))
         await event_memory_partition.encode_events([event])
+        embedded: list[Any] = []
+
+        async def spy(queries: list[Any], max_attempts: int = 1) -> list[list[float]]:
+            embedded.append(queries)
+            return []
+
+        monkeypatch.setattr(fake_embedder, "search_embed", spy)
 
         with pytest.raises(ValueError, match=r"system field 'context\.producer'"):
             await event_memory_partition.query(
@@ -1220,6 +1234,29 @@ class TestQueryWithFilter:
                     )
                 ),
             )
+        assert embedded == []
+
+    async def test_a_typed_property_reaches_the_vector_store(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A declared key's condition reaches the search whatever type its reference carries."""
+        seen = _record_query_filters(fake_vector_store_partition, monkeypatch)
+        await event_memory_partition.encode_events(
+            [
+                _make_event("red thing", properties={"episode_uid": "e1"}),
+                _make_event("blue thing", properties={"episode_uid": "e2"}),
+            ]
+        )
+
+        texts = await _query_texts(
+            event_memory_partition, Equals(Property("episode_uid", str), "e1"), limit=10
+        )
+
+        assert seen == [Equals(Property("episode_uid", str), "e1")]
+        assert texts == {"red thing"}
 
 
 # ===================================================================

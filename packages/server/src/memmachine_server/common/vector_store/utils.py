@@ -117,11 +117,11 @@ def bind_filter(
     store, so a filter naming one has nothing to scan for. A membership test
     holds ints or strs, so one on a float or datetime key raises ValueError.
 
-    In the bound filter every value is of its key's declared type, so a
-    backend compares a stored value only with a value of the same type. An
-    int for a float key binds to the float it equals. A bool is never a
-    number, a float key is compared with finite floats only, and any key
-    with ints in 64 signed bits only.
+    In the bound filter every property carries its key's declared type and
+    every value is of that type, so a backend compares a stored value only
+    with a value of the same type. An int for a float key binds to the float
+    it equals. A bool is never a number, a float key is compared with finite
+    floats only, and any key with ints in 64 signed bits only.
     """
     keys = {property_key(field) for field in filter_fields(property_filter)}
     undeclared = keys - indexed_properties.keys()
@@ -152,15 +152,18 @@ def _bound_filter(
             return Or(tuple(_bound_filter(o, indexed_properties) for o in operands))
         case Not(operand):
             return Not(_bound_filter(operand, indexed_properties))
-        case IsNull():
-            return expr
+        case IsNull(field):
+            key = property_key(field)
+            return IsNull(Property(key, indexed_properties[key]))
         case Equals(field, value):
             key = property_key(field)
-            return Equals(field, _bound_value(key, value, indexed_properties[key]))
+            declared = indexed_properties[key]
+            return Equals(Property(key, declared), _bound_value(key, value, declared))
         case Ordering(field, op, value):
             key = property_key(field)
+            declared = indexed_properties[key]
             return Ordering(
-                field, op, _bound_value(key, value, indexed_properties[key])
+                Property(key, declared), op, _bound_value(key, value, declared)
             )
         case In(field, values):
             key = property_key(field)
@@ -173,7 +176,7 @@ def _bound_filter(
                 )
             for value in values:
                 _validate_value(key, value, declared)
-            return expr
+            return In(Property(key, declared), values)
 
 
 def _bound_value[V: PropertyValue](

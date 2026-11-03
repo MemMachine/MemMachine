@@ -8,9 +8,10 @@ from .episode_model import (
     EpisodeResponse,
     EpisodeType,
 )
-from .episode_storage import EpisodeStorage
+from .episode_storage import EPISODE_STORAGE_FILTER_FIELD_TYPES, EpisodeStorage
 
 __all__ = [
+    "EPISODE_STORAGE_FILTER_FIELD_TYPES",
     "ContentType",
     "CountCachingEpisodeStorage",
     "Episode",
