@@ -332,13 +332,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             case Property(key=key):
                 return Episode.json_metadata[key], "json"
             case SystemField(name=name):
-                # Check for system field mappings (case-insensitive)
-                normalized = name.lower()
-                if normalized not in EPISODE_STORAGE_FILTER_FIELD_TYPES:
+                if name not in EPISODE_STORAGE_FILTER_FIELD_TYPES:
                     raise ValueError(f"Unknown filter field: {name!r}")
-                column = Episode.__table__.c[
-                    _SYSTEM_FIELD_ALIASES.get(normalized, normalized)
-                ]
+                column = Episode.__table__.c[_SYSTEM_FIELD_ALIASES.get(name, name)]
                 return column, "uuid" if column.name == "uid" else "column"
 
     @timed("get_episode_messages")
