@@ -1189,8 +1189,11 @@ class Neo4jSemanticStorage(SemanticStorage):
                     params.update(operand_params)
                 return joiner.join(conditions), params
             case Not(operand):
+                # A comparison on a missing property is null in Cypher, so the
+                # operand is made total before it is negated, and the negation
+                # is its complement.
                 inner_cond, inner_params = self._render_filter_expr(alias, operand)
-                return f"NOT ({inner_cond})", inner_params
+                return f"NOT coalesce(({inner_cond}), false)", inner_params
 
     _KNOWN_FIELDS: frozenset[str] = frozenset(
         {

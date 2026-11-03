@@ -885,6 +885,32 @@ async def test_metadata_numbers_compare_by_value(semantic_storage: SemanticStora
 
 
 @pytest.mark.asyncio
+async def test_a_negation_is_the_complement(semantic_storage: SemanticStorage):
+    """A feature missing the compared metadata key matches a negated condition."""
+    embed = np.array([1.0], dtype=float)
+    for value, metadata in (("three", {"n": 3}), ("four", {"n": 4}), ("none", None)):
+        await semantic_storage.add_feature(
+            set_id="user",
+            category_name="default",
+            feature="note",
+            value=value,
+            tag="misc",
+            metadata=metadata,
+            embedding=embed,
+        )
+
+    async def values(spec: str) -> set[str]:
+        features = await _collect_feature_set(semantic_storage, filter_expr=_expr(spec))
+        return {feature.value for feature in features}
+
+    assert await values("m.n = 3") == {"three"}
+    assert await values("NOT m.n = 3") == {"four", "none"}
+    assert await values("m.n != 3") == {"four", "none"}
+    assert await values("NOT (m.n > 3 AND m.n < 10)") == {"three", "none"}
+    assert await values("NOT m.n IN (3, 4)") == {"none"}
+
+
+@pytest.mark.asyncio
 async def test_get_feature_set_unknown_filter_column_errors(
     semantic_storage: SemanticStorage,
 ):
