@@ -215,17 +215,18 @@ async def open_event_memory_partition(
     *,
     segment_store_partition: SegmentStorePartition,
     vector_store_partition: InMemoryVectorStorePartition,
+    store_schema: VectorStoreSchema,
     segmenter: Segmenter,
     deriver: Deriver,
     embedder: Embedder,
     reranker: Reranker | None = None,
     metrics_factory: MetricsFactory | None = None,
 ) -> EventMemoryPartition:
-    """Open a partition of an EventMemory whose stores hand out the given partitions, with the vector store partition's schema."""
+    """Open a partition of an EventMemory whose stores hand out the given partitions, and whose vector store has `store_schema`."""
     segment_store = create_autospec(SegmentStore, instance=True)
     segment_store.open_or_create_partition.return_value = segment_store_partition
     vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.store_schema = vector_store_partition._store_schema
+    vector_store.store_schema = store_schema
     vector_store.open_or_create_partition.return_value = vector_store_partition
     event_memory = EventMemory(
         EventMemoryParams(
@@ -257,21 +258,25 @@ def fake_segment_store_partition():
 
 
 @pytest.fixture
-def fake_vector_store_partition(fake_embedder):
-    return InMemoryVectorStorePartition(
-        store_schema=VectorStoreSchema(
-            vector_dimensions=fake_embedder.dimensions,
-            similarity_metric=fake_embedder.similarity_metric,
-            indexed_properties={
-                **EventMemory.expected_vector_store_indexed_properties(),
-                "episode_uid": str,
-            },
-        )
+def fake_store_schema(fake_embedder):
+    return VectorStoreSchema(
+        vector_dimensions=fake_embedder.dimensions,
+        similarity_metric=fake_embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            "episode_uid": str,
+        },
     )
+
+
+@pytest.fixture
+def fake_vector_store_partition(fake_store_schema):
+    return InMemoryVectorStorePartition(store_schema=fake_store_schema)
 
 
 @pytest_asyncio.fixture
 async def event_memory_partition(
+    fake_store_schema,
     fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
@@ -279,6 +284,7 @@ async def event_memory_partition(
     return await open_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
+        store_schema=fake_store_schema,
         segmenter=TextSegmenter(),
         deriver=WholeTextDeriver(),
         embedder=fake_embedder,
@@ -287,6 +293,7 @@ async def event_memory_partition(
 
 @pytest_asyncio.fixture
 async def event_memory_partition_with_reranker(
+    fake_store_schema,
     fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
@@ -294,6 +301,7 @@ async def event_memory_partition_with_reranker(
     return await open_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
+        store_schema=fake_store_schema,
         segmenter=TextSegmenter(),
         deriver=WholeTextDeriver(),
         embedder=fake_embedder,
@@ -303,6 +311,7 @@ async def event_memory_partition_with_reranker(
 
 @pytest_asyncio.fixture
 async def event_memory_partition_with_sentences(
+    fake_store_schema,
     fake_vector_store_partition,
     fake_segment_store_partition,
     fake_embedder,
@@ -310,6 +319,7 @@ async def event_memory_partition_with_sentences(
     return await open_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
+        store_schema=fake_store_schema,
         segmenter=TextSegmenter(),
         deriver=SentenceTextDeriver(),
         embedder=fake_embedder,

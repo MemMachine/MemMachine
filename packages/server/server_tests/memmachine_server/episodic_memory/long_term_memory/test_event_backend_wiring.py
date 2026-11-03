@@ -158,23 +158,28 @@ def fake_embedder() -> FakeEmbedder:
 
 
 @pytest.fixture
-def vector_store():
-    """Stand-in for the parent VectorStore: only partition lifecycle is invoked."""
-    return create_autospec(VectorStore, instance=True)
+def store_schema(fake_embedder) -> VectorStoreSchema:
+    return VectorStoreSchema(
+        vector_dimensions=fake_embedder.dimensions,
+        similarity_metric=fake_embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            **EVENT_BACKEND_SYSTEM_FIELDS,
+        },
+    )
 
 
 @pytest.fixture
-def vector_store_partition(fake_embedder):
-    return InMemoryVectorStorePartition(
-        store_schema=VectorStoreSchema(
-            vector_dimensions=fake_embedder.dimensions,
-            similarity_metric=fake_embedder.similarity_metric,
-            indexed_properties={
-                **EventMemory.expected_vector_store_indexed_properties(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-            },
-        )
-    )
+def vector_store(store_schema):
+    """Stand-in for the parent VectorStore: it answers `store_schema`, and only partition lifecycle is invoked."""
+    store = create_autospec(VectorStore, instance=True)
+    store.store_schema = store_schema
+    return store
+
+
+@pytest.fixture
+def vector_store_partition(store_schema):
+    return InMemoryVectorStorePartition(store_schema=store_schema)
 
 
 @pytest.fixture
@@ -201,7 +206,6 @@ async def _event_long_term_memory(
     segmenter: Segmenter,
 ) -> LongTermMemory:
     """A LongTermMemory on session `sess1`'s partition, which the given stores hand out."""
-    vector_store.store_schema = vector_store_partition._store_schema
     vector_store.open_or_create_partition.return_value = vector_store_partition
     segment_store.open_or_create_partition.return_value = segment_store_partition
     event_memory = EventMemory(
@@ -495,19 +499,19 @@ async def _make_ltm(
     given). No reranker is configured — that's the failure mode under
     euclidean.
     """
-    vector_store_partition = InMemoryVectorStorePartition(
-        store_schema=VectorStoreSchema(
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties={
-                **EventMemory.expected_vector_store_indexed_properties(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-            },
-        )
+    store_schema = VectorStoreSchema(
+        vector_dimensions=embedder.dimensions,
+        similarity_metric=embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            **EVENT_BACKEND_SYSTEM_FIELDS,
+        },
     )
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.store_schema = store_schema
     return await _event_long_term_memory(
-        vector_store=create_autospec(VectorStore, instance=True),
-        vector_store_partition=vector_store_partition,
+        vector_store=vector_store,
+        vector_store_partition=InMemoryVectorStorePartition(store_schema=store_schema),
         segment_store=create_autospec(SegmentStore, instance=True),
         segment_store_partition=InMemorySegmentStorePartition(),
         episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),

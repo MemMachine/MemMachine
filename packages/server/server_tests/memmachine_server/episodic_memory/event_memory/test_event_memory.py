@@ -254,17 +254,17 @@ class TestEncodeEvents:
         self, fake_embedder
     ):
         # A partition without context fields.
-        vector_store_partition = InMemoryVectorStorePartition(
-            store_schema=VectorStoreSchema(
-                vector_dimensions=fake_embedder.dimensions,
-                similarity_metric=SimilarityMetric.COSINE,
-                indexed_properties={EVENT_TIMESTAMP_KEY: datetime.datetime},
-            )
+        store_schema = VectorStoreSchema(
+            vector_dimensions=fake_embedder.dimensions,
+            similarity_metric=SimilarityMetric.COSINE,
+            indexed_properties={EVENT_TIMESTAMP_KEY: datetime.datetime},
         )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
         partition = InMemorySegmentStorePartition()
         em = await open_event_memory_partition(
             segment_store_partition=partition,
             vector_store_partition=vector_store_partition,
+            store_schema=store_schema,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=fake_embedder,
@@ -308,13 +308,12 @@ class TestEncodeEvents:
 
     async def test_init_raises_on_missing_base_field(self, fake_embedder):
         # A partition without the timestamp key — base field required at init.
-        vector_store_partition = InMemoryVectorStorePartition(
-            store_schema=VectorStoreSchema(
-                vector_dimensions=fake_embedder.dimensions,
-                similarity_metric=SimilarityMetric.COSINE,
-                indexed_properties={},
-            )
+        store_schema = VectorStoreSchema(
+            vector_dimensions=fake_embedder.dimensions,
+            similarity_metric=SimilarityMetric.COSINE,
+            indexed_properties={},
         )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
         partition = InMemorySegmentStorePartition()
         with pytest.raises(
             ValueError,
@@ -322,6 +321,7 @@ class TestEncodeEvents:
         ):
             await open_event_memory_partition(
                 vector_store_partition=vector_store_partition,
+                store_schema=store_schema,
                 segment_store_partition=partition,
                 segmenter=TextSegmenter(),
                 embedder=fake_embedder,
@@ -956,19 +956,19 @@ class TestQueryWithFilter:
         monkeypatch: pytest.MonkeyPatch,
     ):
         """A user key the partition declares is on the record, and its condition reaches the search under its bare name."""
-        vector_store_partition = InMemoryVectorStorePartition(
-            store_schema=VectorStoreSchema(
-                vector_dimensions=fake_embedder.dimensions,
-                similarity_metric=fake_embedder.similarity_metric,
-                indexed_properties={
-                    **EventMemory.expected_vector_store_indexed_properties(),
-                    "color": str,
-                },
-            )
+        store_schema = VectorStoreSchema(
+            vector_dimensions=fake_embedder.dimensions,
+            similarity_metric=fake_embedder.similarity_metric,
+            indexed_properties={
+                **EventMemory.expected_vector_store_indexed_properties(),
+                "color": str,
+            },
         )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
         event_memory_partition = await open_event_memory_partition(
             segment_store_partition=fake_segment_store_partition,
             vector_store_partition=vector_store_partition,
+            store_schema=store_schema,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=fake_embedder,
@@ -1190,21 +1190,21 @@ async def declaring_event_memory_partition(
     fake_embedder, fake_segment_store_partition
 ) -> EventMemoryPartition:
     """Event memory whose vector store declares `d1`, `d2`, and `d3` but not `u1` or `u2`."""
-    vector_store_partition = InMemoryVectorStorePartition(
-        store_schema=VectorStoreSchema(
-            vector_dimensions=fake_embedder.dimensions,
-            similarity_metric=fake_embedder.similarity_metric,
-            indexed_properties={
-                **EventMemory.expected_vector_store_indexed_properties(),
-                "d1": int,
-                "d2": int,
-                "d3": int,
-            },
-        )
+    store_schema = VectorStoreSchema(
+        vector_dimensions=fake_embedder.dimensions,
+        similarity_metric=fake_embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            "d1": int,
+            "d2": int,
+            "d3": int,
+        },
     )
+    vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
     return await open_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=vector_store_partition,
+        store_schema=store_schema,
         segmenter=TextSegmenter(),
         deriver=WholeTextDeriver(),
         embedder=fake_embedder,
@@ -1340,6 +1340,7 @@ class _ColorEmbedder(Embedder):
 class TestQueryWithAConditionOnAnUndeclaredField:
     async def test_the_condition_applies_to_the_seeds_the_search_returns(
         self,
+        fake_store_schema: VectorStoreSchema,
         fake_vector_store_partition: InMemoryVectorStorePartition,
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
@@ -1347,6 +1348,7 @@ class TestQueryWithAConditionOnAnUndeclaredField:
         event_memory_partition = await open_event_memory_partition(
             segment_store_partition=fake_segment_store_partition,
             vector_store_partition=fake_vector_store_partition,
+            store_schema=fake_store_schema,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=_ColorEmbedder(),
@@ -1478,16 +1480,16 @@ class _RecordingEmbedder(FakeEmbedder):
 class TestIngestFormatOptions:
     @staticmethod
     async def _build(embedder: FakeEmbedder) -> EventMemoryPartition:
-        vector_store_partition = InMemoryVectorStorePartition(
-            store_schema=VectorStoreSchema(
-                vector_dimensions=embedder.dimensions,
-                similarity_metric=embedder.similarity_metric,
-                indexed_properties=EventMemory.expected_vector_store_indexed_properties(),
-            )
+        store_schema = VectorStoreSchema(
+            vector_dimensions=embedder.dimensions,
+            similarity_metric=embedder.similarity_metric,
+            indexed_properties=EventMemory.expected_vector_store_indexed_properties(),
         )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
         return await open_event_memory_partition(
             segment_store_partition=InMemorySegmentStorePartition(),
             vector_store_partition=vector_store_partition,
+            store_schema=store_schema,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=embedder,
@@ -1518,16 +1520,16 @@ class TestIngestFormatOptions:
         """The baked timestamp lives only in the embedding, not the segment."""
         embedder = _RecordingEmbedder()
         partition = InMemorySegmentStorePartition()
-        vector_store_partition = InMemoryVectorStorePartition(
-            store_schema=VectorStoreSchema(
-                vector_dimensions=embedder.dimensions,
-                similarity_metric=embedder.similarity_metric,
-                indexed_properties=EventMemory.expected_vector_store_indexed_properties(),
-            )
+        store_schema = VectorStoreSchema(
+            vector_dimensions=embedder.dimensions,
+            similarity_metric=embedder.similarity_metric,
+            indexed_properties=EventMemory.expected_vector_store_indexed_properties(),
         )
+        vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
         event_memory_partition = await open_event_memory_partition(
             segment_store_partition=partition,
             vector_store_partition=vector_store_partition,
+            store_schema=store_schema,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=embedder,

@@ -88,16 +88,14 @@ async def _stored(partition) -> dict[UUID, dict]:
     """The records the partition's table holds, UUID to properties.
 
     Read past the store, from the table itself, so the answer is exact
-    rather than a search engine's approximation.
+    rather than a search engine's approximation. The partition's store
+    declares `INDEXED_PROPERTIES`.
     """
     table = partition._records_table
     async with partition._create_session() as session:
         rows = (await session.execute(select(table))).all()
     return {
-        row.uuid: _declared_values(
-            row._mapping, partition._store_schema.indexed_properties
-        )
-        for row in rows
+        row.uuid: _declared_values(row._mapping, INDEXED_PROPERTIES) for row in rows
     }
 
 
