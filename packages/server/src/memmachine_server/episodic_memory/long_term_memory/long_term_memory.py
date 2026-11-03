@@ -3,10 +3,10 @@
 import datetime
 import logging
 from collections.abc import Iterable
-from typing import Annotated, Final, Literal, cast
+from typing import Final, cast
 from uuid import UUID, uuid5
 
-from pydantic import BaseModel, Field, InstanceOf, JsonValue
+from pydantic import JsonValue
 
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.episode_store import (
@@ -107,53 +107,28 @@ _FILTERABLE_METADATA_NONE_FLAG = "_filterable_metadata_none"
 _EVENT_BACKEND_DEDUP_OVERFETCH = 4
 
 
-class DeclarativeBackendParams(BaseModel):
-    """Parameters for the declarative-backed LongTermMemory."""
-
-    backend: Literal["declarative"] = "declarative"
-    session_id: str = Field(..., description="Session identifier")
-    declarative_memory: InstanceOf[DeclarativeMemory] = Field(
-        ...,
-        description="The session's DeclarativeMemory",
-    )
-
-
-class EventBackendParams(BaseModel):
-    """Parameters for the event-backed LongTermMemory."""
-
-    backend: Literal["event"] = "event"
-    session_id: str = Field(..., description="Session identifier")
-    event_memory_partition: InstanceOf[EventMemoryPartition] = Field(
-        ...,
-        description="The session's EventMemory partition",
-    )
-    episode_storage: InstanceOf[EpisodeStorage] = Field(
-        ...,
-        description="EpisodeStorage used to hydrate Episodes at query time",
-    )
-    reranker: InstanceOf[Reranker] | None = Field(default=None)
-
-
-LongTermMemoryParams = Annotated[
-    DeclarativeBackendParams | EventBackendParams,
-    Field(discriminator="backend"),
-]
-
-
 class LongTermMemory:
-    """Long-term memory facade dispatching to a declarative or event backend."""
+    """Long-term memory routing each request to a session's declarative memory or event memory partition."""
 
     def __init__(
         self,
-        params: DeclarativeBackendParams | EventBackendParams,
+        memory: DeclarativeMemory | EventMemoryPartition,
+        *,
+        episode_storage: EpisodeStorage | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
-        """Wire up the chosen backend."""
-        self._backend: Literal["declarative", "event"] = params.backend
+        """
+        Route requests to a session's memory.
 
-        # Backend-specific state. Only the relevant slots are populated.
-        self._declarative_memory: DeclarativeMemory | None = None
-        self._event_memory_partition: EventMemoryPartition | None = None
-        self._episode_storage: EpisodeStorage | None = None
+        An EventMemoryPartition needs `episode_storage`, which turns its
+        results into episodes; a `reranker` makes its scores higher-is-better.
+
+        Raises:
+            ValueError: If `memory` is an EventMemoryPartition and
+                `episode_storage` is None.
+        """
+        self._memory = memory
+        self._episode_storage = episode_storage
         # Event backend only: whether scores from `EventMemoryPartition.query`
         # are higher-is-better. Matches the same derivation inside it
         # (reranker scores are higher-is-better; raw vector scores depend on the
@@ -161,31 +136,28 @@ class LongTermMemory:
         # is lower-is-better). Used to apply `score_threshold` in the correct
         # direction so it doesn't invert under euclidean with no reranker.
         self._score_higher_is_better: bool = True
-        self._session_id: str = params.session_id
 
-        match params:
-            case DeclarativeBackendParams():
-                self._declarative_memory = params.declarative_memory
-            case EventBackendParams():
-                self._event_memory_partition = params.event_memory_partition
-                self._episode_storage = params.episode_storage
-                self._score_higher_is_better = (
-                    params.reranker is not None
-                    or params.event_memory_partition.similarity_metric.higher_is_better
+        if isinstance(memory, EventMemoryPartition):
+            if episode_storage is None:
+                raise ValueError(
+                    "An event memory partition needs the episode storage "
+                    "that turns its results into episodes"
                 )
+            self._score_higher_is_better = (
+                reranker is not None or memory.similarity_metric.higher_is_better
+            )
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
-        if self._backend == "declarative":
-            assert self._declarative_memory is not None
-            await self._declarative_memory.add_episodes(
-                LongTermMemory._declarative_memory_episode(e) for e in episodes
-            )
-            return
-
-        assert self._event_memory_partition is not None
-        events = [LongTermMemory._episode_to_event(episode) for episode in episodes]
-        await self._event_memory_partition.encode_events(events)
+        match self._memory:
+            case DeclarativeMemory() as declarative_memory:
+                await declarative_memory.add_episodes(
+                    LongTermMemory._declarative_memory_episode(e) for e in episodes
+                )
+            case EventMemoryPartition() as event_memory_partition:
+                await event_memory_partition.encode_events(
+                    [LongTermMemory._episode_to_event(episode) for episode in episodes]
+                )
 
     async def query(
         self,
@@ -212,24 +184,29 @@ class LongTermMemory:
             raise ValueError(
                 f"num_episodes_limit is not positive: {num_episodes_limit}"
             )
-        if self._backend == "declarative":
-            return await self._query_declarative(
-                query,
-                num_episodes_limit=num_episodes_limit,
-                expand_context=expand_context,
-                score_threshold=score_threshold,
-                property_filter=property_filter,
-            )
-        return await self._query_event(
-            query,
-            num_episodes_limit=num_episodes_limit,
-            expand_context=expand_context,
-            score_threshold=score_threshold,
-            property_filter=property_filter,
-        )
+        match self._memory:
+            case DeclarativeMemory() as declarative_memory:
+                return await self._query_declarative(
+                    declarative_memory,
+                    query,
+                    num_episodes_limit=num_episodes_limit,
+                    expand_context=expand_context,
+                    score_threshold=score_threshold,
+                    property_filter=property_filter,
+                )
+            case EventMemoryPartition() as event_memory_partition:
+                return await self._query_event(
+                    event_memory_partition,
+                    query,
+                    num_episodes_limit=num_episodes_limit,
+                    expand_context=expand_context,
+                    score_threshold=score_threshold,
+                    property_filter=property_filter,
+                )
 
     async def _query_declarative(
         self,
+        declarative_memory: DeclarativeMemory,
         query: str,
         *,
         num_episodes_limit: int,
@@ -237,8 +214,7 @@ class LongTermMemory:
         score_threshold: float | None,
         property_filter: FilterExpr | None,
     ) -> list[tuple[float, Episode]]:
-        assert self._declarative_memory is not None
-        scored = await self._declarative_memory.search_scored(
+        scored = await declarative_memory.search_scored(
             query,
             max_num_episodes=num_episodes_limit,
             expand_context=expand_context,
@@ -257,6 +233,7 @@ class LongTermMemory:
 
     async def _query_event(
         self,
+        event_memory_partition: EventMemoryPartition,
         query: str,
         *,
         num_episodes_limit: int,
@@ -264,7 +241,6 @@ class LongTermMemory:
         score_threshold: float | None,
         property_filter: FilterExpr | None,
     ) -> list[tuple[float, Episode]]:
-        assert self._event_memory_partition is not None
         assert self._episode_storage is not None
         self._validate_event_backend_filter(property_filter)
         # `expand_context` is a window of segments, the unit EventMemory and
@@ -286,7 +262,7 @@ class LongTermMemory:
             num_episodes_limit * _EVENT_BACKEND_DEDUP_OVERFETCH,
             num_episodes_limit,
         )
-        result = await self._event_memory_partition.query(
+        result = await event_memory_partition.query(
             query,
             vector_search_limit=vector_search_limit,
             expand_context=expand_context,
@@ -356,14 +332,13 @@ class LongTermMemory:
 
     async def delete_episodes(self, uids: Iterable[UUID]) -> None:
         uids = list(uids)
-        if self._backend == "declarative":
-            assert self._declarative_memory is not None
-            await self._declarative_memory.delete_episodes(uids)
-            return
-
-        assert self._event_memory_partition is not None
-        event_uuids = {uuid5(_EVENT_UUID_NAMESPACE, str(uid)) for uid in uids}
-        await self._event_memory_partition.forget_events(event_uuids)
+        match self._memory:
+            case DeclarativeMemory() as declarative_memory:
+                await declarative_memory.delete_episodes(uids)
+            case EventMemoryPartition() as event_memory_partition:
+                await event_memory_partition.forget_events(
+                    {uuid5(_EVENT_UUID_NAMESPACE, str(uid)) for uid in uids}
+                )
 
     def _score_passes_threshold(
         self, score: float, score_threshold: float | None

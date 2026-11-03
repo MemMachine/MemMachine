@@ -50,9 +50,7 @@ from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter imp
 
 from .long_term_memory import (
     EVENT_BACKEND_SYSTEM_FIELDS,
-    DeclarativeBackendParams,
-    EventBackendParams,
-    LongTermMemoryParams,
+    LongTermMemory,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,17 +62,14 @@ Fixed, because the name locates the store's data.
 """
 
 
-async def long_term_memory_params_from_config(
+async def long_term_memory_from_config(
     config: LongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
-) -> LongTermMemoryParams:
-    """Build LongTermMemoryParams from configuration and resources."""
+) -> LongTermMemory:
+    """Build a session's LongTermMemory from its configuration and the deployment's resources."""
     match config:
         case DeclarativeLongTermMemoryConf():
-            return DeclarativeBackendParams(
-                session_id=config.session_id,
-                declarative_memory=await _declarative_memory(config, resource_manager),
-            )
+            return LongTermMemory(await _declarative_memory(config, resource_manager))
         case EventLongTermMemoryConf():
             reranker = (
                 await resource_manager.get_reranker(config.reranker, validate=True)
@@ -84,9 +79,8 @@ async def long_term_memory_params_from_config(
             event_memory = await _event_memory(
                 config, resource_manager, reranker=reranker
             )
-            return EventBackendParams(
-                session_id=config.session_id,
-                event_memory_partition=await event_memory.open_or_create_partition(
+            return LongTermMemory(
+                await event_memory.open_or_create_partition(
                     partition_key_for_session(config.session_id)
                 ),
                 episode_storage=await resource_manager.get_episode_storage(),

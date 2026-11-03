@@ -1,6 +1,6 @@
 """End-to-end wiring test for the event-backed LongTermMemory.
 
-Builds a LongTermMemory(EventBackendParams(...)) using:
+Builds a LongTermMemory over an EventMemoryPartition using:
 - the in-memory vector store partition from event_memory tests
 - the in-memory segment_store partition from event_memory tests
 - an EventMemory whose store stand-ins hand out those two partitions
@@ -56,7 +56,6 @@ from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter imp
 )
 from memmachine_server.episodic_memory.long_term_memory import (
     EVENT_BACKEND_SYSTEM_FIELDS,
-    EventBackendParams,
     LongTermMemory,
 )
 from server_tests.memmachine_server.common.reranker.fake_embedder import FakeEmbedder
@@ -191,7 +190,7 @@ def segment_store_partition() -> InMemorySegmentStorePartition:
     return InMemorySegmentStorePartition()
 
 
-async def _event_backend_params(
+async def _event_long_term_memory(
     *,
     vector_store: NonCallableMagicMock,
     vector_store_partition: InMemoryVectorStorePartition,
@@ -200,8 +199,8 @@ async def _event_backend_params(
     episode_storage: EpisodeStorage,
     embedder: Embedder,
     segmenter: Segmenter,
-) -> EventBackendParams:
-    """Event backend params for session `sess1`, whose stores hand out the given partitions."""
+) -> LongTermMemory:
+    """A LongTermMemory on session `sess1`'s partition, which the given stores hand out."""
     vector_store.open_or_create_partition.return_value = vector_store_partition
     segment_store.open_or_create_partition.return_value = segment_store_partition
     event_memory = EventMemory(
@@ -214,9 +213,8 @@ async def _event_backend_params(
             embedder=embedder,
         )
     )
-    return EventBackendParams(
-        session_id="sess1",
-        event_memory_partition=await event_memory.open_or_create_partition("sess1"),
+    return LongTermMemory(
+        await event_memory.open_or_create_partition("sess1"),
         episode_storage=episode_storage,
     )
 
@@ -230,17 +228,23 @@ async def long_term_memory(
     segment_store_partition,
     fake_episode_storage,
 ) -> LongTermMemory:
-    return LongTermMemory(
-        await _event_backend_params(
-            vector_store=vector_store,
-            vector_store_partition=vector_store_partition,
-            segment_store=segment_store,
-            segment_store_partition=segment_store_partition,
-            episode_storage=fake_episode_storage,
-            embedder=fake_embedder,
-            segmenter=PassthroughSegmenter(),
-        ),
+    return await _event_long_term_memory(
+        vector_store=vector_store,
+        vector_store_partition=vector_store_partition,
+        segment_store=segment_store,
+        segment_store_partition=segment_store_partition,
+        episode_storage=fake_episode_storage,
+        embedder=fake_embedder,
+        segmenter=PassthroughSegmenter(),
     )
+
+
+async def test_an_event_memory_partition_without_episode_storage_is_refused(
+    long_term_memory,
+):
+    """The event branch reads the episode storage to turn results into episodes."""
+    with pytest.raises(ValueError, match="episode storage"):
+        LongTermMemory(long_term_memory._memory)
 
 
 async def test_add_then_search_returns_full_episodes(long_term_memory, episodes):
@@ -501,16 +505,14 @@ async def _make_ltm(
             },
         )
     )
-    return LongTermMemory(
-        await _event_backend_params(
-            vector_store=create_autospec(VectorStore, instance=True),
-            vector_store_partition=vector_store_partition,
-            segment_store=create_autospec(SegmentStore, instance=True),
-            segment_store_partition=InMemorySegmentStorePartition(),
-            episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),
-            embedder=embedder,
-            segmenter=segmenter if segmenter is not None else PassthroughSegmenter(),
-        ),
+    return await _event_long_term_memory(
+        vector_store=create_autospec(VectorStore, instance=True),
+        vector_store_partition=vector_store_partition,
+        segment_store=create_autospec(SegmentStore, instance=True),
+        segment_store_partition=InMemorySegmentStorePartition(),
+        episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),
+        embedder=embedder,
+        segmenter=segmenter if segmenter is not None else PassthroughSegmenter(),
     )
 
 
@@ -696,16 +698,14 @@ async def timeline_long_term_memory(
 ) -> LongTermMemory:
     # `RankedEmbedder` shares FakeEmbedder's dimensions and similarity metric,
     # so the shared `vector_store_partition` config still applies.
-    return LongTermMemory(
-        await _event_backend_params(
-            vector_store=vector_store,
-            vector_store_partition=vector_store_partition,
-            segment_store=segment_store,
-            segment_store_partition=segment_store_partition,
-            episode_storage=timeline_storage,
-            embedder=RankedEmbedder(),
-            segmenter=PassthroughSegmenter(),
-        ),
+    return await _event_long_term_memory(
+        vector_store=vector_store,
+        vector_store_partition=vector_store_partition,
+        segment_store=segment_store,
+        segment_store_partition=segment_store_partition,
+        episode_storage=timeline_storage,
+        embedder=RankedEmbedder(),
+        segmenter=PassthroughSegmenter(),
     )
 
 

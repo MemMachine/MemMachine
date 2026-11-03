@@ -24,10 +24,7 @@ from memmachine_server.episodic_memory.declarative_memory import (
 from memmachine_server.episodic_memory.episodic_memory import (
     EpisodicMemoryParams,
 )
-from memmachine_server.episodic_memory.long_term_memory import (
-    DeclarativeBackendParams,
-    LongTermMemory,
-)
+from memmachine_server.episodic_memory.long_term_memory import LongTermMemory
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     delete_long_term_memory_storage,
 )
@@ -490,17 +487,14 @@ async def init_memmachine_params(
     normalized_session_id = session_id or "evaluation_session"
 
     long_term_memory = LongTermMemory(
-        DeclarativeBackendParams(
-            session_id=normalized_session_id,
-            declarative_memory=DeclarativeMemory(
-                DeclarativeMemoryParams(
-                    session_id=normalized_session_id,
-                    vector_graph_store=vector_graph_store,
-                    embedder=embedder,
-                    reranker=reranker,
-                    message_sentence_chunking=message_sentence_chunking,
-                )
-            ),
+        DeclarativeMemory(
+            DeclarativeMemoryParams(
+                session_id=normalized_session_id,
+                vector_graph_store=vector_graph_store,
+                embedder=embedder,
+                reranker=reranker,
+                message_sentence_chunking=message_sentence_chunking,
+            )
         )
     )
     memory = EpisodicMemory(

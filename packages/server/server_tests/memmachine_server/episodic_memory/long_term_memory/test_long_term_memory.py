@@ -26,10 +26,7 @@ from memmachine_server.episodic_memory.declarative_memory import (
     DeclarativeMemory,
     DeclarativeMemoryParams,
 )
-from memmachine_server.episodic_memory.long_term_memory import (
-    DeclarativeBackendParams,
-    LongTermMemory,
-)
+from memmachine_server.episodic_memory.long_term_memory import LongTermMemory
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     delete_long_term_memory_storage,
 )
@@ -172,15 +169,12 @@ def vector_graph_store(request):
 @pytest.fixture(scope="module")
 def long_term_memory(embedder, reranker, vector_graph_store):
     return LongTermMemory(
-        DeclarativeBackendParams(
-            session_id="test_session",
-            declarative_memory=DeclarativeMemory(
-                DeclarativeMemoryParams(
-                    session_id="test_session",
-                    embedder=embedder,
-                    reranker=reranker,
-                    vector_graph_store=vector_graph_store,
-                ),
+        DeclarativeMemory(
+            DeclarativeMemoryParams(
+                session_id="test_session",
+                embedder=embedder,
+                reranker=reranker,
+                vector_graph_store=vector_graph_store,
             ),
         ),
     )
