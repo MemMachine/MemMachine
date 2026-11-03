@@ -15,6 +15,9 @@ from memmachine_server.common.episode_store import (
 from memmachine_server.common.errors import InvalidArgumentError
 from memmachine_server.common.filter import (
     FilterExpr,
+    IsNull,
+    Not,
+    SystemField,
 )
 from memmachine_server.common.filter.filter_parser import (
     parse_filter,
@@ -857,6 +860,28 @@ async def test_filter_by_metadata_nullity(semantic_storage: SemanticStorage):
         filter_expr=_expr("metadata.details IS NOT NULL"),
     )
     assert [feature.value for feature in not_null_results] == ["first"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", list(SEMANTIC_STORAGE_FILTER_FIELD_TYPES))
+async def test_a_filter_resolves_every_system_field(
+    semantic_storage: SemanticStorage, name: str
+):
+    if isinstance(semantic_storage, Neo4jSemanticStorage):
+        pytest.skip("Neo4j holds some system field names under no node property")
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="first",
+        tag="misc",
+        embedding=np.array([1.0], dtype=float),
+    )
+
+    features = await _collect_feature_set(
+        semantic_storage, filter_expr=Not(IsNull(SystemField(name)))
+    )
+    assert [feature.value for feature in features] == ["first"]
 
 
 @pytest.mark.asyncio

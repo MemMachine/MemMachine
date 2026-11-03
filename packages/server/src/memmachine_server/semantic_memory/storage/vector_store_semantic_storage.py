@@ -43,6 +43,7 @@ from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store import Record, VectorStorePartition
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
     FeatureIdT,
     SemanticStorage,
 )
@@ -167,6 +168,16 @@ class VectorSemanticSetIngestedHistory(BaseVectorSemanticStorage):
             "ingested",
         ),
     )
+
+
+# The column of each system field not held under its own name.
+_SYSTEM_FIELD_ALIASES: dict[str, str] = {
+    "set": "set_id",
+    "category_name": "semantic_category_id",
+    "category": "semantic_category_id",
+    "tag": "tag_id",
+    "feature_name": "feature",
+}
 
 
 class VectorStoreSemanticStorage(SemanticStorage):
@@ -772,23 +783,11 @@ class VectorStoreSemanticStorage(SemanticStorage):
             case Property(key=key):
                 return table.json_metadata[key], "json"
             case SystemField(name=name):
-                field_mapping: dict[str, ColumnElement] = {
-                    "set_id": table.set_id.expression,
-                    "set": table.set_id.expression,
-                    "semantic_category_id": table.semantic_category_id.expression,
-                    "category_name": table.semantic_category_id.expression,
-                    "category": table.semantic_category_id.expression,
-                    "tag_id": table.tag_id.expression,
-                    "tag": table.tag_id.expression,
-                    "feature": table.feature.expression,
-                    "feature_name": table.feature.expression,
-                    "value": table.value.expression,
-                    "created_at": table.created_at.expression,
-                    "updated_at": table.updated_at.expression,
-                }
-                if name in field_mapping:
-                    return field_mapping[name], "column"
-                raise ValueError(f"Unknown filter field: {name!r}")
+                if name not in SEMANTIC_STORAGE_FILTER_FIELD_TYPES:
+                    raise ValueError(f"Unknown filter field: {name!r}")
+                return table.__table__.c[
+                    _SYSTEM_FIELD_ALIASES.get(name, name)
+                ], "column"
 
     async def _load_feature_citations(
         self,
