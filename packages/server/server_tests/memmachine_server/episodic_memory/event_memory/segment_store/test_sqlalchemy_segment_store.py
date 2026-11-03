@@ -36,6 +36,7 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
     SystemField,
 )
 from memmachine_server.common.filter.filter_parser import (
@@ -596,7 +597,7 @@ async def test_contexts_property_filter(
     s3 = _seg(event_uuid=ep, offset=3, ts_offset_seconds=3, properties={"tag": "a"})
     await partition.add_segments(_links(s0, s1, s2, s3))
 
-    filt = Equals(field="m.tag", value="a")
+    filt = Equals(field=Property("tag"), value="a")
     result = await partition.get_segment_contexts(
         [s2.uuid],
         max_backward_segments=5,
@@ -635,7 +636,7 @@ async def test_context_comes_from_the_segments_nearest_the_seed(
         [seed.uuid],
         max_backward_segments=5,
         max_forward_segments=5,
-        property_filter=Equals(field="m.tag", value="a"),
+        property_filter=Equals(field=Property("tag"), value="a"),
     )
     assert [segment.uuid for segment in filtered[seed.uuid]] == [
         backward[4].uuid,
@@ -671,7 +672,7 @@ async def test_contexts_negated_property_filter_keeps_a_segment_without_the_key(
         [s1.uuid],
         max_backward_segments=5,
         max_forward_segments=5,
-        property_filter=Not(Equals(field="m.tag", value="a")),
+        property_filter=Not(Equals(field=Property("tag"), value="a")),
     )
     ctx = result[s1.uuid]
     uuids = [s.uuid for s in ctx]
@@ -819,17 +820,21 @@ async def test_random_context_reads_agree_with_a_model(
 
     filters: list[FilterExpr | None] = [
         None,
-        Equals(field="m.tag", value="a"),
-        In(field="m.tag", values=("a", "b")),
-        Not(Equals(field="m.opt", value="x")),
+        Equals(field=Property("tag"), value="a"),
+        In(field=Property("tag"), values=("a", "b")),
+        Not(Equals(field=Property("opt"), value="x")),
         And(
             (
-                Equals(field="m.tag", value="b"),
-                Equals(field="m.role", value="user"),
+                Equals(field=Property("tag"), value="b"),
+                Equals(field=Property("role"), value="user"),
             )
         ),
-        Or((Equals(field="m.tag", value="c"), IsNull(field="m.opt"))),
-        Ordering(field="timestamp", op=">=", value=BASE_TIME + timedelta(seconds=8)),
+        Or((Equals(field=Property("tag"), value="c"), IsNull(field=Property("opt")))),
+        Ordering(
+            field=SystemField("timestamp"),
+            op=">=",
+            value=BASE_TIME + timedelta(seconds=8),
+        ),
     ]
     for _ in range(40):
         seeds = rng.sample(segments, rng.randint(1, 5))
@@ -930,15 +935,17 @@ def _truth(segment: Segment, expr: FilterExpr) -> bool:
 
 def _leaf_truth(segment: Segment, expr: Equals | Ordering | In | IsNull) -> bool:
     """A leaf's value for `segment`."""
-    if expr.field == "timestamp":
-        actual = segment.timestamp
-    else:
-        key = expr.field.removeprefix("m.")
-        if isinstance(expr, IsNull):
-            return key not in segment.properties
-        if key not in segment.properties:
-            return False
-        actual = segment.properties[key]
+    match expr.field:
+        case SystemField(name="timestamp"):
+            actual = segment.timestamp
+        case Property(key=key):
+            if isinstance(expr, IsNull):
+                return key not in segment.properties
+            if key not in segment.properties:
+                return False
+            actual = segment.properties[key]
+        case SystemField(name=name):
+            raise ValueError(f"No system field {name!r}")
     match expr:
         case In(values=values):
             return actual in values
