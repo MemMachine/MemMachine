@@ -848,8 +848,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         """
         Map a filter field name to one of `columns` and its encoding.
 
-        The timestamp maps to its column and a property to its key in the
-        properties. Raises ValueError for a field that names neither.
+        Raises ValueError for an unknown field.
         """
         if field == "timestamp":
             return columns.timestamp, "column"

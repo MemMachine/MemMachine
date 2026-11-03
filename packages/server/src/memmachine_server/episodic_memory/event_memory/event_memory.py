@@ -356,7 +356,7 @@ class EventMemory:
         """
         Translates canonical filter field name to vector record property.
 
-        The timestamp (`timestamp`) translates to its reserved key.
+        Event memory base properties (`foo`) translate to their reserved keys.
         User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
         Any other name translates unchanged.
         """
@@ -391,13 +391,14 @@ class EventMemory:
                 around each matched segment for additional context
                 (default: 0).
             property_filter (FilterExpr | None):
-                A filter over the segments' properties and timestamp
+                Property fields and values
+                to use for filtering segments
                 (default: None).
                 The vector search applies only the part of the filter
-                that names the timestamp or declared properties alone
-                (see `extract_filter`); the whole filter then applies to
-                the seeds it returns, so fewer than `vector_search_limit`
-                seeds, or none, may survive it.
+                that names declared fields alone (see `extract_filter`);
+                the whole filter then applies to the seeds it returns,
+                so fewer than `vector_search_limit` seeds, or none,
+                may survive it.
             format_options (FormatOptions | None):
                 Options for formatting.
                 (default: None).

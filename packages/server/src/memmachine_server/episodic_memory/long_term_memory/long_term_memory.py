@@ -607,8 +607,7 @@ class LongTermMemory:
         """The EventMemory filter field a client filter field names.
 
         A system field's bare name names its reserved key as a property;
-        `timestamp` and a `m.<key>` / `metadata.<key>` name are the same
-        field in both.
+        any other name is the same field in both.
         """
         key = _SYSTEM_FIELD_KEYS.get(field)
         if key is None:
