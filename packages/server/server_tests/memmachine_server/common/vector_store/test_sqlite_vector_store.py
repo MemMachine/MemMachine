@@ -1891,3 +1891,8 @@ class TestPartitionResources:
 
         await store.shutdown()
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_the_store_answers_the_schema_it_was_built_with(store):
+    assert store.store_schema == _schema()

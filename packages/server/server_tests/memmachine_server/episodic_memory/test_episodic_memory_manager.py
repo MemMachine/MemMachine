@@ -28,7 +28,7 @@ from memmachine_server.common.session_manager.session_data_manager_sql_impl impo
     SessionDataManagerSQL,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
-from memmachine_server.common.vector_store import VectorStore
+from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.episodic_memory import (
     EpisodicMemory,
     EpisodicMemoryParams,
@@ -38,6 +38,9 @@ from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManagerParams,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    event_backend_indexed_properties,
+)
 
 
 @pytest_asyncio.fixture
@@ -596,6 +599,11 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
         )
     )
     vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.store_schema = VectorStoreSchema(
+        vector_dimensions=3,
+        similarity_metric=SimilarityMetric.COSINE,
+        indexed_properties=event_backend_indexed_properties(),
+    )
     segment_store = create_autospec(SegmentStore, instance=True)
     embedder = create_autospec(Embedder, instance=True)
     embedder.dimensions = 3

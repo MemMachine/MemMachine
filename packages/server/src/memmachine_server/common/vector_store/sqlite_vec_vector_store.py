@@ -469,6 +469,11 @@ class SQLiteVecVectorStore(VectorStore):
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
         self._sa_metadata = MetaData()
 
+    @property
+    @override
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
+
     @override
     async def startup(self) -> None:
         async with self._engine.begin() as connection:

@@ -157,6 +157,12 @@ class VectorStore(ABC):
           NUL characters. Every such key works on every backend.
     """
 
+    @property
+    @abstractmethod
+    def store_schema(self) -> VectorStoreSchema:
+        """The schema the store was built with, which every partition's records and queries follow."""
+        raise NotImplementedError
+
     @abstractmethod
     async def startup(self) -> None:
         """Start the store, creating idempotently what must exist before a partition is created."""

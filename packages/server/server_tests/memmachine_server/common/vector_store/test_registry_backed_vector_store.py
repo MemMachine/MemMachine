@@ -562,3 +562,9 @@ async def test_a_query_limit_that_is_not_positive_is_refused(
 
     with pytest.raises(ValueError, match="not positive"):
         await partition.query(query_vectors=query_vectors, limit=limit)
+
+
+def test_the_store_answers_the_schema_it_was_built_with(store):
+    assert store.store_schema == VectorStoreSchema(
+        vector_dimensions=VECTOR_DIMENSIONS, indexed_properties={}
+    )

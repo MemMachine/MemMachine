@@ -201,13 +201,13 @@ async def _event_long_term_memory(
     segmenter: Segmenter,
 ) -> LongTermMemory:
     """A LongTermMemory on session `sess1`'s partition, which the given stores hand out."""
+    vector_store.store_schema = vector_store_partition._store_schema
     vector_store.open_or_create_partition.return_value = vector_store_partition
     segment_store.open_or_create_partition.return_value = segment_store_partition
     event_memory = EventMemory(
         EventMemoryParams(
             segment_store=segment_store,
             vector_store=vector_store,
-            store_schema=vector_store_partition._store_schema,
             segmenter=segmenter,
             deriver=WholeTextDeriver(),
             embedder=embedder,

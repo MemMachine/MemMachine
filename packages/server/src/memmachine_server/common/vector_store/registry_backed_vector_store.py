@@ -278,6 +278,11 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         # cancelled.
         self._reservation_cancellations: set[asyncio.Task[None]] = set()
 
+    @property
+    @override
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
+
     @override
     async def startup(self) -> None:
         # The caller owns the registry's lifecycle and that of any client a

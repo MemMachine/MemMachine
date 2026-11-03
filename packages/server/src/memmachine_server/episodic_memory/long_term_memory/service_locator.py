@@ -157,7 +157,6 @@ async def _event_memory(
         EventMemoryParams(
             segment_store=await resource_manager.get_segment_store(segment_store_id),
             vector_store=await event_backend_vector_store(resource_manager),
-            store_schema=event_backend_store_schema(embedder),
             segmenter=_build_segmenter(config.segmenter),
             deriver=_build_deriver(config.deriver),
             embedder=embedder,

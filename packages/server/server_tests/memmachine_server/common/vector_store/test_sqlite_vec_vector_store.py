@@ -1264,3 +1264,8 @@ class TestPartitionResources:
         [found] = await second.query(query_vectors=[record.vector], limit=5)
         assert [match.record_uuid for match in found.matches] == [record.uuid]
         await store.delete_partition(NAME)
+
+
+@pytest.mark.asyncio
+async def test_the_store_answers_the_schema_it_was_built_with(store):
+    assert store.store_schema == _schema()

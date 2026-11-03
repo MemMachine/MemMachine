@@ -686,6 +686,11 @@ class SQLiteVectorStore(VectorStore):
                 "VectorStore has not been started. Call startup() first."
             )
 
+    @property
+    @override
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
+
     @override
     async def startup(self) -> None:
         if self._started:

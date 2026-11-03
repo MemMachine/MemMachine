@@ -37,7 +37,6 @@ from memmachine_server.common.vector_store import (
     Record,
     VectorStore,
     VectorStorePartition,
-    VectorStoreSchema,
 )
 from memmachine_server.common.vector_store.data_types import is_valid_identifier
 
@@ -83,8 +82,6 @@ class EventMemoryParams(BaseModel):
             Segment store holding the events' segments.
         vector_store (VectorStore):
             Vector store holding the derivatives' vectors.
-        store_schema (VectorStoreSchema):
-            Schema the vector store was built with.
         segmenter (Segmenter):
             Segmenter that segments events into segments.
         deriver (Deriver):
@@ -107,10 +104,6 @@ class EventMemoryParams(BaseModel):
     vector_store: InstanceOf[VectorStore] = Field(
         ...,
         description="Vector store holding the derivatives' vectors",
-    )
-    store_schema: VectorStoreSchema = Field(
-        ...,
-        description="Schema the vector store was built with",
     )
     segmenter: InstanceOf[Segmenter] = Field(
         ...,
@@ -170,7 +163,8 @@ class EventMemory:
                 EventMemory.
         """
         self._params = params
-        self._schema_fields = frozenset(params.store_schema.indexed_properties)
+        store_schema = params.vector_store.store_schema
+        self._schema_fields = frozenset(store_schema.indexed_properties)
 
         missing_base_fields = _BASE_EVENT_MEMORY_FIELD_NAMES - self._schema_fields
         if missing_base_fields:
@@ -179,7 +173,7 @@ class EventMemory:
                 f"{', '.join(sorted(missing_base_fields))}"
             )
 
-        self._similarity_metric = params.store_schema.similarity_metric
+        self._similarity_metric = store_schema.similarity_metric
 
     async def open_or_create_partition(
         self, partition_key: str

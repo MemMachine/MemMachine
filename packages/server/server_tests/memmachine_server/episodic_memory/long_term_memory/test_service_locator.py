@@ -137,6 +137,11 @@ def _deployment_resource_manager(
 ) -> NonCallableMagicMock:
     """A resource manager whose deployment configures `deployment` and whose stores open autospec partitions."""
     vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.store_schema = VectorStoreSchema(
+        vector_dimensions=3,
+        similarity_metric=SimilarityMetric.COSINE,
+        indexed_properties=event_backend_indexed_properties(),
+    )
     vector_store.open_or_create_partition.return_value = create_autospec(
         VectorStorePartition, instance=True
     )
