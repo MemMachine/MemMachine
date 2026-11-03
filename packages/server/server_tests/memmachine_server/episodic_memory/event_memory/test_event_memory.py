@@ -23,7 +23,6 @@ from memmachine_server.common.filter import (
     Ordering,
     Property,
     SystemField,
-    map_filter_fields,
 )
 from memmachine_server.common.property_keys import reserved_property_key
 from memmachine_server.common.vector_store import VectorStoreSchema
@@ -816,13 +815,13 @@ class TestQueryWithFilter:
             "thing",
             property_filter=And(
                 (
-                    Equals(field="m.color", value="red"),
-                    Equals(field="m.episode_uid", value="e1"),
+                    Equals(field=Property("color"), value="red"),
+                    Equals(field=Property("episode_uid"), value="e1"),
                 )
             ),
         )
 
-        assert seen == [Equals(field="episode_uid", value="e1")]
+        assert seen == [Equals(field=Property("episode_uid"), value="e1")]
         all_texts = {
             seg.block.text
             for scored in result.scored_segment_contexts
@@ -848,10 +847,14 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Ordering(field="timestamp", op=">=", value=_ts(5)),
+            property_filter=Ordering(
+                field=SystemField("timestamp"), op=">=", value=_ts(5)
+            ),
         )
 
-        assert seen == [Ordering(field=EVENT_TIMESTAMP_KEY, op=">=", value=_ts(5))]
+        assert seen == [
+            Ordering(field=Property(EVENT_TIMESTAMP_KEY), op=">=", value=_ts(5))
+        ]
         all_texts = {
             seg.block.text
             for scored in result.scored_segment_contexts
@@ -876,8 +879,8 @@ class TestQueryWithFilter:
             "thing",
             property_filter=Or(
                 (
-                    Equals(field="m.color", value="red"),
-                    Equals(field="m.episode_uid", value="e1"),
+                    Equals(field=Property("color"), value="red"),
+                    Equals(field=Property("episode_uid"), value="e1"),
                 )
             ),
         )
@@ -892,22 +895,22 @@ class TestQueryWithFilter:
                     (
                         And(
                             (
-                                Equals(field="m.color", value="red"),
-                                Equals(field="m.episode_uid", value="e1"),
+                                Equals(field=Property("color"), value="red"),
+                                Equals(field=Property("episode_uid"), value="e1"),
                             )
                         ),
                         And(
                             (
-                                Equals(field="m.color", value="blue"),
-                                Equals(field="m.episode_uid", value="e2"),
+                                Equals(field=Property("color"), value="blue"),
+                                Equals(field=Property("episode_uid"), value="e2"),
                             )
                         ),
                     )
                 ),
                 Or(
                     (
-                        Equals(field="episode_uid", value="e1"),
-                        Equals(field="episode_uid", value="e2"),
+                        Equals(field=Property("episode_uid"), value="e1"),
+                        Equals(field=Property("episode_uid"), value="e2"),
                     )
                 ),
                 id="each arm of an or",
@@ -916,20 +919,20 @@ class TestQueryWithFilter:
                 Not(
                     Or(
                         (
-                            Equals(field="m.color", value="red"),
-                            Equals(field="m.episode_uid", value="e1"),
+                            Equals(field=Property("color"), value="red"),
+                            Equals(field=Property("episode_uid"), value="e1"),
                         )
                     )
                 ),
-                Not(Equals(field="episode_uid", value="e1")),
+                Not(Equals(field=Property("episode_uid"), value="e1")),
                 id="a negated or",
             ),
             pytest.param(
                 Not(
                     And(
                         (
-                            Equals(field="m.color", value="red"),
-                            Equals(field="m.episode_uid", value="e1"),
+                            Equals(field=Property("color"), value="red"),
+                            Equals(field=Property("episode_uid"), value="e1"),
                         )
                     )
                 ),
@@ -940,12 +943,12 @@ class TestQueryWithFilter:
                 Not(
                     Or(
                         (
-                            Equals(field="m.color", value="red"),
-                            Not(Equals(field="m.episode_uid", value="e1")),
+                            Equals(field=Property("color"), value="red"),
+                            Not(Equals(field=Property("episode_uid"), value="e1")),
                         )
                     )
                 ),
-                Not(Not(Equals(field="episode_uid", value="e1"))),
+                Not(Not(Equals(field=Property("episode_uid"), value="e1"))),
                 id="a negation under a negated or",
             ),
         ],
@@ -974,7 +977,7 @@ class TestQueryWithFilter:
         fake_segment_store_partition: InMemorySegmentStorePartition,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """A user key the partition declares is on the record, and its condition reaches the search under its bare name."""
+        """A user key the partition declares is on the record, and its condition reaches the search unchanged."""
         store_schema = VectorStoreSchema(
             vector_dimensions=fake_embedder.dimensions,
             similarity_metric=fake_embedder.similarity_metric,
@@ -1001,8 +1004,8 @@ class TestQueryWithFilter:
             "thing",
             property_filter=And(
                 (
-                    Equals(field="m.color", value="red"),
-                    Equals(field="m.size", value=1),
+                    Equals(field=Property("color"), value="red"),
+                    Equals(field=Property("size"), value=1),
                 )
             ),
         )
@@ -1010,7 +1013,7 @@ class TestQueryWithFilter:
         record = next(iter(vector_store_partition.records.values()))
         assert _record_properties(record)["color"] == "red"
         assert "size" not in _record_properties(record)
-        assert seen == [Equals(field="color", value="red")]
+        assert seen == [Equals(field=Property("color"), value="red")]
 
     async def test_a_seed_the_filter_rejects_is_left_out_though_its_context_matches(
         self,
@@ -1030,7 +1033,7 @@ class TestQueryWithFilter:
             "thing",
             vector_search_limit=2,
             expand_context=1,
-            property_filter=Equals(field="m.color", value="red"),
+            property_filter=Equals(field=Property("color"), value="red"),
         )
 
         seed_blocks = [
@@ -1047,7 +1050,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Equals(field="m.color", value="red"),
+            property_filter=Equals(field=Property("color"), value="red"),
         )
         all_texts = {
             seg.block.text
@@ -1068,7 +1071,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Not(Equals(field="m.color", value="red")),
+            property_filter=Not(Equals(field=Property("color"), value="red")),
         )
         all_texts = {
             seg.block.text
@@ -1088,7 +1091,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=In(field="m.color", values=("red", "green")),
+            property_filter=In(field=Property("color"), values=("red", "green")),
         )
         all_texts = {
             seg.block.text
@@ -1108,7 +1111,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=IsNull(field="m.color"),
+            property_filter=IsNull(field=Property("color")),
         )
         all_texts = {
             seg.block.text
@@ -1128,7 +1131,10 @@ class TestQueryWithFilter:
         result = await event_memory_partition.query(
             "thing",
             property_filter=And(
-                (Equals(field="m.color", value="red"), Not(IsNull(field="m.color")))
+                (
+                    Equals(field=Property("color"), value="red"),
+                    Not(IsNull(field=Property("color"))),
+                )
             ),
         )
         all_texts = {
@@ -1151,8 +1157,8 @@ class TestQueryWithFilter:
             "thing",
             property_filter=Or(
                 (
-                    Equals(field="m.color", value="red"),
-                    Equals(field="m.color", value="blue"),
+                    Equals(field=Property("color"), value="red"),
+                    Equals(field=Property("color"), value="blue"),
                 )
             ),
         )
@@ -1174,7 +1180,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Not(Equals(field="m.color", value="red")),
+            property_filter=Not(Equals(field=Property("color"), value="red")),
         )
         all_texts = {
             seg.block.text
@@ -1194,7 +1200,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Equals(field="m.color", value="purple"),
+            property_filter=Equals(field=Property("color"), value="purple"),
         )
         assert result.scored_segment_contexts == []
 
@@ -1220,8 +1226,8 @@ class TestQueryWithFilter:
 # Queries with and without the vector store's part of the filter
 # ===================================================================
 
-_FIELDS_ON_THE_RECORD = ("m.d1", "m.d2", "m.d3")
-_FIELDS_ON_THE_SEGMENT_ONLY = ("m.u1", "m.u2")
+_KEYS_ON_THE_RECORD = ("d1", "d2", "d3")
+_KEYS_ON_THE_SEGMENT_ONLY = ("u1", "u2")
 
 
 @pytest_asyncio.fixture
@@ -1303,9 +1309,9 @@ class TestQueryWithAndWithoutThePart:
         properties_by_text = await _encode_random_events(
             declaring_event_memory_partition, rng, 24
         )
-        fields = (*_FIELDS_ON_THE_RECORD, *_FIELDS_ON_THE_SEGMENT_ONLY)
+        keys = (*_KEYS_ON_THE_RECORD, *_KEYS_ON_THE_SEGMENT_ONLY)
         for _ in range(300):
-            property_filter = random_filter(rng, fields, depth=4)
+            property_filter = random_filter(rng, keys, depth=4)
             with_part = await _query_texts(
                 declaring_event_memory_partition, property_filter, limit=24
             )
@@ -1314,13 +1320,10 @@ class TestQueryWithAndWithoutThePart:
                 without_part = await _query_texts(
                     declaring_event_memory_partition, property_filter, limit=24
                 )
-            segment_filter = map_filter_fields(
-                property_filter, InMemorySegmentStorePartition._normalize_segment_field
-            )
             expected = {
                 text
                 for text, properties in properties_by_text.items()
-                if evaluate_filter(segment_filter, properties)
+                if evaluate_filter(property_filter, properties)
             }
             assert with_part == without_part == expected, property_filter
 
@@ -1331,9 +1334,9 @@ class TestQueryWithAndWithoutThePart:
     ):
         rng = random.Random(1706)
         await _encode_random_events(declaring_event_memory_partition, rng, 24)
-        fields = (*_FIELDS_ON_THE_RECORD, *_FIELDS_ON_THE_SEGMENT_ONLY)
+        keys = (*_KEYS_ON_THE_RECORD, *_KEYS_ON_THE_SEGMENT_ONLY)
         for _ in range(300):
-            property_filter = random_filter(rng, fields, depth=4)
+            property_filter = random_filter(rng, keys, depth=4)
             with_part = await _query_texts(
                 declaring_event_memory_partition, property_filter, limit=4
             )
@@ -1412,19 +1415,19 @@ class TestQueryWithAConditionOnAnUndeclaredField:
 
         on_the_segment_only = await _query_texts(
             event_memory_partition,
-            Equals(field="m.color", value="red"),
+            Equals(field=Property("color"), value="red"),
             limit=3,
             query="blue thing",
         )
         on_the_segment_only_with_every_seed = await _query_texts(
             event_memory_partition,
-            Equals(field="m.color", value="red"),
+            Equals(field=Property("color"), value="red"),
             limit=11,
             query="blue thing",
         )
         on_the_record = await _query_texts(
             event_memory_partition,
-            Equals(field="m.episode_uid", value="red"),
+            Equals(field=Property("episode_uid"), value="red"),
             limit=3,
             query="blue thing",
         )

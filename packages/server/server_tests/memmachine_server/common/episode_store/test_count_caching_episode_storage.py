@@ -10,6 +10,7 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.filter import (
     Equals,
+    SystemField,
 )
 
 
@@ -32,8 +33,8 @@ async def test_caches_counts_per_key(wrapped_store):
     wrapped_store.get_episode_messages_count = AsyncMock(side_effect=[2, 5])
     storage = CountCachingEpisodeStorage(wrapped_store)
 
-    filter_a = Equals(field="session_key", value="a")
-    filter_b = Equals(field="session_key", value="b")
+    filter_a = Equals(field=SystemField("session_key"), value="a")
+    filter_b = Equals(field=SystemField("session_key"), value="b")
 
     first_a = await storage.get_episode_messages_count(filter_expr=filter_a)
     second_a = await storage.get_episode_messages_count(filter_expr=filter_a)
@@ -50,7 +51,7 @@ async def test_mutations_invalidate_cache(wrapped_store):
     wrapped_store.get_episode_messages_count = AsyncMock(side_effect=[1, 3])
     storage = CountCachingEpisodeStorage(wrapped_store)
 
-    session_filter = Equals(field="session_key", value="abc")
+    session_filter = Equals(field=SystemField("session_key"), value="abc")
 
     first = await storage.get_episode_messages_count(filter_expr=session_filter)
     second = await storage.get_episode_messages_count(filter_expr=session_filter)
@@ -73,7 +74,7 @@ async def test_deletes_clear_cached_counts(wrapped_store):
     wrapped_store.get_episode_messages_count = AsyncMock(side_effect=[4, 6, 8])
     storage = CountCachingEpisodeStorage(wrapped_store)
 
-    session_filter = Equals(field="session_key", value="s")
+    session_filter = Equals(field=SystemField("session_key"), value="s")
 
     initial = await storage.get_episode_messages_count(filter_expr=session_filter)
     assert initial == 4
@@ -105,7 +106,7 @@ async def test_non_session_filters_bypass_cache(wrapped_store):
     wrapped_store.get_episode_messages_count = AsyncMock(side_effect=[7, 9])
     storage = CountCachingEpisodeStorage(wrapped_store)
 
-    topic_filter = Equals(field="topic", value="alpha")
+    topic_filter = Equals(field=SystemField("topic"), value="alpha")
 
     first = await storage.get_episode_messages_count(filter_expr=topic_filter)
     second = await storage.get_episode_messages_count(filter_expr=topic_filter)
@@ -121,7 +122,7 @@ async def test_get_episode_ids_passes_through(wrapped_store):
     wrapped_store.get_episode_ids.return_value = ["1", "2", "3"]
     storage = CountCachingEpisodeStorage(wrapped_store)
 
-    session_filter = Equals(field="session_key", value="s1")
+    session_filter = Equals(field=SystemField("session_key"), value="s1")
     result = await storage.get_episode_ids(
         filter_expr=session_filter,
         page_size=10,

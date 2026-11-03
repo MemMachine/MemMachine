@@ -20,6 +20,7 @@ from memmachine_server.common.filter import (
     Not,
     Or,
     Ordering,
+    Property,
 )
 from memmachine_server.common.sql import (
     enable_sqlite_explicit_begin,
@@ -548,7 +549,7 @@ class TestFilters:
         all_results = await partition.query(
             query_vectors=[query_vector],
             limit=10,
-            property_filter=comparison(field, op, value),
+            property_filter=comparison(Property(field), op, value),
         )
         return {match.record_uuid for match in all_results[0].matches}
 
@@ -720,7 +721,7 @@ class TestFilters:
         query_results = await partition.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=In(field="name", values=("alice", "carol")),
+            property_filter=In(field=Property("name"), values=("alice", "carol")),
         )
         uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
@@ -735,8 +736,8 @@ class TestFilters:
             limit=10,
             property_filter=And(
                 (
-                    Equals(field="active", value=True),
-                    Ordering(field="age", op=">", value=30),
+                    Equals(field=Property("active"), value=True),
+                    Ordering(field=Property("age"), op=">", value=30),
                 )
             ),
         )
@@ -752,8 +753,8 @@ class TestFilters:
             limit=10,
             property_filter=Or(
                 (
-                    Equals(field="name", value="alice"),
-                    Equals(field="name", value="carol"),
+                    Equals(field=Property("name"), value="alice"),
+                    Equals(field=Property("name"), value="carol"),
                 )
             ),
         )
@@ -768,7 +769,7 @@ class TestFilters:
         query_results = await partition.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Not(Ordering(field="age", op=">", value=30)),
+            property_filter=Not(Ordering(field=Property("age"), op=">", value=30)),
         )
         uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
@@ -1308,7 +1309,9 @@ class TestConcurrentAsync:
                 query_vectors=[record.vector],
                 limit=1,
                 property_filter=(
-                    Equals(field="name", value="alice") if with_filter else None
+                    Equals(field=Property("name"), value="alice")
+                    if with_filter
+                    else None
                 ),
             )
 
@@ -1653,7 +1656,7 @@ class TestIndexFileDurability:
         await partition.query(
             query_vectors=[vector],
             limit=1,
-            property_filter=Equals(field="name", value="alice"),
+            property_filter=Equals(field=Property("name"), value="alice"),
         )
         pool = store._sync_sqlalchemy_engine.pool
         assert pool.checkedin() == 1

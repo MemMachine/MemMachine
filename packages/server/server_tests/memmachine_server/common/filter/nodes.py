@@ -6,10 +6,14 @@ from memmachine_server.common.filter import (
     FilterExpr,
     Not,
     Ordering,
+    Property,
+    SystemField,
 )
 
 
-def comparison(field: str, op: str, value: PropertyValue) -> FilterExpr:
+def comparison(
+    field: SystemField | Property, op: str, value: PropertyValue
+) -> FilterExpr:
     """The node a textual comparison operator denotes."""
     match op:
         case "=":

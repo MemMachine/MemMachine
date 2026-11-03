@@ -128,8 +128,8 @@ def test_user_filterable_metadata_keys_are_bare():
     )
     event = LongTermMemory._episode_to_event(episode)
     p = event.properties
-    # User-defined keys land as given, so the v2 client filter API
-    # `m.my_field` resolves to property `my_field`.
+    # User-defined keys land as given, so a filter's property `my_field`
+    # compares the property `my_field`.
     assert p["my_field"] == "value"
     assert p["count"] == 7
 
