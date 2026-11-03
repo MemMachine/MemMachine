@@ -49,7 +49,7 @@ async def main() -> None:
 
         group_id = f"group_{idx}"
 
-        memory, _, _ = await agent_utils.init_memmachine_params(
+        memory, _, _, _, _ = await agent_utils.init_memmachine_params(
             resource_manager=resource_manager,
             session_id=group_id,
         )
