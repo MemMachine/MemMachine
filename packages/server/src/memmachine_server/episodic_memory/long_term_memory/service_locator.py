@@ -18,7 +18,6 @@ from memmachine_server.common.configuration.episodic_config import (
     WholeTextDeriverConf,
 )
 from memmachine_server.common.data_types import PropertyType
-from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.errors import ConfigurationError
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager import CommonResourceManager
@@ -198,16 +197,11 @@ async def event_backend_vector_store(
     return await resource_manager.get_vector_store(
         vector_store_id,
         vector_store_name=_EVENT_MEMORY_VECTOR_STORE_NAME,
-        store_schema=event_backend_store_schema(embedder),
-    )
-
-
-def event_backend_store_schema(embedder: Embedder) -> VectorStoreSchema:
-    """The schema of the deployment's event memory vector store, built for its embedder."""
-    return VectorStoreSchema(
-        vector_dimensions=embedder.dimensions,
-        similarity_metric=embedder.similarity_metric,
-        indexed_properties=event_backend_indexed_properties(),
+        store_schema=VectorStoreSchema(
+            vector_dimensions=embedder.dimensions,
+            similarity_metric=embedder.similarity_metric,
+            indexed_properties=event_backend_indexed_properties(),
+        ),
     )
 
 
