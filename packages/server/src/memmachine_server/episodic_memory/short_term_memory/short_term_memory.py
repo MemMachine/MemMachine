@@ -285,9 +285,12 @@ class ShortTermMemory:
         b: PropertyValue,
         op: str,
     ) -> bool:
-        """Safely compare two filterable property values for ordering operators."""
+        """Safely compare two filterable property values for ordering operators.
+
+        An int and a float are one numeric type, compared exactly by value.
+        """
         comparisons = (
-            ((int, float), lambda x, y: (float(x), float(y))),
+            ((int, float), lambda x, y: (x, y)),
             (str, lambda x, y: (x, y)),
             (datetime, lambda x, y: (x, y)),
         )

@@ -21,7 +21,9 @@ from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
 )
 from memmachine_server.common.errors import InvalidArgumentError
 from memmachine_server.common.filter import (
+    Equals,
     FilterExpr,
+    SystemField,
 )
 from memmachine_server.common.filter.filter_parser import (
     parse_filter,
@@ -484,6 +486,51 @@ async def test_history_metadata_filter(episode_storage: EpisodeStorage):
         filter_expr=_filter("metadata.scope = 'b'"),
     )
     assert [entry.uid for entry in results] == [second]
+
+    await episode_storage.delete_episodes([first, second])
+
+
+@pytest.mark.asyncio
+async def test_history_metadata_numbers_compare_by_value(
+    episode_storage: EpisodeStorage,
+):
+    three = await create_history_entry(
+        episode_storage, content="three", metadata={"n": 3}
+    )
+    three_and_a_half = await create_history_entry(
+        episode_storage, content="three and a half", metadata={"n": 3.5}
+    )
+    big = await create_history_entry(
+        episode_storage, content="big", metadata={"n": 2**53 + 1}
+    )
+
+    async def matching(spec: str) -> set[UUID]:
+        results = await episode_storage.get_episode_messages(filter_expr=_filter(spec))
+        return {entry.uid for entry in results}
+
+    assert await matching("metadata.n = 3.0") == {three}
+    assert await matching("metadata.n = 3.5") == {three_and_a_half}
+    assert await matching("metadata.n > 3") == {three_and_a_half, big}
+    assert await matching("metadata.n IN (3)") == {three}
+    assert await matching("metadata.n > 9007199254740992.0") == {big}
+
+    await episode_storage.delete_episodes([three, three_and_a_half, big])
+
+
+@pytest.mark.asyncio
+async def test_history_created_at_equals_only_its_instant(
+    episode_storage: EpisodeStorage,
+):
+    created_at = datetime(2024, 3, 1, 12, 0, 0, 123456, tzinfo=UTC)
+    first = await create_history_entry(episode_storage, created_at=created_at)
+    second = await create_history_entry(
+        episode_storage, created_at=created_at + timedelta(microseconds=1)
+    )
+
+    results = await episode_storage.get_episode_messages(
+        filter_expr=Equals(SystemField("created_at"), created_at)
+    )
+    assert [entry.uid for entry in results] == [first]
 
     await episode_storage.delete_episodes([first, second])
 

@@ -720,6 +720,25 @@ class TestSessionMemoryPublicAPI:
         assert len(episodes) == 1
         assert episodes == [ep2]
 
+    async def test_metadata_numbers_compare_exactly_by_value(self, memory):
+        three = create_test_episode(content="a" * 6, filterable_metadata={"n": 3})
+        big = create_test_episode(content="b" * 6, filterable_metadata={"n": 2**53 + 1})
+        await memory.add_episodes([three, big])
+
+        for filter_str, expected in [
+            ("m.n = 3.0", [three]),
+            ("m.n IN (3)", [three]),
+            ("m.n > 9007199254740992.0", [big]),
+            ("m.n <= 9007199254740992.0", [three]),
+        ]:
+            episodes, _ = await memory.get_short_term_memory_context(
+                "test",
+                filters=parse_filter(
+                    filter_str, system_fields=EVENT_BACKEND_FILTER_FIELD_TYPES
+                ),
+            )
+            assert episodes == expected, filter_str
+
     async def test_datetime_metadata_filters_tag_naive_stored_values(self, memory):
         """A naive stored datetime means UTC, like a filter's.
 

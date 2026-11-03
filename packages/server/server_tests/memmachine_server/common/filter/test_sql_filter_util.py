@@ -194,6 +194,30 @@ def test_json_float_less_equal(json_session):
     assert _query_json_names(json_session, "m.score <= 2.5") == {"alpha", "beta"}
 
 
+# --- Numbers by value ---
+
+
+def test_json_an_int_and_a_float_compare_by_value(json_session):
+    json_session.add(_Item(name="zeta", json_metadata={"count": 7.0}))
+    json_session.commit()
+
+    assert _query_json_names(json_session, "m.count = 10.0") == {"beta"}
+    assert _query_json_names(json_session, "m.count = 7") == {"zeta"}
+    assert _query_json_names(json_session, "m.count IN (7, 10)") == {"zeta", "beta"}
+    assert _query_json_names(json_session, "m.score > 2") == {"beta", "gamma", "delta"}
+    assert _query_json_names(json_session, "m.score = 2.5") == {"beta"}
+
+
+def test_json_numbers_compare_exactly_beyond_53_bits(json_session):
+    json_session.add(_Item(name="int", json_metadata={"count": 2**53 + 1}))
+    json_session.add(_Item(name="float", json_metadata={"count": 2.0**53}))
+    json_session.commit()
+
+    assert _query_json_names(json_session, "m.count = 9007199254740992.0") == {"float"}
+    assert _query_json_names(json_session, "m.count = 9007199254740993") == {"int"}
+    assert _query_json_names(json_session, "m.count > 9007199254740992.0") == {"int"}
+
+
 # --- Boolean equality ---
 
 
@@ -548,6 +572,56 @@ class TestPropsJsonFloatFilters:
             )
             == set()
         )
+
+
+class TestPropsJsonNumbersByValue:
+    """A dynamically typed number compares by value, an int and a float alike."""
+
+    @staticmethod
+    async def _add(session, name, value):
+        session.add(
+            _PropsRow(name=name, properties=encode_properties({"count": value}))
+        )
+        await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_an_int_and_a_float_compare_by_value(self, properties_session):
+        await self._add(properties_session, "zeta", 7.0)
+        await self._add(properties_session, "text", "10")
+
+        assert await _query_props_names(
+            properties_session, Equals(field=Property("count"), value=10.0)
+        ) == {"beta"}
+        assert await _query_props_names(
+            properties_session, Equals(field=Property("count"), value=7)
+        ) == {"zeta"}
+        assert await _query_props_names(
+            properties_session, In(field=Property("count"), values=(7, 10))
+        ) == {"zeta", "beta"}
+        assert await _query_props_names(
+            properties_session, Ordering(field=Property("score"), op=">", value=2)
+        ) == {"beta", "gamma", "delta"}
+        assert await _query_props_names(
+            properties_session, Ordering(field=Property("count"), op="<=", value=6.5)
+        ) == {"alpha", "epsilon"}
+
+    @pytest.mark.asyncio
+    async def test_numbers_compare_exactly_beyond_53_bits(self, properties_session):
+        await self._add(properties_session, "int", 2**53 + 1)
+        await self._add(properties_session, "float", 2.0**53)
+
+        assert await _query_props_names(
+            properties_session, Equals(field=Property("count"), value=2.0**53)
+        ) == {"float"}
+        assert await _query_props_names(
+            properties_session, Equals(field=Property("count"), value=2**53 + 1)
+        ) == {"int"}
+        assert await _query_props_names(
+            properties_session, Ordering(field=Property("count"), op=">", value=2.0**53)
+        ) == {"int"}
+        assert await _query_props_names(
+            properties_session, In(field=Property("count"), values=(2**53,))
+        ) == {"float"}
 
 
 class TestPropsJsonBoolFilters:
