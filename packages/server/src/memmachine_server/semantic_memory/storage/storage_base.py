@@ -10,12 +10,29 @@ from uuid import UUID
 import numpy as np
 from pydantic import InstanceOf
 
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.filter import FilterExpr
 from memmachine_server.semantic_memory.semantic_model import (
     FeatureIdT,
     SemanticFeature,
     SetIdT,
 )
+
+SEMANTIC_STORAGE_FILTER_FIELD_TYPES: dict[str, PropertyType] = {
+    "set_id": str,
+    "set": str,
+    "semantic_category_id": str,
+    "category_name": str,
+    "category": str,
+    "tag_id": str,
+    "tag": str,
+    "feature": str,
+    "feature_name": str,
+    "value": str,
+    "created_at": datetime,
+    "updated_at": datetime,
+}
+"""The type of each system field a filter may name on a semantic storage."""
 
 
 class SemanticStorage(ABC):

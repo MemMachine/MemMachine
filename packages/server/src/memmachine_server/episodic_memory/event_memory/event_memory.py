@@ -22,6 +22,7 @@ from memmachine_server.common.filter import (
     Property,
     SystemField,
     extract_filter,
+    filter_fields,
     map_filter_fields,
 )
 from memmachine_server.common.metrics_factory import (
@@ -737,12 +738,6 @@ class EventMemoryPartition:
         format_options: FormatOptions | None,
     ) -> QueryResult:
         t_start = time.monotonic()
-        query_embedding = (
-            await self._embedder.search_embed(
-                [query],
-            )
-        )[0]
-        t_embedding = time.monotonic()
 
         # A vector record carries the properties the vector store declares, so
         # a condition naming any other field has nothing to match there. The
@@ -751,10 +746,24 @@ class EventMemoryPartition:
         # property, gets the whole filter below and narrows it back.
         vector_store_filter = None
         if property_filter is not None:
-            vector_store_filter = extract_filter(
-                map_filter_fields(property_filter, self._vector_record_field),
-                allowed_fields={Property(key) for key in self._schema_fields},
+            vector_record_filter = map_filter_fields(
+                property_filter, self._vector_record_field
             )
+            vector_store_filter = extract_filter(
+                vector_record_filter,
+                allowed_fields={
+                    field
+                    for field in filter_fields(vector_record_filter)
+                    if isinstance(field, Property) and field.key in self._schema_fields
+                },
+            )
+
+        query_embedding = (
+            await self._embedder.search_embed(
+                [query],
+            )
+        )[0]
+        t_embedding = time.monotonic()
 
         [query_result] = await self._vector_store_partition.query(
             query_vectors=[query_embedding],
@@ -872,7 +881,7 @@ class EventMemoryPartition:
         """The vector record property a filter's field compares: an event memory base field's reserved key, or the property itself."""
         match field:
             case SystemField(name="timestamp"):
-                return Property(EVENT_TIMESTAMP_KEY)
+                return Property(EVENT_TIMESTAMP_KEY, datetime.datetime)
             case Property():
                 return field
             case SystemField(name=name):

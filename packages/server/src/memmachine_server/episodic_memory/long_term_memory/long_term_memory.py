@@ -8,7 +8,7 @@ from uuid import UUID, uuid5
 
 from pydantic import JsonValue
 
-from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.data_types import PropertyType, PropertyValue
 from memmachine_server.common.episode_store import (
     ContentType,
     Episode,
@@ -94,6 +94,11 @@ EVENT_BACKEND_SYSTEM_FIELDS: dict[str, type[PropertyValue]] = {
 _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES: frozenset[str] = frozenset(
     _SYSTEM_FIELD_KEYS
 ) | {"timestamp"}
+
+# The type of each system field a filter may name on the event backend.
+EVENT_BACKEND_FILTER_FIELD_TYPES: dict[str, PropertyType] = {
+    name: EVENT_BACKEND_SYSTEM_FIELDS[key] for name, key in _SYSTEM_FIELD_KEYS.items()
+} | {"timestamp": datetime.datetime}
 
 # Filterable-metadata sentinel: Episode.filterable_metadata=None vs {} carry
 # different semantics in the declarative backend; preserve that here too.
@@ -480,9 +485,9 @@ class LongTermMemory:
         """The filter EventMemory takes in the place of a caller's.
 
         Each of the adapter's system fields becomes the property that stores
-        it under its reserved key; any other field is the same field in
-        both, and a caller's property in the reserved namespace raises
-        ValueError.
+        it under its reserved key, with its declared type; any other field
+        is the same field in both, and a caller's property in the reserved
+        namespace raises ValueError.
         """
         if property_filter is None:
             return None
@@ -494,7 +499,8 @@ class LongTermMemory:
             case SystemField(name="timestamp"):
                 return field
             case SystemField(name=name) if name in _SYSTEM_FIELD_KEYS:
-                return Property(_SYSTEM_FIELD_KEYS[name])
+                key = _SYSTEM_FIELD_KEYS[name]
+                return Property(key, EVENT_BACKEND_SYSTEM_FIELDS[key])
             case SystemField(name=name):
                 raise ValueError(
                     f"Unknown filter field {name!r}. Valid system fields: "

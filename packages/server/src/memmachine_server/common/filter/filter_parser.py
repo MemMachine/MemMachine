@@ -5,14 +5,22 @@ The HTTP API still speaks this language, so the parser stays as the server's
 translation into the tree in `filter_expression`; the tree is what every
 store compiles, and nothing below the API boundary parses text. The parser
 resolves each field name once: `m.<key>` and `metadata.<key>` name the
-property `<key>`, and any other name is a system field.
+property `<key>`, and any other name is a system field. It types each
+literal compared with a system field of a static type by that type; a
+literal compared with a property keeps its own type.
 """
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import NamedTuple, cast
 
-from memmachine_server.common.data_types import OrderedValue, PropertyValue
+from memmachine_server.common.data_types import (
+    PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
+    OrderedValue,
+    PropertyType,
+    PropertyValue,
+)
 
 from .filter_expression import (
     And,
@@ -98,9 +106,12 @@ _ORDERING_OPS: dict[str, OrderingOp] = {
 
 
 class _Parser:
-    def __init__(self, tokens: list[Token]) -> None:
+    def __init__(
+        self, tokens: list[Token], system_fields: Mapping[str, PropertyType]
+    ) -> None:
         self.tokens = tokens
         self.pos = 0
+        self.system_fields = system_fields
 
     def _peek(self) -> Token | None:
         return self.tokens[self.pos] if self.pos < len(self.tokens) else None
@@ -170,19 +181,32 @@ class _Parser:
         # Both produce Not(In(...)).
         name = self._expect("IDENT").value
         field = _field_reference(name)
+        declared = None if isinstance(field, Property) else self.system_fields.get(name)
 
         if self._accept("EQ"):
-            return Equals(field, self._parse_value())
+            return Equals(field, _typed(name, declared, self._parse_value()))
         if self._accept("NE"):
-            return Not(Equals(field, self._parse_value()))
+            return Not(Equals(field, _typed(name, declared, self._parse_value())))
         op_tok = self._accept("GE", "LE", "GT", "LT")
         if op_tok:
-            return Ordering(field, _ORDERING_OPS[op_tok.type], self._parse_ordered())
+            return Ordering(
+                field,
+                _ORDERING_OPS[op_tok.type],
+                _typed(name, declared, self._parse_ordered()),
+            )
 
         # IN / NOT IN
         negate = self._accept("NOT") is not None
         if self._accept("IN"):
+            if declared is float or declared is datetime:
+                raise FilterParseError(
+                    f"Field {name} is of type "
+                    f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}, "
+                    "which IN does not compare"
+                )
             values = self._parse_value_list()
+            for value in values:
+                _typed(name, declared, value)
             expr: FilterExpr = In(field, values)
             return Not(expr) if negate else expr
         if negate:
@@ -266,6 +290,24 @@ class _Parser:
         return raw
 
 
+def _typed[V: PropertyValue](
+    name: str, declared: PropertyType | None, value: V
+) -> V | float:
+    """The literal as a field of the declared type holds it; a field of no static type takes any literal."""
+    if declared is None:
+        return value
+    if declared is float and type(value) is int:
+        return float(value)
+    # `bool` is an `int` at runtime and is its own property type here.
+    if type(value) is not declared:
+        written = " (written date('...'))" if declared is datetime else ""
+        raise FilterParseError(
+            f"Field {name} is of type {PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}"
+            f"{written}, got {type(value).__name__} {value!r}"
+        )
+    return value
+
+
 _PROPERTY_PREFIXES = ("m.", "metadata.")
 
 
@@ -284,15 +326,25 @@ def _looks_like_float(value: str) -> bool:
     return bool(left) and bool(right) and left.isdigit() and right.isdigit()
 
 
-def parse_filter(spec: str | None) -> FilterExpr | None:
-    """Parse the given textual filter specification."""
+def parse_filter(
+    spec: str | None, *, system_fields: Mapping[str, PropertyType]
+) -> FilterExpr | None:
+    """
+    Parse a textual filter specification for a system of the given fields.
+
+    `system_fields` maps the name of each system field of a static type to
+    that type. A literal compared with one is of its type: an int for a
+    float field is the float it equals, and any other literal of another
+    type, or a membership test on a float or datetime field, raises
+    FilterParseError.
+    """
     if spec is None:
         return None
     spec = spec.strip()
     if not spec:
         return None
     tokens = _tokenize(spec)
-    return _Parser(tokens).parse()
+    return _Parser(tokens, system_fields).parse()
 
 
 def to_property_filter(

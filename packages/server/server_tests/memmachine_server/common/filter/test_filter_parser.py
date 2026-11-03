@@ -1,6 +1,7 @@
 import datetime
 import itertools
 import random
+import re
 from collections.abc import Iterator
 
 import pytest
@@ -529,6 +530,73 @@ def test_a_field_name_resolves_to_a_property_or_a_system_field(
 ) -> None:
     """A property prefix names the property after it; any other name is a system field, as written."""
     assert parse_filter(spec) == Equals(field, 1)
+
+
+_TYPED_FIELDS: dict[str, PropertyType] = {
+    "count": int,
+    "score": float,
+    "flag": bool,
+    "name": str,
+    "when": datetime.datetime,
+}
+_JAN_1 = datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC)
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        ("score = 3", Equals(SystemField("score"), 3.0)),
+        ("score > 3", Ordering(SystemField("score"), ">", 3.0)),
+        ("score <= 2.5", Ordering(SystemField("score"), "<=", 2.5)),
+        ("count >= 3", Ordering(SystemField("count"), ">=", 3)),
+        ("flag = true", Equals(SystemField("flag"), True)),
+        ("name = alice", Equals(SystemField("name"), "alice")),
+        ("name IN ('a', 'b')", In(SystemField("name"), ("a", "b"))),
+        ("count NOT IN (1, 2)", Not(In(SystemField("count"), (1, 2)))),
+        ("when > date('2024-01-01')", Ordering(SystemField("when"), ">", _JAN_1)),
+        ("m.score = 3", Equals(Property("score"), 3)),
+        ("m.when = '2024-01-01'", Equals(Property("when"), "2024-01-01")),
+        ("other = 3", Equals(SystemField("other"), 3)),
+    ],
+)
+def test_a_literal_takes_the_type_of_its_system_field(
+    spec: str, expected: FilterExpr
+) -> None:
+    """A property and a field of no static type keep the literal's own type."""
+    expr = parse_filter(spec, system_fields=_TYPED_FIELDS)
+    assert expr == expected
+    leaf = expr.operand if isinstance(expr, Not) else expr
+    expected_leaf = expected.operand if isinstance(expected, Not) else expected
+    assert isinstance(leaf, Equals | Ordering | In)
+    assert isinstance(expected_leaf, Equals | Ordering | In)
+    if isinstance(leaf, In) and isinstance(expected_leaf, In):
+        assert [type(v) for v in leaf.values] == [type(v) for v in expected_leaf.values]
+    elif not isinstance(leaf, In) and not isinstance(expected_leaf, In):
+        assert type(leaf.value) is type(expected_leaf.value)
+
+
+@pytest.mark.parametrize(
+    ("spec", "message"),
+    [
+        ("count = 1.5", "Field count is of type int, got float 1.5"),
+        ("count = true", "Field count is of type int, got bool True"),
+        ("score > false", "take a number or a date"),
+        ("score = true", "Field score is of type float, got bool True"),
+        ("flag = 1", "Field flag is of type bool, got int 1"),
+        ("name = 3", "Field name is of type str, got int 3"),
+        ("name IN (1, 2)", "Field name is of type str, got int 1"),
+        ("count IN ('a')", "Field count is of type int, got str 'a'"),
+        ("when = '2024-01-01'", "Field when is of type datetime (written date('...'))"),
+        ("when > 3", "Field when is of type datetime (written date('...')), got int 3"),
+        ("score IN (1, 2)", "Field score is of type float, which IN does not compare"),
+        ("when IN ('a')", "Field when is of type datetime, which IN does not compare"),
+    ],
+)
+def test_a_literal_its_system_field_cannot_hold_is_a_parse_error(
+    spec: str, message: str
+) -> None:
+    with pytest.raises(FilterParseError, match=re.escape(message)):
+        parse_filter(spec, system_fields=_TYPED_FIELDS)
 
 
 def test_legacy_mapping_keys_a_property_by_its_key() -> None:
