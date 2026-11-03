@@ -71,9 +71,27 @@ async def long_term_memory_params_from_config(
     """Build LongTermMemoryParams from configuration and resources."""
     match config:
         case DeclarativeLongTermMemoryConf():
-            return await _declarative_params(config, resource_manager)
+            return DeclarativeBackendParams(
+                session_id=config.session_id,
+                declarative_memory=await _declarative_memory(config, resource_manager),
+            )
         case EventLongTermMemoryConf():
-            return await _event_params(config, resource_manager)
+            reranker = (
+                await resource_manager.get_reranker(config.reranker, validate=True)
+                if config.reranker is not None
+                else None
+            )
+            event_memory = await _event_memory(
+                config, resource_manager, reranker=reranker
+            )
+            return EventBackendParams(
+                session_id=config.session_id,
+                event_memory_partition=await event_memory.open_or_create_partition(
+                    partition_key_for_session(config.session_id)
+                ),
+                episode_storage=await resource_manager.get_episode_storage(),
+                reranker=reranker,
+            )
         case _:
             raise NotImplementedError(
                 f"Unsupported long-term memory backend: {type(config).__name__}"
@@ -109,16 +127,6 @@ async def delete_long_term_memory_storage(
             )
 
 
-async def _declarative_params(
-    config: DeclarativeLongTermMemoryConf,
-    resource_manager: InstanceOf[CommonResourceManager],
-) -> DeclarativeBackendParams:
-    return DeclarativeBackendParams(
-        session_id=config.session_id,
-        declarative_memory=await _declarative_memory(config, resource_manager),
-    )
-
-
 async def _declarative_memory(
     config: DeclarativeLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
@@ -137,26 +145,6 @@ async def _declarative_memory(
             ),
             message_sentence_chunking=config.message_sentence_chunking,
         ),
-    )
-
-
-async def _event_params(
-    config: EventLongTermMemoryConf,
-    resource_manager: InstanceOf[CommonResourceManager],
-) -> EventBackendParams:
-    reranker = (
-        await resource_manager.get_reranker(config.reranker, validate=True)
-        if config.reranker is not None
-        else None
-    )
-    event_memory = await _event_memory(config, resource_manager, reranker=reranker)
-    return EventBackendParams(
-        session_id=config.session_id,
-        event_memory_partition=await event_memory.open_or_create_partition(
-            partition_key_for_session(config.session_id)
-        ),
-        episode_storage=await resource_manager.get_episode_storage(),
-        reranker=reranker,
     )
 
 

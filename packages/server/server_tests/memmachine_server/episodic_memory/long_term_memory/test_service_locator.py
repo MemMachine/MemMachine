@@ -34,12 +34,15 @@ from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
-from memmachine_server.episodic_memory.long_term_memory import service_locator
+from memmachine_server.episodic_memory.long_term_memory import (
+    EventBackendParams,
+    service_locator,
+)
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
-    _event_params,
     delete_long_term_memory_storage,
     event_backend_indexed_properties,
     event_backend_vector_store,
+    long_term_memory_params_from_config,
     partition_key_for_session,
 )
 
@@ -177,9 +180,10 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
     config = EventLongTermMemoryConf(session_id="raced")
 
-    params = await _event_params(config, resource_manager)
+    params = await long_term_memory_params_from_config(config, resource_manager)
 
     vector_store = resource_manager.get_vector_store.return_value
+    assert isinstance(params, EventBackendParams)
     assert params.event_memory_partition.similarity_metric is SimilarityMetric.COSINE
     vector_store.open_or_create_partition.assert_awaited_once_with("raced")
     resource_manager.get_vector_store.assert_awaited_once_with(
@@ -206,7 +210,7 @@ async def test_event_params_uses_the_deployments_stores_whatever_a_saved_session
         }
     )
 
-    await _event_params(config, resource_manager)
+    await long_term_memory_params_from_config(config, resource_manager)
 
     assert resource_manager.get_vector_store.await_args.args == ("vs",)
     resource_manager.get_segment_store.assert_awaited_once_with("ss")
@@ -233,7 +237,7 @@ async def test_event_params_refuses_a_session_of_a_deployment_without_event_memo
     config = EventLongTermMemoryConf(session_id="s")
 
     with pytest.raises(ConfigurationError, match="no event memory"):
-        await _event_params(config, resource_manager)
+        await long_term_memory_params_from_config(config, resource_manager)
 
     resource_manager.get_vector_store.assert_not_awaited()
     resource_manager.get_segment_store.assert_not_awaited()
