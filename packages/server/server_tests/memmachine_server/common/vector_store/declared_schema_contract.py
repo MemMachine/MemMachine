@@ -87,7 +87,6 @@ _MISTYPED_FILTERS = [
     In(field=Property("age"), values=("30",)),
     In(field=Property("name"), values=(30,)),
     In(field=Property("active"), values=(1,)),
-    In(field=Property("score"), values=("1",)),
     Not(
         And(
             (
@@ -219,9 +218,6 @@ class DeclaredSchemaContract:
         assert await _admitted(
             partition, Ordering(field=Property("score"), op=">", value=2.5)
         ) == {three.uuid}
-        assert await _admitted(partition, In(field=Property("score"), values=(3,))) == {
-            three.uuid
-        }
 
     @pytest.mark.asyncio
     async def test_query_rejects_an_undeclared_key(self, partition):
@@ -393,8 +389,6 @@ class DeclaredSchemaContract:
             ),
             (Ordering(field=Property("score"), op="<", value=3), {below.uuid}),
             (Equals(field=Property("score"), value=3), {equal.uuid}),
-            (In(field=Property("score"), values=(2, 3)), {equal.uuid}),
-            (In(field=Property("score"), values=(4,)), set()),
         ]
         for property_filter, admitted in expected:
             assert await _admitted(partition, property_filter) == admitted, (
@@ -404,6 +398,36 @@ class DeclaredSchemaContract:
                 await _admitted(partition, Not(property_filter))
                 == everything - admitted
             ), property_filter
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "property_filter",
+        [
+            In(field=Property("score"), values=(1, 2)),
+            In(field=Property("score"), values=()),
+            Not(In(field=Property("created_at"), values=(1,))),
+        ],
+    )
+    async def test_query_rejects_a_membership_test_on_a_float_or_datetime_key(
+        self, partition, property_filter
+    ):
+        with pytest.raises(ValueError, match="membership test"):
+            await _admitted(partition, property_filter)
+
+    @pytest.mark.asyncio
+    async def test_a_float_equals_only_itself(self, partition):
+        scores = [0.1, 0.30000000000000004, 0.3, 1e16, 1e16 + 2.0, -2.5]
+        records = [
+            _record([1.0, 0.01 * index, 0.0], score=score)
+            for index, score in enumerate(scores)
+        ]
+        await self._store(partition, records)
+
+        for record in records:
+            score = record.properties["score"]
+            assert await _admitted(
+                partition, Equals(field=Property("score"), value=score)
+            ) == {record.uuid}, score
 
     @pytest.mark.asyncio
     async def test_an_int_compares_across_64_signed_bits(self, partition):

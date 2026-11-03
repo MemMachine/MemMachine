@@ -537,6 +537,18 @@ class TestPropsJsonFloatFilters:
             "beta",
         }
 
+    @pytest.mark.asyncio
+    async def test_eq(self, properties_session):
+        assert await _query_props_names(
+            properties_session, Equals(field=Property("score"), value=2.5)
+        ) == {"beta"}
+        assert (
+            await _query_props_names(
+                properties_session, Equals(field=Property("score"), value=2.4)
+            )
+            == set()
+        )
+
 
 class TestPropsJsonBoolFilters:
     @pytest.mark.asyncio
@@ -580,6 +592,21 @@ class TestPropsJsonStringFilters:
 
 
 class TestPropsJsonDatetimeFilters:
+    @pytest.mark.asyncio
+    async def test_eq(self, properties_session):
+        jst = timezone(timedelta(hours=9))
+        same_instant = datetime(2024, 3, 15, 22, 0, 0, tzinfo=jst)  # = 13:00 UTC
+        assert await _query_props_names(
+            properties_session, Equals(field=Property("ts"), value=same_instant)
+        ) == {"beta"}
+        assert (
+            await _query_props_names(
+                properties_session,
+                Equals(field=Property("ts"), value=same_instant + timedelta(seconds=1)),
+            )
+            == set()
+        )
+
     @pytest.mark.asyncio
     async def test_gt(self, properties_session):
         cutoff = datetime(2024, 6, 1, 0, 0, 0, tzinfo=UTC)

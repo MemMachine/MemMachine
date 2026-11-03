@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.data_types import PropertyType, PropertyValue
 from memmachine_server.common.filter import (
     And,
     Equals,
@@ -253,6 +253,26 @@ def test_datetime_parsing_with_equality() -> None:
         field=SystemField("created_at"),
         value=datetime.datetime.fromisoformat("2026-01-19T01:56:41Z"),
     )
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        (1.5,),
+        (1, 2.5),
+        (datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),),
+        (True,),
+    ],
+)
+def test_in_holds_ints_or_strs_only(values: tuple) -> None:
+    with pytest.raises(TypeError, match="values must be int or str"):
+        In(Property("x"), values)
+
+
+@pytest.mark.parametrize("declared", [float, datetime.datetime])
+def test_in_takes_no_float_or_datetime_field(declared: PropertyType) -> None:
+    with pytest.raises(TypeError, match="no float or datetime field"):
+        In(Property("x", declared), (1,))
 
 
 def test_comparison_normalizes_datetime_values_at_construction() -> None:
