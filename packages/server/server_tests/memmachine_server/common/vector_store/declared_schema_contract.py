@@ -520,6 +520,64 @@ class DeclaredSchemaContract:
         ) == {record.uuid}
 
     @pytest.mark.asyncio
+    async def test_a_datetime_written_at_an_offset_compares_by_its_instant(
+        self, partition
+    ):
+        written = datetime(
+            2024, 3, 1, 17, 30, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))
+        )
+        record = _record([1.0, 0.0, 0.0], created_at=written)
+        await self._store(partition, [record])
+
+        same_instant = written.astimezone(timezone(timedelta(hours=-8)))
+        for op in ("<=", ">="):
+            assert await _admitted(
+                partition,
+                Ordering(field=Property("created_at"), op=op, value=same_instant),
+            ) == {record.uuid}, op
+        assert await _admitted(
+            partition, Equals(field=Property("created_at"), value=same_instant)
+        ) == {record.uuid}
+        # A later instant at an earlier wall-clock time, and an earlier
+        # instant at a later one.
+        later = (written + timedelta(seconds=1)).astimezone(
+            timezone(timedelta(hours=-8))
+        )
+        earlier = (written - timedelta(seconds=1)).astimezone(
+            timezone(timedelta(hours=9))
+        )
+        assert await _admitted(
+            partition, Ordering(field=Property("created_at"), op="<", value=later)
+        ) == {record.uuid}
+        assert await _admitted(
+            partition, Ordering(field=Property("created_at"), op=">", value=earlier)
+        ) == {record.uuid}
+
+    @pytest.mark.asyncio
+    async def test_a_datetime_at_an_offset_with_seconds_compares_by_its_instant(
+        self, partition
+    ):
+        # Liberia's offset until 1972, the last in the time zone database with
+        # a seconds component.
+        offset_with_seconds = timezone(-timedelta(minutes=44, seconds=30))
+        written = datetime(2024, 3, 1, 12, 0, 0, tzinfo=offset_with_seconds)
+        record = _record([1.0, 0.0, 0.0], created_at=written)
+        await self._store(partition, [record])
+
+        for value in (written, written.astimezone(UTC)):
+            assert await _admitted(
+                partition, Equals(field=Property("created_at"), value=value)
+            ) == {record.uuid}, value
+            for op in ("<", ">"):
+                assert (
+                    await _admitted(
+                        partition,
+                        Ordering(field=Property("created_at"), op=op, value=value),
+                    )
+                    == set()
+                ), (op, value)
+
+    @pytest.mark.asyncio
     async def test_the_filter_is_evaluated_during_the_search(self, partition):
         """A filtered search finds an admitted record behind nearer excluded ones."""
         near = [_record([1.0, 0.01 * i, 0.0], name="near") for i in range(1, 6)]

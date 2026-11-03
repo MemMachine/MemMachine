@@ -41,6 +41,10 @@ class VectorStorePartition(ABC):
     rejected too, so a backend compares a stored value only with a value of
     its type; a record's or a filter's int for a float key is the float it
     equals. Every store evaluates the whole filter language during a search.
+
+    A store keeps a datetime property's instant, taking a naive datetime as
+    UTC, and may drop its UTC offset. A filter compares datetime values by
+    their instant, for equality and ordering alike.
     """
 
     @abstractmethod
