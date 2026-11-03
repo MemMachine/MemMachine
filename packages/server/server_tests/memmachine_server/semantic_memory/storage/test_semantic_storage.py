@@ -23,7 +23,10 @@ from memmachine_server.semantic_memory.semantic_model import FeatureIdT, Semanti
 from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
-from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+    SemanticStorage,
+)
 
 
 def _uid(label: str) -> UUID:
@@ -31,7 +34,11 @@ def _uid(label: str) -> UUID:
 
 
 def _expr(spec: str | None) -> FilterExpr | None:
-    return parse_filter(spec) if spec else None
+    return (
+        parse_filter(spec, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES)
+        if spec
+        else None
+    )
 
 
 async def _collect(iterator):

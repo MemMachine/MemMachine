@@ -124,7 +124,7 @@ def json_session():
 
 def _query_json_names(session: Session, filter_str: str) -> set[str]:
     """Parse filter, compile to SQL, execute, and return set of matching names."""
-    expr = parse_filter(filter_str)
+    expr = parse_filter(filter_str, system_fields={})
     assert expr is not None
     return _query_json_expr(session, expr)
 
