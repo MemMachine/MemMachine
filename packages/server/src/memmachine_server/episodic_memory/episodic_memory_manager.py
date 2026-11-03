@@ -22,8 +22,10 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.episodic_memory.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    delete_long_term_memory_storage,
+)
 from memmachine_server.episodic_memory.service_locator import (
-    delete_episodic_memory_storage,
     episodic_memory_params_from_config,
 )
 
@@ -329,10 +331,12 @@ class EpisodicMemoryManager:
                 session_info = await self.get_session_info(session_key)
                 if session_info is None:
                     raise SessionNotFoundError(session_key)
-                await delete_episodic_memory_storage(
-                    session_info.episode_memory_conf,
-                    self._resource_manager,
-                )
+                conf = session_info.episode_memory_conf
+                if conf.long_term_memory and conf.long_term_memory_enabled:
+                    await delete_long_term_memory_storage(
+                        conf.long_term_memory,
+                        self._resource_manager,
+                    )
 
     async def get_episodic_memory_keys(
         self,

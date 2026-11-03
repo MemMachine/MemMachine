@@ -425,7 +425,7 @@ async def test_open_episodic_memory_cached_instance(
 
 @pytest.mark.asyncio
 @patch(
-    "memmachine_server.episodic_memory.episodic_memory_manager.delete_episodic_memory_storage"
+    "memmachine_server.episodic_memory.episodic_memory_manager.delete_long_term_memory_storage"
 )
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_delete_episodic_session_not_in_use(
@@ -453,18 +453,17 @@ async def test_delete_episodic_session_not_in_use(
 
     await manager.delete_episodic_session(session_key)
 
-    # The idle instance is closed, and the storage is deleted by key.
+    # The idle instance is closed; the session configures no long-term
+    # memory, so there is no storage to delete.
     assert await manager._instance_cache.get(session_key) is None
     mock_episodic_memory_instance.close.assert_awaited_once()
-    mock_delete_storage.assert_awaited_once_with(
-        mock_episodic_memory_conf, mock_resource_manager
-    )
+    mock_delete_storage.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("instance_cache_size", [0, 100])
 @patch(
-    "memmachine_server.episodic_memory.episodic_memory_manager.delete_episodic_memory_storage"
+    "memmachine_server.episodic_memory.episodic_memory_manager.delete_long_term_memory_storage"
 )
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_delete_episodic_session_in_use_raises_error(
@@ -503,12 +502,11 @@ async def test_delete_episodic_session_in_use_raises_error(
 
     await manager.delete_episodic_session(session_key)
     assert await manager._instance_cache.get(session_key) is None
-    mock_delete_storage.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 @patch(
-    "memmachine_server.episodic_memory.episodic_memory_manager.delete_episodic_memory_storage"
+    "memmachine_server.episodic_memory.episodic_memory_manager.delete_long_term_memory_storage"
 )
 @patch("memmachine_server.episodic_memory.episodic_memory_manager.EpisodicMemory")
 async def test_delete_episodic_session_not_in_cache(
@@ -539,13 +537,48 @@ async def test_delete_episodic_session_not_in_cache(
 
     await manager.delete_episodic_session(session_key)
 
-    # The storage is deleted by key from the stored configuration, without
-    # building the session's memory.
+    # Deleting builds no memory; the session configures no long-term memory,
+    # so there is no storage to delete.
     mock_episodic_memory_cls.assert_not_called()
     mock_episodic_memory_instance.close.assert_not_awaited()
-    mock_delete_storage.assert_awaited_once_with(
-        mock_episodic_memory_conf, mock_resource_manager
+    mock_delete_storage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("long_term_memory_enabled", [True, False])
+@patch(
+    "memmachine_server.episodic_memory.episodic_memory_manager.delete_long_term_memory_storage"
+)
+async def test_deleting_a_session_deletes_its_long_term_storage_when_it_builds_long_term_memory(
+    mock_delete_storage,
+    manager: EpisodicMemoryManager,
+    mock_session_storage,
+    mock_resource_manager,
+    long_term_memory_enabled: bool,
+):
+    """The stored configuration's long-term storage is deleted by key, when that configuration builds long-term memory."""
+    session_key = "configured_session"
+    long_term_memory = EventLongTermMemoryConf(session_id=session_key)
+    await mock_session_storage.create_or_validate_session(
+        session_key,
+        {},
+        EpisodicMemoryConf(
+            session_key=session_key,
+            long_term_memory=long_term_memory,
+            long_term_memory_enabled=long_term_memory_enabled,
+        ),
+        "",
+        {},
     )
+
+    await manager.delete_episodic_session(session_key)
+
+    if long_term_memory_enabled:
+        mock_delete_storage.assert_awaited_once_with(
+            long_term_memory, mock_resource_manager
+        )
+    else:
+        mock_delete_storage.assert_not_awaited()
 
 
 @pytest.mark.asyncio
