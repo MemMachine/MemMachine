@@ -107,25 +107,32 @@ class In:
     """
     Field holds a value among `values`.
 
-    Values are homogeneous because a store indexes and compares a property by
-    its type; a mixed list has no single type to compare against. Booleans are
-    excluded rather than treated as integers. No values admits nothing: every
-    compiler renders an empty `In` as false, so a caller whose set of admitted
-    values came out empty can still say so.
+    Values are ints or strs, which every store matches exactly; booleans are
+    excluded rather than treated as integers, and a float or datetime field
+    takes no membership test. Values are homogeneous because a store indexes
+    and compares a property by its type; a mixed list has no single type to
+    compare against. No values admits nothing: every compiler renders an
+    empty `In` as false, so a caller whose set of admitted values came out
+    empty can still say so.
     """
 
     field: SystemField | Property
     values: tuple[int, ...] | tuple[str, ...]
 
     def __post_init__(self) -> None:
-        """Reject value lists a store cannot compare as a single type."""
-        if any(isinstance(value, bool) for value in self.values):
-            raise TypeError(f"In({self.field!r}) values must be int or str, not bool")
+        """Reject value lists a store cannot compare as a single type, and a float or datetime field."""
+        if any(type(value) not in (int, str) for value in self.values):
+            raise TypeError(
+                f"In({self.field!r}) values must be int or str, got "
+                f"{sorted({type(value).__name__ for value in self.values})}"
+            )
         if len({type(value) for value in self.values}) > 1:
             raise TypeError(
                 f"In({self.field!r}) values must all be int or all be str, got "
                 f"{sorted({type(value).__name__ for value in self.values})}"
             )
+        if isinstance(self.field, Property) and self.field.type in (float, datetime):
+            raise TypeError(f"In({self.field!r}) takes no float or datetime field")
 
 
 @dataclass(frozen=True)

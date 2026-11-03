@@ -2,8 +2,13 @@
 
 import math
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 
-from memmachine_server.common.data_types import PropertyType, PropertyValue
+from memmachine_server.common.data_types import (
+    PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
+    PropertyType,
+    PropertyValue,
+)
 from memmachine_server.common.filter import (
     And,
     Equals,
@@ -109,15 +114,14 @@ def bind_filter(
 
     Raises unless the filter names declared keys only and compares each key
     with values of its declared type. An undeclared key never exists in the
-    store, so a filter naming one has nothing to scan for.
+    store, so a filter naming one has nothing to scan for. A membership test
+    holds ints or strs, so one on a float or datetime key raises ValueError.
 
     In the bound filter every value is of its key's declared type, so a
     backend compares a stored value only with a value of the same type. An
-    int for a float key binds to the float it equals, and a membership test
-    of ints on a float key to the disjunction of those floats' equalities,
-    since a membership test holds ints or strs. A bool is never a number, a
-    float key is compared with finite floats only, and any key with ints in
-    64 signed bits only.
+    int for a float key binds to the float it equals. A bool is never a
+    number, a float key is compared with finite floats only, and any key
+    with ints in 64 signed bits only.
     """
     keys = {property_key(field) for field in filter_fields(property_filter)}
     undeclared = keys - indexed_properties.keys()
@@ -161,10 +165,14 @@ def _bound_filter(
         case In(field, values):
             key = property_key(field)
             declared = indexed_properties[key]
+            if declared is float or declared is datetime:
+                raise ValueError(
+                    f"Property {key!r} is declared as "
+                    f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}, "
+                    "which a membership test does not compare"
+                )
             for value in values:
                 _validate_value(key, value, declared)
-            if declared is float and values:
-                return Or(tuple(Equals(field, float(value)) for value in values))
             return expr
 
 

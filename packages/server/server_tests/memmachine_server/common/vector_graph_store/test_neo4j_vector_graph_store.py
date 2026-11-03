@@ -1289,6 +1289,32 @@ async def test_search_matching_nodes_extended_filters(vector_graph_store):
 
 
 @pytest.mark.asyncio
+async def test_a_float_and_a_datetime_equal_only_themselves(vector_graph_store):
+    base = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
+    readings = [
+        (score, base + timedelta(microseconds=index), str(uuid4()))
+        for index, score in enumerate([0.1, 0.30000000000000004, 0.3, 1e16 + 2.0])
+    ]
+    await vector_graph_store.add_nodes(
+        collection="Reading",
+        nodes=[
+            Node(uid=uid, properties={"score": score, "when": when})
+            for score, when, uid in readings
+        ],
+    )
+
+    for score, when, uid in readings:
+        by_score = await vector_graph_store.search_matching_nodes(
+            collection="Reading", property_filter=Equals(Property("score"), score)
+        )
+        by_when = await vector_graph_store.search_matching_nodes(
+            collection="Reading", property_filter=Equals(Property("when"), when)
+        )
+        assert [match.uid for match in by_score] == [uid]
+        assert [match.uid for match in by_when] == [uid]
+
+
+@pytest.mark.asyncio
 async def test_get_nodes(vector_graph_store):
     nodes = [
         Node(

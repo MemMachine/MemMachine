@@ -125,7 +125,8 @@ class VectorStorePartition(ABC):
                 If the limit is not positive, a query vector does not have
                 the store's dimensions or has a coordinate that is not
                 finite, the score threshold is not finite, or the filter
-                names a system field.
+                names a system field or holds a membership test on a float
+                or datetime key.
         """
         raise NotImplementedError
 

@@ -408,6 +408,28 @@ async def test_timestamp_filter_compares_instants_not_wall_clocks(
 
 
 @pytest.mark.asyncio
+async def test_a_float_and_a_timestamp_equal_only_themselves(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    segments = [
+        _seg(ts_offset_seconds=offset, properties={"score": score})
+        for offset, score in enumerate([0.1, 0.30000000000000004, 0.3, 1e15 + 0.5])
+    ]
+    await partition.add_segments(_links(*segments))
+    seeds = [segment.uuid for segment in segments]
+
+    for segment in segments:
+        by_score = await partition.get_segment_contexts(
+            seeds,
+            property_filter=Equals(Property("score"), segment.properties["score"]),
+        )
+        by_timestamp = await partition.get_segment_contexts(
+            seeds, property_filter=Equals(SystemField("timestamp"), segment.timestamp)
+        )
+        assert set(by_score) == set(by_timestamp) == {segment.uuid}
+
+
+@pytest.mark.asyncio
 async def test_add_segments_empty(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
