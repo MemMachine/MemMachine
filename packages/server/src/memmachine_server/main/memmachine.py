@@ -42,9 +42,14 @@ from memmachine_server.common.filter.filter_parser import (
     parse_filter,
     to_property_filter,
 )
+from memmachine_server.common.resource_manager.readiness import (
+    ReadinessResult,
+    ReadinessService,
+)
 from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
+from memmachine_server.common.resource_manager.storage_probes import StorageProbes
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -144,6 +149,9 @@ class MemMachine:
         self._delete_worker: asyncio.Task[None] | None = None
         self._key_to_session: Callable[[str], MemMachine.SessionData] | None = None
         self._started = False
+        self._storage_probes = StorageProbes(conf, self._resources.database_manager)
+        self._readiness = ReadinessService(self._storage_probes.selected)
+        self._readiness_stopped = False
 
     def _initialize_default_episodic_configuration(self) -> None:
         """
@@ -477,6 +485,12 @@ class MemMachine:
         """
         if self._started:
             return
+        if self._readiness_stopped:
+            self._storage_probes = StorageProbes(
+                self._conf, self._resources.database_manager
+            )
+            self._readiness = ReadinessService(self._storage_probes.selected)
+            self._readiness_stopped = False
         self._key_to_session = key_to_session
         await self._queue_pending_session_deletions()
         self._delete_worker = asyncio.create_task(self._delete_session_worker())
@@ -489,6 +503,7 @@ class MemMachine:
             logger.info(
                 "Semantic memory is disabled; skipping semantic service startup."
             )
+        self._readiness.started()
 
     async def stop(self) -> None:
         """
@@ -498,6 +513,10 @@ class MemMachine:
             None.
 
         """
+        self.begin_shutdown()
+        await self._readiness.close()
+        self._storage_probes.close()
+        self._readiness_stopped = True
         if not self._started:
             return
         self._started = False
@@ -514,6 +533,14 @@ class MemMachine:
             await semantic_service.stop()
 
         await self._resources.close()
+
+    async def readiness(self) -> ReadinessResult:
+        """Report bounded storage readiness through the public lifecycle seam."""
+        return await self._readiness.check()
+
+    def begin_shutdown(self) -> None:
+        """Withdraw traffic readiness before any application lifespan teardown."""
+        self._readiness.stopping()
 
     @property
     def resource_manager(self) -> ResourceManagerImpl:

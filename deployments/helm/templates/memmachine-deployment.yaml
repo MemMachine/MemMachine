@@ -57,7 +57,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /api/v2/health
+              path: {{ .Values.memmachine.readiness.path | quote }}
               port: 8080
             initialDelaySeconds: 60
             periodSeconds: 30

@@ -371,8 +371,10 @@ async def global_memory_lifespan() -> AsyncGenerator[None, None]:
     These resources are cleaned up on shutdown.
     """
     await init_global_memory()
-    yield
-    await shutdown_global_memory()
+    try:
+        yield
+    finally:
+        await shutdown_global_memory()
 
 
 async def init_global_memory() -> None:
@@ -407,8 +409,12 @@ async def mcp_http_lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     install_sigusr1_handler()
     async with global_memory_lifespan(), mcp_app.lifespan(application):
         application.state.mem_machine = mem_machine
-        yield
-        dump_traceback()
+        try:
+            yield
+        finally:
+            if mem_machine is not None:
+                mem_machine.begin_shutdown()
+            dump_traceback()
 
 
 @mcp.tool(

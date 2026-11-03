@@ -2064,7 +2064,7 @@
           "System"
         ],
         "summary": "Health Check",
-        "description": "Health check endpoint to verify server is running.",
+        "description": "Process liveness endpoint. Returns 200 while the server can answer requests,\n    independently of storage dependency availability. Use `/api/v2/ready` for\n    traffic readiness; do not restart the process because a database is down.",
         "operationId": "health_check",
         "responses": {
           "200": {
@@ -2103,6 +2103,38 @@
                 "schema": {
                   "type": "string",
                   "description": "Prometheus metrics in text format"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v2/ready": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Readiness Check",
+        "description": "Return 200 when startup is complete and required storage is reachable, or\n    503 during startup/shutdown or when a required check fails or times out.\n    Session and episode stores are required. Enabled semantic memory adds its\n    feature/vector and configuration stores. Enabled episodic long-term memory\n    requires the configured storage catalog, since projects can select alternate\n    backends. Disabled services do not require otherwise-unused resources.\n\n    Checks are read-only and do not close serving clients. Results are reused\n    for at most one second from the check's start, with a two-second per-check\n    observation deadline and a three-second response deadline. Concurrent probe\n    requests share work. Responses contain only safe component labels and\n    status codes, never connection details or backend exception messages.\n    Embedding/LLM providers and collection/index correctness are not checked.",
+        "operationId": "readiness_check",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResult"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResult"
                 }
               }
             }
@@ -2570,6 +2602,19 @@
         ],
         "title": "AddSemanticTagSpec",
         "description": "Specification model for adding a tag to a category."
+      },
+      "ComponentStatus": {
+        "type": "string",
+        "enum": [
+          "ready",
+          "unavailable",
+          "timeout",
+          "unsupported",
+          "starting",
+          "stopping"
+        ],
+        "title": "ComponentStatus",
+        "description": "Public readiness states; backend exception messages are never returned."
       },
       "ConfigureEpisodicMemorySpec": {
         "properties": {
@@ -4601,6 +4646,34 @@
         ],
         "title": "ProjectResponse",
         "description": "Response model returned after project operations (e.g., creation, update, fetch).\n\nContains the resolved identifiers and configuration of the project as stored\nin the system. Field formats follow the same validation rules as in\n`CreateProjectSpec`."
+      },
+      "ReadinessResult": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ],
+            "title": "Status",
+            "default": "not_ready"
+          },
+          "service": {
+            "type": "string",
+            "title": "Service",
+            "default": "memmachine"
+          },
+          "components": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ComponentStatus"
+            },
+            "type": "object",
+            "title": "Components"
+          }
+        },
+        "type": "object",
+        "title": "ReadinessResult",
+        "description": "Storage availability for an initialized application process."
       },
       "ResourceInfo": {
         "properties": {
