@@ -45,6 +45,7 @@ from memmachine_server.common.neo4j_utils import (
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
     FeatureIdT,
     SemanticStorage,
 )
@@ -1195,25 +1196,6 @@ class Neo4jSemanticStorage(SemanticStorage):
                 inner_cond, inner_params = self._render_filter_expr(alias, operand)
                 return f"NOT coalesce(({inner_cond}), false)", inner_params
 
-    _KNOWN_FIELDS: frozenset[str] = frozenset(
-        {
-            "set_id",
-            "set",
-            "semantic_category_id",
-            "category_name",
-            "category",
-            "tag_id",
-            "tag",
-            "feature",
-            "feature_name",
-            "value",
-            "created_at",
-            "created_at_ts",
-            "updated_at",
-            "updated_at_ts",
-        }
-    )
-
     def _resolve_field_reference(
         self,
         alias: str,
@@ -1228,7 +1210,7 @@ class Neo4jSemanticStorage(SemanticStorage):
                     return f"{alias}.created_at_ts", coerce_datetime_to_timestamp
                 if name in {"updated_at", "updated_at_ts"}:
                     return f"{alias}.updated_at_ts", coerce_datetime_to_timestamp
-                if name in self._KNOWN_FIELDS:
+                if name in SEMANTIC_STORAGE_FILTER_FIELD_TYPES:
                     return f"{alias}.{name}", None
                 raise ValueError(f"Unknown filter field: {name!r}")
 

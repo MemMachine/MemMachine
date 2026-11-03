@@ -491,6 +491,46 @@ async def test_history_metadata_filter(episode_storage: EpisodeStorage):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name", [*EPISODE_STORAGE_FILTER_FIELD_TYPES, "Producer_ID", "SESSION"]
+)
+async def test_history_filters_on_every_system_field(
+    episode_storage: EpisodeStorage, name: str
+):
+    """Every system field resolves, by a name of any case."""
+    created_at = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
+    uid = await create_history_entry(
+        episode_storage,
+        content="hello",
+        session_key="session-fields",
+        producer_id="alice",
+        producer_role="user",
+        produced_for_id="bob",
+        created_at=created_at,
+        episode_type=EpisodeType.MESSAGE,
+    )
+    values = {
+        "uid": str(uid),
+        "id": str(uid),
+        "session_key": "session-fields",
+        "session": "session-fields",
+        "producer_id": "alice",
+        "producer_role": "user",
+        "produced_for_id": "bob",
+        "episode_type": EpisodeType.MESSAGE.name,
+        "content": "hello",
+        "created_at": created_at,
+    }
+
+    results = await episode_storage.get_episode_messages(
+        filter_expr=Equals(SystemField(name), values[name.lower()])
+    )
+    assert [entry.uid for entry in results] == [uid]
+
+    await episode_storage.delete_episodes([uid])
+
+
+@pytest.mark.asyncio
 async def test_history_metadata_numbers_compare_by_value(
     episode_storage: EpisodeStorage,
 ):

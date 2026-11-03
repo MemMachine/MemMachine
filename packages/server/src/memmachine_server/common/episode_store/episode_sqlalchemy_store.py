@@ -38,6 +38,7 @@ from memmachine_server.common.episode_store.episode_model import (
     EpisodeType,
 )
 from memmachine_server.common.episode_store.episode_storage import (
+    EPISODE_STORAGE_FILTER_FIELD_TYPES,
     EpisodeStorage,
 )
 from memmachine_server.common.errors import (
@@ -131,6 +132,10 @@ class Episode(BaseEpisodeStore):
             created_at=created_at,
             metadata=self.json_metadata or None,
         )
+
+
+# The column of each system field not held under its own name.
+_SYSTEM_FIELD_ALIASES: dict[str, str] = {"id": "uid", "session": "session_key"}
 
 
 class SqlAlchemyEpisodeStore(EpisodeStorage):
@@ -329,25 +334,12 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
             case SystemField(name=name):
                 # Check for system field mappings (case-insensitive)
                 normalized = name.lower()
-                field_mapping: dict[str, ColumnElement] = {
-                    "uid": Episode.uid.expression,
-                    "id": Episode.uid.expression,
-                    "session_key": Episode.session_key.expression,
-                    "session": Episode.session_key.expression,
-                    "producer_id": Episode.producer_id.expression,
-                    "producer_role": Episode.producer_role.expression,
-                    "produced_for_id": Episode.produced_for_id.expression,
-                    "episode_type": Episode.episode_type.expression,
-                    "content": Episode.content.expression,
-                    "created_at": Episode.created_at.expression,
-                }
-
-                if normalized in field_mapping:
-                    return field_mapping[normalized], (
-                        "uuid" if normalized in {"uid", "id"} else "column"
-                    )
-
-                raise ValueError(f"Unknown filter field: {name!r}")
+                if normalized not in EPISODE_STORAGE_FILTER_FIELD_TYPES:
+                    raise ValueError(f"Unknown filter field: {name!r}")
+                column = Episode.__table__.c[
+                    _SYSTEM_FIELD_ALIASES.get(normalized, normalized)
+                ]
+                return column, "uuid" if column.name == "uid" else "column"
 
     @timed("get_episode_messages")
     async def get_episode_messages(
