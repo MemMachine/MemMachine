@@ -581,6 +581,74 @@ async def test_generate_response_streamed_tool_calls_and_discards_reasoning_chun
 
 
 @pytest.mark.asyncio
+async def test_generate_response_streamed_tool_calls_reusing_index(
+    mock_async_openai,
+    minimal_config,
+):
+    """Test streamed tool calls with distinct ids are not merged when they share an index."""
+
+    def chunk(chunk_id: str, tool_call: dict[str, Any]):
+        return make_chat_completion_chunk(
+            {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"tool_calls": [tool_call]},
+                        "finish_reason": None,
+                        "logprobs": None,
+                    }
+                ],
+                "usage": None,
+            }
+        )
+
+    mock_client = mock_async_openai.return_value
+    mock_client.chat.completions.create.return_value = FakeAsyncStream(
+        [
+            chunk(
+                "chunk-1",
+                {
+                    "index": 0,
+                    "id": "call_a",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": '{"city": "Rome"}',
+                    },
+                },
+            ),
+            chunk(
+                "chunk-2",
+                {
+                    "index": 0,
+                    "id": "call_b",
+                    "type": "function",
+                    "function": {"name": "get_time", "arguments": '{"zone": "UTC"}'},
+                },
+            ),
+        ]
+    )
+
+    lm = OpenAIChatCompletionsLanguageModel(minimal_config)
+    _, tool_calls = await lm.generate_response()
+
+    assert tool_calls == [
+        {
+            "call_id": "call_a",
+            "function": {"name": "get_weather", "arguments": {"city": "Rome"}},
+        },
+        {
+            "call_id": "call_b",
+            "function": {"name": "get_time", "arguments": {"zone": "UTC"}},
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_generate_response_with_tool_calls(
     mock_async_openai,
     minimal_config,
