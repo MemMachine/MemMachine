@@ -93,8 +93,9 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         for seed_uuid in seed_segment_uuids:
             if seed_uuid not in self.segments:
                 continue
+            seed = self.segments[seed_uuid]
             if normalized_filter is not None and not evaluate_filter(
-                normalized_filter, self.segments[seed_uuid].properties
+                normalized_filter, {**seed.properties, "timestamp": seed.timestamp}
             ):
                 continue
             try:
@@ -109,7 +110,13 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 if uid in self.segments
                 and (
                     normalized_filter is None
-                    or evaluate_filter(normalized_filter, self.segments[uid].properties)
+                    or evaluate_filter(
+                        normalized_filter,
+                        {
+                            **self.segments[uid].properties,
+                            "timestamp": self.segments[uid].timestamp,
+                        },
+                    )
                 )
             ]
             if context:
@@ -121,14 +128,16 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         """Translate canonical filter field names to raw segment property keys.
 
         Mirrors SQLAlchemySegmentStorePartition._resolve_segment_field:
-        - `m.<key>` / `metadata.<key>` → user metadata, bare key.
-        - any other bare name → system field, `_<field>` (matches the
-          LongTermMemory event-backend property layout).
+        - `timestamp` -> the segment's own timestamp.
+        - `m.<key>` / `metadata.<key>` -> the property, bare key.
+        - any other name -> ValueError.
         """
+        if field == "timestamp":
+            return field
         internal_name, is_user_metadata = normalize_filter_field(field)
-        if is_user_metadata:
-            return demangle_user_metadata_key(internal_name)
-        return f"_{field}"
+        if not is_user_metadata:
+            raise ValueError(f"Filter field {field!r} names no segment property.")
+        return demangle_user_metadata_key(internal_name)
 
     @override
     async def get_segment_uuids_by_event_uuids(
@@ -217,7 +226,7 @@ def fake_vector_store_partition(fake_embedder):
             similarity_metric=fake_embedder.similarity_metric,
             indexed_properties={
                 **EventMemory.expected_vector_store_indexed_properties(),
-                "_episode_uid": str,
+                "episode_uid": str,
             },
         )
     )

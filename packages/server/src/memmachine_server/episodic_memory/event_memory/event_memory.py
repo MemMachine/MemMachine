@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Iterable, Sequence
-from typing import ClassVar, cast
+from typing import ClassVar, Final, cast
 from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf
@@ -24,11 +24,16 @@ from memmachine_server.common.metrics_factory import (
     MetricsFactory,
     OperationTracker,
 )
+from memmachine_server.common.property_keys import (
+    is_reserved_property_key,
+    reserved_property_key,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import (
     Record,
     VectorStorePartition,
 )
+from memmachine_server.common.vector_store.data_types import is_valid_identifier
 
 from .data_types import (
     Block,
@@ -48,6 +53,13 @@ from .segment_store import SegmentStorePartition
 from .segmenter import Segmenter
 
 logger = logging.getLogger(__name__)
+
+# The key the memory writes into a vector record; `em` names this memory,
+# short because every key shares the identifier budget.
+_EVENT_MEMORY_SYSTEM: Final[str] = "em"
+EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
+    _EVENT_MEMORY_SYSTEM, "timestamp"
+)
 
 
 class EventMemoryParams(BaseModel):
@@ -108,11 +120,8 @@ class EventMemoryParams(BaseModel):
 class EventMemory:
     """Event memory system."""
 
-    # System-defined metadata field names. Reserved.
-    _TIMESTAMP_FIELD_NAME = "_timestamp"
-
     _BASE_EVENT_MEMORY_FIELD_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {_TIMESTAMP_FIELD_NAME}
+        {EVENT_TIMESTAMP_KEY}
     )
 
     @classmethod
@@ -125,7 +134,7 @@ class EventMemory:
         on any other property applies to the seeds the search returns.
         """
         return {
-            cls._TIMESTAMP_FIELD_NAME: cast(type[PropertyValue], datetime.datetime),
+            EVENT_TIMESTAMP_KEY: cast(type[PropertyValue], datetime.datetime),
         }
 
     def __init__(self, params: EventMemoryParams) -> None:
@@ -180,21 +189,22 @@ class EventMemory:
         """
         Validate a batch of events before encoding.
 
-        Raises ValueError if any event supplies a reserved field name in its properties.
+        Raises ValueError if any event supplies a property key outside the
+        naming contract or under the memory's own reserved keys. A key
+        reserved for another system belongs to the component that embeds
+        the memory and is kept as given.
         """
-        events = list(events)
-
-        reserved_fields = {
-            field
-            for event in events
-            for field in event.properties
-            if field in EventMemory._BASE_EVENT_MEMORY_FIELD_NAMES
-        }
-        if reserved_fields:
-            raise ValueError(
-                f"Event properties must not contain reserved fields: "
-                f"{', '.join(sorted(reserved_fields))}"
-            )
+        for event in events:
+            for key in event.properties:
+                if not is_valid_identifier(key):
+                    raise ValueError(
+                        f"Property key {key!r} must match [a-z0-9_] and be at "
+                        "most 32 bytes."
+                    )
+                if is_reserved_property_key(key, system=_EVENT_MEMORY_SYSTEM):
+                    raise ValueError(
+                        f"Property key {key!r} is reserved for the event memory."
+                    )
 
     async def encode_events(
         self,
@@ -213,7 +223,8 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If any event supplies a reserved field name in its properties.
+                If any event supplies an illegal property key, or one of
+                the memory's own reserved keys.
         """
         async with self._tracker("encode_events"):
             await self._encode_events(events, format_options=format_options)
@@ -326,7 +337,7 @@ class EventMemory:
         filter (see `query`).
         """
         properties: dict[str, PropertyValue] = {
-            self._TIMESTAMP_FIELD_NAME: derivative.timestamp,
+            EVENT_TIMESTAMP_KEY: derivative.timestamp,
             **{
                 key: value
                 for key, value in derivative.properties.items()
@@ -345,13 +356,16 @@ class EventMemory:
         """
         Translates canonical filter field name to vector record property.
 
-        Event memory base properties (`foo`) translate to `_foo`.
+        Event memory base properties (`foo`) translate to their reserved keys.
         User-defined properties (`m.foo` / `metadata.foo`) translate to `foo`.
+        Any other name translates unchanged.
         """
         internal_name, is_user_metadata = normalize_filter_field(field)
         if is_user_metadata:
             return demangle_user_metadata_key(internal_name)
-        return f"_{field}"
+        if field == "timestamp":
+            return EVENT_TIMESTAMP_KEY
+        return field
 
     async def query(
         self,

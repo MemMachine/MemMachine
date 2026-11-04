@@ -79,6 +79,10 @@ class SegmentStorePartition(ABC):
                 A mapping from each seed segment UUID to its context segments.
                 A seed that does not match the filter has no entry, and a
                 context holds only segments that match it.
+
+        Raises:
+            ValueError:
+                If `property_filter` names an unknown field.
         """
         raise NotImplementedError
 
