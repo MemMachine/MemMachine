@@ -369,7 +369,7 @@ async def _build_qdrant_client_kwargs(qdrant_conf: QdrantConf) -> dict:
         builder = DatabaseManager(conf)
         await builder.async_get_qdrant_client("qdrant1")
 
-    return mock_cls.call_args.kwargs
+    return dict(mock_cls.call_args.kwargs)
 
 
 @pytest.mark.asyncio
