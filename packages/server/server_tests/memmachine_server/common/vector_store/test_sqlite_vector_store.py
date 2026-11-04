@@ -65,6 +65,17 @@ INDEXED_PROPERTIES: dict[str, PropertyType] = {
     "created_at": datetime,
 }
 
+_DEFAULT_SELECTIVE_FILTER_LIMIT: int = SQLiteVectorStoreParams.model_fields[
+    "selective_filter_limit"
+].default
+# A filter on a few records is searched through an allowlist under the
+# default limit, and applied to an unfiltered search's candidates under 0.
+BOTH_FILTER_PATHS = pytest.mark.parametrize(
+    "selective_filter_limit",
+    [_DEFAULT_SELECTIVE_FILTER_LIMIT, 0],
+    ids=["allowlist", "post_filter"],
+)
+
 
 def _normalize(vector: list[float]) -> list[float]:
     magnitude = math.sqrt(sum(x * x for x in vector))
@@ -114,13 +125,20 @@ def _declared_values(row, indexed_properties) -> dict:
     return values
 
 
+@pytest.fixture
+def selective_filter_limit() -> int:
+    return _DEFAULT_SELECTIVE_FILTER_LIMIT
+
+
 @pytest_asyncio.fixture
-async def store(tmp_path):
+async def store(tmp_path, selective_filter_limit):
     db_path = tmp_path / "test.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
     enable_sqlite_explicit_begin(engine)
     enable_sqlite_foreign_keys(engine)
-    vector_store = SQLiteVectorStore(_params(engine))
+    vector_store = SQLiteVectorStore(
+        _params(engine, selective_filter_limit=selective_filter_limit)
+    )
     await vector_store.startup()
     yield vector_store
     await vector_store.shutdown()
@@ -482,6 +500,7 @@ class TestUpsertAndQuery:
 # ── Filters ──
 
 
+@BOTH_FILTER_PATHS
 class TestDeclaredSchema(DeclaredSchemaContract):
     """The declared-schema contract, against this store."""
 
@@ -491,6 +510,7 @@ class TestDeclaredSchema(DeclaredSchemaContract):
         pass
 
 
+@BOTH_FILTER_PATHS
 class TestFilters:
     async def _setup(self, partition):
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -767,8 +787,76 @@ class TestFilters:
         assert r2.uuid in uuids
         assert len(uuids) == 2
 
+    # ── Delete ──
 
-# ── Delete ──
+
+class TestFilterPaths:
+    @staticmethod
+    async def _records(partition) -> tuple[list[Record], Record]:
+        """Two records near the query with age 1, and one far from it with age 2."""
+        near = [
+            _make_record(vector=_normalize([1.0, 0.1 * i, 0.0]), properties={"age": 1})
+            for i in range(1, 3)
+        ]
+        far = _make_record(vector=_normalize([0.0, 1.0, 0.0]), properties={"age": 2})
+        await partition.upsert(records=[*near, far])
+        return near, far
+
+    @pytest.mark.asyncio
+    async def test_a_selective_filter_finds_its_records_however_far(self, tmp_path):
+        store, engine = await _fresh_store(
+            tmp_path / "test.db", tmp_path, overfetch_factor=1
+        )
+        partition = await store.open_or_create_partition(NAME)
+        _near, far = await self._records(partition)
+
+        [result] = await partition.query(
+            query_vectors=[_normalize([1.0, 0.0, 0.0])],
+            limit=1,
+            property_filter=Comparison(field="age", op="=", value=2),
+        )
+        assert [match.record_uuid for match in result.matches] == [far.uuid]
+
+        await store.shutdown()
+        await engine.dispose()
+
+    @pytest.mark.asyncio
+    async def test_a_broad_filter_applies_to_the_overfetched_candidates_only(
+        self, tmp_path
+    ):
+        store, engine = await _fresh_store(
+            tmp_path / "test.db", tmp_path, selective_filter_limit=0, overfetch_factor=2
+        )
+        partition = await store.open_or_create_partition(NAME)
+        near, far = await self._records(partition)
+        query = _normalize([1.0, 0.0, 0.0])
+
+        # With a limit of 1, the two nearest records are the candidates, and
+        # the far record the filter admits is not among them.
+        [result] = await partition.query(
+            query_vectors=[query],
+            limit=1,
+            property_filter=Comparison(field="age", op="=", value=2),
+        )
+        assert result.matches == []
+
+        [result] = await partition.query(
+            query_vectors=[query],
+            limit=2,
+            property_filter=Comparison(field="age", op="=", value=2),
+        )
+        assert [match.record_uuid for match in result.matches] == [far.uuid]
+
+        # Candidates the filter admits beyond the limit are left out.
+        [result] = await partition.query(
+            query_vectors=[query],
+            limit=1,
+            property_filter=Comparison(field="age", op="=", value=1),
+        )
+        assert [match.record_uuid for match in result.matches] == [near[0].uuid]
+
+        await store.shutdown()
+        await engine.dispose()
 
 
 class TestDelete:
@@ -1272,9 +1360,17 @@ class TestConcurrentAsync:
         await engine.dispose()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("with_filter", [False, True])
+    @pytest.mark.parametrize(
+        ("with_filter", "selective_filter_limit"),
+        [
+            (False, _DEFAULT_SELECTIVE_FILTER_LIMIT),
+            (True, _DEFAULT_SELECTIVE_FILTER_LIMIT),
+            (True, 0),
+        ],
+        ids=["unfiltered", "allowlist", "post_filter"],
+    )
     async def test_a_query_overtaken_by_its_partitions_deletion_raises_stale(
-        self, store, monkeypatch, with_filter
+        self, store, monkeypatch, with_filter, selective_filter_limit
     ):
         partition = await store.open_or_create_partition("overtaken")
         record = _make_record(
@@ -1285,11 +1381,8 @@ class TestConcurrentAsync:
         search = engine.search
 
         async def search_overtaken_by_deletion(*args, **kwargs):
-            # With a filter, the search reads the records table per
-            # candidate; without one, the matches' rows are read after it.
-            if with_filter:
-                await store.delete_partition("overtaken")
-                return await search(*args, **kwargs)
+            # The records table is read after the search: for the matches'
+            # rows, and for a broad filter, its candidates' rows.
             results = await search(*args, **kwargs)
             await store.delete_partition("overtaken")
             return results
@@ -1310,7 +1403,7 @@ class TestConcurrentAsync:
 # ── Crash recovery & pending operations ──
 
 
-async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
+async def _fresh_store(db_path, tmp_path, *, save_threshold=1000, **overrides):
     """Create a new SQLiteVectorStore against the same DB file."""
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
     enable_sqlite_explicit_begin(engine)
@@ -1319,6 +1412,7 @@ async def _fresh_store(db_path, tmp_path, *, save_threshold=1000):
         engine,
         index_directory=str(tmp_path / "indexes"),
         save_threshold=save_threshold,
+        **overrides,
     )
     store = SQLiteVectorStore(params)
     await store.startup()
@@ -1629,31 +1723,6 @@ class TestIndexFileDurability:
 
         await store.shutdown()
         assert await _get_index_saved(engine, NAME) is True
-
-        await engine.dispose()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_closes_the_connections_a_filtered_query_opened(
-        self, tmp_path
-    ):
-        db_path = tmp_path / "test.db"
-        store, engine = await _fresh_store(db_path, tmp_path)
-
-        partition = await store.open_or_create_partition(NAME)
-        vector = _normalize([1.0, 0.0, 0.0])
-        await partition.upsert(
-            records=[_make_record(vector=vector, properties={"name": "alice"})]
-        )
-        await partition.query(
-            query_vectors=[vector],
-            limit=1,
-            property_filter=Comparison(field="name", op="=", value="alice"),
-        )
-        pool = store._sync_sqlalchemy_engine.pool
-        assert pool.checkedin() == 1
-
-        await store.shutdown()
-        assert pool.checkedin() == 0
 
         await engine.dispose()
 
