@@ -30,10 +30,10 @@ by its plain name, and a filter that names a reserved key is refused.
 
 Three parties write keys into the same space: the end user, whose keys
 are an open, untrusted set; the application that embeds the memory, whose
-keys are a closed set it stamps on every event; and the memory's own
-components. A scheme that gives one party a privileged tier leaves the
-others sharing a space that stays disjoint only by luck, and a key the
-memory adds later can collide with one an application already writes.
+keys are a closed set it defines; and the memory's own components. A
+scheme that gives one party a privileged tier leaves the others sharing a
+space that stays disjoint only by luck, and a key the memory adds later
+can collide with one an application already writes.
 
 A leading underscore was rejected as the reservation. Underscore names
 suit a space one party owns, where a few exact names are reserved. Shared
@@ -51,13 +51,13 @@ The prefix is the product's name, distinctive enough that users are
 unlikely to want keys under it, and a reader of stored data can tell at
 once who owns a key without knowing the codebase. A short top-level
 prefix per memory system was rejected, since each system added would
-reserve another short family of names users do want. The prefix is reserved as a
-whole and checked as a prefix, so a field a component adds later is
-protected without a list to update. Within it, each component writes
-under its own token, named for the lowest level that writes the key, the
-store wrapper or the memory type, rather than for a generic data model,
-so no central list of keys is needed. Tokens are short, so keys stay
-within the identifier rule's length with room to spare.
+reserve another short family of names users do want. The prefix is
+reserved as a whole and checked as a prefix, so a field a component adds
+later is protected without a list to update. Within it, each component
+writes under its own token, named for the lowest level that writes the
+key, the store wrapper or the memory type, rather than for a generic data
+model, so no central list of keys is needed. Tokens are short, so keys
+stay within the identifier rule's length with room to spare.
 
 The reservation also leaves the API free in how a caller reaches a
 component's field. Whether the field is a typed search parameter or a
@@ -92,10 +92,10 @@ A store's physical names follow the opposite rule: the store keeps its
 own fields under names no property key can take. A store either gives
 every declared key, MemMachine's included, a prefix internal to the store
 that none of its own field names begins with, or names its own fields
-outside the identifier rule and writes declared keys as they are.
-Prefixing at that level leaves the rule intact, since callers write and
-filter keys as written, only the store sees the physical name, and a
-filter on a property never reaches one of the store's own fields.
+outside the identifier rule and writes declared keys as they are. Either
+way the rule stays intact, since callers write and filter keys as
+written, only the store sees the physical name, and a filter on a
+property never reaches one of the store's own fields.
 
 A layer above MemMachine that offers keys outside the rule keeps its own
 mapping from its keys to legal ones.
