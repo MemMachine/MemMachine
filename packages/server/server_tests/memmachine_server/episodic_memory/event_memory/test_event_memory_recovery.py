@@ -2,7 +2,7 @@
 
 import asyncio
 import datetime
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, timedelta
 from unittest.mock import call, create_autospec
 from uuid import UUID, uuid4
@@ -477,6 +477,104 @@ async def test_a_forget_ends_the_derivatives_pending_with_it(
 
     assert not await event_memory._finish_pending_derivatives()
     assert vector_store_partition.records == {}
+
+
+class _HookedEmbedder(FakeEmbedder):
+    """An embedder that awaits a hook, while one is set, before embedding for ingestion."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hook: Callable[[], Awaitable[None]] | None = None
+
+    async def _ingest_embed(
+        self, inputs: list, max_attempts: int = 1
+    ) -> list[list[float]]:
+        if self.hook is not None:
+            await self.hook()
+        return await super()._ingest_embed(inputs, max_attempts)
+
+
+def _hooked_event_memory(
+    segment_store: SQLAlchemySegmentStore,
+    vector_store_partition: _FailingVectorStorePartition,
+    store_schema: VectorStoreSchema,
+    embedder: _HookedEmbedder,
+    **params,
+) -> EventMemory:
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.store_schema = store_schema
+    vector_store.open_or_create_partition.return_value = vector_store_partition
+    vector_store.open_partition.return_value = vector_store_partition
+    return EventMemory(
+        EventMemoryParams(
+            segment_store=segment_store,
+            vector_store=vector_store,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=embedder,
+            **params,
+        )
+    )
+
+
+async def test_background_work_embeds_before_its_write_budget_starts(
+    segment_store: SQLAlchemySegmentStore,
+    vector_store_partition: _FailingVectorStorePartition,
+    store_schema: VectorStoreSchema,
+    sqlalchemy_sqlite_engine: AsyncEngine,
+):
+    embedder = _HookedEmbedder()
+    event_memory = _hooked_event_memory(
+        segment_store,
+        vector_store_partition,
+        store_schema,
+        embedder,
+        write_budget_seconds=1,
+    )
+    partition = await event_memory.open_or_create_partition("partition")
+    vector_store_partition.fail_upserts = True
+    with pytest.raises(ConnectionError):
+        await partition.encode_events([_event("hello")])
+    vector_store_partition.fail_upserts = False
+    await _age_pending_derivatives(sqlalchemy_sqlite_engine, timedelta(hours=1))
+
+    async def embed_slower_than_the_budget() -> None:
+        await asyncio.sleep(1.5)
+
+    embedder.hook = embed_slower_than_the_budget
+    assert await event_memory._finish_pending_derivatives()
+
+    assert len(vector_store_partition.records) == 1
+    assert not await event_memory._finish_pending_derivatives()
+
+
+async def test_a_forget_while_the_background_work_embeds_ends_its_write(
+    segment_store: SQLAlchemySegmentStore,
+    vector_store_partition: _FailingVectorStorePartition,
+    store_schema: VectorStoreSchema,
+    sqlalchemy_sqlite_engine: AsyncEngine,
+):
+    embedder = _HookedEmbedder()
+    event_memory = _hooked_event_memory(
+        segment_store, vector_store_partition, store_schema, embedder
+    )
+    partition = await event_memory.open_or_create_partition("partition")
+    vector_store_partition.fail_upserts = True
+    event = _event("hello")
+    with pytest.raises(ConnectionError):
+        await partition.encode_events([event])
+    vector_store_partition.fail_upserts = False
+    await _age_pending_derivatives(sqlalchemy_sqlite_engine, timedelta(hours=1))
+
+    async def forget_the_event() -> None:
+        embedder.hook = None
+        await partition.forget_events([event.uuid])
+
+    embedder.hook = forget_the_event
+    assert await event_memory._finish_pending_derivatives()
+
+    assert vector_store_partition.records == {}
+    assert not await event_memory._finish_pending_derivatives()
 
 
 async def test_startup_runs_the_background_work_until_shutdown(

@@ -50,9 +50,9 @@ delete. A failure here leaves the first delete to the background work.
 
 **Background work.** Any process claims, from the segment store:
 
-- pending derivatives older than the budget plus a margin, starting a
-  budget of its own before the claim, then writes them and deletes the
-  record;
+- pending derivatives older than the budget plus a margin: it embeds
+  them, starts a budget of its own, and renews its claim, then writes
+  them and deletes the record;
 - tombstones due for a delete, at once for the first and after R for the
   second, and deletes their derivatives from the vector store.
 
@@ -79,8 +79,8 @@ store partition always has its vector store partition.
 
 Every vector write is sent within the budget L of a moment its derivative
 was linked and its event not forgotten: an ingest starts its budget before
-its transaction, and a recovery starts its budget before its claim, which a
-forget of the same derivatives must follow. The forget's tombstone is
+its transaction, and a recovery starts its budget before renewing its
+claim, which a forget of the same derivatives must follow. The forget's tombstone is
 stamped after that moment, so the write lands before the tombstone's time
 plus L plus the in-flight time d, and the second delete, after R, removes
 it whenever
@@ -103,16 +103,19 @@ reads its own snapshot, so the forget follows three rules:
    locks. The transaction's start time could precede an ingest the locks
    waited for.
 3. **It deletes the pending derivatives before stamping the tombstone.** A
-   claim holds its record, so the delete waits for a claim in progress: a
-   claim either committed before the stamp or finds its record gone.
+   claim's renewal holds its record, so the delete waits for a renewal in
+   progress: a renewal either committed before the stamp or finds its
+   record gone.
 
 SQLite serializes write transactions, so the same transactions are
 atomic there.
 
-A recovery opens the vector store partition under the partition's key, so
-it checks after opening that the partition it claimed from still exists:
-since deletion removes the segment store's partition first, the vector
-store partition it opened belongs to the same life.
+A recovery opens the vector store partition under the partition's key
+before renewing its claim, and the renewal checks that the partition it
+claimed from still exists: since deletion removes the segment store's
+partition first, the vector store partition it opened belongs to the same
+life. Embedding before the budget starts lets a recovery take as long to
+embed as an ingest does.
 
 The protocol was model-checked on a small instance (two encodes of one
 event, an evicting encode, two recovery workers, crashes and timeouts at
