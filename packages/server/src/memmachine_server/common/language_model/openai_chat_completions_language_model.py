@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class _StreamedToolCallState(BaseModel):
+    index: int = 0
     id: str | None = None
     type: str | None = None
     function_name: str = ""
@@ -376,7 +377,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         response_stream: AsyncIterator[object],
     ) -> tuple[str, list[dict[str, Any]], int, int]:
         output_chunks: list[str] = []
-        streamed_tool_calls: dict[int, _StreamedToolCallState] = {}
+        streamed_tool_calls: list[_StreamedToolCallState] = []
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
@@ -417,13 +418,12 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
 
     def _build_streamed_tool_calls(
         self,
-        streamed_tool_calls: dict[int, _StreamedToolCallState],
+        streamed_tool_calls: list[_StreamedToolCallState],
     ) -> list[dict[str, Any]]:
         function_calls_arguments = []
 
         try:
-            for index in sorted(streamed_tool_calls):
-                tool_call = streamed_tool_calls[index]
+            for tool_call in sorted(streamed_tool_calls, key=lambda t: t.index):
                 if tool_call.type != "function":
                     logger.info(
                         "Unsupported streamed tool call type: %s",
@@ -505,7 +505,7 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
         self,
         chunk: ChatCompletionChunk,
         output_chunks: list[str],
-        streamed_tool_calls: dict[int, _StreamedToolCallState],
+        streamed_tool_calls: list[_StreamedToolCallState],
     ) -> None:
         for choice in chunk.choices:
             delta = choice.delta
@@ -517,9 +517,10 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                 continue
 
             for tool_call in delta.tool_calls:
-                state = streamed_tool_calls.setdefault(
+                state = self._find_streamed_tool_call_state(
+                    streamed_tool_calls,
                     tool_call.index,
-                    _StreamedToolCallState(),
+                    tool_call.id,
                 )
                 if tool_call.id:
                     state.id = tool_call.id
@@ -530,6 +531,31 @@ class OpenAIChatCompletionsLanguageModel(LanguageModel):
                         state.function_name += tool_call.function.name
                     if tool_call.function.arguments:
                         state.function_arguments += tool_call.function.arguments
+
+    @staticmethod
+    def _find_streamed_tool_call_state(
+        streamed_tool_calls: list[_StreamedToolCallState],
+        index: int,
+        tool_call_id: str | None,
+    ) -> _StreamedToolCallState:
+        """
+        Find the state a streamed tool call delta belongs to.
+
+        Deltas are normally matched by index, but some OpenAI-compatible
+        servers reuse an index for several tool calls.
+        A delta that carries a different id than the call already
+        seen at that index therefore starts a new tool call.
+        """
+        for state in reversed(streamed_tool_calls):
+            if state.index != index:
+                continue
+            if tool_call_id and state.id and state.id != tool_call_id:
+                break
+            return state
+
+        state = _StreamedToolCallState(index=index)
+        streamed_tool_calls.append(state)
+        return state
 
     def _collect_stream_usage_metrics(
         self,
