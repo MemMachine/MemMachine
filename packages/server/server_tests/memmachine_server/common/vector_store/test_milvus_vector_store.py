@@ -411,7 +411,7 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
     )
     await timed.startup()
     await timed.create_partition("timed")
-    partition = await timed.open_partition("timed")
+    partition = await timed.get_partition("timed")
     assert partition is not None
     vector = _normalize([1.0, 0.0, 0.0])
     record, kept = (
@@ -453,7 +453,7 @@ def test_a_setting_that_is_not_positive_is_refused(setting):
 @pytest_asyncio.fixture
 async def partition(store):
     await store.create_partition(NAME)
-    partition = await store.open_partition(NAME)
+    partition = await store.get_partition(NAME)
     assert partition is not None
     yield partition
     await store.delete_partition(NAME)
@@ -485,7 +485,7 @@ class TestPartitionLifecycle:
 
         await partial.startup()
         await partial.create_partition("partial")
-        partition = await partial.open_partition("partial")
+        partition = await partial.get_partition("partial")
         assert partition is not None
         vector = _normalize([1.0, 0.0, 0.0])
         record = _make_record(vector=vector, properties={"name": "alice"})
@@ -506,7 +506,7 @@ class TestPartitionLifecycle:
     @pytest.mark.asyncio
     async def test_create_open_delete(self, store):
         await store.create_partition("lifecycle")
-        partition = await store.open_partition("lifecycle")
+        partition = await store.get_partition("lifecycle")
         assert isinstance(partition, MilvusVectorStorePartition)
         await store.delete_partition("lifecycle")
 
@@ -532,7 +532,7 @@ class TestPartitionLifecycle:
         )
         await digit_first.startup()
         await digit_first.create_partition("digit_first")
-        assert await digit_first.open_partition("digit_first") is not None
+        assert await digit_first.get_partition("digit_first") is not None
         await digit_first.delete_partition("digit_first")
 
     @pytest.mark.asyncio
@@ -544,7 +544,7 @@ class TestPartitionLifecycle:
         }
         for partition_key, record in records.items():
             await store.create_partition(partition_key)
-            partition = await store.open_partition(partition_key)
+            partition = await store.get_partition(partition_key)
             assert partition is not None
             await partition.upsert(records=[record])
 
@@ -569,7 +569,7 @@ class TestPartitionLifecycle:
         """Each declared property is a typed, nullable, indexed field, a
         datetime with a field for its offset; the collection isolates tenants."""
         await store.create_partition("schema")
-        partition = await store.open_partition("schema")
+        partition = await store.get_partition("schema")
         assert partition is not None
         native = partition._collection_name
 
@@ -628,7 +628,7 @@ class TestPartitionLifecycle:
             store_schema=_schema(indexed_properties={key: datetime}),
         )
         await longest.create_partition("longest_key")
-        partition = await longest.open_partition("longest_key")
+        partition = await longest.get_partition("longest_key")
         assert partition is not None
         written = datetime(2024, 6, 15, 12, 0, tzinfo=timezone(timedelta(hours=9)))
         record = _make_record(
@@ -719,7 +719,7 @@ class TestConcurrentPreparation:
                 await asyncio.wait_for(first_created.wait(), 60)
                 await second.startup()
                 await second.create_partition("second")
-                partition = await second.open_partition("second")
+                partition = await second.get_partition("second")
                 assert partition is not None
                 await _require_usable(partition)
             finally:
@@ -728,7 +728,7 @@ class TestConcurrentPreparation:
         await asyncio.gather(first.startup(), start_second())
 
         await first.create_partition("first")
-        partition = await first.open_partition("first")
+        partition = await first.get_partition("first")
         assert partition is not None
         await _require_usable(partition)
         assert set(await store._client.list_indexes(first._collection_name)) == {
@@ -757,7 +757,7 @@ class TestUpsertAndQuery:
             request_timeout_seconds=120,
         )
         await oversized.create_partition(NAME)
-        partition = await oversized.open_partition(NAME)
+        partition = await oversized.get_partition(NAME)
         assert partition is not None
         text = "x" * 60_000
         records = [
@@ -1267,7 +1267,7 @@ class TestFilterModel:
             store_schema=_schema(indexed_properties=_MODEL_DECLARED),
         )
         await modeled.create_partition("model")
-        partition = await modeled.open_partition("model")
+        partition = await modeled.get_partition("model")
         assert partition is not None
         records = [
             Record(
@@ -1317,7 +1317,7 @@ class _ModelPartitions:
         self.dead_incarnations.append(self.handles[partition_key]._incarnation)
         await self.store.delete_partition(partition_key)
         await self.store.create_partition(partition_key)
-        handle = await self.store.open_partition(partition_key)
+        handle = await self.store.get_partition(partition_key)
         assert handle is not None
         self.handles[partition_key] = handle
         self.records[partition_key] = {}
@@ -1385,7 +1385,7 @@ class TestOperationModel:
         handles = {}
         for partition_key in partition_keys:
             await modeled.create_partition(partition_key)
-            handle = await modeled.open_partition(partition_key)
+            handle = await modeled.get_partition(partition_key)
             assert handle is not None
             handles[partition_key] = handle
         model = _ModelPartitions(
@@ -1458,7 +1458,7 @@ class TestScores:
         await scored.startup()
         await scored.delete_partition("scores")
         await scored.create_partition("scores")
-        partition = await scored.open_partition("scores")
+        partition = await scored.get_partition("scores")
         assert partition is not None
         record = _make_record(vector=[1.2, 1.6, 0.0])
         await partition.upsert(records=[record])
@@ -1507,7 +1507,7 @@ class TestScores:
             store_schema=_schema(similarity_metric=metric),
         )
         await scored.create_partition("threshold")
-        partition = await scored.open_partition("threshold")
+        partition = await scored.get_partition("threshold")
         assert partition is not None
         nearest, middle, farthest = (_make_record(vector=vector) for vector in vectors)
         await partition.upsert(records=[farthest, nearest, middle])
@@ -1541,7 +1541,7 @@ class TestScores:
             store_schema=_schema(similarity_metric=metric),
         )
         await scored.create_partition("edge")
-        partition = await scored.open_partition("edge")
+        partition = await scored.get_partition("edge")
         assert partition is not None
         # Vectors that each metric ranks in its own order, none tied.
         records = [
@@ -1612,7 +1612,7 @@ class TestConsistency:
         )
 
         await bounded.create_partition("bounded")
-        partition = await bounded.open_partition("bounded")
+        partition = await bounded.get_partition("bounded")
         assert partition is not None
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await partition.upsert(records=[record])
@@ -1812,8 +1812,8 @@ class TestPartitionIsolation:
         """The same UUID in two partitions is two records, written and deleted apart."""
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
-        partition_a = await store.open_partition("tenant_a")
-        partition_b = await store.open_partition("tenant_b")
+        partition_a = await store.get_partition("tenant_a")
+        partition_b = await store.get_partition("tenant_b")
         assert partition_a is not None
         assert partition_b is not None
 
@@ -1863,7 +1863,7 @@ class TestPartitionIsolation:
         own_records = {}
         for partition_key in ("query_a", "query_b"):
             await isolated.create_partition(partition_key)
-            partition = await isolated.open_partition(partition_key)
+            partition = await isolated.get_partition(partition_key)
             assert partition is not None
             records = [
                 _make_record(
@@ -1905,7 +1905,7 @@ class TestPurgeBatches:
             )
         )
         await store.create_partition("batched")
-        partition = await store.open_partition("batched")
+        partition = await store.get_partition("batched")
         assert partition is not None
         await partition.upsert(
             records=[
@@ -1949,7 +1949,7 @@ class TestPurge:
             vector_store_name="dropped_native",
         )
         await dropped.create_partition("dropped")
-        partition = await dropped.open_partition("dropped")
+        partition = await dropped.get_partition("dropped")
         assert partition is not None
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
@@ -1970,7 +1970,7 @@ class TestPurge:
         handles = {}
         for partition_key in ("live", "dead_0", "dead_1", "dead_2", "dead_3"):
             await store.create_partition(partition_key)
-            handle = await store.open_partition(partition_key)
+            handle = await store.get_partition(partition_key)
             assert handle is not None
             await handle.upsert(
                 records=[
@@ -2135,9 +2135,14 @@ async def _churn_worker(
                 await store.create_partition(step.partition_key)
                 continue
             if step.partition_key not in handles:
-                handles[step.partition_key] = await store.open_or_create_partition(
-                    step.partition_key
-                )
+                handle = await store.get_partition(step.partition_key)
+                if handle is None:
+                    await store.create_partition(step.partition_key)
+                    handle = await store.get_partition(step.partition_key)
+                if handle is None:
+                    # Deleted again between its creation and the lookup.
+                    continue
+                handles[step.partition_key] = handle
             await _churn_on(handles[step.partition_key], step, owner, own, ledger)
         except VectorStorePartitionHandleStaleError:
             handles.pop(step.partition_key, None)
@@ -2264,7 +2269,7 @@ class TestChurn:
 
         live = set()
         for partition_key in _CHURN_PARTITION_KEYS:
-            handle = await stores[0].open_partition(partition_key)
+            handle = await stores[0].get_partition(partition_key)
             if handle is not None:
                 live.add(handle._incarnation)
                 await _check_live_partition(
