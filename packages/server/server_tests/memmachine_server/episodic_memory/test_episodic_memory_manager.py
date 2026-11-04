@@ -550,14 +550,18 @@ async def test_delete_episodic_session_not_in_cache(
 @patch(
     "memmachine_server.episodic_memory.episodic_memory_manager.delete_long_term_memory_storage"
 )
-async def test_deleting_a_session_deletes_its_long_term_storage_when_it_builds_long_term_memory(
+async def test_deleting_a_session_deletes_the_long_term_storage_its_configuration_names(
     mock_delete_storage,
     manager: EpisodicMemoryManager,
     mock_session_storage,
     mock_resource_manager,
     long_term_memory_enabled: bool,
 ):
-    """The stored configuration's long-term storage is deleted by key, when that configuration builds long-term memory."""
+    """The long-term storage the stored configuration names is deleted, even after long-term memory was disabled.
+
+    A session can write long-term memory and then have it disabled, so its
+    storage may hold data whatever the flag says now.
+    """
     session_key = "configured_session"
     long_term_memory = EventLongTermMemoryConf(session_id=session_key)
     await mock_session_storage.create_or_validate_session(
@@ -574,12 +578,9 @@ async def test_deleting_a_session_deletes_its_long_term_storage_when_it_builds_l
 
     await manager.delete_episodic_session(session_key)
 
-    if long_term_memory_enabled:
-        mock_delete_storage.assert_awaited_once_with(
-            long_term_memory, mock_resource_manager
-        )
-    else:
-        mock_delete_storage.assert_not_awaited()
+    mock_delete_storage.assert_awaited_once_with(
+        long_term_memory, mock_resource_manager
+    )
 
 
 @pytest.mark.asyncio

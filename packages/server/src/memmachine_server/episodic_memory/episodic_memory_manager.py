@@ -332,7 +332,7 @@ class EpisodicMemoryManager:
                 if session_info is None:
                     raise SessionNotFoundError(session_key)
                 conf = session_info.episode_memory_conf
-                if conf.long_term_memory and conf.long_term_memory_enabled:
+                if conf.long_term_memory:
                     await delete_long_term_memory_storage(
                         conf.long_term_memory,
                         self._resource_manager,
