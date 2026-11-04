@@ -77,6 +77,10 @@ store partition always has its vector store partition.
 
 ## Why it is safe
 
+A deriver gives every derivative a UUID no other derivative has, so a
+tombstone's deletes reach only the vectors of the events it forgot, and
+never those of an event added again under the same UUID.
+
 Every vector write is sent within the budget L of a moment its derivative
 was linked and its event not forgotten: an ingest starts its budget before
 its transaction, and a recovery starts its budget before renewing its
