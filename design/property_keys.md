@@ -12,12 +12,11 @@ A key that begins with `memmachine_` belongs to MemMachine. A component
 builds each of its keys as `memmachine_<component>_<field>`, where the
 component token names the code that writes the key: `em` for the event
 memory, and `ltm` for the long-term memory's event backend. Every other
-key belongs to the user: an identifier within the bound that every
-supported backend accepts for a field name, stored and filtered exactly
-as written. The bound is the vector stores' naming rule, so any user key
-can be declared to a vector store as written. The reservation covers
-property keys only; an id a caller names may begin with the prefix,
-since ids are not keys.
+key belongs to the user: an identifier under the vector stores' naming
+rule, stored and filtered exactly as written, so any user key can be
+declared to a vector store as written. The reservation covers property
+keys only; an id a caller names may begin with the prefix, since ids are
+not keys.
 
 A user key is checked against the rule where it enters, before any store
 is written, so a request with an illegal key fails whole and no store
@@ -36,37 +35,43 @@ components. A scheme that gives one party a privileged tier leaves the
 others sharing a space that stays disjoint only by luck, and a key the
 memory adds later can collide with one an application already writes.
 
-A leading underscore was rejected as the reservation. It suits a space
-one party owns. Shared by several, it spends the one obvious prefix on a
-single component, leaves a second component or an embedding application
-no sanctioned way to reserve names of its own, and takes the whole family
-of underscore names away from callers. Shared spaces are divided by a
-qualified prefix instead, the way a database reserves its catalog's
-names.
+A leading underscore was rejected as the reservation. Underscore names
+suit a space one party owns, where a few exact names are reserved. Shared
+by several, a leading underscore spends the one obvious prefix on a
+single component and leaves a second component or an embedding
+application no sanctioned way to reserve names of its own. Shared spaces
+are divided by a qualified prefix instead, the way a database reserves
+its catalog's names.
 
-The prefix is the distribution name, so the package registry keeps it
-unique, and a reader of stored data can tell at once who owns a key. It
-is reserved as a whole and checked as a prefix, so a field a component
-adds later is protected without a list to update. Within it, each
-component writes under its own token, named for the code that writes the
-key rather than for a data model, so a key can be attributed without
-knowing the codebase and no central list of keys is needed. Tokens are
-short, because every key shares the bound the backends agree on.
+Reserving characters outside the user alphabet was rejected: property
+keys reach some backends' filter expressions as bare identifiers, and the
+alphabet is what keeps a key from changing such an expression.
+
+The prefix is the product's name, distinctive enough that users are
+unlikely to want keys under it, and a reader of stored data can tell at
+once who owns a key without knowing the codebase. A short top-level
+prefix per memory system was rejected, since each system added would
+reserve another short family of names users do want. The prefix is reserved as a
+whole and checked as a prefix, so a field a component adds later is
+protected without a list to update. Within it, each component writes
+under its own token, named for the lowest level that writes the key, the
+store wrapper or the memory type, rather than for a generic data model,
+so no central list of keys is needed. Tokens are short, so keys stay
+within the identifier rule's length with room to spare.
 
 The reservation also leaves the API free in how a caller reaches a
 component's field. Whether the field is a typed search parameter or a
 name a filter routes to the reserved key, no caller can write the key,
 so neither choice can collide with a user's.
 
-## Reservation, never rewriting
+## Keys are validated, not repaired
 
-Leaving every name to the caller and rewriting user keys with a prefix on
-the way to storage was rejected. The key a caller writes is the key the
-caller filters on; a rewriting undone on every read is a round trip that
-cancels; and a rewritten user space can still be made to address a
-system key through the filter language. Reserving a length instead of a
-prefix was rejected too, since it pads every system key to the bound and
-makes stored data unreadable.
+A key outside the rule is refused rather than repaired: input is
+validated, not sanitized, since encoding a key into the alphabet
+lengthens it against the rule's length, so a long key overflows it or,
+truncated, collides with another. Reserving a length instead of a
+prefix, with MemMachine's keys padded to that length, was rejected too,
+since padded keys are unreadable in stored data.
 
 ## Where the rule applies
 
@@ -88,8 +93,8 @@ own fields under names no property key can take. A store either gives
 every declared key, MemMachine's included, a prefix internal to the store
 that none of its own field names begins with, or names its own fields
 outside the identifier rule and writes declared keys as they are.
-Rewriting at that level escapes the objections above, since callers write
-and filter keys as written, only the store sees the physical name, and a
+Prefixing at that level leaves the rule intact, since callers write and
+filter keys as written, only the store sees the physical name, and a
 filter on a property never reaches one of the store's own fields.
 
 A layer above MemMachine that offers keys outside the rule keeps its own
