@@ -165,8 +165,31 @@ class VectorStore(ABC):
     """
 
     @abstractmethod
+    async def migrate(self) -> None:
+        """
+        Create the store's durable resources, or bring them up to date.
+
+        The caller runs it before `startup`, while no other process uses the
+        store. Running it again changes nothing.
+
+        Raises:
+            SchemaMismatchError:
+                If existing resources conflict with the store's dimensions
+                or metric.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def startup(self) -> None:
-        """Start the store, creating idempotently what must exist before a partition is created."""
+        """
+        Start the store, on the durable resources `migrate` created.
+
+        Raises:
+            SchemaMismatchError:
+                If `migrate` has not created the store's durable resources
+                or brought them up to date, or they conflict with the
+                store's dimensions, metric, or declared properties.
+        """
         raise NotImplementedError
 
     @abstractmethod

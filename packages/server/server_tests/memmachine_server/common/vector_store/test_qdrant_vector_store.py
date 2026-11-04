@@ -65,6 +65,9 @@ from server_tests.memmachine_server.common.vector_store.declared_schema_contract
 from server_tests.memmachine_server.common.vector_store.partition_lifecycle_contract import (
     PartitionLifecycleContract,
 )
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
+)
 
 VECTOR_STORE_NAME = "test_vector_store"
 NAME = "test_name"
@@ -167,6 +170,7 @@ async def _params(client, registry_engine, **overrides) -> QdrantVectorStorePara
             tombstone_retention_seconds=0,
         )
     )
+    await params["partition_registry"].migrate()
     await params["partition_registry"].startup()
     return QdrantVectorStoreParams(**params)
 
@@ -174,6 +178,7 @@ async def _params(client, registry_engine, **overrides) -> QdrantVectorStorePara
 @pytest_asyncio.fixture
 async def store(any_qdrant_client, registry_engine):
     s = QdrantVectorStore(await _params(any_qdrant_client, registry_engine))
+    await s.migrate()
     await s.startup()
     yield s
 
@@ -376,6 +381,7 @@ class TestSimilarityMetrics:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
+        await store.migrate()
         await store.startup()
         await store.create_partition(NAME)
         partition = await store.open_partition(NAME)
@@ -428,6 +434,7 @@ class TestSimilarityMetrics:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
+        await store.migrate()
         await store.startup()
         await store.create_partition(NAME)
         partition = await store.open_partition(NAME)
@@ -1288,6 +1295,7 @@ class TestPartitionIsolation:
                 ),
             )
         )
+        await store.migrate()
         await store.startup()
         await store.create_partition("tenant_a")
         await store.create_partition("tenant_b")
@@ -1346,6 +1354,7 @@ class TestPartitionIsolation:
                 vector_store_name=f"{VECTOR_STORE_NAME}_other",
             )
         )
+        await other.migrate()
         await other.startup()
         await store.create_partition(NAME)
         await other.create_partition(NAME)
@@ -1462,6 +1471,7 @@ class TestPurge:
                 any_qdrant_client, registry_engine, vector_store_name="dropped_native"
             )
         )
+        await dropped.migrate()
         await dropped.startup()
         await dropped.create_partition("dropped")
         partition = await dropped.open_partition("dropped")
@@ -1704,6 +1714,7 @@ class TestAgainstAModel:
                 store_schema=_schema(indexed_properties=_MODEL_INDEXED_PROPERTIES),
             )
         )
+        await store.migrate()
         await store.startup()
         rng = random.Random(_MODEL_SEED)
         run = _ModelRun(store, rng, sorted(uuid4() for _ in range(_MODEL_POOL_SIZE)))
@@ -1921,6 +1932,7 @@ async def _stores_sharing_a_registry(
                 store_schema=_schema(indexed_properties=_CHURN_INDEXED_PROPERTIES),
             )
         )
+        await store.migrate()
         await store.startup()
         stores.append(store)
     return stores
@@ -2038,6 +2050,7 @@ class TestMetrics:
         store = QdrantVectorStore(
             await _params(qdrant_client, registry_engine, metrics_factory=mock_factory)
         )
+        await store.migrate()
         await store.startup()
 
         await store.create_partition("metrics_test")
@@ -2079,13 +2092,12 @@ class TestCollectionProvisioningAcrossWorkers:
     ):
         """A collection that exists without its indexes still gets them.
 
-        A second store starting, another worker's or a retry after one died
-        between the two calls, finds the collection there and creates the
-        indexes it lacks.
+        A migration after one that died between the two calls finds the
+        collection there and creates the indexes it lacks.
         """
         native, name = "raced", "raced_name"
 
-        # Stand in for a startup that got as far as the collection and no further.
+        # Stand in for a migration that got as far as the collection and no further.
         await qdrant_client.create_collection(
             collection_name=native,
             vectors_config=models.VectorParams(
@@ -2096,6 +2108,7 @@ class TestCollectionProvisioningAcrossWorkers:
         store = QdrantVectorStore(
             await _params(qdrant_client, registry_engine, vector_store_name=native)
         )
+        await store.migrate()
         await store.startup()
         try:
             await store.open_or_create_partition(name)
@@ -2147,7 +2160,9 @@ class TestCollectionProvisioningAcrossWorkers:
         store_b = QdrantVectorStore(
             await _params(client_b, registry_engine, vector_store_name=native)
         )
+        await store_a.migrate()
         await store_a.startup()
+        await store_b.migrate()
         await store_b.startup()
         self._together(
             monkeypatch,
@@ -2188,51 +2203,6 @@ class TestCollectionProvisioningAcrossWorkers:
             await client_a.close()
             await client_b.close()
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("prefer_grpc", [False, True], ids=["rest", "grpc"])
-    async def test_two_stores_preparing_their_storage_at_once_both_succeed(
-        self, new_qdrant_client, registry_engine, monkeypatch, prefer_grpc
-    ):
-        """Two workers start stores of one name at once, so both prepare the
-        native collection they share at the same moment. Both startups
-        succeed, and a partition each worker creates holds its own records."""
-        client_a = new_qdrant_client(prefer_grpc=prefer_grpc)
-        client_b = new_qdrant_client(prefer_grpc=prefer_grpc)
-        native = f"race_storage_{'grpc' if prefer_grpc else 'rest'}"
-
-        store_a = QdrantVectorStore(
-            await _params(client_a, registry_engine, vector_store_name=native)
-        )
-        store_b = QdrantVectorStore(
-            await _params(client_b, registry_engine, vector_store_name=native)
-        )
-        self._together(monkeypatch, [store_a, store_b], "_prepare_storage")
-
-        try:
-            async with asyncio.timeout(60):
-                await asyncio.gather(store_a.startup(), store_b.startup())
-            await store_a.create_partition("first")
-            await store_b.create_partition("second")
-            first = await store_b.open_partition("first")
-            second = await store_a.open_partition("second")
-            assert first is not None
-            assert second is not None
-            records = {
-                partition: _make_record(vector=_normalize([1.0, 0.0, 0.0]))
-                for partition in (first, second)
-            }
-            for partition, record in records.items():
-                await partition.upsert(records=[record])
-            for partition, record in records.items():
-                [result] = await partition.query(
-                    query_vectors=[record.vector], limit=10
-                )
-                assert [match.record_uuid for match in result.matches] == [record.uuid]
-        finally:
-            await client_a.delete_collection(native)
-            await client_a.close()
-            await client_b.close()
-
 
 @pytest.mark.integration
 class TestStrictMode:
@@ -2241,6 +2211,7 @@ class TestStrictMode:
     @pytest.mark.asyncio
     async def test_the_collection_is_strict(self, qdrant_client, registry_engine):
         store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
+        await store.migrate()
         await store.startup()
         info = await qdrant_client.get_collection(VECTOR_STORE_NAME)
         assert info.config.strict_mode_config is not None
@@ -2267,6 +2238,7 @@ class TestStrictMode:
     ):
         """The store answers a mistyped leaf itself; the server would refuse it."""
         store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
+        await store.migrate()
         await store.startup()
         await store.delete_partition("mistyped")
         await store.create_partition("mistyped")
@@ -2298,7 +2270,7 @@ class TestStrictModeIsRequested:
     """Local mode does not record strict mode, so the request itself is checked."""
 
     @pytest.mark.asyncio
-    async def test_startup_creates_the_collection_strict(
+    async def test_migrate_creates_the_collection_strict(
         self, monkeypatch, registry_engine
     ):
         client = AsyncQdrantClient(location=":memory:")
@@ -2310,8 +2282,15 @@ class TestStrictModeIsRequested:
             return await original(*args, **kwargs)
 
         monkeypatch.setattr(client, "create_collection", recording_create_collection)
-        store = QdrantVectorStore(await _params(client, registry_engine))
-        await store.startup()
+        # Local mode records no payload indexes, so the store declares none.
+        store = QdrantVectorStore(
+            await _params(
+                client,
+                registry_engine,
+                store_schema=_schema(indexed_properties={}),
+            )
+        )
+        await store.migrate()
 
         assert set(requested) == {VECTOR_STORE_NAME}
         config = requested[VECTOR_STORE_NAME]
@@ -2331,3 +2310,18 @@ class TestLifecycleContract(PartitionLifecycleContract):
     async def settle(partition) -> None:
         # A Qdrant write returns once applied, so reads reflect it already.
         pass
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return QdrantVectorStore(
+            await _params(
+                store._client,
+                store._partition_registry._engine,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )

@@ -34,6 +34,7 @@ from memmachine_server.common.vector_store.sqlite_properties import (
     property_column_name,
 )
 from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
+    _STORE_SCHEMA_TABLES,
     SQLiteVecVectorStore,
     SQLiteVecVectorStoreParams,
     SQLiteVecVectorStorePartition,
@@ -41,6 +42,9 @@ from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
 )
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
+)
+from server_tests.memmachine_server.common.vector_store.store_schema_check_contract import (
+    StoreSchemaCheckContract,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -118,6 +122,7 @@ async def store(tmp_path):
     enable_sqlite_explicit_begin(engine)
     load_sqlite_vec_extension(engine)
     vector_store = SQLiteVecVectorStore(_params(engine))
+    await vector_store.migrate()
     await vector_store.startup()
     yield vector_store
     await vector_store.shutdown()
@@ -155,6 +160,7 @@ async def _store_with(
             store_schema=_schema(**overrides),
         )
     )
+    await other.migrate()
     await other.startup()
     return other
 
@@ -166,6 +172,24 @@ async def partition(store):
     assert partition is not None
     yield partition
     await store.delete_partition(NAME)
+
+
+# ── Store schema record ──
+
+
+@pytest.mark.asyncio
+async def test_migrate_records_the_store_schema(store):
+    store_table, declared_property_table = _STORE_SCHEMA_TABLES
+    async with store._engine.connect() as connection:
+        stores = (await connection.execute(select(store_table))).all()
+        keys = (
+            await connection.scalars(select(declared_property_table.c.property_key))
+        ).all()
+
+    assert [tuple(row) for row in stores] == [
+        (VECTOR_STORE_NAME, VECTOR_DIM, SimilarityMetric.COSINE.value)
+    ]
+    assert set(keys) == set(INDEXED_PROPERTIES)
 
 
 # ── Partition lifecycle ──
@@ -1264,3 +1288,17 @@ class TestPartitionResources:
         [found] = await second.query(query_vectors=[record.vector], limit=5)
         assert [match.record_uuid for match in found.matches] == [record.uuid]
         await store.delete_partition(NAME)
+
+
+class TestStoreSchemaCheck(StoreSchemaCheckContract):
+    """The schema check, against this store."""
+
+    @staticmethod
+    async def build(store, vector_store_name, **schema_changes):
+        return SQLiteVecVectorStore(
+            _params(
+                store._engine,
+                vector_store_name=vector_store_name,
+                store_schema=_schema(**schema_changes),
+            )
+        )

@@ -507,7 +507,9 @@ async def test_get_vector_store_qdrant(tmp_path):
         ),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.migrate = AsyncMock()
         builder = DatabaseManager(conf)
+        await builder.migrate_vector_store("qdrant1", **_STORE)
         store = await builder.get_vector_store("qdrant1", **_STORE)
 
     assert store is mock_store_cls.return_value
@@ -559,7 +561,9 @@ async def test_qdrant_close(tmp_path):
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.migrate = AsyncMock()
         builder = DatabaseManager(conf)
+        await builder.migrate_vector_store("qdrant1", **_STORE)
         await builder.get_vector_store("qdrant1", **_STORE)
 
     assert "qdrant1" in builder.qdrant_clients
@@ -757,7 +761,9 @@ async def test_get_vector_store_milvus(tmp_path):
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
         mock_store_cls.return_value.startup = AsyncMock()
+        mock_store_cls.return_value.migrate = AsyncMock()
         builder = DatabaseManager(conf)
+        await builder.migrate_vector_store("milvus1", **_STORE)
         store = await builder.get_vector_store("milvus1", **_STORE)
 
     assert store is mock_store_cls.return_value
@@ -845,7 +851,9 @@ async def test_milvus_close(tmp_path):
     ):
         mock_store_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.shutdown = AsyncMock()
+        mock_store_cls.return_value.migrate = AsyncMock()
         builder = DatabaseManager(conf)
+        await builder.migrate_vector_store("milvus1", **_STORE)
         await builder.get_vector_store("milvus1", **_STORE)
 
     assert "milvus1" in builder.milvus_clients
@@ -962,6 +970,7 @@ async def test_a_sqlite_vector_store_engine_takes_the_write_lock_at_begin(tmp_pa
         sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path=str(path))}
     )
     builder = DatabaseManager(conf)
+    await builder.migrate_vector_store("vs1", **_STORE)
     await builder.get_vector_store("vs1", **_STORE)
     other = create_async_engine(
         f"sqlite+aiosqlite:///{path}", connect_args={"timeout": 0.2}
@@ -990,6 +999,7 @@ async def test_a_sqlite_vector_store_engine_enforces_foreign_keys(tmp_path):
     )
     builder = DatabaseManager(conf)
     try:
+        await builder.migrate_vector_store("vs1", **_STORE)
         await builder.get_vector_store("vs1", **_STORE)
         engine = builder.vector_store_sql_engines["vs1"]
         async with engine.connect() as connection:
@@ -1010,6 +1020,7 @@ async def test_a_sqlite_vec_vector_store_engine_loads_sqlite_vec(tmp_path):
     )
     builder = DatabaseManager(conf)
     try:
+        await builder.migrate_vector_store("vec1", **_STORE)
         await builder.get_vector_store("vec1", **_STORE)
         engine = builder.vector_store_sql_engines["vec1"]
         async with engine.connect() as connection:

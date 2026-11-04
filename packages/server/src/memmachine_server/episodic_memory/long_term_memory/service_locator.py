@@ -18,6 +18,7 @@ from memmachine_server.common.configuration.episodic_config import (
     WholeTextDeriverConf,
 )
 from memmachine_server.common.data_types import PropertyType
+from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.errors import ConfigurationError
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
@@ -51,7 +52,7 @@ from .long_term_memory import (
 
 logger = logging.getLogger(__name__)
 
-_EVENT_MEMORY_VECTOR_STORE_NAME = "event_memory"
+EVENT_MEMORY_VECTOR_STORE_NAME = "event_memory"
 """The name of event memory's one vector store, whatever its backend and embedder.
 
 Fixed, because the name locates the store's data.
@@ -168,12 +169,17 @@ async def event_backend_vector_store(
     embedder = await resource_manager.get_embedder(embedder_id, validate=True)
     return await resource_manager.get_vector_store(
         vector_store_id,
-        vector_store_name=_EVENT_MEMORY_VECTOR_STORE_NAME,
-        store_schema=VectorStoreSchema(
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties=event_backend_indexed_properties(),
-        ),
+        vector_store_name=EVENT_MEMORY_VECTOR_STORE_NAME,
+        store_schema=event_backend_store_schema(embedder),
+    )
+
+
+def event_backend_store_schema(embedder: Embedder) -> VectorStoreSchema:
+    """The schema of the event backend's vector store, for its embedder."""
+    return VectorStoreSchema(
+        vector_dimensions=embedder.dimensions,
+        similarity_metric=embedder.similarity_metric,
+        indexed_properties=event_backend_indexed_properties(),
     )
 
 

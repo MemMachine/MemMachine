@@ -47,6 +47,9 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         self._set_type_categories_cache: dict[str, list[SemanticCategory]] = {}
         self._set_type_ids_cache: dict[str, list[SetTypeEntry]] = {}
 
+    async def migrate(self) -> None:
+        await self._wrapped.migrate()
+
     async def startup(self) -> None:
         await self._wrapped.startup()
 

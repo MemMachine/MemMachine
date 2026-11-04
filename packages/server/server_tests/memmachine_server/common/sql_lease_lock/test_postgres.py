@@ -23,6 +23,7 @@ async def test_postgres_exclusive_expiry_and_fencing(
     first = SQLLeaseLockService(sqlalchemy_pg_engine)
     second = SQLLeaseLockService(second_engine)
     try:
+        await first.migrate()
         await first.startup()
         first_lease = await first.try_acquire(
             "pg-parity", lease_duration=timedelta(seconds=2)
@@ -71,6 +72,7 @@ async def test_postgres_simultaneous_writers_are_exclusive(
     first = SQLLeaseLockService(sqlalchemy_pg_engine)
     second = SQLLeaseLockService(second_engine)
     try:
+        await first.migrate()
         await first.startup()
         grants = await asyncio.gather(
             first.try_acquire("pg-writers", lease_duration=timedelta(seconds=2)),

@@ -18,8 +18,25 @@ class SessionDataManager(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def create_tables(self) -> None:
-        """Create the necessary tables in the database."""
+    async def migrate(self) -> None:
+        """
+        Create the manager's durable resources, or bring them up to date.
+
+        The caller runs it before `startup`, while no other process uses the
+        manager. Running it again changes nothing.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def startup(self) -> None:
+        """
+        Start the manager.
+
+        Raises:
+            SchemaMismatchError:
+                If `migrate` has not created the manager's durable resources
+                or brought them up to date.
+        """
         raise NotImplementedError
 
     @abstractmethod
