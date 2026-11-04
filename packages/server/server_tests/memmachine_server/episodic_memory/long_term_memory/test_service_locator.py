@@ -3,6 +3,8 @@
 from unittest.mock import NonCallableMagicMock, create_autospec
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.episodic_config import (
@@ -15,23 +17,47 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ConfigurationError
 from memmachine_server.common.resource_manager import CommonResourceManager
+from memmachine_server.common.sql import (
+    enable_sqlite_explicit_begin,
+    enable_sqlite_foreign_keys,
+)
 from memmachine_server.common.vector_store import (
     VectorStore,
     VectorStorePartition,
     VectorStoreSchema,
 )
+from memmachine_server.common.vector_store.sqlite_vector_store import (
+    SQLiteVectorStore,
+    SQLiteVectorStoreParams,
+    SQLiteVectorStorePartition,
+)
+from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
+    USearchVectorSearchEngine,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
     SegmentStorePartition,
+    SegmentStorePartitionAlreadyExistsError,
+)
+from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
+    SQLAlchemySegmentStore,
+    SQLAlchemySegmentStoreParams,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
+from memmachine_server.episodic_memory.long_term_memory.long_term_memory import (
+    EventBackendParams,
+)
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    SessionPartitionMissingError,
     _event_params,
+    create_event_backend_partitions,
+    delete_event_backend_partitions,
     event_backend_indexed_properties,
     event_backend_vector_store,
+    long_term_memory_params_from_config,
     partition_key_for_session,
 )
 
@@ -126,7 +152,7 @@ def _deployment_resource_manager(
 ) -> NonCallableMagicMock:
     """A resource manager whose deployment configures `deployment` and whose stores open autospec partitions."""
     vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.open_or_create_partition.return_value = create_autospec(
+    vector_store.open_partition.return_value = create_autospec(
         VectorStorePartition, instance=True
     )
     embedder = create_autospec(Embedder, instance=True)
@@ -141,8 +167,8 @@ def _deployment_resource_manager(
     resource_manager.get_segment_store.return_value = create_autospec(
         SegmentStore, instance=True
     )
-    resource_manager.get_segment_store.return_value.open_or_create_partition.return_value = create_autospec(
-        SegmentStorePartition, instance=True
+    resource_manager.get_segment_store.return_value.open_partition.return_value = (
+        create_autospec(SegmentStorePartition, instance=True)
     )
     resource_manager.get_embedder.return_value = embedder
     resource_manager.get_episode_storage.return_value = create_autospec(
@@ -159,24 +185,16 @@ _DEPLOYMENT = LongTermMemoryConfPartial(
 
 @pytest.mark.asyncio
 async def test_event_params_opens_the_session_partition_in_the_event_store():
-    """The session's partition is opened in the deployment's event store.
-
-    Opening creates the partition when it is absent; the vector store's
-    registry arbitrates creation across processes, so a worker that loses
-    the race to another opens the winner's partition instead of failing
-    the request.
-    """
+    """The session's partition is opened in the deployment's event store, never created."""
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
     config = EventLongTermMemoryConf(session_id="raced")
 
     params = await _event_params(config, resource_manager)
 
     vector_store = resource_manager.get_vector_store.return_value
-    assert (
-        params.vector_store_partition
-        is vector_store.open_or_create_partition.return_value
-    )
-    vector_store.open_or_create_partition.assert_awaited_once_with("raced")
+    assert params.vector_store_partition is vector_store.open_partition.return_value
+    vector_store.open_partition.assert_awaited_once_with("raced")
+    vector_store.create_partition.assert_not_awaited()
     resource_manager.get_vector_store.assert_awaited_once_with(
         "vs",
         vector_store_name="event_memory",
@@ -232,3 +250,96 @@ async def test_event_params_refuses_a_session_of_a_deployment_without_event_memo
 
     resource_manager.get_vector_store.assert_not_awaited()
     resource_manager.get_segment_store.assert_not_awaited()
+
+
+# ===================================================================
+# A session's partitions are created with the session, never by a request
+# ===================================================================
+
+
+@pytest_asyncio.fixture
+async def stores(tmp_path):
+    """A segment store and the event memory's vector store on one SQLite file, both started."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'stores.db'}")
+    enable_sqlite_explicit_begin(engine)
+    enable_sqlite_foreign_keys(engine)
+    segment_store = SQLAlchemySegmentStore(SQLAlchemySegmentStoreParams(engine=engine))
+    await segment_store.startup()
+    vector_store = SQLiteVectorStore(
+        SQLiteVectorStoreParams(
+            vector_store_name="event_memory",
+            store_schema=VectorStoreSchema(
+                vector_dimensions=3,
+                similarity_metric=SimilarityMetric.COSINE,
+                indexed_properties=event_backend_indexed_properties(),
+            ),
+            sqlalchemy_engine=engine,
+            vector_search_engine_factory=lambda ndim, metric: USearchVectorSearchEngine(
+                num_dimensions=ndim, similarity_metric=metric
+            ),
+        )
+    )
+    await vector_store.startup()
+    yield segment_store, vector_store
+    await vector_store.shutdown()
+    await engine.dispose()
+
+
+@pytest.fixture
+def resource_manager(stores):
+    """The deployment's resource manager, serving the real stores."""
+    segment_store, vector_store = stores
+    manager = _deployment_resource_manager(_DEPLOYMENT)
+    manager.get_segment_store.return_value = segment_store
+    manager.get_vector_store.return_value = vector_store
+    return manager
+
+
+_EVENT_CONF = EventLongTermMemoryConf(session_id="sess_1")
+
+
+@pytest.mark.asyncio
+async def test_a_request_never_creates_a_partition(stores, resource_manager):
+    segment_store, vector_store = stores
+
+    with pytest.raises(SessionPartitionMissingError, match="sess_1"):
+        await long_term_memory_params_from_config(_EVENT_CONF, resource_manager)
+
+    key = partition_key_for_session("sess_1")
+    assert await vector_store.open_partition(key) is None
+    assert await segment_store.open_partition(key) is None
+
+
+@pytest.mark.asyncio
+async def test_partitions_created_with_the_session_are_what_a_request_binds(
+    resource_manager,
+):
+    key = partition_key_for_session("sess_1")
+
+    await create_event_backend_partitions(_EVENT_CONF, resource_manager)
+    params = await long_term_memory_params_from_config(_EVENT_CONF, resource_manager)
+
+    assert isinstance(params, EventBackendParams)
+    assert params.partition_key == key
+    assert isinstance(params.vector_store_partition, SQLiteVectorStorePartition)
+    assert params.vector_store_partition._partition_key == key
+    assert params.segment_store_partition is not None
+    # Strict: the session is created once.
+    with pytest.raises(SegmentStorePartitionAlreadyExistsError):
+        await create_event_backend_partitions(_EVENT_CONF, resource_manager)
+
+
+@pytest.mark.asyncio
+async def test_deleting_partitions_needs_none_to_exist(stores, resource_manager):
+    segment_store, vector_store = stores
+    key = partition_key_for_session("sess_1")
+
+    await delete_event_backend_partitions(_EVENT_CONF, resource_manager)
+
+    await create_event_backend_partitions(_EVENT_CONF, resource_manager)
+    # Half-created storage, as a crash between the two creates would leave.
+    await vector_store.delete_partition(key)
+    await delete_event_backend_partitions(_EVENT_CONF, resource_manager)
+
+    assert await vector_store.open_partition(key) is None
+    assert await segment_store.open_partition(key) is None
