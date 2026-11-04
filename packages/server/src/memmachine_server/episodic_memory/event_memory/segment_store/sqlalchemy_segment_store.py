@@ -503,11 +503,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if row is None:
             raise SegmentStorePartitionHandleStaleError(self._partition_key)
 
-    @override
-    async def require_current(self) -> None:
-        async with self._create_session() as session:
-            await self._ensure_partition_live(session)
-
     # Registration
 
     @override
@@ -1948,7 +1943,6 @@ class SQLAlchemySegmentStore(SegmentStore):
         payload_codec = await self._load_payload_codec(partition.config)
         return PendingDerivativesClaim(
             partition_key=partition_row.partition_key,
-            partition=partition,
             pending_derivatives=PendingDerivatives(
                 uuid=claimed.uuid,
                 event_uuid=claimed.event_uuid,
@@ -1960,6 +1954,36 @@ class SQLAlchemySegmentStore(SegmentStore):
             generation=claimed.claim_generation,
             attempt=claimed.attempts_without_progress,
         )
+
+    @override
+    async def renew_pending_derivatives_claim(
+        self, claim: PendingDerivativesClaim, *, lease_seconds: int
+    ) -> bool:
+        async with (
+            self._tracker("renew_pending_derivatives_claim"),
+            write_session(self._create_session) as session,
+        ):
+            # The update holds the record's row, as the claim did: a forget
+            # deleting the record waits for this transaction, or this
+            # update finds the record gone.
+            renewed = (
+                await session.execute(
+                    update(PendingDerivativesRow)
+                    .where(
+                        PendingDerivativesRow.uuid == claim.pending_derivatives.uuid,
+                        PendingDerivativesRow.claim_generation == claim.generation,
+                        select(PartitionRow.partition_key)
+                        .where(
+                            PartitionRow.incarnation
+                            == PendingDerivativesRow.incarnation
+                        )
+                        .exists(),
+                    )
+                    .values(claimed_until=self._seconds_from_now(lease_seconds))
+                    .returning(PendingDerivativesRow.uuid)
+                )
+            ).one_or_none()
+        return renewed is not None
 
     @override
     async def finish_pending_derivatives_claim(

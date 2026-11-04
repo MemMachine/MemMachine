@@ -1761,27 +1761,77 @@ async def test_claims_skip_deleted_partitions(
 
 
 @pytest.mark.asyncio
-async def test_pending_derivatives_claim_partition_is_bound_to_the_records_incarnation(
+async def test_renewing_a_claim_holds_its_record_for_another_lease(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    await partition.add_events(*_events(_links(_seg())))
+    claim = await store.claim_pending_derivatives(min_age_seconds=0, lease_seconds=60)
+    assert claim is not None
+    await _backdate(store, PendingDerivativesRow.claimed_until, timedelta(days=1))
+
+    assert await store.renew_pending_derivatives_claim(claim, lease_seconds=60)
+
+    # The renewed lease holds the record again.
+    assert (
+        await store.claim_pending_derivatives(min_age_seconds=0, lease_seconds=60)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_claim_is_not_renewed(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    await partition.add_events(*_events(_links(_seg())))
+    superseded = await store.claim_pending_derivatives(
+        min_age_seconds=0, lease_seconds=60
+    )
+    assert superseded is not None
+    await _backdate(store, PendingDerivativesRow.claimed_until, timedelta(days=1))
+    latest = await store.claim_pending_derivatives(min_age_seconds=0, lease_seconds=60)
+    assert latest is not None
+
+    assert not await store.renew_pending_derivatives_claim(superseded, lease_seconds=60)
+    assert await store.renew_pending_derivatives_claim(latest, lease_seconds=60)
+
+
+@pytest.mark.asyncio
+async def test_a_claim_on_a_forgotten_event_is_not_renewed(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    segment = _seg()
+    await partition.add_events(*_events(_links(segment)))
+    claim = await store.claim_pending_derivatives(min_age_seconds=0, lease_seconds=60)
+    assert claim is not None
+
+    await partition.forget_events([segment.event_uuid])
+
+    assert not await store.renew_pending_derivatives_claim(claim, lease_seconds=60)
+
+
+@pytest.mark.asyncio
+async def test_a_claim_in_a_deleted_partition_is_not_renewed(
     store: SQLAlchemySegmentStore,
 ) -> None:
     config = _plaintext_partition_config()
     partition = await store.open_or_create_partition("claimed_incarnation", config)
-    segment = _seg()
-    derivative_uuid = uuid4()
-    segments_by_event, pending_derivatives = _events({segment: [derivative_uuid]})
-    await partition.add_events(segments_by_event, pending_derivatives)
+    await partition.add_events(*_events(_links(_seg())))
     claim = await store.claim_pending_derivatives(min_age_seconds=0, lease_seconds=60)
     assert claim is not None
 
-    await claim.partition.require_current()
-    assert await claim.partition.get_segment_uuids_by_derivative_uuids(
-        [derivative_uuid]
-    ) == {derivative_uuid: segment.uuid}
-
     await store.delete_partition("claimed_incarnation")
     await store.open_or_create_partition("claimed_incarnation", config)
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
-        await claim.partition.require_current()
+
+    assert not await store.renew_pending_derivatives_claim(claim, lease_seconds=60)
 
 
 # ===================================================================
@@ -2386,7 +2436,6 @@ async def test_stale_handle_raises_after_delete(
     )
     seg = _seg()
     await _add_segments(partition, _links(seg))
-    await partition.require_current()
 
     await store.delete_partition("fenced")
 
@@ -2394,8 +2443,6 @@ async def test_stale_handle_raises_after_delete(
     await partition.add_events({}, [])
     assert await partition.forget_events([]) is None
 
-    with pytest.raises(SegmentStorePartitionHandleStaleError):
-        await partition.require_current()
     with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.add_events(*_events(_links(_seg())))
     with pytest.raises(SegmentStorePartitionHandleStaleError):
