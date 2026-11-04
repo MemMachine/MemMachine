@@ -193,18 +193,6 @@ class SegmentStorePartition(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    async def require_current(self) -> None:
-        """
-        Raise unless the partition this handle was opened on still exists.
-
-        Raises:
-            SegmentStorePartitionHandleStaleError:
-                If the partition was deleted, whether or not another was
-                created under its key since.
-        """
-        raise NotImplementedError
-
 
 @dataclass(frozen=True)
 class PendingDerivativesClaim:
@@ -214,8 +202,6 @@ class PendingDerivativesClaim:
     Attributes:
         partition_key (str):
             The key of the partition holding the derivatives.
-        partition (SegmentStorePartition):
-            A handle on the partition the derivatives belong to.
         pending_derivatives (PendingDerivatives):
             The pending derivatives.
         generation (int):
@@ -227,7 +213,6 @@ class PendingDerivativesClaim:
     """
 
     partition_key: str
-    partition: SegmentStorePartition
     pending_derivatives: PendingDerivatives
     generation: int
     attempt: int
@@ -432,6 +417,30 @@ class SegmentStore(ABC):
         Returns:
             PendingDerivativesClaim | None:
                 The claim, or None if no record is claimable.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def renew_pending_derivatives_claim(
+        self, claim: PendingDerivativesClaim, *, lease_seconds: int
+    ) -> bool:
+        """
+        Hold claimed pending derivatives for `lease_seconds` more, if the claim still holds.
+
+        The claim holds while it is the latest on its record, the record
+        exists, and the record's partition exists. A forget of the record's
+        event either takes effect after a renewal that returned True, or
+        makes the renewal return False.
+
+        Args:
+            claim (PendingDerivativesClaim):
+                The claim.
+            lease_seconds (int):
+                Seconds from now the claim holds its record.
+
+        Returns:
+            bool:
+                Whether the claim held and was renewed.
         """
         raise NotImplementedError
 

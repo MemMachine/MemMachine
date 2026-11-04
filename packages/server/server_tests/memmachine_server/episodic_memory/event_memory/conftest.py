@@ -216,10 +216,6 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         if tombstone_uuid in self.tombstones:
             self.tombstones_awaiting_second_delete.add(tombstone_uuid)
 
-    @override
-    async def require_current(self) -> None:
-        return
-
 
 class FakeReranker(Reranker):
     """Reranker that scores by candidate string length."""

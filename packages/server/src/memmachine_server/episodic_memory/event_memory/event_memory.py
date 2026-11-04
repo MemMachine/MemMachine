@@ -299,9 +299,6 @@ class EventMemory:
 
     async def _finish_pending_derivatives(self) -> bool:
         """Write one claimed record of pending derivatives to the vector store; whether one was claimed."""
-        # Started before the claim: a forget of these derivatives stamps its
-        # tombstone after the claim, so after the start.
-        budget = _WriteBudget.start(self._params.write_budget_seconds)
         claim = await self._params.segment_store.claim_pending_derivatives(
             min_age_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
             lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
@@ -309,7 +306,7 @@ class EventMemory:
         if claim is None:
             return False
         try:
-            await self._write_pending_derivatives(claim, budget)
+            written = await self._write_pending_derivatives(claim)
         except Exception as error:
             logger.warning(
                 "Writing pending derivatives %s of partition %r failed on attempt %d",
@@ -322,28 +319,34 @@ class EventMemory:
                 claim, error
             )
             return True
-        await self._params.segment_store.finish_pending_derivatives_claim(claim)
+        if written:
+            await self._params.segment_store.finish_pending_derivatives_claim(claim)
         return True
 
-    async def _write_pending_derivatives(
-        self, claim: PendingDerivativesClaim, budget: "_WriteBudget"
-    ) -> None:
-        """Write a claim's derivatives to the vector store within the budget."""
+    async def _write_pending_derivatives(self, claim: PendingDerivativesClaim) -> bool:
+        """Write a claim's derivatives to the vector store within a budget; whether the claim still held."""
         vector_store_partition = await self._params.vector_store.open_partition(
             claim.partition_key
         )
-        # The vector store partition opened under the key belongs to the
-        # claimed partition only while that partition exists, since a
-        # partition leaves the segment store first.
-        await claim.partition.require_current()
-        if vector_store_partition is None:
-            raise RuntimeError(
-                f"Partition {claim.partition_key!r} has no vector store partition"
-            )
         derivatives = claim.pending_derivatives.derivatives
         embeddings = await self._params.embedder.ingest_embed(
             _derivative_texts(derivatives)
         )
+        # Started before the renewal, which a forget of these derivatives
+        # follows. The renewal also checks that the partition still exists
+        # after the vector store partition was opened under its key; since
+        # a partition leaves the segment store first, that vector store
+        # partition belongs to the claimed partition.
+        budget = _WriteBudget.start(self._params.write_budget_seconds)
+        if not await self._params.segment_store.renew_pending_derivatives_claim(
+            claim,
+            lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
+        ):
+            return False
+        if vector_store_partition is None:
+            raise RuntimeError(
+                f"Partition {claim.partition_key!r} has no vector store partition"
+            )
         await _upsert_within_budget(
             vector_store_partition,
             [
@@ -352,6 +355,7 @@ class EventMemory:
             ],
             budget,
         )
+        return True
 
     async def _delete_tombstoned_derivatives(self) -> bool:
         """Delete one claimed tombstone's derivatives from the vector store; whether one was claimed."""
