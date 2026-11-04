@@ -15,8 +15,8 @@ memory, and `ltm` for the long-term memory's event backend. Every other
 key belongs to the user: an identifier under the vector stores' naming
 rule, stored and filtered exactly as written, so any user key can be
 declared to a vector store as written. The reservation covers property
-keys only; an id a caller names may begin with the prefix, since ids are
-not keys.
+keys only; a value, including a session or producer id a caller names,
+may begin with the prefix.
 
 A user key is checked against the rule where it enters, before any store
 is written, so a request with an illegal key fails whole and no store
@@ -43,9 +43,9 @@ application no sanctioned way to reserve names of its own. Shared spaces
 are divided by a qualified prefix instead, the way a database reserves
 its catalog's names.
 
-Reserving characters outside the user alphabet was rejected: property
-keys reach some backends' filter expressions as bare identifiers, and the
-alphabet is what keeps a key from changing such an expression.
+Reserving characters outside the user alphabet was rejected: MemMachine's
+own keys are stored and filtered everywhere a user's keys are, so they
+can rely on no wider alphabet than the user's.
 
 The prefix is the product's name, distinctive enough that users are
 unlikely to want keys under it, and a reader of stored data can tell at
