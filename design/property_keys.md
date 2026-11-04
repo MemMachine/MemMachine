@@ -44,8 +44,9 @@ are divided by a qualified prefix instead, the way a database reserves
 its catalog's names.
 
 Reserving characters outside the user alphabet was rejected: MemMachine's
-own keys are stored and filtered everywhere a user's keys are, so they
-can rely on no wider alphabet than the user's.
+own keys go to the same stores as user keys, whose naming rule admits
+only the user alphabet. Widening it would take a review of every backend
+for a character each one accepts within its length and other limits.
 
 The prefix is the product's name, distinctive enough that users are
 unlikely to want keys under it, and a reader of stored data can tell at
