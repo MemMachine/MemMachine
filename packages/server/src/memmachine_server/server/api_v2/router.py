@@ -196,7 +196,7 @@ async def create_project(
     return ProjectResponse(
         org_id=spec.org_id,
         project_id=spec.project_id,
-        description=spec.description,
+        description=session.description,
         config=_project_config_from_ltm(long_term),
     )
 
