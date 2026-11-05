@@ -17,6 +17,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
@@ -385,6 +386,36 @@ def test_add_memories(client, mock_memmachine):
         assert response.json() == {"results": [{"uid": EPISODE_UID_1}]}
         call_args = mock_add_messages.call_args[1]
         assert call_args["target_memories"] == [MemoryType.Semantic]
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "method", "body"),
+    [
+        ("/api/v2/memories", "add_episodes", {"messages": [{"content": "hello"}]}),
+        ("/api/v2/memories/search", "query_search", {"query": "hello"}),
+    ],
+)
+def test_memory_request_to_deleted_project(mock_memmachine, endpoint, method, body):
+    operation = getattr(mock_memmachine, method)
+    operation.side_effect = SessionDeletedError("test_org/test_proj")
+    app = MemMachineAPI()
+    app.dependency_overrides[get_memmachine] = lambda: mock_memmachine
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = client.post(
+            endpoint,
+            json={"org_id": "test_org", "project_id": "test_proj", **body},
+        )
+
+    operation.assert_awaited_once()
+    assert response.status_code == 404
+    assert response.json()["detail"] == {
+        "code": 404,
+        "message": "Project has been deleted",
+        "exception": "SessionDeletedError",
+        "internal_error": "Session 'test_org/test_proj' has been deleted.",
+        "trace": "",
+    }
 
 
 def test_add_memories_episode_type_forwarded(client, mock_memmachine):

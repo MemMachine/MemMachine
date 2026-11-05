@@ -84,6 +84,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
@@ -299,9 +300,12 @@ async def add_memories(
     """Add memories to a project."""
     # Use types from spec if provided, otherwise use all memory types
     target_memories = spec.types or ALL_MEMORY_TYPES
-    results = await _add_messages_to(
-        target_memories=target_memories, spec=spec, memmachine=memmachine
-    )
+    try:
+        results = await _add_messages_to(
+            target_memories=target_memories, spec=spec, memmachine=memmachine
+        )
+    except SessionDeletedError as e:
+        raise RestError(code=404, message="Project has been deleted", ex=e) from e
     return AddMemoriesResponse(results=results)
 
 
@@ -321,6 +325,8 @@ async def search_memories(
         return await _search_target_memories(
             target_memories=target_memories, spec=spec, memmachine=memmachine
         )
+    except SessionDeletedError as e:
+        raise RestError(code=404, message="Project has been deleted", ex=e) from e
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
     except RuntimeError as e:
