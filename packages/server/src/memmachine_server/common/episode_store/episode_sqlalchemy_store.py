@@ -300,7 +300,11 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         filters: list[ColumnElement[bool]] = []
 
         if filter_expr is not None:
-            parsed_filter = compile_sql_filter(filter_expr, self._resolve_episode_field)
+            parsed_filter = compile_sql_filter(
+                filter_expr,
+                self._resolve_episode_field,
+                dialect_name=self._engine.dialect.name,
+            )
             if parsed_filter is not None:
                 filters.append(parsed_filter)
 

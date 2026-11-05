@@ -14,6 +14,8 @@ from typing import Any, cast
 import pytest
 import pytest_asyncio
 from sqlalchemy import JSON, Column, Integer, String, create_engine, select
+from sqlalchemy.dialects import postgresql as postgresql_dialect
+from sqlalchemy.dialects import sqlite as sqlite_dialect
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Session
@@ -626,3 +628,93 @@ class TestColumnDatetimeNormalization:
         value = clause.right.value
         assert value.hour == 0
         assert value.utcoffset() == timedelta(0)
+
+
+# ============================================================================
+# Raw JSON numeric gate - mixed-type values (#1917)
+# ============================================================================
+
+
+class _MixedBase(DeclarativeBase):
+    pass
+
+
+class _MixedRow(_MixedBase):
+    __tablename__ = "test_mixed_type_metadata_filters"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    json_metadata = Column(_JSON_AUTO, nullable=False)
+
+
+def _resolve_mixed_field(field: str):
+    normalized = field.lower()
+    if normalized.startswith("m."):
+        return _MixedRow.json_metadata[normalized.split(".", 1)[1]], "json"
+    raise ValueError(f"Unknown filter field: {field!r}")
+
+
+@pytest_asyncio.fixture
+async def mixed_session(sqlalchemy_engine):
+    """Rows where the filtered key holds both JSON numbers and text (#1917)."""
+    async with sqlalchemy_engine.begin() as conn:
+        await conn.run_sync(_MixedBase.metadata.create_all)
+
+    async with AsyncSession(sqlalchemy_engine) as s:
+        s.add_all(
+            [
+                _MixedRow(name="text", json_metadata={"size": "large"}),
+                _MixedRow(name="big", json_metadata={"size": 5}),
+                _MixedRow(name="small", json_metadata={"size": 2}),
+                _MixedRow(name="decimal_text", json_metadata={"size": "3.5"}),
+            ]
+        )
+        await s.commit()
+        yield s
+
+
+async def _query_mixed_names(session: AsyncSession, filter_str: str) -> set[str]:
+    """Query with the session's real dialect, like the episode store does."""
+    expr = parse_filter(filter_str)
+    dialect_name = session.bind.dialect.name
+    clause = compile_sql_filter(expr, _resolve_mixed_field, dialect_name=dialect_name)
+    stmt = select(_MixedRow.name).where(clause)
+    return {row[0] for row in (await session.execute(stmt))}
+
+
+class TestJsonNumericGateMixedTypes:
+    @pytest.mark.asyncio
+    async def test_numeric_comparison_excludes_text_values(self, mixed_session):
+        # PostgreSQL used to answer 500 here: CAST('large' AS INTEGER) fails
+        # for the whole query. The gate excludes the text row instead.
+        assert await _query_mixed_names(mixed_session, "m.size > 3") == {"big"}
+
+    @pytest.mark.asyncio
+    async def test_numeric_equality_matches_only_numbers(self, mixed_session):
+        assert await _query_mixed_names(mixed_session, "m.size = 2") == {"small"}
+
+    @pytest.mark.asyncio
+    async def test_numeric_in_matches_only_numbers(self, mixed_session):
+        assert await _query_mixed_names(mixed_session, "m.size IN (2, 5)") == {
+            "big",
+            "small",
+        }
+
+    @pytest.mark.asyncio
+    async def test_string_comparison_unaffected(self, mixed_session):
+        assert await _query_mixed_names(mixed_session, "m.size = 'large'") == {"text"}
+
+
+def test_json_numeric_gate_compiles_jsonb_typeof_on_postgresql():
+    expr = parse_filter("m.size > 3")
+    clause = compile_sql_filter(expr, _resolve_mixed_field, dialect_name="postgresql")
+    compiled = str(clause.compile(dialect=postgresql_dialect.dialect()))
+    assert "jsonb_typeof" in compiled
+    assert "CAST" in compiled
+
+
+def test_json_numeric_gate_absent_without_dialect():
+    """Unknown dialects keep the ungated behavior (no backend-specific SQL)."""
+    expr = parse_filter("m.size > 3")
+    clause = compile_sql_filter(expr, _resolve_mixed_field)
+    compiled = str(clause.compile(dialect=sqlite_dialect.dialect()))
+    assert "typeof" not in compiled
