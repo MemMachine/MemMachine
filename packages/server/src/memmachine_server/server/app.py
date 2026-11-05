@@ -46,6 +46,15 @@ from memmachine_server.server.middleware import (
 logger = logging.getLogger(__name__)
 
 
+def _env_flag(name: str) -> bool:
+    """Read an environment flag the way operators expect.
+
+    Unset, empty, and the common off spellings ("0", "false", "no", "off",
+    case-insensitive) count as off; anything else counts as on.
+    """
+    return os.getenv(name, "").strip().lower() not in {"", "0", "false", "no", "off"}
+
+
 class MemMachineAPI(FastAPI):
     """MemMachine API wrapper."""
 
@@ -92,7 +101,7 @@ class MemMachineAPI(FastAPI):
 
 app = MemMachineAPI(
     lifespan=mcp_http_lifespan,
-    with_config_api=bool(os.getenv("MEMMACHINE_CONFIG_API")),
+    with_config_api=_env_flag("MEMMACHINE_CONFIG_API"),
 )
 app.add_middleware(cast(type, AccessLogMiddleware))
 app.add_middleware(cast(type, RequestMetricsMiddleware))
@@ -102,7 +111,7 @@ def start_http() -> None:
     """Run the FastAPI HTTP application using the uvicorn server."""
     # For the single-worker case, the module-level `app` was created before
     # main() set the env var. Include the config router explicitly here.
-    if os.getenv("MEMMACHINE_CONFIG_API"):
+    if _env_flag("MEMMACHINE_CONFIG_API"):
         from memmachine_server.server.api_v2.config_router import config_router
 
         app.include_router(config_router, prefix="/api/v2")
