@@ -19,6 +19,7 @@ from memmachine_server.common.configuration import (
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
     EpisodicMemoryConfPartial,
+    EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
     ShortTermMemoryConfPartial,
 )
@@ -240,6 +241,24 @@ def test_with_default_episodic_memory_conf_uses_fallbacks(
     assert (
         "Based on the following episodes" in conf.short_term_memory.summary_prompt_user
     )
+
+
+def test_with_default_episodic_memory_conf_infers_event_backend(
+    minimal_conf, patched_resource_manager
+):
+    minimal_conf.episodic_memory.long_term_memory = LongTermMemoryConfPartial(
+        embedder="default-embedder",
+        vector_store="vector-store",
+        segment_store="segment-store",
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    conf = memmachine._with_default_episodic_memory_conf(session_key="session-1")
+
+    assert isinstance(conf.long_term_memory, EventLongTermMemoryConf)
+    assert conf.long_term_memory.vector_store == "vector-store"
+    assert conf.long_term_memory.segment_store == "segment-store"
+    assert conf.long_term_memory_enabled is True
 
 
 def test_with_default_retrieval_agent_llm_falls_back_to_stm_model(

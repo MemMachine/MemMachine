@@ -108,10 +108,9 @@ def _ltm_partial_from_project_config(
 ) -> LongTermMemoryConfPartial:
     """Translate a v2 ProjectConfig into a LongTermMemoryConfPartial.
 
-    Backend selection follows the parse-time default: if the client sets
-    `backend` explicitly, honor it; otherwise leave it None and let the
-    server-side config determine the resolution (declarative for legacy
-    configs, event for wizard-generated ones).
+    If the client sets `backend` explicitly, honor it; otherwise leave it None
+    for `LongTermMemoryConfPartial.resolve_backend` to resolve against the
+    server's config.
     """
     return LongTermMemoryConfPartial(
         backend=config.backend,
