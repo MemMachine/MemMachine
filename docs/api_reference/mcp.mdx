@@ -27,8 +27,8 @@ This tool writes to both short-term (episodic) and long-term (profile) memory, s
 | Name      | Type     | Required | Description                                                  | Default                                |
 | --------- | -------- | -------- | ------------------------------------------------------------ | -------------------------------------- |
 | `content` | `string` | Yes      | The complete context or summary to store in memory.          |                                        |
-| `user_id` | `string` | No       | The unique identifier of the user whose memory is being updated. This ensures the new memory is stored under the correct profile. | `user-{mac_address}`                   |
-| `proj_id` | `string` | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` or `mcp-{mac_address}` |
+| `user_id` | `string` | No       | The unique identifier of the user whose memory is being updated. This ensures the new memory is stored under the correct profile. | `user-{MM_DEFAULT_ID}` (`user-default` by default) |
+| `proj_id` | `string` | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` |
 | `org_id`  | `string` | No       | Organization ID.                                             | `mcp-universal`                        |
 
 ### Responses
@@ -57,8 +57,8 @@ This searches both **Profile Memory** (long-term user traits and facts) and **Ep
 | --------- | --------- | -------- | ------------------------------------------------------------ | -------------------------------------- |
 | `query`   | `string`  | Yes      | The current user message or topic of discussion to search against. |                                        |
 | `top_k`   | `integer` | No       | The maximum number of memory entries to retrieve.            | `20`                                   |
-| `user_id` | `string`  | No       | The unique identifier of the user whose memory is being searched. | `user-{mac_address}`                   |
-| `proj_id` | `string`  | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` or `mcp-{mac_address}` |
+| `user_id` | `string`  | No       | The unique identifier of the user whose memory is being searched. | `user-{MM_DEFAULT_ID}` (`user-default` by default) |
+| `proj_id` | `string`  | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` |
 | `org_id`  | `string`  | No       | Organization ID.                                             | `mcp-universal`                        |
 
 ### Responses
@@ -88,8 +88,8 @@ Use this to remove outdated, incorrect, or sensitive information that should no 
 | ----------------------- | -------------- | -------- | ------------------------------------------------------------ | -------------------------------------- |
 | `episodic_memory_uids`  | `list[string]` | No       | List of episodic memory IDs to delete.                       | `[]`                                   |
 | `semantic_memory_uids`  | `list[string]` | No       | List of semantic memory IDs to delete.                       | `[]`                                   |
-| `user_id`               | `string`       | No       | The unique identifier of the user whose memories are being deleted. | `user-{mac_address}`                   |
-| `proj_id`               | `string`       | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` or `mcp-{mac_address}` |
+| `user_id`               | `string`       | No       | The unique identifier of the user whose memories are being deleted. | `user-{MM_DEFAULT_ID}` (`user-default` by default) |
+| `proj_id`               | `string`       | No       | Project ID. Defaults to `mcp-{user_id}` if `user_id` is provided. | `mcp-{user_id}` |
 | `org_id`                | `string`       | No       | Organization ID.                                             | `mcp-universal`                        |
 
 ### Responses

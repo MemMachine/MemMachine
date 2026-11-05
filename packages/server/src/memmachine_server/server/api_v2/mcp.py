@@ -3,7 +3,6 @@
 import contextvars
 import logging
 import os
-import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -121,7 +120,7 @@ def get_current_user_id() -> str | None:
 
 MCP_SUCCESS = McpResponse(status=McpStatus.SUCCESS, message="Success")
 
-default_mcp_id = hex(uuid.getnode())
+DEFAULT_MCP_ID = "default"
 
 
 class Params(BaseModel):
@@ -135,7 +134,7 @@ class Params(BaseModel):
     proj_id: str = Field(
         default="",
         description="Project ID, default to mcp-{user_id} if user_id is provided."
-        "default to mcp-{mac_address} if user_id is not provided.",
+        " Defaults to a stable server identity when user_id is not provided.",
     )
 
     user_id: str = Field(
@@ -179,7 +178,8 @@ class Params(BaseModel):
 
     def _set_defaults(self) -> None:
         if not self.user_id:
-            self.user_id = f"user-{default_mcp_id}"
+            default_id = os.getenv("MM_DEFAULT_ID") or DEFAULT_MCP_ID
+            self.user_id = f"user-{default_id}"
         if not self.proj_id:
             self.proj_id = f"mcp-{self.user_id}"
         if not self.org_id:
@@ -309,7 +309,7 @@ class MemMachineFastMCP(FastMCP):
 
     def get_app(self, path: str | None = None) -> ParamsContextMiddleware:
         """Override to add authentication middleware."""
-        http_app = super().http_app(path=path)
+        http_app = super().http_app(path=path, stateless_http=True)
         return ParamsContextMiddleware(http_app)
 
 

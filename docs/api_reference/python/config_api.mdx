@@ -6,6 +6,15 @@ icon: "gear"
 
 The `client.config` namespace provides programmatic access to the system's underlying resources and memory behavior. Use this to manage model providers, vector stores, and the specific toggles for Episodic and Semantic subsystems.
 
+<Warning>
+  The server configuration API is disabled by default. Enable it with
+  `MEMMACHINE_CONFIG_API=1` or `memmachine-server --with-config-api` only in a
+  protected, single-process environment. Changes are process-local and are not
+  broadcast to other replicas or workers. Use environment references such as
+  `$OPENAI_API_KEY` for credentials; MemMachine preserves those references when
+  saving the YAML configuration.
+</Warning>
+
 ## System Configuration
 
 ### `get_full_config`
@@ -61,7 +70,7 @@ Registers a new embedding model provider.
 client.config.add_embedder(
     name="openai-v3",
     provider="openai",
-    config={"api_key": "sk-...", "model": "text-embedding-3-small"}
+    config={"api_key": "$OPENAI_API_KEY", "model": "text-embedding-3-small"}
 )
 ```
 

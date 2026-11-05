@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypeGuard, cast
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 from memmachine_server.common.configuration.database_conf import DatabasesConf
 from memmachine_server.common.configuration.embedder_conf import EmbeddersConf
@@ -45,6 +46,9 @@ from memmachine_server.server.prompt.default_prompts import (
 )
 
 YamlValue = dict[str, "YamlValue"] | list["YamlValue"] | str | int | float | bool | None
+YamlPath = tuple[str | int, ...]
+
+_ENV_REFERENCE_RE = re.compile(r"\$(\w+)|\$\{(\w+)}")
 
 
 logger = logging.getLogger(__name__)
@@ -87,8 +91,11 @@ class EpisodeStoreConf(YamlSerializableMixin):
         description="The database ID to use for episode storage",
     )
     with_count_cache: bool = Field(
-        default=True,
-        description="Whether to use a in memory cache for counting messages per session.",
+        default=False,
+        description=(
+            "Whether to use an in-memory cache for counting messages per session. "
+            "This optimization is only safe for single-process deployments."
+        ),
     )
 
 
@@ -152,8 +159,11 @@ class SemanticMemoryConf(YamlSerializableMixin):
         description="The config database to use for semantic memory",
     )
     with_config_cache: bool = Field(
-        default=True,
-        description="Whether to use a in memory cache for semantic memory config.",
+        default=False,
+        description=(
+            "Whether to use an in-memory cache for semantic memory config. "
+            "This optimization is only safe for single-process deployments."
+        ),
     )
     llm_model: str | None = Field(
         default=None,
@@ -410,7 +420,59 @@ class Configuration(BaseModel):
     server: ServerConf = ServerConf()
 
     # Path to the configuration file (set when loaded from file)
-    _config_file_path: str | None = None
+    _config_file_path: str | None = PrivateAttr(default=None)
+    _environment_references: dict[YamlPath, tuple[str, str]] = PrivateAttr(
+        default_factory=dict
+    )
+
+    @staticmethod
+    def _resolve_environment_reference(value: str) -> str:
+        """Resolve environment-variable placeholders in a configuration value."""
+
+        def replace(match: re.Match[str]) -> str:
+            name = match.group(1) or match.group(2)
+            return os.environ.get(name, match.group(0))
+
+        return _ENV_REFERENCE_RE.sub(replace, value)
+
+    def remember_environment_references(
+        self, data: object, prefix: YamlPath = ()
+    ) -> None:
+        """Remember placeholders so persistence never replaces them with secrets."""
+        if isinstance(data, dict):
+            for key, value in cast(dict[str, object], data).items():
+                self.remember_environment_references(value, (*prefix, key))
+            return
+        if isinstance(data, list):
+            for index, value in enumerate(cast(list[object], data)):
+                self.remember_environment_references(value, (*prefix, index))
+            return
+        if isinstance(data, str) and _ENV_REFERENCE_RE.search(data):
+            self._environment_references[prefix] = (
+                data,
+                self._resolve_environment_reference(data),
+            )
+
+    def _yaml_with_environment_references(self) -> str:
+        """Serialize while restoring unchanged environment-variable references."""
+        data = yaml.safe_load(self.to_yaml())
+        if not isinstance(data, dict):
+            return self.to_yaml()
+
+        for path, (reference, resolved) in self._environment_references.items():
+            current: Any = data
+            try:
+                for part in path[:-1]:
+                    current = current[part]
+                leaf = path[-1]
+                if current[leaf] in (reference, resolved):
+                    current[leaf] = reference
+            except (KeyError, IndexError, TypeError):
+                # The runtime API may have removed the resource containing the
+                # original reference. Missing paths need no restoration.
+                continue
+
+        return yaml.safe_dump(data, sort_keys=True)
 
     @field_validator("semantic_memory", mode="before")
     @classmethod
@@ -620,7 +682,7 @@ class Configuration(BaseModel):
             )
 
         config_path = Path(save_path)
-        yaml_content = self.to_yaml()
+        yaml_content = self._yaml_with_environment_references()
         config_path.write_text(yaml_content, encoding="utf-8")
         logger.info("Configuration saved to '%s'", save_path)
 
@@ -658,4 +720,5 @@ class Configuration(BaseModel):
 
         config = Configuration(**mapping_config)
         config._config_file_path = config_file
+        config.remember_environment_references(mapping_config)
         return config

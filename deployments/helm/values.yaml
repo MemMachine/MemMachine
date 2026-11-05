@@ -17,6 +17,16 @@ storageClass: nfs-client
 accessMode: ReadWriteMany
 pvcSize: 5Gi
 
+# API-server scaling. Keep one replica unless every enabled component is safe
+# for the selected deployment topology; see docs/open_source/scaling.mdx.
+replicaCount: 1
+workerCount: 1
+affinity: {}
+
+service:
+  type: NodePort
+  sessionAffinity: None
+
 # Long-term memory backend. This picks which vector store is deployed and wired:
 #   event       -> Qdrant (vector_store) + Postgres (segment_store). The default.
 #   declarative -> Neo4j (vector_graph_store). The legacy backend.

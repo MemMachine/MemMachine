@@ -1,0 +1,94 @@
+---
+title: "Replicas and Workers"
+description: "Safety requirements for running MemMachine with multiple server processes"
+---
+
+MemMachine can run multiple API pods or multiple Uvicorn workers against shared
+PostgreSQL, Neo4j, and vector-store backends. Some optional components still
+keep state in process memory, so review this page before increasing the replica
+or worker count.
+
+## Replica-safe defaults
+
+The following defaults avoid process-local behavior that would otherwise give
+different answers on different replicas:
+
+- `episode_store.with_count_cache` defaults to `false`.
+- `semantic_memory.with_config_cache` defaults to `false`.
+- MCP over HTTP uses stateless requests.
+- MCP requests without identity headers use the stable `MM_DEFAULT_ID` value,
+  which defaults to `default`.
+- The runtime configuration API is disabled unless
+  `MEMMACHINE_CONFIG_API=1` or `--with-config-api` is set.
+- The Helm chart writes application logs to stdout/stderr rather than a shared
+  file.
+
+The two caches may be enabled as single-process optimizations. They do not have
+cross-process invalidation and must stay disabled when `replicaCount > 1` or
+`workerCount > 1`.
+
+## Component scope
+
+| Component | Multiple processes | Notes |
+|---|---:|---|
+| PostgreSQL-backed episode and segment stores | Yes | All replicas must use the same database configuration. |
+| Qdrant and Milvus vector stores | Yes | Use a shared external service rather than per-pod storage. |
+| MCP over HTTP | Yes | Requests are stateless; identity comes from headers, `MM_*` variables, or the stable default. |
+| Episode count cache | No | Leave `with_count_cache: false`. |
+| Semantic configuration cache | No | Leave `with_config_cache: false`. |
+| Short-term memory | No | Recent context is stored in process memory. Disable it for requests that can move between replicas. |
+| SQLite stores | Limited | A local SQLite file is not a cluster-wide shared service. Use PostgreSQL for multi-pod deployments. |
+| Runtime configuration API | No | Changes affect only the serving process. Keep it disabled in multi-process deployments. |
+
+Neo4j- and Nebula-backed declarative memory also contain process-local caches.
+Treat them as single-process components until their cache-coherency work is
+complete.
+
+## Helm configuration
+
+The chart exposes the process topology directly:
+
+```yaml
+replicaCount: 3
+workerCount: 2
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app: memmachine
+
+service:
+  type: NodePort
+  sessionAffinity: None
+```
+
+Database connection pools are created per worker. Size PostgreSQL and Neo4j for
+`replicaCount × workerCount` processes, including each process's configured pool
+and overflow limits.
+
+## Runtime configuration API
+
+The configuration API is intended for protected, single-process development
+environments. Enable it explicitly with one of:
+
+```bash
+MEMMACHINE_CONFIG_API=1 memmachine-server --config cfg.yml
+memmachine-server --config cfg.yml --with-config-api
+```
+
+Do not enable it behind a multi-replica load balancer. Runtime mutations are
+not broadcast to other processes. When changes are saved, existing environment
+variable references are preserved so resolved credentials are not written back
+to the YAML file.
+
+## Docker Compose
+
+The provided Compose stack is a single-instance development deployment. It uses
+fixed container names and published host ports for predictable local commands.
+Use the Helm chart, or another orchestrator with shared external databases, for
+multi-replica deployments.
