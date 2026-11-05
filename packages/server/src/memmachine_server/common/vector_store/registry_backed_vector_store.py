@@ -89,11 +89,6 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
         self._store_schema = store_schema
         self._tracker = tracker
 
-    @property
-    @override
-    def store_schema(self) -> VectorStoreSchema:
-        return self._store_schema
-
     @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
         async with self._tracker("upsert"):
@@ -282,6 +277,11 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         # so the garbage collector cannot drop one whose creation was
         # cancelled.
         self._reservation_cancellations: set[asyncio.Task[None]] = set()
+
+    @property
+    @override
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
 
     @override
     async def startup(self) -> None:

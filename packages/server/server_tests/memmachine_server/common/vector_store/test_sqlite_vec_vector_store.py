@@ -85,16 +85,14 @@ def _make_record(
 async def _stored(partition) -> dict[UUID, dict]:
     """The records the partition's table holds, UUID to properties.
 
-    Read past the store, from the table itself.
+    Read past the store, from the table itself. The partition's store
+    declares `INDEXED_PROPERTIES`.
     """
     table = partition._records_table
     async with partition._create_session() as session:
         rows = (await session.execute(select(table))).all()
     return {
-        row.uuid: _declared_values(
-            row._mapping, partition.store_schema.indexed_properties
-        )
-        for row in rows
+        row.uuid: _declared_values(row._mapping, INDEXED_PROPERTIES) for row in rows
     }
 
 
@@ -1264,3 +1262,8 @@ class TestPartitionResources:
         [found] = await second.query(query_vectors=[record.vector], limit=5)
         assert [match.record_uuid for match in found.matches] == [record.uuid]
         await store.delete_partition(NAME)
+
+
+@pytest.mark.asyncio
+async def test_the_store_answers_the_schema_it_was_built_with(store):
+    assert store.store_schema == _schema()

@@ -49,13 +49,7 @@ async def main() -> None:
 
         group_id = f"group_{idx}"
 
-        memory, _, _ = await agent_utils.init_memmachine_params(
-            resource_manager=resource_manager,
-            session_id=group_id,
-        )
-
-        await memory.delete_session_episodes()
-        await memory.close()
+        await agent_utils.delete_session_episodes(resource_manager, group_id)
 
     tasks = [process_conversation(idx, item) for idx, item in enumerate(locomo_data)]
     await asyncio.gather(*tasks)

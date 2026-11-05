@@ -1,14 +1,15 @@
 """End-to-end wiring test for the event-backed LongTermMemory.
 
-Builds a LongTermMemory(EventBackendParams(...)) using:
+Builds a LongTermMemory over an EventMemoryPartition using:
 - the in-memory vector store partition from event_memory tests
 - the in-memory segment_store partition from event_memory tests
+- an EventMemory whose store stand-ins hand out those two partitions
 - a fake embedder
 - a fake EpisodeStorage that satisfies the get_episode(uid) lookup used during
-  search_scored hydration.
+  query hydration.
 
-Verifies that add_episodes / search_scored / delete_episodes /
-drop_session_partition all dispatch correctly through the event backend.
+Verifies that add_episodes / query / delete_episodes all dispatch
+correctly through the event backend.
 """
 
 import logging
@@ -16,10 +17,11 @@ import math
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, override
-from unittest.mock import create_autospec
+from unittest.mock import NonCallableMagicMock, create_autospec
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
+import pytest_asyncio
 
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
@@ -36,7 +38,10 @@ from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     WholeTextDeriver,
 )
-from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
+from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EventMemory,
+    EventMemoryParams,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
 )
@@ -51,7 +56,6 @@ from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter imp
 )
 from memmachine_server.episodic_memory.long_term_memory import (
     EVENT_BACKEND_SYSTEM_FIELDS,
-    EventBackendParams,
     LongTermMemory,
 )
 from server_tests.memmachine_server.common.reranker.fake_embedder import FakeEmbedder
@@ -154,23 +158,28 @@ def fake_embedder() -> FakeEmbedder:
 
 
 @pytest.fixture
-def vector_store():
-    """Stand-in for the parent VectorStore: only delete_partition is invoked."""
-    return create_autospec(VectorStore, instance=True)
+def store_schema(fake_embedder) -> VectorStoreSchema:
+    return VectorStoreSchema(
+        vector_dimensions=fake_embedder.dimensions,
+        similarity_metric=fake_embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            **EVENT_BACKEND_SYSTEM_FIELDS,
+        },
+    )
 
 
 @pytest.fixture
-def vector_store_partition(fake_embedder):
-    return InMemoryVectorStorePartition(
-        store_schema=VectorStoreSchema(
-            vector_dimensions=fake_embedder.dimensions,
-            similarity_metric=fake_embedder.similarity_metric,
-            indexed_properties={
-                **EventMemory.expected_vector_store_indexed_properties(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-            },
-        )
-    )
+def vector_store(store_schema):
+    """Stand-in for the parent VectorStore: it answers `store_schema`, and only partition lifecycle is invoked."""
+    store = create_autospec(VectorStore, instance=True)
+    store.store_schema = store_schema
+    return store
+
+
+@pytest.fixture
+def vector_store_partition(store_schema):
+    return InMemoryVectorStorePartition(store_schema=store_schema)
 
 
 @pytest.fixture
@@ -186,8 +195,36 @@ def segment_store_partition() -> InMemorySegmentStorePartition:
     return InMemorySegmentStorePartition()
 
 
-@pytest.fixture
-def long_term_memory(
+async def _event_long_term_memory(
+    *,
+    vector_store: NonCallableMagicMock,
+    vector_store_partition: InMemoryVectorStorePartition,
+    segment_store: NonCallableMagicMock,
+    segment_store_partition: InMemorySegmentStorePartition,
+    episode_storage: EpisodeStorage,
+    embedder: Embedder,
+    segmenter: Segmenter,
+) -> LongTermMemory:
+    """A LongTermMemory on session `sess1`'s partition, which the given stores hand out."""
+    vector_store.open_or_create_partition.return_value = vector_store_partition
+    segment_store.open_or_create_partition.return_value = segment_store_partition
+    event_memory = EventMemory(
+        EventMemoryParams(
+            segment_store=segment_store,
+            vector_store=vector_store,
+            segmenter=segmenter,
+            deriver=WholeTextDeriver(),
+            embedder=embedder,
+        )
+    )
+    return LongTermMemory(
+        await event_memory.open_or_create_partition("sess1"),
+        episode_storage=episode_storage,
+    )
+
+
+@pytest_asyncio.fixture
+async def long_term_memory(
     fake_embedder,
     vector_store,
     vector_store_partition,
@@ -195,27 +232,30 @@ def long_term_memory(
     segment_store_partition,
     fake_episode_storage,
 ) -> LongTermMemory:
-    return LongTermMemory(
-        EventBackendParams(
-            session_id="sess1",
-            vector_store=vector_store,
-            vector_store_partition=vector_store_partition,
-            segment_store=segment_store,
-            segment_store_partition=segment_store_partition,
-            partition_key="sess1",
-            episode_storage=fake_episode_storage,
-            embedder=fake_embedder,
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
-        ),
+    return await _event_long_term_memory(
+        vector_store=vector_store,
+        vector_store_partition=vector_store_partition,
+        segment_store=segment_store,
+        segment_store_partition=segment_store_partition,
+        episode_storage=fake_episode_storage,
+        embedder=fake_embedder,
+        segmenter=PassthroughSegmenter(),
     )
+
+
+async def test_an_event_memory_partition_without_episode_storage_is_refused(
+    long_term_memory,
+):
+    """The event branch reads the episode storage to turn results into episodes."""
+    with pytest.raises(ValueError, match="episode storage"):
+        LongTermMemory(long_term_memory._memory)
 
 
 async def test_add_then_search_returns_full_episodes(long_term_memory, episodes):
     await long_term_memory.add_episodes(episodes)
 
     # FakeEmbedder maps query length -> vector; the longest content scores best.
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "george washington",
         num_episodes_limit=3,
     )
@@ -235,7 +275,7 @@ async def test_search_dedupes_by_episode_uid(
     """Even if a single episode produces multiple segments/derivatives, only
     one tuple per episode_uid is returned."""
     await long_term_memory.add_episodes(episodes)
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "powerhouse",
         num_episodes_limit=10,
     )
@@ -261,7 +301,7 @@ async def test_search_warns_on_index_storage_drift(
         logging.WARNING,
         logger="memmachine_server.episodic_memory.long_term_memory.long_term_memory",
     ):
-        scored = await long_term_memory.search_scored(
+        scored = await long_term_memory.query(
             "george washington",
             num_episodes_limit=3,
         )
@@ -299,35 +339,6 @@ async def test_delete_episodes_removes_from_event_memory(
     assert str(_uid("ep-1")) not in remaining_episode_uids
 
 
-async def test_drop_session_partition_calls_parent_lifecycle_hooks(
-    long_term_memory,
-    vector_store,
-    segment_store,
-):
-    await long_term_memory.drop_session_partition()
-    vector_store.delete_partition.assert_awaited_once_with("sess1")
-    segment_store.delete_partition.assert_awaited_once_with("sess1")
-    # Reclamation is the sweeper's; the delete path never purges.
-    segment_store.purge_deleted_partitions.assert_not_awaited()
-
-
-async def test_event_backend_unusable_after_drop_session_partition(
-    long_term_memory,
-    episodes,
-):
-    """After dropping the partition, the EventMemory handles point at deleted
-    resources. Reusing the LongTermMemory must fail loudly rather than
-    silently operate on a stale (or recreated) partition.
-    """
-    await long_term_memory.drop_session_partition()
-    with pytest.raises(RuntimeError, match="drop_session_partition"):
-        await long_term_memory.add_episodes(episodes)
-    with pytest.raises(RuntimeError, match="drop_session_partition"):
-        await long_term_memory.search_scored("anything", num_episodes_limit=1)
-    with pytest.raises(RuntimeError, match="drop_session_partition"):
-        await long_term_memory.delete_episodes([_uid("ep-1")])
-
-
 async def test_user_metadata_filter_round_trips(
     long_term_memory,
     fake_episode_storage,
@@ -356,7 +367,7 @@ async def test_user_metadata_filter_round_trips(
     fake_episode_storage._episodes.update({e.uid: e for e in episodes})
     await long_term_memory.add_episodes(episodes)
 
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "fruit",
         num_episodes_limit=10,
         property_filter=FilterComparison(field="m.color", op="=", value="red"),
@@ -405,7 +416,7 @@ async def test_system_field_filter_round_trips(
 
     monkeypatch.setattr(vector_store_partition, "query", recording_query)
 
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "msg",
         num_episodes_limit=10,
         property_filter=FilterComparison(field="producer_role", op="=", value="user"),
@@ -422,7 +433,7 @@ async def test_system_field_filter_round_trips(
 async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
     """A caller names a system field by its bare name, never by its reserved key."""
     with pytest.raises(ValueError, match="names a reserved key"):
-        await long_term_memory.search_scored(
+        await long_term_memory.query(
             "msg",
             num_episodes_limit=10,
             property_filter=FilterComparison(
@@ -433,11 +444,6 @@ async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
         )
 
 
-async def test_close_is_a_noop(long_term_memory):
-    # Should not raise.
-    await long_term_memory.close()
-
-
 async def test_unknown_bare_filter_field_raises(long_term_memory):
     """Typo'd bare system field surfaces as ValueError, not silent empty.
 
@@ -445,7 +451,7 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
     name as an exact JSON property lookup and silently return zero results.
     """
     with pytest.raises(ValueError, match="Unknown filter field 'producre_id'"):
-        await long_term_memory.search_scored(
+        await long_term_memory.query(
             "msg",
             num_episodes_limit=10,
             property_filter=FilterComparison(
@@ -457,7 +463,7 @@ async def test_unknown_bare_filter_field_raises(long_term_memory):
 async def test_any_user_metadata_field_is_accepted(long_term_memory):
     """Any `m.<x>` outside the reserved namespace is a valid filter field."""
     # Doesn't raise.
-    scored = await long_term_memory.search_scored(
+    scored = await long_term_memory.query(
         "msg",
         num_episodes_limit=10,
         property_filter=FilterComparison(field="m.anything", op="=", value="x"),
@@ -469,7 +475,7 @@ async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
     """`timestamp` is a valid bare filter field (segment store has it as a column)."""
     await long_term_memory.add_episodes(episodes)
     # Doesn't raise; whether anything matches depends on the embedder/score path.
-    await long_term_memory.search_scored(
+    await long_term_memory.query(
         "anything",
         num_episodes_limit=10,
         property_filter=FilterComparison(
@@ -480,7 +486,7 @@ async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
     )
 
 
-def _make_ltm(
+async def _make_ltm(
     embedder: Embedder,
     episodes: list[Episode],
     *,
@@ -493,29 +499,24 @@ def _make_ltm(
     given). No reranker is configured — that's the failure mode under
     euclidean.
     """
-    vector_store_partition = InMemoryVectorStorePartition(
-        store_schema=VectorStoreSchema(
-            vector_dimensions=embedder.dimensions,
-            similarity_metric=embedder.similarity_metric,
-            indexed_properties={
-                **EventMemory.expected_vector_store_indexed_properties(),
-                **EVENT_BACKEND_SYSTEM_FIELDS,
-            },
-        )
+    store_schema = VectorStoreSchema(
+        vector_dimensions=embedder.dimensions,
+        similarity_metric=embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            **EVENT_BACKEND_SYSTEM_FIELDS,
+        },
     )
-    return LongTermMemory(
-        EventBackendParams(
-            session_id="sess1",
-            vector_store=create_autospec(VectorStore, instance=True),
-            vector_store_partition=vector_store_partition,
-            segment_store=create_autospec(SegmentStore, instance=True),
-            segment_store_partition=InMemorySegmentStorePartition(),
-            partition_key="sess1",
-            episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),
-            embedder=embedder,
-            segmenter=segmenter if segmenter is not None else PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
-        ),
+    vector_store = create_autospec(VectorStore, instance=True)
+    vector_store.store_schema = store_schema
+    return await _event_long_term_memory(
+        vector_store=vector_store,
+        vector_store_partition=InMemoryVectorStorePartition(store_schema=store_schema),
+        segment_store=create_autospec(SegmentStore, instance=True),
+        segment_store_partition=InMemorySegmentStorePartition(),
+        episode_storage=FakeEpisodeStorage({e.uid: e for e in episodes}),
+        embedder=embedder,
+        segmenter=segmenter if segmenter is not None else PassthroughSegmenter(),
     )
 
 
@@ -528,15 +529,15 @@ async def test_score_threshold_drops_low_scores_under_cosine():
         _episode("near", "abc"),
         _episode("far", "abcdefghij"),
     ]
-    ltm = _make_ltm(FakeEmbedder(similarity_metric=SimilarityMetric.COSINE), episodes)
+    ltm = await _make_ltm(
+        FakeEmbedder(similarity_metric=SimilarityMetric.COSINE), episodes
+    )
     await ltm.add_episodes(episodes)
 
-    kept_all = await ltm.search_scored("abc", num_episodes_limit=10)
+    kept_all = await ltm.query("abc", num_episodes_limit=10)
     assert {ep.uid for _, ep in kept_all} == {_uid("near"), _uid("far")}
 
-    kept_none = await ltm.search_scored(
-        "abc", num_episodes_limit=10, score_threshold=2.0
-    )
+    kept_none = await ltm.query("abc", num_episodes_limit=10, score_threshold=2.0)
     assert kept_none == []
 
 
@@ -559,14 +560,13 @@ async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
         _episode("near", "abc"),
         _episode("far", "abcdefghij"),
     ]
-    ltm = _make_ltm(
+    ltm = await _make_ltm(
         FakeEmbedder(similarity_metric=SimilarityMetric.EUCLIDEAN), episodes
     )
     await ltm.add_episodes(episodes)
 
     scores_by_uid = {
-        ep.uid: score
-        for score, ep in await ltm.search_scored("abc", num_episodes_limit=10)
+        ep.uid: score for score, ep in await ltm.query("abc", num_episodes_limit=10)
     }
     assert scores_by_uid[_uid("near")] < scores_by_uid[_uid("far")], (
         "FakeEmbedder should make the shorter 'near' anchor a closer "
@@ -574,7 +574,7 @@ async def test_score_threshold_not_inverted_under_euclidean_no_reranker():
     )
     midpoint_threshold = (scores_by_uid[_uid("near")] + scores_by_uid[_uid("far")]) / 2
 
-    kept = await ltm.search_scored(
+    kept = await ltm.query(
         "abc", num_episodes_limit=10, score_threshold=midpoint_threshold
     )
     uids = {ep.uid for _, ep in kept}
@@ -591,12 +591,12 @@ async def test_score_threshold_none_keeps_all_results_under_euclidean():
     the default "no threshold" must NOT drop everything. Default is now
     `score_threshold=None` which short-circuits the filter."""
     episodes = [_episode("only", "abc")]
-    ltm = _make_ltm(
+    ltm = await _make_ltm(
         FakeEmbedder(similarity_metric=SimilarityMetric.EUCLIDEAN), episodes
     )
     await ltm.add_episodes(episodes)
 
-    scored = await ltm.search_scored("abc", num_episodes_limit=10)
+    scored = await ltm.query("abc", num_episodes_limit=10)
     assert [ep.uid for _, ep in scored] == [_uid("only")]
 
 
@@ -692,8 +692,8 @@ def timeline_storage(timeline_episodes) -> FakeEpisodeStorage:
     return FakeEpisodeStorage({e.uid: e for e in timeline_episodes})
 
 
-@pytest.fixture
-def timeline_long_term_memory(
+@pytest_asyncio.fixture
+async def timeline_long_term_memory(
     vector_store,
     vector_store_partition,
     segment_store,
@@ -702,19 +702,14 @@ def timeline_long_term_memory(
 ) -> LongTermMemory:
     # `RankedEmbedder` shares FakeEmbedder's dimensions and similarity metric,
     # so the shared `vector_store_partition` config still applies.
-    return LongTermMemory(
-        EventBackendParams(
-            session_id="sess1",
-            vector_store=vector_store,
-            vector_store_partition=vector_store_partition,
-            segment_store=segment_store,
-            segment_store_partition=segment_store_partition,
-            partition_key="sess1",
-            episode_storage=timeline_storage,
-            embedder=RankedEmbedder(),
-            segmenter=PassthroughSegmenter(),
-            deriver=WholeTextDeriver(),
-        ),
+    return await _event_long_term_memory(
+        vector_store=vector_store,
+        vector_store_partition=vector_store_partition,
+        segment_store=segment_store,
+        segment_store_partition=segment_store_partition,
+        episode_storage=timeline_storage,
+        embedder=RankedEmbedder(),
+        segmenter=PassthroughSegmenter(),
     )
 
 
@@ -730,11 +725,11 @@ async def test_expand_context_returns_neighbours_the_search_would_not(
     await timeline_long_term_memory.add_episodes(timeline_episodes)
 
     query = _timeline_token(_MATCH_INDEX)
-    plain = await timeline_long_term_memory.search_scored(
+    plain = await timeline_long_term_memory.query(
         query,
         num_episodes_limit=3,
     )
-    expanded = await timeline_long_term_memory.search_scored(
+    expanded = await timeline_long_term_memory.query(
         query,
         num_episodes_limit=3,
         expand_context=2,
@@ -759,7 +754,7 @@ async def test_expand_context_zero_returns_matches_in_score_order(
     """Without expansion, the result is the search's own matches, best first."""
     await timeline_long_term_memory.add_episodes(timeline_episodes)
 
-    scored = await timeline_long_term_memory.search_scored(
+    scored = await timeline_long_term_memory.query(
         _timeline_token(_MATCH_INDEX),
         num_episodes_limit=3,
     )
@@ -805,7 +800,7 @@ async def test_expand_context_window_stays_within_the_episode_limit(
 
     for num_episodes_limit, expand_context in ((1, -3), (1, 5), (3, 99), (5, 2)):
         windows.clear()
-        scored = await timeline_long_term_memory.search_scored(
+        scored = await timeline_long_term_memory.query(
             _timeline_token(_MATCH_INDEX),
             num_episodes_limit=num_episodes_limit,
             expand_context=expand_context,
@@ -830,7 +825,7 @@ async def test_a_limit_that_is_not_positive_is_refused_before_the_query_is_embed
     monkeypatch.setattr(RankedEmbedder, "search_embed", unexpected)
 
     with pytest.raises(ValueError, match="not positive"):
-        await timeline_long_term_memory.search_scored(
+        await timeline_long_term_memory.query(
             _timeline_token(_MATCH_INDEX), num_episodes_limit=num_episodes_limit
         )
 
@@ -865,9 +860,9 @@ async def test_expand_context_counts_segments_under_a_splitting_segmenter(
     }
     reached: dict[str, set[UUID]] = {}
     for name, segmenter in segmenters.items():
-        ltm = _make_ltm(RankedEmbedder(), timeline_episodes, segmenter=segmenter)
+        ltm = await _make_ltm(RankedEmbedder(), timeline_episodes, segmenter=segmenter)
         await ltm.add_episodes(timeline_episodes)
-        expanded = await ltm.search_scored(
+        expanded = await ltm.query(
             query,
             num_episodes_limit=expand_context + 1,
             expand_context=expand_context,

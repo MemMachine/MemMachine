@@ -7,9 +7,7 @@ from memmachine_server.common.resource_manager import CommonResourceManager
 
 from .episodic_memory import EpisodicMemoryParams
 from .long_term_memory.long_term_memory import LongTermMemory
-from .long_term_memory.service_locator import (
-    long_term_memory_params_from_config,
-)
+from .long_term_memory.service_locator import long_term_memory_from_config
 from .short_term_memory.service_locator import (
     short_term_memory_params_from_config,
 )
@@ -23,11 +21,10 @@ async def episodic_memory_params_from_config(
     """Create EpisodicMemoryParams from configuration and resource manager."""
     long_term_memory: LongTermMemory | None = None
     if config.long_term_memory and config.long_term_memory_enabled:
-        long_term_memory_params = await long_term_memory_params_from_config(
+        long_term_memory = await long_term_memory_from_config(
             config.long_term_memory,
             resource_manager,
         )
-        long_term_memory = LongTermMemory(long_term_memory_params)
 
     short_term_memory: ShortTermMemory | None = None
     if config.short_term_memory and config.short_term_memory_enabled:

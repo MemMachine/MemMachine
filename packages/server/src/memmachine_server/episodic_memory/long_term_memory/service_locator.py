@@ -19,16 +19,21 @@ from memmachine_server.common.configuration.episodic_config import (
 )
 from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.errors import ConfigurationError
+from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
+from memmachine_server.episodic_memory.declarative_memory import (
+    DeclarativeMemory,
+    DeclarativeMemoryParams,
+)
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
     WholeTextDeriver,
 )
-from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStorePartitionConfig,
+from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EventMemory,
+    EventMemoryParams,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
@@ -44,9 +49,7 @@ from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter imp
 
 from .long_term_memory import (
     EVENT_BACKEND_SYSTEM_FIELDS,
-    DeclarativeBackendParams,
-    EventBackendParams,
-    LongTermMemoryParams,
+    LongTermMemory,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,82 +61,107 @@ Fixed, because the name locates the store's data.
 """
 
 
-async def long_term_memory_params_from_config(
+async def long_term_memory_from_config(
     config: LongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
-) -> LongTermMemoryParams:
-    """Build LongTermMemoryParams from configuration and resources."""
+) -> LongTermMemory:
+    """Build a session's LongTermMemory from its configuration and the deployment's resources."""
     match config:
         case DeclarativeLongTermMemoryConf():
-            return await _declarative_params(config, resource_manager)
+            return LongTermMemory(await _declarative_memory(config, resource_manager))
         case EventLongTermMemoryConf():
-            return await _event_params(config, resource_manager)
+            reranker = (
+                await resource_manager.get_reranker(config.reranker, validate=True)
+                if config.reranker is not None
+                else None
+            )
+            event_memory = await _event_memory(
+                config, resource_manager, reranker=reranker
+            )
+            return LongTermMemory(
+                await event_memory.open_or_create_partition(
+                    partition_key_for_session(config.session_id)
+                ),
+                episode_storage=await resource_manager.get_episode_storage(),
+                reranker=reranker,
+            )
         case _:
             raise NotImplementedError(
                 f"Unsupported long-term memory backend: {type(config).__name__}"
             )
 
 
-async def _declarative_params(
+async def delete_long_term_memory_storage(
+    config: LongTermMemoryConf,
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> None:
+    """
+    Delete a session's long-term memory storage.
+
+    The event backend deletes the session's partitions by key, opening
+    neither, so storage the session never created stays uncreated.
+    """
+    match config:
+        case DeclarativeLongTermMemoryConf():
+            declarative_memory = await _declarative_memory(config, resource_manager)
+            episodes = await declarative_memory.get_matching_episodes()
+            await declarative_memory.delete_episodes(
+                episode.uid for episode in episodes
+            )
+        case EventLongTermMemoryConf():
+            # Deleting a partition uses no reranker.
+            event_memory = await _event_memory(config, resource_manager, reranker=None)
+            await event_memory.delete_partition(
+                partition_key_for_session(config.session_id)
+            )
+        case _:
+            raise NotImplementedError(
+                f"Unsupported long-term memory backend: {type(config).__name__}"
+            )
+
+
+async def _declarative_memory(
     config: DeclarativeLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
-) -> DeclarativeBackendParams:
-    vector_graph_store = await resource_manager.get_vector_graph_store(
-        config.vector_graph_store,
-    )
-    embedder = await resource_manager.get_embedder(config.embedder, validate=True)
-    reranker = await resource_manager.get_reranker(config.reranker, validate=True)
-    return DeclarativeBackendParams(
-        session_id=config.session_id,
-        vector_graph_store=vector_graph_store,
-        embedder=embedder,
-        reranker=reranker,
-        message_sentence_chunking=config.message_sentence_chunking,
+) -> DeclarativeMemory:
+    return DeclarativeMemory(
+        DeclarativeMemoryParams(
+            session_id=config.session_id,
+            vector_graph_store=await resource_manager.get_vector_graph_store(
+                config.vector_graph_store,
+            ),
+            embedder=await resource_manager.get_embedder(
+                config.embedder, validate=True
+            ),
+            reranker=await resource_manager.get_reranker(
+                config.reranker, validate=True
+            ),
+            message_sentence_chunking=config.message_sentence_chunking,
+        ),
     )
 
 
-async def _event_params(
+async def _event_memory(
     config: EventLongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
-) -> EventBackendParams:
+    *,
+    reranker: Reranker | None,
+) -> EventMemory:
+    """An EventMemory on the deployment's stores and embedder, with the session's segmenter and deriver."""
     _, segment_store_id, embedder_id = deployment_event_memory_ids(
         resource_manager.config
     )
-    segment_store = await resource_manager.get_segment_store(segment_store_id)
     embedder = await resource_manager.get_embedder(embedder_id, validate=True)
-    vector_store = await event_backend_vector_store(resource_manager)
-    reranker = (
-        await resource_manager.get_reranker(config.reranker, validate=True)
-        if config.reranker is not None
-        else None
-    )
-    episode_storage = await resource_manager.get_episode_storage()
-
-    partition_key = partition_key_for_session(config.session_id)
-
-    vector_store_partition = await vector_store.open_or_create_partition(partition_key)
-
-    partition = await segment_store.open_or_create_partition(
-        partition_key,
-        SegmentStorePartitionConfig(),
-    )
-
-    segmenter = _build_segmenter(config.segmenter)
-    deriver = _build_deriver(config.deriver)
-
-    return EventBackendParams(
-        session_id=config.session_id,
-        vector_store=vector_store,
-        vector_store_partition=vector_store_partition,
-        segment_store=segment_store,
-        segment_store_partition=partition,
-        partition_key=partition_key,
-        episode_storage=episode_storage,
-        embedder=embedder,
-        reranker=reranker,
-        segmenter=segmenter,
-        deriver=deriver,
-        metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
+    return EventMemory(
+        EventMemoryParams(
+            segment_store=await resource_manager.get_segment_store(segment_store_id),
+            vector_store=await event_backend_vector_store(resource_manager),
+            segmenter=_build_segmenter(config.segmenter),
+            deriver=_build_deriver(config.deriver),
+            embedder=embedder,
+            reranker=reranker,
+            metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
+        )
     )
 
 

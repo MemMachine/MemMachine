@@ -5,6 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from memmachine_server.common.configuration import Configuration
+from memmachine_server.common.configuration.episodic_config import (
+    DeclarativeLongTermMemoryConf,
+)
 from memmachine_server.common.configuration.retrieval_config import OptimizedCoqConf
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.language_model.language_model import LanguageModel
@@ -14,12 +17,16 @@ from memmachine_server.common.resource_manager.resource_manager import (
     ResourceManagerImpl,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.declarative_memory import (
+    DeclarativeMemory,
+    DeclarativeMemoryParams,
+)
 from memmachine_server.episodic_memory.episodic_memory import (
     EpisodicMemoryParams,
 )
-from memmachine_server.episodic_memory.long_term_memory import (
-    DeclarativeBackendParams,
-    LongTermMemory,
+from memmachine_server.episodic_memory.long_term_memory import LongTermMemory
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    delete_long_term_memory_storage,
 )
 from memmachine_server.retrieval_agent.agents import (
     ChainOfQueryAgent,
@@ -480,12 +487,14 @@ async def init_memmachine_params(
     normalized_session_id = session_id or "evaluation_session"
 
     long_term_memory = LongTermMemory(
-        DeclarativeBackendParams(
-            session_id=normalized_session_id,
-            vector_graph_store=vector_graph_store,
-            embedder=embedder,
-            reranker=reranker,
-            message_sentence_chunking=message_sentence_chunking,
+        DeclarativeMemory(
+            DeclarativeMemoryParams(
+                session_id=normalized_session_id,
+                vector_graph_store=vector_graph_store,
+                embedder=embedder,
+                reranker=reranker,
+                message_sentence_chunking=message_sentence_chunking,
+            )
         )
     )
     memory = EpisodicMemory(
@@ -521,3 +530,31 @@ async def init_memmachine_params(
     )
 
     return memory, answer_model, query_agent, agent_model_id, answer_model_id
+
+
+async def delete_session_episodes(
+    resource_manager: ResourceManagerImpl,
+    session_id: str,
+) -> None:
+    """Delete an evaluation session's episodes, as the server deletes a session's long-term storage."""
+    conf = resource_manager.config
+    ltm_conf = conf.episodic_memory.long_term_memory
+    if ltm_conf is None:
+        raise ValueError(
+            "episodic_memory.long_term_memory is not configured in configuration.yml"
+        )
+    reranker_id = conf.retrieval_agent.reranker or ltm_conf.reranker
+    if not (ltm_conf.vector_graph_store and ltm_conf.embedder and reranker_id):
+        raise ValueError(
+            "episodic_memory.long_term_memory needs a vector_graph_store, an "
+            "embedder, and a reranker in configuration.yml"
+        )
+    await delete_long_term_memory_storage(
+        DeclarativeLongTermMemoryConf(
+            session_id=session_id,
+            vector_graph_store=ltm_conf.vector_graph_store,
+            embedder=ltm_conf.embedder,
+            reranker=reranker_id,
+        ),
+        resource_manager,
+    )
