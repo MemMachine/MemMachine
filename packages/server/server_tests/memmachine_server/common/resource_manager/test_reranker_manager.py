@@ -167,6 +167,7 @@ async def test_build_cohere_reranker_passes_base_url(monkeypatch):
     assert captured_kwargs == {
         "api_key": "test-cohere-key",
         "base_url": "http://localhost:8000",
+        "timeout": 30.0,
     }
 
 
@@ -197,7 +198,7 @@ async def test_build_cohere_reranker_omits_base_url_when_not_configured(monkeypa
     reranker = await reranker_manager.get_reranker("cohere_reranker_id")
 
     assert isinstance(reranker, CohereReranker)
-    assert captured_kwargs == {"api_key": "test-cohere-key"}
+    assert captured_kwargs == {"api_key": "test-cohere-key", "timeout": 30.0}
 
 
 @requires_sentence_transformers
