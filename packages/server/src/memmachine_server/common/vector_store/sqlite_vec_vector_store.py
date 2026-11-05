@@ -405,16 +405,12 @@ class SQLiteVecVectorStoreCollection(VectorStoreCollection):
             if not rows:
                 return
 
-            record_rowids = [row.rowid for row in rows]
-
-            placeholders = ", ".join(
-                f":r{index}" for index in range(len(record_rowids))
-            )
+            # One statement per row, in rowid order: vec0 looks a row up by
+            # `rowid = ?` but scans the whole table for `rowid IN (...)`, and
+            # deletes rows faster in rowid order.
             await session.execute(
-                text(
-                    f"DELETE FROM [{self._vector_table_name}] WHERE rowid IN ({placeholders})"
-                ),
-                {f"r{index}": row_id for index, row_id in enumerate(record_rowids)},
+                text(f"DELETE FROM [{self._vector_table_name}] WHERE rowid = :rowid"),
+                [{"rowid": rowid} for rowid in sorted(row.rowid for row in rows)],
             )
 
             await session.execute(
