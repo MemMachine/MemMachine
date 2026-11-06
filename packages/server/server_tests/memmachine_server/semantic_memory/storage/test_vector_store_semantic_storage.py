@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import numpy as np
@@ -139,6 +140,55 @@ async def test_vector_search_returns_relational_features_in_similarity_order(
         ]
 
         assert [feature.value for feature in results] == ["pizza", "sushi"]
+    finally:
+        await storage.delete_all()
+        await storage.cleanup()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delete_set", [False, True])
+async def test_failed_vector_delete_preserves_features_for_retry(
+    sqlalchemy_sqlite_engine,
+    vector_collection: InMemoryVectorStoreCollection,
+    monkeypatch: pytest.MonkeyPatch,
+    delete_set: bool,
+):
+    storage = VectorStoreSemanticStorage(sqlalchemy_sqlite_engine, vector_collection)
+    await storage.startup()
+    try:
+        feature_id = await storage.add_feature(
+            set_id="user",
+            category_name="default",
+            feature="likes",
+            value="pizza",
+            tag="food",
+            embedding=np.array([1.0, 0.0], dtype=float),
+        )
+        record_uuid = feature_vector_uuid(feature_id)
+
+        async def delete_features() -> None:
+            if delete_set:
+                await storage.delete_feature_set(
+                    filter_expr=parse_filter("set_id=user")
+                )
+            else:
+                await storage.delete_features([feature_id])
+
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                vector_collection,
+                "delete",
+                AsyncMock(side_effect=RuntimeError("vector store unavailable")),
+            )
+            with pytest.raises(RuntimeError, match="vector store unavailable"):
+                await delete_features()
+
+        assert await storage.get_feature(feature_id) is not None
+        assert record_uuid in vector_collection.records
+
+        await delete_features()
+        assert await storage.get_feature(feature_id) is None
+        assert record_uuid not in vector_collection.records
     finally:
         await storage.delete_all()
         await storage.cleanup()
