@@ -3,6 +3,7 @@ configuration.yml
 config.yml
 cfg.yml
 sqlitetest.db
+/evaluation/data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -137,13 +137,44 @@ For the legacy episodic-memory benchmark flow, see:
 
 - `evaluation/episodic_memory/README.md`
 
-## Dataset Paths
+## Datasets
 
-By default, benchmark scripts expect files under `evaluation/data/`, for
-example:
+`run_test.sh` reads the LoCoMo and WikiMultiHop datasets from
+`evaluation/data/`. Download them from their authors before running these
+benchmarks. Run the commands below from the repository root.
 
-- `evaluation/data/locomo10.json`
-- `evaluation/data/wikimultihop.json`
+### LoCoMo
+
+`locomo10.json` from the
+[LoCoMo repository](https://github.com/snap-research/locomo):
+
+```sh
+mkdir -p evaluation/data
+curl -fL -o evaluation/data/locomo10.json \
+  https://raw.githubusercontent.com/snap-research/locomo/cbfbc1dba6bc53d00625212a0f22d55ffee7c1fc/data/locomo10.json
+```
+
+### WikiMultiHop
+
+The dev split of the original `data.zip` release from the
+[2WikiMultihopQA repository](https://github.com/Alab-NII/2wikimultihop).
+The benchmark scripts read one JSON object per line, with `context`,
+`supporting_facts`, and `evidences` encoded as JSON strings, so convert the
+downloaded `dev.json`:
+
+```sh
+mkdir -p evaluation/data
+curl -fL -o 2wikimultihop.zip \
+  'https://www.dropbox.com/s/npidmtadreo6df2/data.zip?dl=1'
+unzip -p 2wikimultihop.zip data/dev.json | python3 -c '
+import json, sys
+for row in json.load(sys.stdin.buffer):
+    for key in ("context", "supporting_facts", "evidences"):
+        row[key] = json.dumps(row[key])
+    print(json.dumps(row))
+' > evaluation/data/wikimultihop.json
+rm 2wikimultihop.zip
+```
 
 ## Wikimultihop Benchmark Note
 
