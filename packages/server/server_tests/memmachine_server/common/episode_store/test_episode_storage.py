@@ -295,6 +295,32 @@ async def test_add_multiple_episodes_preserves_input_order_when_rows_reordered()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("expression", "matches"),
+    [
+        ("episode_type = 'message'", True),
+        ("episode_type IN ('message')", True),
+        ("episode_type != 'message'", False),
+        ("NOT (episode_type IN ('message'))", False),
+        ("episode_type = 'MESSAGE'", True),
+        ("episode_type IS NULL", False),
+    ],
+)
+async def test_history_episode_type_filters(episode_storage, expression, matches):
+    uid = await create_history_entry(
+        episode_storage, content="message", episode_type=EpisodeType.MESSAGE
+    )
+    predicate = parse_filter(expression)
+    rows = await episode_storage.get_episode_messages(filter_expr=predicate)
+    count = await episode_storage.get_episode_messages_count(filter_expr=predicate)
+    assert [row.uid for row in rows] == ([uid] if matches else [])
+    assert count == int(matches)
+    stored = await episode_storage.get_episode(uid)
+    assert stored is not None
+    assert stored.episode_type == EpisodeType.MESSAGE
+
+
+@pytest.mark.asyncio
 async def test_history_identity_filters(episode_storage: EpisodeStorage):
     user_message = await create_history_entry(
         episode_storage,
