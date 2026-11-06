@@ -23,6 +23,11 @@ from pydantic import Field, InstanceOf
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+from memmachine_server.common.partition_registry import (
+    Registration,
+    Reservation,
+    VectorStorePartitionRegistry,
+)
 
 from .data_types import (
     QueryResult,
@@ -32,11 +37,6 @@ from .data_types import (
     VectorStorePartitionDeletedError,
     VectorStorePartitionPendingError,
     VectorStoreSchema,
-)
-from .partition_registry import (
-    Registration,
-    Reservation,
-    VectorStorePartitionRegistry,
 )
 from .utils import (
     validate_declared_properties,

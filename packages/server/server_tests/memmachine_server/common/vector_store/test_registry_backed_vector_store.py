@@ -12,6 +12,14 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.partition_registry import (
+    Registration,
+    sqlalchemy_partition_registry,
+)
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyVectorStorePartitionRegistry,
+    SQLAlchemyVectorStorePartitionRegistryParams,
+)
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store import (
     QueryResult,
@@ -22,14 +30,6 @@ from memmachine_server.common.vector_store import (
     VectorStorePartitionPendingError,
     VectorStoreSchema,
     registry_backed_vector_store,
-)
-from memmachine_server.common.vector_store.partition_registry import (
-    Registration,
-    sqlalchemy_partition_registry,
-)
-from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
 )
 from memmachine_server.common.vector_store.registry_backed_vector_store import (
     RegistryBackedVectorStore,

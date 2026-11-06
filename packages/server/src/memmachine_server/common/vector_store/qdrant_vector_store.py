@@ -41,6 +41,7 @@ from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
+from memmachine_server.common.partition_registry import Registration
 from memmachine_server.common.utils import ensure_tz_aware
 
 from .data_types import (
@@ -49,7 +50,6 @@ from .data_types import (
     Record,
     VectorStoreSchema,
 )
-from .partition_registry import Registration
 from .registry_backed_vector_store import (
     RegistryBackedVectorStore,
     RegistryBackedVectorStoreParams,
