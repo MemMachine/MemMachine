@@ -1,4 +1,4 @@
-"""Upgrading a lineage's tables."""
+"""Upgrading and checking a lineage's tables."""
 
 from pathlib import Path
 
@@ -6,7 +6,12 @@ import pytest
 from sqlalchemy import Column, Integer, MetaData, Table, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
+from memmachine_server.common.errors import SchemaMismatchError
+from memmachine_server.common.schema_migration import (
+    Lineage,
+    check_lineage,
+    upgrade_lineage,
+)
 
 _REVISION = """
 import sqlalchemy as sa
@@ -79,6 +84,39 @@ async def test_upgrade_creates_the_tables_and_a_rerun_changes_nothing(
         "second",
         "alembic_version_toy",
     }
+    await check_lineage(sqlalchemy_engine, lineage)
+
+
+@pytest.mark.asyncio
+async def test_check_refuses_missing_tables(sqlalchemy_engine, tmp_path):
+    lineage = _lineage(tmp_path / "versions", ["first"])
+
+    with pytest.raises(
+        SchemaMismatchError, match=r"missing.*memmachine-server migrate"
+    ):
+        await check_lineage(sqlalchemy_engine, lineage)
+
+
+@pytest.mark.asyncio
+async def test_check_refuses_an_older_revision(sqlalchemy_engine, tmp_path):
+    older = _lineage(tmp_path / "older", ["first"])
+    newer = _lineage(tmp_path / "newer", ["first", "second"])
+    await upgrade_lineage(sqlalchemy_engine, older)
+
+    with pytest.raises(
+        SchemaMismatchError, match="at revision rev0, not at revision rev1"
+    ):
+        await check_lineage(sqlalchemy_engine, newer)
+
+
+@pytest.mark.asyncio
+async def test_check_refuses_a_revision_it_does_not_know(sqlalchemy_engine, tmp_path):
+    newer = _lineage(tmp_path / "newer", ["first", "second"])
+    older = _lineage(tmp_path / "older", ["first"])
+    await upgrade_lineage(sqlalchemy_engine, newer)
+
+    with pytest.raises(SchemaMismatchError, match="newer than this server"):
+        await check_lineage(sqlalchemy_engine, older)
 
 
 @pytest.mark.asyncio
