@@ -28,8 +28,6 @@ from sqlalchemy import (
     Interval,
     String,
     Uuid,
-    and_,
-    case,
     delete,
     func,
     insert,
@@ -123,12 +121,10 @@ class PurgeQueueRow(BasePartitionRegistry):
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    # When a purge round last raised.
-    last_failed_at: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # When the open claim was taken; None when no claim is open.
-    claimed_at: MappedColumn[datetime | None] = mapped_column(
+    # When a claim may next take the tombstone: once the open claim's lease
+    # and the backoff pass, or the backoff after a raise; None when no claim
+    # or raise since the last progress set one.
+    claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # Incremented by each claim; a round ends only its own claim.
@@ -266,7 +262,8 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
     After `_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS` attempts without progress, a
     tombstone is dead-lettered: kept, its incarnation reserved, and skipped by
     claims; a last attempt that raises is reported in an error log. Setting its
-    `attempts_without_progress` back to 0 returns it to the purge.
+    `attempts_without_progress` back to 0 and its `claimable_at` to NULL
+    returns it to the purge.
     """
 
     def __init__(self, params: SQLAlchemyVectorStorePartitionRegistryParams) -> None:
@@ -433,7 +430,6 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         the work, since rounds are safe to repeat. A claim whose round never
         ended is taken again once its lease, and then the backoff, have passed.
         """
-        backoff_seconds = self._purge_retry_backoff_seconds()
         oldest_due = (
             select(PurgeQueueRow.incarnation)
             .where(
@@ -444,27 +440,8 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                 PurgeQueueRow.attempts_without_progress
                 < _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
                 or_(
-                    # No attempt since the last progress.
-                    PurgeQueueRow.attempts_without_progress == 0,
-                    # No claim is open: the backoff runs from the last raise.
-                    and_(
-                        PurgeQueueRow.claimed_at.is_(None),
-                        or_(
-                            PurgeQueueRow.last_failed_at.is_(None),
-                            self._has_elapsed(
-                                backoff_seconds, since=PurgeQueueRow.last_failed_at
-                            ),
-                        ),
-                    ),
-                    # The open claim's round never ended: the backoff runs
-                    # from when its lease passed.
-                    and_(
-                        PurgeQueueRow.claimed_at.is_not(None),
-                        self._has_elapsed(
-                            backoff_seconds + self._purge_lease_seconds,
-                            since=PurgeQueueRow.claimed_at,
-                        ),
-                    ),
+                    PurgeQueueRow.claimable_at.is_(None),
+                    PurgeQueueRow.claimable_at <= func.now(),
                 ),
             )
             .order_by(PurgeQueueRow.enqueued_at)
@@ -482,7 +459,12 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                         attempts_without_progress=(
                             PurgeQueueRow.attempts_without_progress + 1
                         ),
-                        claimed_at=func.now(),
+                        claimable_at=self._seconds_from_now(
+                            self._purge_lease_seconds
+                            + self._purge_retry_backoff_seconds(
+                                PurgeQueueRow.attempts_without_progress + 1
+                            )
+                        ),
                         claim_generation=PurgeQueueRow.claim_generation + 1,
                     )
                     .returning(
@@ -500,15 +482,12 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
             attempt=row.attempts_without_progress,
         )
 
-    def _purge_retry_backoff_seconds(self) -> ColumnElement[int]:
-        """Each tombstone's purge retry backoff in seconds, computed by the database."""
-        # 1 << (a - 1) is 2 ** (a - 1) on both dialects. a is clamped at 0:
-        # the claim evaluates this for tombstones with no attempts too, and
-        # PostgreSQL leaves a negative shift undefined.
-        attempts = PurgeQueueRow.attempts_without_progress
-        doublings = literal(1, Integer).op("<<")(
-            case((attempts > 0, attempts - 1), else_=0)
-        )
+    def _purge_retry_backoff_seconds(
+        self, attempts: ColumnElement[int] | InstrumentedAttribute[int]
+    ) -> ColumnElement[int]:
+        """The purge retry backoff in seconds after `attempts` attempts, computed by the database."""
+        # 1 << (a - 1) is 2 ** (a - 1) on both dialects.
+        doublings = literal(1, Integer).op("<<")(attempts - 1)
         smaller = func.min if self._is_sqlite else func.least
         return smaller(
             self._base_purge_retry_backoff_seconds * doublings,
@@ -535,6 +514,18 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
             cutoff = func.now() - literal(timedelta(seconds=1), Interval) * seconds
         return since <= cutoff
 
+    def _seconds_from_now(
+        self, seconds: int | ColumnElement[int]
+    ) -> ColumnElement[datetime]:
+        """The time `seconds` from now, on the database clock."""
+        if self._is_sqlite:
+            return func.datetime(
+                "now",
+                func.printf("+%d seconds", seconds),
+                type_=DateTime(timezone=True),
+            )
+        return func.now() + literal(timedelta(seconds=1), Interval) * seconds
+
     async def _end_tombstone_claim_after_failure(
         self, claim: _TombstoneClaim, error: Exception
     ) -> None:
@@ -550,7 +541,13 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                     PurgeQueueRow.incarnation == claim.incarnation,
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
-                .values(claimed_at=None, last_failed_at=func.now())
+                .values(
+                    claimable_at=self._seconds_from_now(
+                        self._purge_retry_backoff_seconds(
+                            PurgeQueueRow.attempts_without_progress
+                        )
+                    )
+                )
             )
         if ended.rowcount != 1:
             self._report_purge_round_outlasting_its_claim(claim)
@@ -560,8 +557,8 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
             logger.error(
                 "Purge of incarnation %s is dead-lettered after %d attempts "
                 "without progress: its records stay and it is no longer claimed. "
-                "Last error: %r. Set its attempts_without_progress to 0 in %s to "
-                "retry it.",
+                "Last error: %r. Set its attempts_without_progress to 0 and its "
+                "claimable_at to NULL in %s to retry it.",
                 claim.incarnation,
                 claim.attempt,
                 error,
@@ -603,7 +600,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
                 .values(
-                    claimed_at=None,
+                    claimable_at=None,
                     attempts_without_progress=(
                         PurgeQueueRow.attempts_without_progress - 1
                     ),
@@ -635,7 +632,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                     PurgeQueueRow.incarnation == claim.incarnation,
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
-                .values(attempts_without_progress=0, claimed_at=None)
+                .values(attempts_without_progress=0, claimable_at=None)
             )
         if ended.rowcount != 1:
             self._report_purge_round_outlasting_its_claim(claim)

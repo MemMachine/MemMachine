@@ -206,9 +206,9 @@ claim may take it again: a claim sets it to its lease end plus the backoff
 for its attempt, a failure to the backoff's end, and progress clears it.
 The retention stays its own condition, computed from `enqueued_at` when the
 claim runs, so a change to it reaches every queued tombstone and no retry
-schedule can shorten it. A claim is then two index ranges: tombstones whose
-retention has passed and that no claim has scheduled, and tombstones whose
-`claimable_at` has passed. Every write after a tombstone's insert is a
+schedule can shorten it. The claim keeps its one index range, oldest
+deletion first, and skips tombstones whose `claimable_at` has not passed.
+Every write after a tombstone's insert is a
 claim's, matched on `claim_generation`; a transition made by anything that
 holds no claim would have to increment the generation, so that an
 outstanding claim's late failure matches nothing.

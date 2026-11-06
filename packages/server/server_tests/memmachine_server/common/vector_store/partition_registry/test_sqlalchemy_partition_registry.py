@@ -154,31 +154,23 @@ async def _attempts(
         ).scalar_one()
 
 
-async def _age_last_failure(
+async def _age_claimable_at(
     registry: SQLAlchemyVectorStorePartitionRegistry,
     incarnation: UUID,
-    ago: timedelta,
+    by: timedelta = PURGE_LEASE + timedelta(minutes=1),
 ) -> None:
-    """Move the tombstone's last failed round back to `ago` before now, on the database clock."""
-    async with registry._engine.begin() as connection:
-        await connection.execute(
-            update(PurgeQueueRow)
-            .where(PurgeQueueRow.incarnation == incarnation)
-            .values(last_failed_at=_database_time_ago(registry._engine, ago))
+    """Move the tombstone's claimable time back by `by`, as if that much more time had passed since the claim or raise that set it, past the purge lease and the first backoff unless given."""
+    if registry._engine.dialect.name == "sqlite":
+        earlier = func.datetime(
+            PurgeQueueRow.claimable_at, f"-{int(by.total_seconds())} seconds"
         )
-
-
-async def _age_claim(
-    registry: SQLAlchemyVectorStorePartitionRegistry,
-    incarnation: UUID,
-    ago: timedelta = PURGE_LEASE + timedelta(minutes=1),
-) -> None:
-    """Move the tombstone's claim back to `ago` before now, past the purge lease and the first backoff unless given, on the database clock."""
+    else:
+        earlier = PurgeQueueRow.claimable_at - by
     async with registry._engine.begin() as connection:
         await connection.execute(
             update(PurgeQueueRow)
             .where(PurgeQueueRow.incarnation == incarnation)
-            .values(claimed_at=_database_time_ago(registry._engine, ago))
+            .values(claimable_at=earlier)
         )
 
 
@@ -704,7 +696,7 @@ async def test_a_round_that_raises_keeps_the_tombstone_and_names_it_in_the_error
     assert await _attempts(registry, incarnation) == 1
     # Backing off: claimed again once 30 seconds have passed since the failure.
     assert await _round(registry, any_records_found=False) is None
-    await _age_last_failure(registry, incarnation, timedelta(seconds=35))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=35))
     assert await _round(registry, any_records_found=False) == incarnation
 
 
@@ -736,12 +728,12 @@ async def test_the_backoff_doubles_with_each_failure_and_runs_from_the_last_one(
     await _age_deletion(registry, incarnation, extra=timedelta(days=3))
 
     await _failing_round(registry)
-    await _age_last_failure(registry, incarnation, timedelta(seconds=35))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=35))
     await _failing_round(registry)
     # Two failures: a minute from the second.
-    await _age_last_failure(registry, incarnation, timedelta(seconds=50))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=50))
     assert await _round(registry, any_records_found=True) is None
-    await _age_last_failure(registry, incarnation, timedelta(seconds=70))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=20))
     assert await _round(registry, any_records_found=True) == incarnation
 
 
@@ -764,12 +756,12 @@ async def test_the_backoff_stops_doubling_at_its_maximum(
     await _age_deletion(registry, incarnation)
 
     for _ in range(5):
+        await _age_claimable_at(registry, incarnation, timedelta(days=1))
         await _failing_round(registry)
-        await _age_last_failure(registry, incarnation, timedelta(days=1))
     # Five failures: 30 seconds doubled four times is 8 minutes, capped at 2.
-    await _age_last_failure(registry, incarnation, timedelta(seconds=110))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=110))
     assert await _round(registry, any_records_found=True) is None
-    await _age_last_failure(registry, incarnation, timedelta(seconds=130))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=20))
     assert await _round(registry, any_records_found=True) == incarnation
 
 
@@ -788,7 +780,7 @@ async def test_a_tombstone_whose_rounds_keep_failing_is_dead_lettered_and_report
     with caplog.at_level(logging.ERROR):
         for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS):
             # Past its backoff, so it is the oldest tombstone claimable.
-            await _age_last_failure(registry, failing, timedelta(days=1))
+            await _age_claimable_at(registry, failing, timedelta(days=1))
             assert await _failing_round(registry) == failing
 
     assert [
@@ -806,15 +798,15 @@ async def test_a_tombstone_whose_rounds_keep_failing_is_dead_lettered_and_report
 async def test_resetting_a_dead_lettered_tombstones_attempts_returns_it_to_the_purge(
     sqlalchemy_engine, vector_store_name
 ):
-    """Setting the attempts without progress back to 0, as the dead-letter
-    report says, makes the tombstone claimable at once, its last failure just
-    now."""
+    """Setting the attempts without progress back to 0 and the claimable time
+    to NULL, as the dead-letter report says, makes the tombstone claimable at
+    once, its last failure just now."""
     registry = await _registry(sqlalchemy_engine, vector_store_name)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
     for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS):
-        await _age_last_failure(registry, incarnation, timedelta(days=1))
+        await _age_claimable_at(registry, incarnation, timedelta(days=1))
         assert await _failing_round(registry) == incarnation
     assert await _round(registry, any_records_found=False) is None
 
@@ -822,7 +814,7 @@ async def test_resetting_a_dead_lettered_tombstones_attempts_returns_it_to_the_p
         await connection.execute(
             update(PurgeQueueRow)
             .where(PurgeQueueRow.incarnation == incarnation)
-            .values(attempts_without_progress=0)
+            .values(attempts_without_progress=0, claimable_at=None)
         )
 
     assert await _round(registry, any_records_found=False) == incarnation
@@ -839,7 +831,7 @@ async def test_a_round_that_finds_points_resets_the_attempts_without_progress(
 
     for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS - 1):
         await _failing_round(registry)
-        await _age_last_failure(registry, incarnation, timedelta(days=1))
+        await _age_claimable_at(registry, incarnation, timedelta(days=1))
     assert await _round(registry, any_records_found=True) == incarnation
     assert await _attempts(registry, incarnation) == 0
 
@@ -890,10 +882,10 @@ async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backof
     assert await _round(registry, any_records_found=False) is None
 
     # Past the lease, but not the 30-second backoff that runs from it.
-    await _age_claim(registry, incarnation, PURGE_LEASE + timedelta(seconds=20))
+    await _age_claimable_at(registry, incarnation, PURGE_LEASE + timedelta(seconds=20))
     assert await _round(registry, any_records_found=False) is None
 
-    await _age_claim(registry, incarnation, PURGE_LEASE + timedelta(seconds=40))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=20))
     caplog.clear()
     with caplog.at_level(logging.WARNING):
         assert await _round(registry, any_records_found=False) == incarnation
@@ -921,7 +913,7 @@ async def test_rounds_that_never_end_dead_letter_the_tombstone(
     with caplog.at_level(logging.WARNING):
         for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS):
             assert await _abandon_claim(registry, monkeypatch) == incarnation
-            await _age_claim(registry, incarnation, timedelta(days=1))
+            await _age_claimable_at(registry, incarnation, timedelta(days=1))
 
     assert (
         await _attempts(registry, incarnation) == _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS
@@ -944,14 +936,14 @@ async def test_a_cancelled_retry_of_a_round_that_never_ended_leaves_it_claimable
 ):
     """A cancelled round takes back its attempt even when the attempt before
     it never ended and no round ever raised, so the tombstone is claimable at
-    once rather than left with no time to back off from."""
+    once."""
     registry = await _registry(sqlalchemy_engine, vector_store_name)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
 
     assert await _abandon_claim(registry, monkeypatch) == incarnation
-    await _age_claim(registry, incarnation, timedelta(days=1))
+    await _age_claimable_at(registry, incarnation, timedelta(days=1))
     _, holding = await _start_held_round(registry)
     holding.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -977,7 +969,7 @@ async def test_racing_purgers_retry_a_round_that_never_ended_once(
         await purgers[0].unregister("a")
         await _age_deletion(purgers[0], incarnation)
         await _abandon_claim(purgers[0], monkeypatch)
-        await _age_claim(purgers[0], incarnation)
+        await _age_claimable_at(purgers[0], incarnation)
 
         # Finding nothing removes the tombstone, so a second claim would show.
         async def found_nothing(claimed: UUID) -> bool:
@@ -1043,7 +1035,7 @@ async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
     stale, stale_task = await _start_held_round(registry)
     current_task = None
     try:
-        await _age_claim(registry, incarnation)
+        await _age_claimable_at(registry, incarnation)
         current, current_task = await _start_held_round(registry)
         assert current.ran == [incarnation]
 
@@ -1088,7 +1080,7 @@ async def test_a_round_that_finds_nothing_removes_the_tombstone_under_any_claim(
     stale, stale_task = await _start_held_round(registry)
     current_task = None
     try:
-        await _age_claim(registry, incarnation)
+        await _age_claimable_at(registry, incarnation)
         current, current_task = await _start_held_round(registry)
         stale.end(any_records_found=False)
         assert await asyncio.wait_for(stale_task, 30)
@@ -1242,10 +1234,10 @@ async def test_purge_rounds_keep_time_by_the_database_clock(
 async def test_a_purge_lease_runs_by_the_database_clock(
     sqlalchemy_engine, vector_store_name
 ):
-    """A claim is stamped, and its lease measured, by the database's clock.
+    """A claim's lease is scheduled, and measured, by the database's clock.
 
     By a clock ten days behind the real one, a claim taken just now still
-    holds, though by the real clock it was taken ten days ago.
+    holds, though by the real clock its lease ended ten days ago.
     """
     if sqlalchemy_engine.dialect.name != "postgresql":
         pytest.skip("SQLite's clock cannot be shadowed")
@@ -1262,12 +1254,12 @@ async def test_a_purge_lease_runs_by_the_database_clock(
                 row = (
                     await connection.execute(
                         select(
-                            PurgeQueueRow.claimed_at,
+                            PurgeQueueRow.claimable_at,
                             text("pg_catalog.now() AS real_now"),
                         ).where(PurgeQueueRow.incarnation == incarnation)
                     )
                 ).one()
-            assert row.real_now - row.claimed_at > timedelta(days=9)
+            assert row.real_now - row.claimable_at > timedelta(days=9)
             assert await _round(registry, any_records_found=False) is None
             held.end(any_records_found=False)
             assert await asyncio.wait_for(holding, 30)
@@ -1552,13 +1544,12 @@ async def test_a_persistent_database_error_surfaces_with_its_cause(
 
 
 @pytest.mark.asyncio
-async def test_a_changed_lease_applies_to_claims_already_held(
+async def test_a_claim_holds_for_the_lease_it_was_taken_under(
     sqlalchemy_engine, vector_store_name
 ):
-    """The lease is applied when a claim is decided, from when the claim was
-    taken: a claim taken under a five-minute lease holds against a one-minute
-    lease, and the 30-second backoff after it, for a minute and a half and no
-    longer, while it still holds against the five-minute lease."""
+    """The lease is scheduled when a claim is taken: a claim taken under a
+    five-minute lease holds against a one-minute lease past a minute and a
+    half, until its own five minutes and the 30-second backoff pass."""
     five_minutes = await _registry(sqlalchemy_engine, vector_store_name)
     one_minute = await _registry(
         sqlalchemy_engine, vector_store_name, purge_lease_seconds=60
@@ -1569,10 +1560,9 @@ async def test_a_changed_lease_applies_to_claims_already_held(
 
     held, holding = await _start_held_round(five_minutes)
     try:
-        await _age_claim(five_minutes, incarnation, timedelta(seconds=80))
+        await _age_claimable_at(five_minutes, incarnation, timedelta(seconds=100))
         assert not await one_minute.run_purge_round(_no_round)
-        await _age_claim(five_minutes, incarnation, timedelta(seconds=100))
-        assert not await five_minutes.run_purge_round(_no_round)
+        await _age_claimable_at(five_minutes, incarnation, PURGE_LEASE)
         assert await _round(one_minute, any_records_found=True) == incarnation
         held.end(any_records_found=True)
         assert await asyncio.wait_for(holding, 30)
@@ -1595,13 +1585,13 @@ async def test_the_first_purge_backoff_comes_from_its_parameter(
     await _age_deletion(registry, incarnation)
 
     assert await _failing_round(registry) == incarnation
-    await _age_last_failure(registry, incarnation, timedelta(seconds=5))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=5))
     assert await _round(registry, any_records_found=True) is None
-    await _age_last_failure(registry, incarnation, timedelta(seconds=15))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=10))
     assert await _failing_round(registry) == incarnation
-    await _age_last_failure(registry, incarnation, timedelta(seconds=15))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=15))
     assert await _round(registry, any_records_found=True) is None
-    await _age_last_failure(registry, incarnation, timedelta(seconds=25))
+    await _age_claimable_at(registry, incarnation, timedelta(seconds=10))
     assert await _round(registry, any_records_found=True) == incarnation
 
 
@@ -1680,7 +1670,7 @@ async def test_a_round_whose_outcome_cannot_be_written_is_retried_once_its_lease
 
     assert await _attempts(registry, incarnation) == 1
     assert await _round(registry, any_records_found=False) is None
-    await _age_claim(registry, incarnation)
+    await _age_claimable_at(registry, incarnation)
     assert await _round(registry, any_records_found=True) == incarnation
     assert await _attempts(registry, incarnation) == 0
 
