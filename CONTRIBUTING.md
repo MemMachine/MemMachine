@@ -63,14 +63,18 @@ the repository root before you push.
 
   Integration tests are marked `integration`; run them by adding
   `-m integration`. Most start their databases in Docker. The rest connect to
-  a server you run, and skip when they can't reach it:
+  a server you run:
 
   - NebulaGraph Enterprise 5.0 or later, at `NEBULA_HOST` (default
-    `127.0.0.1:9669`), with `NEBULA_USER` and `NEBULA_PASSWORD`
-  - An OpenAI-compatible server serving `qwen3:8b`, such as Ollama, at the
-    base URL in `OLLAMA_HOST`, which has no default
+    `127.0.0.1:9669`), with `NEBULA_USER` and `NEBULA_PASSWORD`. These tests
+    skip when they can't connect.
   - A MemMachine server, for the Python client's tests, at
-    `MEMORY_BACKEND_URL` (default `http://localhost:8080`)
+    `MEMORY_BACKEND_URL` (default `http://localhost:8080`). These tests skip
+    when it doesn't answer.
+  - An OpenAI-compatible server serving `qwen3:8b`, such as Ollama, at the
+    base URL in `OLLAMA_HOST`, such as `http://localhost:11434/v1`. These
+    tests skip only when `OLLAMA_HOST` is unset. They fail when the server is
+    down, or when `OLLAMA_HOST` holds Ollama's own `host:port` form.
 
   Tests that call OpenAI, Amazon Bedrock, or Cohere use the real APIs, billed
   to the keys you give them. They read test-only variables and run only when
