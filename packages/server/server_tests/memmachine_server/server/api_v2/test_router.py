@@ -5,8 +5,10 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from memmachine_common.api.spec import ContentType, Episode, SearchResult
 
+from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.episodic_config import (
     DeclarativeLongTermMemoryConf,
     EventLongTermMemoryConf,
@@ -19,7 +21,10 @@ from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
     SessionNotFoundError,
 )
-from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
+from memmachine_server.common.session_manager.session_data_manager_sql_impl import (
+    SessionDataManagerSQL,
+)
+from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemMachine, MemoryType
 from memmachine_server.server.api_v2.router import RestError, get_memmachine
 from memmachine_server.server.api_v2.service import _SessionData
 from memmachine_server.server.app import MemMachineAPI
@@ -61,6 +66,7 @@ def test_create_project(client, mock_memmachine):
         vector_graph_store="store",
     )
 
+    mock_session.description = payload["description"]
     mock_memmachine.create_session.return_value = mock_session
 
     response = client.post("/api/v2/projects", json=payload)
@@ -104,6 +110,56 @@ def test_create_project(client, mock_memmachine):
     response_detail = response.json()["detail"]
     assert "already exists" in response_detail["message"]
     assert response_detail["trace"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored_description", "requested_description"),
+    [("original", "replacement"), ("original", ""), ("", "replacement")],
+)
+async def test_recreate_project_returns_stored_description(
+    sqlalchemy_sqlite_engine, stored_description, requested_description
+):
+    manager = SessionDataManagerSQL(sqlalchemy_sqlite_engine)
+    await manager.create_tables()
+    resources = AsyncMock()
+    resources.get_session_data_manager.return_value = manager
+    config = Configuration.model_validate(
+        {
+            "episodic_memory": {"enabled": False},
+            "logging": {},
+            "session_manager": {},
+            "resources": {},
+            "episode_store": {},
+        }
+    )
+    memmachine = MemMachine(config, resources=resources)
+    app = MemMachineAPI()
+    app.dependency_overrides[get_memmachine] = lambda: memmachine
+    project = {"org_id": "test_org", "project_id": "test_proj"}
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/v2/projects",
+                json={**project, "description": stored_description},
+            )
+            recreated = await client.post(
+                "/api/v2/projects",
+                json={**project, "description": requested_description},
+            )
+            retrieved = await client.post("/api/v2/projects/get", json=project)
+        assert created.status_code == 201
+        assert recreated.status_code == 201
+        assert retrieved.status_code == 200
+        assert created.json()["description"] == stored_description
+        assert retrieved.json()["description"] == stored_description
+        assert recreated.json() == retrieved.json() == created.json()
+    finally:
+        app.dependency_overrides.clear()
+        await manager.drop_tables()
+        await manager.close()
 
 
 def test_create_project_with_invalid_name(client):
@@ -189,6 +245,7 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
         segment_store="pgengine",
         properties_schema={"my_field": "str"},
     )
+    mock_session.description = payload["description"]
     mock_memmachine.create_session.return_value = mock_session
 
     response = client.post("/api/v2/projects", json=payload)
@@ -228,6 +285,7 @@ def test_create_project_without_backend_passes_none_through(client, mock_memmach
         reranker="cohere",
         vector_graph_store="store",
     )
+    mock_session.description = payload["description"]
     mock_memmachine.create_session.return_value = mock_session
 
     response = client.post("/api/v2/projects", json=payload)
@@ -258,6 +316,7 @@ def test_create_project_with_explicit_declarative_backend(client, mock_memmachin
         reranker="cohere",
         vector_graph_store="neo",
     )
+    mock_session.description = payload["description"]
     mock_memmachine.create_session.return_value = mock_session
 
     response = client.post("/api/v2/projects", json=payload)
