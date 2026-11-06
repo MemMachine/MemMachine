@@ -12,6 +12,12 @@ on:
         description: "The git tag to build (e.g., v0.1.1)"
         required: true
         type: string
+      variant:
+        description: "Which image to build"
+        required: false
+        default: both
+        type: choice
+        options: [both, cpu, gpu]
 
 env:
   # Docker image name to publish
@@ -31,6 +37,7 @@ jobs:
     name: Build and Push CPU Image
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || inputs.variant != 'gpu'
     steps:
       # Step 0: Free Disk Space (Manual)
       - name: Free Disk Space (Manual)
@@ -86,16 +93,20 @@ jobs:
             # Disable 'latest' tag for CPU image to prevent conflicts with GPU Image
             # We use manual 'latest' tags for CPU images
             latest=false
+          # For a pre-release version, a semver rule replaces its pattern with
+          # {{version}} but keeps its prefix and suffix. The variant therefore
+          # goes in the suffix, and the latest rules skip any version with a
+          # pre-release part, since they would tag the bare version.
           tags: |
             # For Manual (workflow_dispatch) runs
-            type=semver,pattern=v{{version}}-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=semver,pattern={{version}},prefix=v,suffix=-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern=latest-cpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
             type=semver,pattern=latest,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
 
             # For Release events
-            type=semver,pattern=v{{version}}-cpu,enable=${{ github.event_name == 'release' }}
-            type=semver,pattern=latest-cpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
-            type=semver,pattern=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=semver,pattern={{version}},prefix=v,suffix=-cpu,enable=${{ github.event_name == 'release' }}
+            type=semver,pattern=latest-cpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease && !contains(github.event.release.tag_name, '-') }}
+            type=semver,pattern=latest,enable=${{ github.event_name == 'release' && !github.event.release.prerelease && !contains(github.event.release.tag_name, '-') }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
 
@@ -131,6 +142,14 @@ jobs:
     needs: build-cpu
     # Use the latest Ubuntu runner
     runs-on: ubuntu-latest
+    # !cancelled() is needed because a deliberately skipped CPU build would
+    # otherwise skip this job with it; the result check still stops a *failed*
+    # CPU build from letting the GPU one through. Unlike always(), it turns
+    # false when the run is canceled, so a cancel also stops this job.
+    if: >-
+      !cancelled()
+      && (needs.build-cpu.result == 'success' || needs.build-cpu.result == 'skipped')
+      && (github.event_name != 'workflow_dispatch' || inputs.variant != 'cpu')
     steps:
       # Step 0: Free Disk Space (Manual)
       - name: Free Disk Space (Manual)
@@ -184,14 +203,17 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           flavor: |
             latest=false
+          # The variant goes in the suffix, which a semver rule keeps for a
+          # pre-release version, and the latest rule skips a pre-release
+          # version, since it would tag the bare version.
           tags: |
             # For Manual (workflow_dispatch) runs
-            type=semver,pattern=v{{version}}-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=semver,pattern={{version}},prefix=v,suffix=-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=semver,pattern=latest-gpu,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && !contains(inputs.tag, '-') }}
 
             # For Release events
-            type=semver,pattern=v{{version}}-gpu,enable=${{ github.event_name == 'release' }}
-            type=semver,pattern=latest-gpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease }}
+            type=semver,pattern={{version}},prefix=v,suffix=-gpu,enable=${{ github.event_name == 'release' }}
+            type=semver,pattern=latest-gpu,enable=${{ github.event_name == 'release' && !github.event.release.prerelease && !contains(github.event.release.tag_name, '-') }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
 
