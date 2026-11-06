@@ -37,7 +37,7 @@ class OpenAIResponsesLanguageModelConf(
     """Configuration for OpenAI Responses-compatible models."""
 
     model: str = Field(
-        default="gpt-5-nano",
+        default="gpt-6-luna",
         description="OpenAI Responses API-compatible model",
     )
     api_key: SecretStr = Field(
@@ -72,7 +72,7 @@ class OpenAIChatCompletionsLanguageModelConf(
     """Configuration for OpenAI Chat Completions-compatible models."""
 
     model: str = Field(
-        default="gpt-5-nano",
+        default="gpt-6-luna",
         min_length=1,
         description="OpenAI Chat Completions API-compatible model",
     )
@@ -115,7 +115,7 @@ class LiteLLMLanguageModelConf(
         min_length=1,
         description=(
             "LiteLLM model spec, e.g. 'anthropic/claude-sonnet-4-6', "
-            "'openai/gpt-4o', 'bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0'."
+            "'openai/gpt-6-luna', 'bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0'."
         ),
     )
     api_key: SecretStr | None = Field(

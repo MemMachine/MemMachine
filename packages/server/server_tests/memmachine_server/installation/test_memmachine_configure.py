@@ -1,3 +1,4 @@
+import hashlib
 import io
 import logging
 import zipfile
@@ -7,11 +8,16 @@ from unittest.mock import patch
 import pytest
 
 from memmachine_server.installation.memmachine_configure import (
+    LINUX_NEO4J_SHA256,
     LINUX_NEO4J_URL,
+    MACOS_JDK_SHA256_ARM64,
+    MACOS_JDK_SHA256_X64,
     MACOS_JDK_URL_ARM64,
     MACOS_JDK_URL_X64,
+    WINDOWS_JDK_SHA256,
     WINDOWS_JDK_URL,
     WINDOWS_JDK_ZIP_NAME,
+    WINDOWS_NEO4J_SHA256,
     WINDOWS_NEO4J_URL,
     WINDOWS_NEO4J_ZIP_NAME,
     ConfigurationWizard,
@@ -74,13 +80,15 @@ class MockWindowsEnvironment(WindowsEnvironment):
         self.neo4j_uninstalled = False
         self.neo4j_preinstalled = False
 
-    def download_file(self, url: str, dest: str):
+    def download_file(self, url: str, dest: str, sha256: str):
         if url == WINDOWS_JDK_URL:
             assert dest == str(Path(self.expected_install_dir) / WINDOWS_JDK_ZIP_NAME)
+            assert sha256 == WINDOWS_JDK_SHA256
             Path(dest).touch()  # Create an empty file to simulate download
             self.openjdk_zip_downloaded = True
         elif url == WINDOWS_NEO4J_URL:
             assert dest == str(Path(self.expected_install_dir) / WINDOWS_NEO4J_ZIP_NAME)
+            assert sha256 == WINDOWS_NEO4J_SHA256
             Path(dest).touch()  # Create an empty file to simulate download
             self.neo4j_zip_downloaded = True
         else:
@@ -171,8 +179,8 @@ class MockMacOSEnvironment(MacosEnvironment):
         self.downloaded_files = {}
         self.extracted_files = {}
 
-    def download_file(self, url: str, dest: str) -> None:
-        self.downloaded_files[url] = dest
+    def download_file(self, url: str, dest: str, sha256: str) -> None:
+        self.downloaded_files[url] = sha256
 
     def extract_tar(self, tar_path: str, extract_to: str) -> None:
         self.extracted_files[tar_path] = extract_to
@@ -195,8 +203,8 @@ def test_install_in_macos(mock_machine, mock_input, mock_wizard):
     installer = MacosInstaller(environment)
     installer.install()
     assert environment.neo4j_started
-    assert MACOS_JDK_URL_ARM64 in environment.downloaded_files
-    assert LINUX_NEO4J_URL in environment.downloaded_files
+    assert environment.downloaded_files[MACOS_JDK_URL_ARM64] == MACOS_JDK_SHA256_ARM64
+    assert environment.downloaded_files[LINUX_NEO4J_URL] == LINUX_NEO4J_SHA256
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 
@@ -211,8 +219,8 @@ def test_install_in_macos_x64(mock_machine, mock_input, mock_wizard):
     installer = MacosInstaller(environment)
     installer.install()
     assert environment.neo4j_started
-    assert MACOS_JDK_URL_X64 in environment.downloaded_files
-    assert LINUX_NEO4J_URL in environment.downloaded_files
+    assert environment.downloaded_files[MACOS_JDK_URL_X64] == MACOS_JDK_SHA256_X64
+    assert environment.downloaded_files[LINUX_NEO4J_URL] == LINUX_NEO4J_SHA256
     assert Path("~/.config/memmachine/cfg.yml").expanduser().exists()
 
 
@@ -231,8 +239,8 @@ class MockLinuxEnvironment(LinuxEnvironment):
         self.downloaded_files = {}
         self.extracted_files = {}
 
-    def download_file(self, url: str, dest: str) -> None:
-        self.downloaded_files[url] = dest
+    def download_file(self, url: str, dest: str, sha256: str) -> None:
+        self.downloaded_files[url] = sha256
 
     def extract_tar(self, tar_path: str, extract_to: str) -> None:
         self.extracted_files[tar_path] = extract_to
@@ -253,6 +261,38 @@ def test_install_in_linux(mock_input, mock_wizard):
     installer = LinuxInstaller(environment)
     installer.install()
     assert environment.neo4j_started
+
+
+# ---------------------------------------------------------------------------
+# download_file - SHA-256 verification
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("environment_class", [LinuxEnvironment, WindowsEnvironment])
+def test_download_file_keeps_matching_digest(
+    environment_class: type[LinuxEnvironment | WindowsEnvironment], tmp_path: Path
+) -> None:
+    """A download whose SHA-256 digest matches is kept at the destination."""
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"archive")
+    dest = tmp_path / "dest.bin"
+    environment_class().download_file(
+        source.as_uri(), str(dest), hashlib.sha256(b"archive").hexdigest()
+    )
+    assert dest.read_bytes() == b"archive"
+
+
+@pytest.mark.parametrize("environment_class", [LinuxEnvironment, WindowsEnvironment])
+def test_download_file_rejects_mismatched_digest(
+    environment_class: type[LinuxEnvironment | WindowsEnvironment], tmp_path: Path
+) -> None:
+    """A download whose SHA-256 digest differs raises ValueError."""
+    source = tmp_path / "source.bin"
+    source.write_bytes(b"archive")
+    with pytest.raises(ValueError, match="SHA-256"):
+        environment_class().download_file(
+            source.as_uri(), str(tmp_path / "dest.bin"), "0" * 64
+        )
 
 
 # ---------------------------------------------------------------------------

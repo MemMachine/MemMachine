@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -36,10 +36,12 @@ constraints = [
 [manifest.dependency-groups]
 dev = [
     { name = "complexipy", specifier = ">=5.4.1" },
+    { name = "httpx", specifier = ">=0.25.1" },
     { name = "pytest", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "python-dateutil", specifier = ">=2.9.0" },
     { name = "ruff", specifier = "==0.16.8" },
     { name = "testcontainers", extras = ["neo4j", "postgres", "qdrant"], specifier = ">=4.14.2" },
     { name = "tomli", specifier = ">=2.4.1" },
@@ -2342,6 +2344,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "babel" },
     { name = "boto3" },
+    { name = "botocore" },
     { name = "cohere" },
     { name = "fastapi" },
     { name = "fastmcp" },
@@ -2352,6 +2355,7 @@ dependencies = [
     { name = "memmachine-common" },
     { name = "neo4j" },
     { name = "nltk" },
+    { name = "numpy" },
     { name = "openai" },
     { name = "pgvector" },
     { name = "prometheus-client" },
@@ -2360,8 +2364,10 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "rank-bm25" },
+    { name = "requests" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sqlite-vec" },
+    { name = "starlette" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
     { name = "usearch" },
     { name = "uvicorn" },
@@ -2385,6 +2391,7 @@ nebula = [
     { name = "nebula5-python" },
 ]
 qdrant = [
+    { name = "grpcio" },
     { name = "qdrant-client" },
 ]
 
@@ -2395,9 +2402,11 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.31.0" },
     { name = "babel", specifier = ">=2.18.0" },
     { name = "boto3", specifier = ">=1.40.40" },
+    { name = "botocore", specifier = ">=1.31.27" },
     { name = "cohere", specifier = ">=5.20.0" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "fastmcp", specifier = ">=3.2.0" },
+    { name = "grpcio", marker = "extra == 'qdrant'", specifier = ">=1.59.0" },
     { name = "hnswlib", marker = "extra == 'hnswlib'", specifier = ">=0.8.0" },
     { name = "instructor", extras = ["bedrock"], specifier = ">=1.12.0" },
     { name = "json-repair", specifier = ">=0.54" },
@@ -2409,6 +2418,7 @@ requires-dist = [
     { name = "nebula5-python", marker = "extra == 'nebula'", specifier = ">=5.2.1,<5.3" },
     { name = "neo4j", specifier = ">=5.28.2" },
     { name = "nltk", specifier = ">=3.9.4" },
+    { name = "numpy", specifier = ">=1.26" },
     { name = "openai", specifier = ">=2.21.0" },
     { name = "pgvector", specifier = ">=0.4.2" },
     { name = "prometheus-client", specifier = ">=0.22.1" },
@@ -2419,9 +2429,11 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "qdrant-client", marker = "extra == 'qdrant'", specifier = ">=1.17.0" },
     { name = "rank-bm25", specifier = ">=0.2.2" },
+    { name = "requests", specifier = ">=2.32.2" },
     { name = "sentence-transformers", marker = "extra == 'gpu'", specifier = ">=5.1.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.43" },
     { name = "sqlite-vec", specifier = ">=0.1.9" },
+    { name = "starlette", specifier = ">=0.48.0" },
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "usearch", specifier = ">=2.25.1" },
     { name = "uvicorn", specifier = ">=0.35.0" },
