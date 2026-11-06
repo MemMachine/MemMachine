@@ -116,7 +116,7 @@ reservation, or a registration.
   a deletion shows as the handle's methods raising. The words follow two
   known patterns: Try-Confirm/Cancel for the creator (reserve, then confirm
   or cancel), and the stale handle for everyone else (`require_current`,
-  `VectorStorePartitionHandleStaleError`).
+  `PartitionHandleStaleError`).
 - **Why no state fields.** A handle's fields (partition key and
   incarnation) belong to its life and never change. Whether the partition is
   pending, live, or deleted changes under every holder: a `live` field would
@@ -179,26 +179,26 @@ moved a colliding row to the queue has already committed, because the insert
 waited on it. After the check no queue row for this incarnation can appear
 before commit, because the only row carrying it is this uncommitted one. A
 primary-key violation with a row, pending or live, under the key raises
-`VectorStorePartitionAlreadyExistsError`. A rejected incarnation (unique
+`PartitionAlreadyExistsError`. A rejected incarnation (unique
 violation, or queued) is re-minted, up to 10 attempts, then
-`VectorStoreAttemptsExhaustedError`. The loop and its bound are the segment
+`AttemptsExhaustedError`. The loop and its bound are the segment
 store's.
 
 **`Reservation.confirm()`** marks the row live with an `UPDATE` conditional on
 the reservation's incarnation, which is unique, and on the row being pending,
-and answers the `Registration`; it raises `VectorStorePartitionDeletedError`
+and answers the `Registration`; it raises `PartitionDeletedError`
 when it matches nothing. A creation whose partition was deleted while its
 storage was prepared matches nothing, so it cannot confirm a partition
 reserved under the key since.
 
 **`resolve(partition_key)`** reads the partition's row once and answers by its
-state: a `Registration` when it is live, `VectorStorePartitionPendingError`,
+state: a `Registration` when it is live, `PartitionPendingError`,
 with when the partition was reserved, when it is pending, and `None` when there is none. It is how a
 handle is opened: callers address partitions by key, and the key is resolved
 to a live incarnation once, at open.
 
 **`Registration.require_current()`** reads the row under the
-registration's key and raises `VectorStorePartitionHandleStaleError` unless it
+registration's key and raises `PartitionHandleStaleError` unless it
 carries the registration's incarnation. It is how a handle is fenced (below).
 
 **`unregister(partition_key)`** is one transaction: `DELETE ... RETURNING` the
@@ -226,9 +226,9 @@ makes the partition live:
 - The registry's primary key is the one arbiter: a racing creator on any
   process loses at the insert, never in the backend.
 - A pending partition holds its key but is not opened: `open_partition` raises
-  `VectorStorePartitionPendingError`, which says since when it has been
+  `PartitionPendingError`, which says since when it has been
   pending, a `create_partition` of the key raises
-  `VectorStorePartitionAlreadyExistsError`, and open-or-create waits for it.
+  `PartitionAlreadyExistsError`, and open-or-create waits for it.
   `None` from `open_partition` means only that no partition holds the key.
 - A preparation or confirmation that raises, or is cancelled, cancels the
   reservation when the registry can, which frees the key and queues the
@@ -245,15 +245,15 @@ makes the partition live:
   [Milvus](milvus_vector_store.md) documents say how).
 - A partition deleted while its storage is prepared is not marked live, since
   the mark is conditional on its incarnation: the creation raises
-  `VectorStorePartitionDeletedError`.
+  `PartitionDeletedError`.
 
 **`open_or_create_partition`** is read-then-create, retried a second apart: a
 live row is opened; a pending row is another creator's, so the loop waits for
 it rather than registering; no row means create; losing the create means a
 racing creator took the key; losing the mark means a racing deleter removed
 the partition while its storage was prepared, so the loop creates again.
-After 10 attempts it raises `VectorStorePartitionPendingError` if the last
-lookup found the partition pending, and `VectorStoreAttemptsExhaustedError`
+After 10 attempts it raises `PartitionPendingError` if the last
+lookup found the partition pending, and `AttemptsExhaustedError`
 otherwise. The event backend's service locator opens a session's partition
 with it.
 
@@ -265,7 +265,7 @@ exactly one reservation is lost.
 
 A handle is bound to the incarnation it was opened under. After that life is
 deleted, every operation on the handle raises
-`VectorStorePartitionHandleStaleError`, and a partition created again under
+`PartitionHandleStaleError`, and a partition created again under
 the same key is a new life the old handle cannot reach.
 
 - An upsert or query calls its registration's `require_current` once its

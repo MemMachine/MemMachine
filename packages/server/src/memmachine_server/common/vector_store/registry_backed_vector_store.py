@@ -24,6 +24,10 @@ from pydantic import Field, InstanceOf
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionPendingError,
     Registration,
     Reservation,
     VectorStorePartitionRegistry,
@@ -32,10 +36,6 @@ from memmachine_server.common.partition_registry import (
 from .data_types import (
     QueryResult,
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionPendingError,
     VectorStoreSchema,
 )
 from .utils import (
@@ -252,9 +252,9 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
     Any process sharing the backend and the registry may serve any partition.
     A partition is pending until its storage is prepared: meanwhile opening it
-    raises VectorStorePartitionPendingError, `open_or_create_partition` waits
+    raises PartitionPendingError, `open_or_create_partition` waits
     a bounded time for it, and creating its key raises
-    VectorStorePartitionAlreadyExistsError. A partition a crash left pending
+    PartitionAlreadyExistsError. A partition a crash left pending
     stays pending until `delete_partition` deletes it.
 
     For subclasses: `_vector_store_name` and `_store_schema` are the
@@ -315,18 +315,14 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
             # means another creator took the key meanwhile, and losing the
             # confirmation means a deleter removed this one while its storage
             # was prepared (create again).
-            pending_error: VectorStorePartitionPendingError | None = None
-            lost_race: (
-                VectorStorePartitionAlreadyExistsError
-                | VectorStorePartitionDeletedError
-                | None
-            ) = None
+            pending_error: PartitionPendingError | None = None
+            lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
             for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
                 if attempt:
                     await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
                 try:
                     registration = await self._partition_registry.resolve(partition_key)
-                except VectorStorePartitionPendingError as err:
+                except PartitionPendingError as err:
                     pending_error = err
                     continue
                 pending_error = None
@@ -334,21 +330,21 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
                     return self._partition_handle(registration)
                 try:
                     reservation = await self._partition_registry.reserve(partition_key)
-                except VectorStorePartitionAlreadyExistsError as err:
+                except PartitionAlreadyExistsError as err:
                     lost_race = err
                     continue
                 try:
                     registration = await self._prepare_and_confirm_or_cancel(
                         reservation
                     )
-                except VectorStorePartitionDeletedError as err:
+                except PartitionDeletedError as err:
                     lost_race = err
                     continue
                 return self._partition_handle(registration)
             # The last lookup found the partition pending.
             if pending_error is not None:
                 raise pending_error
-            raise VectorStoreAttemptsExhaustedError(
+            raise AttemptsExhaustedError(
                 f"Opening or creating partition {partition_key!r} of vector store "
                 f"{self._vector_store_name!r} made no progress after "
                 f"{_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"

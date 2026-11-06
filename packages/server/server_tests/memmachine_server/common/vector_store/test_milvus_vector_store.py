@@ -15,6 +15,13 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
+)
 from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
     evaluate_filter,
 )
@@ -56,11 +63,6 @@ from memmachine_server.common.partition_registry.sqlalchemy_partition_registry i
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
     VectorStoreSchema,
 )
 from memmachine_server.common.vector_store.milvus_vector_store import (
@@ -512,7 +514,7 @@ class TestPartitionLifecycle:
 
     @pytest.mark.asyncio
     async def test_duplicate_name_raises(self, store, partition):
-        with pytest.raises(VectorStorePartitionAlreadyExistsError):
+        with pytest.raises(PartitionAlreadyExistsError):
             await store.create_partition(NAME)
 
     @pytest.mark.asyncio
@@ -2022,11 +2024,11 @@ _CHURN_DECLARED: dict[str, PropertyType] = {
 _CHURN_TAGS = ("red", "green", "blue")
 # The outcomes the store documents for an operation that loses a race.
 _DOMAIN_ERRORS = (
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
 )
 
 
@@ -2098,7 +2100,7 @@ async def _churn_on(
             ledger.sent.setdefault(incarnation, set()).update(record_uuids)
             try:
                 await handle.upsert(records=step.records)
-            except VectorStorePartitionHandleStaleError:
+            except PartitionHandleStaleError:
                 ledger.raced_deletion.update(
                     (incarnation, record_uuid) for record_uuid in record_uuids
                 )
@@ -2139,7 +2141,7 @@ async def _churn_worker(
                     step.partition_key
                 )
             await _churn_on(handles[step.partition_key], step, owner, own, ledger)
-        except VectorStorePartitionHandleStaleError:
+        except PartitionHandleStaleError:
             handles.pop(step.partition_key, None)
         except _DOMAIN_ERRORS:
             pass

@@ -16,13 +16,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
+)
 from memmachine_server.common.vector_store import (
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
     registry_backed_vector_store,
 )
 
@@ -114,18 +116,18 @@ class PartitionLifecycleContract:
         await store.delete_partition(LIFECYCLE_KEY)
 
         assert await store.open_partition(LIFECYCLE_KEY) is None
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_KEY):
             await partition.upsert(records=[record])
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_KEY):
             await partition.query(query_vectors=[record.vector], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_KEY):
             await partition.delete(record_uuids=[record.uuid])
         # So does an operation with nothing to send to the backend.
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_KEY):
             await partition.upsert(records=[])
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_KEY):
             await partition.query(query_vectors=[], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_KEY):
             await partition.delete(record_uuids=[])
 
     @pytest.mark.asyncio
@@ -149,9 +151,9 @@ class PartitionLifecycleContract:
         assert await self.stored_uuids(new) == {new_record.uuid}
 
         # The old life's handle cannot reach the new life's records.
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await old.query(query_vectors=[new_record.vector], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await old.delete(record_uuids=[new_record.uuid])
         assert await self.stored_uuids(new) == {new_record.uuid}
 
@@ -172,7 +174,7 @@ class PartitionLifecycleContract:
         await self.settle(third)
         [empty] = await third.query(query_vectors=[record.vector], limit=5)
         assert empty.matches == []
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await first.query(query_vectors=[record.vector], limit=5)
         await store.delete_partition(LIFECYCLE_KEY)
 
@@ -241,7 +243,7 @@ class PartitionLifecycleContract:
 
         monkeypatch.setattr(registration_type, "require_current", deleted_once_checked)
 
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_KEY):
             await partition.upsert(records=records)
         await self.settle(partition)
 
@@ -261,7 +263,7 @@ class PartitionLifecycleContract:
 
         await store.delete_partition(LIFECYCLE_KEY)
 
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_KEY):
             await partition.upsert(records=[refused])
         assert await self.stored_uuids(partition) == {kept.uuid}
 
@@ -277,9 +279,7 @@ class PartitionLifecycleContract:
             # Yields as a real round trip would, so an unbounded loop fails
             # the timeout below instead of starving the event loop.
             await asyncio.sleep(0)
-            raise VectorStorePartitionAlreadyExistsError(
-                store._vector_store_name, partition_key
-            )
+            raise PartitionAlreadyExistsError(store._vector_store_name, partition_key)
 
         async def vanished(partition_key) -> None:
             return None
@@ -290,7 +290,7 @@ class PartitionLifecycleContract:
             registry_backed_vector_store, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0
         )
 
-        with pytest.raises(VectorStoreAttemptsExhaustedError):
+        with pytest.raises(AttemptsExhaustedError):
             await asyncio.wait_for(store.open_or_create_partition(LIFECYCLE_KEY), 30)
 
     @pytest.mark.asyncio
@@ -335,9 +335,7 @@ class PartitionLifecycleContract:
                 partition_key, reservation.incarnation
             )
             await reservation.confirm()
-            raise VectorStorePartitionAlreadyExistsError(
-                store._vector_store_name, partition_key
-            )
+            raise PartitionAlreadyExistsError(store._vector_store_name, partition_key)
 
         monkeypatch.setattr(registry, "reserve", another_process_wins)
         partition = await store.open_or_create_partition(LIFECYCLE_KEY)
@@ -371,7 +369,7 @@ class PartitionLifecycleContract:
             nonlocal lost
             if not lost:
                 lost = True
-                raise VectorStorePartitionAlreadyExistsError(
+                raise PartitionAlreadyExistsError(
                     store._vector_store_name, partition_key
                 )
             return await reserve(partition_key)
@@ -406,10 +404,10 @@ class PartitionLifecycleContract:
                     else:
                         await store.delete_partition(key)
                 except (
-                    VectorStoreAttemptsExhaustedError,
-                    VectorStorePartitionAlreadyExistsError,
-                    VectorStorePartitionDeletedError,
-                    VectorStorePartitionPendingError,
+                    AttemptsExhaustedError,
+                    PartitionAlreadyExistsError,
+                    PartitionDeletedError,
+                    PartitionPendingError,
                 ):
                     pass
 

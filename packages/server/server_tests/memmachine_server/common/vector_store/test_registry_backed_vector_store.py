@@ -13,6 +13,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionPendingError,
     Registration,
     sqlalchemy_partition_registry,
 )
@@ -24,10 +28,6 @@ from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store import (
     QueryResult,
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionPendingError,
     VectorStoreSchema,
     registry_backed_vector_store,
 )
@@ -167,12 +167,12 @@ async def test_a_partition_is_pending_while_its_storage_is_prepared(store):
     creating = asyncio.create_task(store.create_partition(KEY))
     await started.wait()
 
-    with pytest.raises(VectorStorePartitionPendingError) as pending:
+    with pytest.raises(PartitionPendingError) as pending:
         await store.open_partition(KEY)
-    with pytest.raises(VectorStorePartitionPendingError) as registered:
+    with pytest.raises(PartitionPendingError) as registered:
         await store._partition_registry.resolve(KEY)
     assert pending.value.registered_at == registered.value.registered_at
-    with pytest.raises(VectorStorePartitionAlreadyExistsError):
+    with pytest.raises(PartitionAlreadyExistsError):
         await store.create_partition(KEY)
 
     release.set()
@@ -226,16 +226,14 @@ async def test_open_or_create_gives_up_from_the_race_it_last_lost(store, monkeyp
     monkeypatch.setattr(
         registry_backed_vector_store, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0
     )
-    lost = VectorStorePartitionAlreadyExistsError(store._vector_store_name, KEY)
+    lost = PartitionAlreadyExistsError(store._vector_store_name, KEY)
 
     async def taken(partition_key):
         raise lost
 
     monkeypatch.setattr(store._partition_registry, "reserve", taken)
 
-    with pytest.raises(
-        VectorStoreAttemptsExhaustedError, match="no progress"
-    ) as gave_up:
+    with pytest.raises(AttemptsExhaustedError, match="no progress") as gave_up:
         await store.open_or_create_partition(KEY)
     assert gave_up.value.__cause__ is lost
 
@@ -480,11 +478,11 @@ async def test_a_failed_preparation_the_registry_cannot_undo_stays_pending_until
             await store.create_partition(KEY)
     store.prepare = _prepared
 
-    with pytest.raises(VectorStorePartitionPendingError):
+    with pytest.raises(PartitionPendingError):
         await store.open_partition(KEY)
-    with pytest.raises(VectorStorePartitionAlreadyExistsError):
+    with pytest.raises(PartitionAlreadyExistsError):
         await store.create_partition(KEY)
-    with pytest.raises(VectorStorePartitionPendingError):
+    with pytest.raises(PartitionPendingError):
         await store.open_or_create_partition(KEY)
 
     await store.delete_partition(KEY)
@@ -504,7 +502,7 @@ async def test_a_partition_deleted_while_its_storage_is_prepared_is_not_marked_l
         await store.delete_partition(KEY)
 
     store.prepare = deleted_meanwhile
-    with pytest.raises(VectorStorePartitionDeletedError):
+    with pytest.raises(PartitionDeletedError):
         await store.create_partition(KEY)
 
     assert await store.open_partition(KEY) is None

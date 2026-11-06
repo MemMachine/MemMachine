@@ -47,6 +47,11 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionHandleStaleError,
+)
 from memmachine_server.common.sql import validate_engine_connections, write_session
 
 from .data_types import (
@@ -54,9 +59,6 @@ from .data_types import (
     QueryMatch,
     QueryResult,
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionHandleStaleError,
     VectorStoreSchema,
 )
 from .sqlite_properties import (
@@ -568,7 +570,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
             )
         ).scalar_one_or_none()
         if current is None:
-            raise VectorStorePartitionHandleStaleError(
+            raise PartitionHandleStaleError(
                 self._vector_store_name, self._partition_key
             )
 
@@ -805,7 +807,7 @@ class SQLiteVectorStore(VectorStore):
                 )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise VectorStoreAttemptsExhaustedError(
+                    raise AttemptsExhaustedError(
                         f"Creating partition {partition_key!r} made no progress "
                         f"after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err
@@ -833,7 +835,7 @@ class SQLiteVectorStore(VectorStore):
             try:
                 await self._insert_partition(partition_key, incarnation)
             except (
-                VectorStorePartitionAlreadyExistsError,
+                PartitionAlreadyExistsError,
                 _RegistryInsertRejectedError,
             ) as err:
                 if isinstance(err, _RegistryInsertRejectedError):
@@ -845,7 +847,7 @@ class SQLiteVectorStore(VectorStore):
                     )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise VectorStoreAttemptsExhaustedError(
+                    raise AttemptsExhaustedError(
                         f"Opening or creating partition {partition_key!r} made no "
                         f"progress after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err
@@ -925,7 +927,7 @@ class SQLiteVectorStore(VectorStore):
         transaction.
 
         Raises:
-            VectorStorePartitionAlreadyExistsError:
+            PartitionAlreadyExistsError:
                 If the partition key is taken.
             _RegistryInsertRejectedError:
                 If the insert is rejected for a reason other than the key
@@ -950,7 +952,7 @@ class SQLiteVectorStore(VectorStore):
             async with self._create_session() as session:
                 taken = await self._partition_incarnation(session, partition_key)
             if taken is not None:
-                raise VectorStorePartitionAlreadyExistsError(
+                raise PartitionAlreadyExistsError(
                     self._vector_store_name, partition_key
                 ) from err
             raise _RegistryInsertRejectedError(

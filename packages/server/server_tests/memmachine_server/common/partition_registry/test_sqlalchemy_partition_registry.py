@@ -24,6 +24,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
 
 from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
     Registration,
     Reservation,
 )
@@ -36,13 +41,6 @@ from memmachine_server.common.partition_registry.sqlalchemy_partition_registry i
     _TombstoneClaim,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
-from memmachine_server.common.vector_store.data_types import (
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
-)
 
 RETENTION = timedelta(days=1)
 RETENTION_SECONDS = int(RETENTION.total_seconds())
@@ -302,14 +300,14 @@ async def test_a_partition_is_pending_until_its_reservation_is_confirmed(
 
     pending = await registry.reserve("c")
 
-    with pytest.raises(VectorStorePartitionPendingError) as resolved:
+    with pytest.raises(PartitionPendingError) as resolved:
         await registry.resolve("c")
     assert resolved.value.registered_at.tzinfo is not None
     await pending.confirm()
     live = await registry.resolve("c")
     assert live is not None
     assert live.incarnation == pending.incarnation
-    with pytest.raises(VectorStorePartitionDeletedError):
+    with pytest.raises(PartitionDeletedError):
         await pending.confirm()
 
 
@@ -322,14 +320,14 @@ async def test_only_the_reserved_incarnation_is_confirmed(
     registry = await _registry(sqlalchemy_engine, vector_store_name)
     deleted = await registry.reserve("c")
     await registry.unregister("c")
-    with pytest.raises(VectorStorePartitionDeletedError):
+    with pytest.raises(PartitionDeletedError):
         await deleted.confirm()
 
     reserved_since = await registry.reserve("c")
 
-    with pytest.raises(VectorStorePartitionDeletedError):
+    with pytest.raises(PartitionDeletedError):
         await deleted.confirm()
-    with pytest.raises(VectorStorePartitionPendingError):
+    with pytest.raises(PartitionPendingError):
         await registry.resolve("c")
     live = await reserved_since.confirm()
     assert live.incarnation == reserved_since.incarnation
@@ -345,7 +343,7 @@ async def test_cancelling_a_reservation_spares_the_key_reserved_since(
     since = await registry.reserve("c")
 
     await old.cancel()
-    with pytest.raises(VectorStorePartitionPendingError):
+    with pytest.raises(PartitionPendingError):
         await registry.resolve("c")
     assert await _queued(registry) == [old.incarnation]
 
@@ -381,11 +379,11 @@ async def test_a_registration_is_current_until_its_partition_is_deleted(
     await live.require_current()
 
     await registry.unregister("c")
-    with pytest.raises(VectorStorePartitionHandleStaleError):
+    with pytest.raises(PartitionHandleStaleError):
         await live.require_current()
 
     await (await registry.reserve("c")).confirm()
-    with pytest.raises(VectorStorePartitionHandleStaleError):
+    with pytest.raises(PartitionHandleStaleError):
         await live.require_current()
 
 
@@ -396,7 +394,7 @@ async def test_a_taken_key_is_already_exists(sqlalchemy_engine, vector_store_nam
     registration = await registry.reserve("c")
 
     for pending in (True, False):
-        with pytest.raises(VectorStorePartitionAlreadyExistsError):
+        with pytest.raises(PartitionAlreadyExistsError):
             await registry.reserve("c")
         if pending:
             await registration.confirm()
@@ -509,9 +507,9 @@ async def test_registries_of_two_vector_stores_share_a_database_and_nothing_else
     assert still_in_second is not None
     assert still_in_second.incarnation == two.incarnation
     await two.require_current()
-    with pytest.raises(VectorStorePartitionHandleStaleError):
+    with pytest.raises(PartitionHandleStaleError):
         await one.require_current()
-    with pytest.raises(VectorStorePartitionAlreadyExistsError):
+    with pytest.raises(PartitionAlreadyExistsError):
         await second.reserve("c")
 
     assert await _round(second, any_records_found=False) is None
@@ -532,9 +530,7 @@ async def test_concurrent_creators_get_one_winner(sqlalchemy_engine, vector_stor
     )
 
     winners = [r for r in results if isinstance(r, Reservation)]
-    losers = [
-        r for r in results if isinstance(r, VectorStorePartitionAlreadyExistsError)
-    ]
+    losers = [r for r in results if isinstance(r, PartitionAlreadyExistsError)]
     assert len(winners) == 1
     assert len(losers) == 5
     live = await winners[0].confirm()
@@ -1166,7 +1162,7 @@ async def test_creation_that_never_mints_a_free_incarnation_gives_up(
         lambda: dead,
     )
 
-    with pytest.raises(VectorStoreAttemptsExhaustedError):
+    with pytest.raises(AttemptsExhaustedError):
         await registry.reserve("b")
     assert await registry.resolve("b") is None
 
@@ -1534,7 +1530,7 @@ async def test_a_persistent_database_error_surfaces_with_its_cause(
         lambda: None,
     )
 
-    with pytest.raises(VectorStoreAttemptsExhaustedError) as raised:
+    with pytest.raises(AttemptsExhaustedError) as raised:
         await asyncio.wait_for(registry.reserve("a"), 30)
 
     cause: BaseException | None = raised.value
@@ -1724,10 +1720,10 @@ class _OverlapWatch:
 
 
 _REFUSALS = (
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionPendingError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
+    PartitionAlreadyExistsError,
+    PartitionPendingError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
 )
 
 
@@ -1838,7 +1834,7 @@ class _ModelCheckedRegistry:
 
     async def reserve(self, key: str) -> None:
         if key in self.partitions:
-            with pytest.raises(VectorStorePartitionAlreadyExistsError):
+            with pytest.raises(PartitionAlreadyExistsError):
                 await self.registry.reserve(key)
             return
         reservation = await self.registry.reserve(key)
@@ -1858,7 +1854,7 @@ class _ModelCheckedRegistry:
             reservation.incarnation,
             False,
         ):
-            with pytest.raises(VectorStorePartitionDeletedError):
+            with pytest.raises(PartitionDeletedError):
                 await reservation.confirm()
             return
         self.registrations.append(await reservation.confirm())
@@ -1887,7 +1883,7 @@ class _ModelCheckedRegistry:
             return
         incarnation, live = self.partitions[key]
         if not live:
-            with pytest.raises(VectorStorePartitionPendingError):
+            with pytest.raises(PartitionPendingError):
                 await self.registry.resolve(key)
             return
         registration = await self.registry.resolve(key)
@@ -1905,7 +1901,7 @@ class _ModelCheckedRegistry:
         ):
             await registration.require_current()
             return
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await registration.require_current()
 
     async def purge(self, key: str) -> None:
