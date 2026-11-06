@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,7 +25,9 @@ from memmachine_server.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine_server.common.configuration.retrieval_config import RetrievalAgentConf
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.episode_store import (
+    EPISODE_STORAGE_FILTER_FIELD_TYPES,
     Episode,
     EpisodeEntry,
     EpisodeResponse,
@@ -34,8 +37,13 @@ from memmachine_server.common.errors import (
     ResourceNotFoundError,
     SessionNotFoundError,
 )
-from memmachine_server.common.filter.filter_parser import And as FilterAnd
-from memmachine_server.common.filter.filter_parser import Comparison as FilterComparison
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    Ordering,
+    SystemField,
+)
+from memmachine_server.common.filter.filter_parser import parse_filter
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -45,12 +53,18 @@ from memmachine_server.common.sql_lease_lock import (
     SQLLeaseLockService,
 )
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.long_term_memory import (
+    EVENT_BACKEND_FILTER_FIELD_TYPES,
+)
 from memmachine_server.main.memmachine import MemMachine, MemoryType
 from memmachine_server.retrieval_agent.common.agent_api import AgentToolBase
 from memmachine_server.semantic_memory.semantic_memory import with_has_set_ids
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
+)
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
 )
 
 
@@ -452,6 +466,48 @@ async def test_query_search_runs_targeted_memory_tasks(
 
     assert result.episodic_memory is async_episodic.return_value
     assert result.semantic_memory == semantic_features
+
+
+@pytest.mark.asyncio
+async def test_query_search_types_each_memorys_filter_by_its_fields(
+    minimal_conf, patched_resource_manager, monkeypatch
+):
+    parsed: list[tuple[str | None, Mapping[str, PropertyType]]] = []
+
+    def _spy_parse(spec: str | None, *, system_fields: Mapping[str, PropertyType]):
+        parsed.append((spec, system_fields))
+        return parse_filter(spec, system_fields=system_fields)
+
+    monkeypatch.setattr("memmachine_server.main.memmachine.parse_filter", _spy_parse)
+    async_episodic = AsyncMock(return_value=None)
+    monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
+
+    async def mock_search(*args, **kwargs):
+        return
+        yield
+
+    semantic_manager = MagicMock()
+    semantic_manager.search = mock_search
+    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+        return_value=semantic_manager
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    await memmachine.query_search(
+        DummySessionData("s1"),
+        target_memories=[MemoryType.Episodic, MemoryType.Semantic],
+        query="hello world",
+        search_filter="created_at > date('2024-01-01')",
+    )
+
+    assert parsed == [
+        ("created_at > date('2024-01-01')", EVENT_BACKEND_FILTER_FIELD_TYPES),
+        ("created_at > date('2024-01-01')", SEMANTIC_STORAGE_FILTER_FIELD_TYPES),
+    ]
+    assert async_episodic.await_args is not None
+    assert async_episodic.await_args.kwargs["search_filter"] == Ordering(
+        SystemField("created_at"), ">", datetime(2024, 1, 1, tzinfo=UTC)
+    )
 
 
 @pytest.mark.asyncio
@@ -1185,11 +1241,7 @@ async def test_count_episodes_filters_by_session_only(
 
     assert result == 7
     episode_storage.get_episode_messages_count.assert_awaited_once_with(
-        filter_expr=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        )
+        filter_expr=Equals(field=SystemField("session_key"), value=session.session_key)
     )
 
 
@@ -1199,11 +1251,11 @@ async def test_count_episodes_combines_search_filter(
 ):
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
     session = DummySessionData("session-with-filter")
-    custom_filter = FilterComparison(field="topic", op="=", value="alpha")
-    parsed_specs: list[str] = []
+    custom_filter = Equals(field=SystemField("topic"), value="alpha")
+    parsed_specs: list[tuple[str, Mapping[str, PropertyType]]] = []
 
-    def _fake_parse(spec: str | None):
-        parsed_specs.append(spec or "")
+    def _fake_parse(spec: str | None, *, system_fields: Mapping[str, PropertyType]):
+        parsed_specs.append((spec or "", system_fields))
         return custom_filter
 
     monkeypatch.setattr("memmachine_server.main.memmachine.parse_filter", _fake_parse)
@@ -1217,18 +1269,16 @@ async def test_count_episodes_combines_search_filter(
     result = await memmachine.episodes_count(session, search_filter="topic = 'alpha'")
 
     assert result == 3
-    assert parsed_specs == ["topic = 'alpha'"]
+    assert parsed_specs == [("topic = 'alpha'", EPISODE_STORAGE_FILTER_FIELD_TYPES)]
 
     await_args = episode_storage.get_episode_messages_count.await_args
     assert await_args is not None
     combined_filter = await_args.kwargs["filter_expr"]
-    assert combined_filter == FilterAnd(
-        left=FilterComparison(
-            field="session_key",
-            op="=",
-            value=session.session_key,
-        ),
-        right=custom_filter,
+    assert combined_filter == And(
+        (
+            Equals(field=SystemField("session_key"), value=session.session_key),
+            custom_filter,
+        )
     )
 
 

@@ -51,11 +51,7 @@ from sqlalchemy.orm import (
     mapped_column,
 )
 
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-    demangle_user_metadata_key,
-    normalize_filter_field,
-)
+from memmachine_server.common.filter import FilterExpr, Property, SystemField
 from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
@@ -841,22 +837,22 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
     @staticmethod
     def _resolve_segment_field(
-        field: str,
+        field: SystemField | Property,
         *,
         columns: ColumnCollection[str, ColumnElement],
     ) -> tuple[ColumnElement, FieldEncoding]:
         """
-        Map a filter field name to one of `columns` and its encoding.
+        Map a filter field to one of `columns` and its encoding.
 
         Raises ValueError for an unknown field.
         """
-        if field == "timestamp":
-            return columns.timestamp, "column"
-        internal_name, is_user_metadata = normalize_filter_field(field)
-        if not is_user_metadata:
-            raise ValueError(f"Filter field {field!r} names no segment property.")
-        key = demangle_user_metadata_key(internal_name)
-        return columns.properties[key], "properties_json"
+        match field:
+            case SystemField(name="timestamp"):
+                return columns.timestamp, "column"
+            case Property(key=key):
+                return columns.properties[key], "properties_json"
+            case SystemField(name=name):
+                raise ValueError(f"Filter field {name!r} names no segment property.")
 
     def _segment_from_segment_row(self, row: SegmentRow) -> Segment:
         """Convert a SegmentRow into a Segment."""

@@ -8,9 +8,14 @@ import pytest
 
 from memmachine_server.common.episode_store import EpisodeEntry, EpisodeStorage
 from memmachine_server.common.errors import InvalidSetIdConfigurationError
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
-from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+    SemanticStorage,
+)
 from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (
     SpyEmbedder,
     add_history,
@@ -221,7 +226,10 @@ async def test_get_set_features_filters_by_tag(
     filtered = await _collect_async(
         semantic_service.get_set_features(
             set_ids=["user-42"],
-            filter_expr=parse_filter("tag IN ('writing_style')"),
+            filter_expr=parse_filter(
+                "tag IN ('writing_style')",
+                system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+            ),
         )
     )
 
@@ -308,7 +316,9 @@ async def test_delete_feature_set_applies_filters(
 
     # When deleting by tag filter
     filter_str = "tag in ('writing_style')"
-    filter_expr = parse_filter(filter_str)
+    filter_expr = parse_filter(
+        filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+    )
     assert filter_expr is not None
 
     await semantic_service.delete_feature_set(

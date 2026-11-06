@@ -27,16 +27,17 @@ from memmachine_server.common.data_types import (
 from memmachine_server.common.episode_store import Episode
 from memmachine_server.common.episode_store.episode_model import episodes_to_string
 from memmachine_server.common.errors import ShortTermMemoryClosedError
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
     IsNull,
     Not,
     Or,
-    demangle_user_metadata_key,
-    normalize_filter_field,
+    Ordering,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.session_manager.session_data_manager import (
@@ -284,9 +285,12 @@ class ShortTermMemory:
         b: PropertyValue,
         op: str,
     ) -> bool:
-        """Safely compare two filterable property values for ordering operators."""
+        """Safely compare two filterable property values for ordering operators.
+
+        An int and a float are one numeric type, compared exactly by value.
+        """
         comparisons = (
-            ((int, float), lambda x, y: (float(x), float(y))),
+            ((int, float), lambda x, y: (x, y)),
             (str, lambda x, y: (x, y)),
             (datetime, lambda x, y: (x, y)),
         )
@@ -320,46 +324,42 @@ class ShortTermMemory:
         """Check if an episode matches the given filter expression."""
         if expr is None:
             return True
-        if isinstance(expr, Comparison):
-            value = self._resolve_field(episode, expr.field)
-            return self._compare(value, expr.op, expr.value)
-        if isinstance(expr, In):
-            value = self._resolve_field(episode, expr.field)
-            return value in expr.values
-        if isinstance(expr, IsNull):
-            value = self._resolve_field(episode, expr.field)
-            return value is None
-        if isinstance(expr, And):
-            return self._check_filter(episode, expr.left) and self._check_filter(
-                episode, expr.right
-            )
-        if isinstance(expr, Or):
-            return self._check_filter(episode, expr.left) or self._check_filter(
-                episode, expr.right
-            )
-        if isinstance(expr, Not):
-            return not self._check_filter(episode, expr.expr)
-        raise TypeError(f"Unsupported filter type: {type(expr)!r}")
+        match expr:
+            case Equals(field, value):
+                return self._compare(self._resolve_field(episode, field), "=", value)
+            case Ordering(field, op, value):
+                return self._compare(self._resolve_field(episode, field), op, value)
+            case In(field, values):
+                return self._resolve_field(episode, field) in values
+            case IsNull(field):
+                return self._resolve_field(episode, field) is None
+            case And(operands):
+                return all(self._check_filter(episode, o) for o in operands)
+            case Or(operands):
+                return any(self._check_filter(episode, o) for o in operands)
+            case Not(operand):
+                return not self._check_filter(episode, operand)
 
-    def _resolve_field(self, episode: Episode, field: str) -> PropertyValue | None:
-        """Resolve a field name to its value from an episode."""
-        internal_name, is_user_metadata = normalize_filter_field(field)
-        if is_user_metadata:
-            key = demangle_user_metadata_key(internal_name)
-            if episode.filterable_metadata and isinstance(
-                episode.filterable_metadata, dict
-            ):
-                return episode.filterable_metadata.get(key)
-            return None
-        match internal_name:
-            case "producer_id":
+    def _resolve_field(
+        self, episode: Episode, field: SystemField | Property
+    ) -> PropertyValue | None:
+        """Resolve a field to its value from an episode."""
+        match field:
+            case Property(key=key):
+                if episode.filterable_metadata and isinstance(
+                    episode.filterable_metadata, dict
+                ):
+                    return episode.filterable_metadata.get(key)
+                return None
+            case SystemField(name="producer_id"):
                 return episode.producer_id
-            case "produced_for_id":
+            case SystemField(name="produced_for_id"):
                 return episode.produced_for_id
-            case "producer_role":
+            case SystemField(name="producer_role"):
                 return episode.producer_role
-        logger.warning("Unsupported filter field: %s", field)
-        return None
+            case SystemField(name=name):
+                logger.warning("Unsupported filter field: %s", name)
+                return None
 
     def _compare(
         self,
@@ -378,8 +378,6 @@ class ShortTermMemory:
             expected = ensure_tz_aware(expected)
         if op == "=":
             return value == expected
-        if op == "!=":
-            return value != expected
         if value is None:
             return False
         return self._safe_compare(value, expected, op)

@@ -22,6 +22,7 @@ from memmachine_server.common.configuration.episodic_config import (
 )
 from memmachine_server.common.configuration.retrieval_config import RetrievalAgentConf
 from memmachine_server.common.episode_store import (
+    EPISODE_STORAGE_FILTER_FIELD_TYPES,
     Episode,
     EpisodeEntry,
     EpisodeResponse,
@@ -32,14 +33,8 @@ from memmachine_server.common.errors import (
     ResourceNotReadyError,
     SessionNotFoundError,
 )
+from memmachine_server.common.filter import And, Equals, FilterExpr, SystemField
 from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
     parse_filter,
     to_property_filter,
 )
@@ -52,6 +47,9 @@ from memmachine_server.common.session_manager.session_data_manager import (
 )
 from memmachine_server.common.sql_lease_lock import LockAcquireTimeoutError
 from memmachine_server.episodic_memory import EpisodicMemory
+from memmachine_server.episodic_memory.long_term_memory import (
+    EVENT_BACKEND_FILTER_FIELD_TYPES,
+)
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     deployment_event_memory_ids,
 )
@@ -77,7 +75,10 @@ from memmachine_server.semantic_memory.semantic_model import (
 from memmachine_server.semantic_memory.semantic_session_manager import (
     SemanticSessionManager,
 )
-from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+    SemanticStorage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -459,11 +460,7 @@ class MemMachine:
         semantic_storage: SemanticStorage | None,
     ) -> None:
         episode_store = await self._resources.get_episode_storage()
-        session_filter = FilterComparison(
-            field="session_key",
-            op="=",
-            value=session_key,
-        )
+        session_filter = Equals(field=SystemField("session_key"), value=session_key)
         while True:
             episode_ids = await episode_store.get_episode_ids(
                 filter_expr=session_filter,
@@ -773,7 +770,7 @@ class MemMachine:
             return right
         if right is None:
             return left
-        return FilterAnd(left=left, right=right)
+        return And((left, right))
 
     def _should_dispatch_to_semantic_memory(
         self, target_memories: list[MemoryType]
@@ -1151,8 +1148,23 @@ class MemMachine:
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
-        property_filter = parse_filter(search_filter) if search_filter else None
-        if MemoryType.Episodic in target_memories:
+        # Each memory's filter is typed by that memory's fields, and every one
+        # is parsed before any search starts.
+        search_episodic = MemoryType.Episodic in target_memories
+        search_semantic = self._should_dispatch_to_semantic_memory(target_memories)
+        episodic_filter = (
+            parse_filter(search_filter, system_fields=EVENT_BACKEND_FILTER_FIELD_TYPES)
+            if search_episodic
+            else None
+        )
+        semantic_filter = (
+            parse_filter(
+                search_filter, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+            if search_semantic
+            else None
+        )
+        if search_episodic:
             retrieval_agent = await self._get_retrieval_agent() if agent_mode else None
             episodic_task = asyncio.create_task(
                 self._search_episodic_memory(
@@ -1161,12 +1173,12 @@ class MemMachine:
                     limit=limit,
                     expand_context=expand_context,
                     score_threshold=score_threshold,
-                    search_filter=property_filter,
+                    search_filter=episodic_filter,
                     retrieval_agent=retrieval_agent,
                 )
             )
 
-        if self._should_dispatch_to_semantic_memory(target_memories):
+        if search_semantic:
             semantic_session = await self._resources.get_semantic_session_manager()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
@@ -1177,7 +1189,7 @@ class MemMachine:
                         session_data=session_data,
                         set_metadata=set_metadata,
                         limit=limit,
-                        search_filter=property_filter,
+                        search_filter=semantic_filter,
                     )
                 ]
 
@@ -1219,21 +1231,36 @@ class MemMachine:
             Aggregated list results across memory types.
 
         """
-        search_filter_expr = parse_filter(search_filter) if search_filter else None
+        # Each memory's filter is typed by that memory's fields, and every one
+        # is parsed before any listing starts.
+        list_episodic = MemoryType.Episodic in target_memories
+        list_semantic = self._should_dispatch_to_semantic_memory(target_memories)
+        episodic_filter = (
+            parse_filter(
+                search_filter, system_fields=EPISODE_STORAGE_FILTER_FIELD_TYPES
+            )
+            if list_episodic
+            else None
+        )
+        semantic_filter = (
+            parse_filter(
+                search_filter, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+            if list_semantic
+            else None
+        )
 
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
-        if MemoryType.Episodic in target_memories:
+        if list_episodic:
             episode_storage = await self._resources.get_episode_storage()
-            session_filter = FilterComparison(
-                field="session_key",
-                op="=",
-                value=session_data.session_key,
+            session_filter = Equals(
+                field=SystemField("session_key"), value=session_data.session_key
             )
             combined_filter = self._merge_filter_exprs(
                 session_filter,
-                search_filter_expr,
+                episodic_filter,
             )
             episodic_task = asyncio.create_task(
                 episode_storage.get_episode_messages(
@@ -1243,7 +1270,7 @@ class MemMachine:
                 )
             )
 
-        if self._should_dispatch_to_semantic_memory(target_memories):
+        if list_semantic:
             semantic_session = await self._resources.get_semantic_session_manager()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
@@ -1252,7 +1279,7 @@ class MemMachine:
                     async for feature in semantic_session.get_set_features(
                         session_data=session_data,
                         set_metadata=set_metadata,
-                        search_filter=search_filter_expr,
+                        search_filter=semantic_filter,
                         page_size=page_size,
                         page_num=page_num,
                     )
@@ -1287,13 +1314,13 @@ class MemMachine:
         """
         episode_storage = await self._resources.get_episode_storage()
 
-        session_filter = FilterComparison(
-            field="session_key",
-            op="=",
-            value=session_data.session_key,
+        session_filter = Equals(
+            field=SystemField("session_key"), value=session_data.session_key
         )
 
-        search_filter_expr = parse_filter(search_filter) if search_filter else None
+        search_filter_expr = parse_filter(
+            search_filter, system_fields=EPISODE_STORAGE_FILTER_FIELD_TYPES
+        )
         combined_filter = self._merge_filter_exprs(session_filter, search_filter_expr)
 
         return await episode_storage.get_episode_messages_count(

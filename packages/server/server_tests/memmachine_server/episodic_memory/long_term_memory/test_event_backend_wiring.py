@@ -30,8 +30,12 @@ from memmachine_server.common.episode_store import (
     EpisodeEntry,
     EpisodeStorage,
 )
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    Ordering,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.property_keys import reserved_property_key
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
@@ -343,7 +347,7 @@ async def test_user_metadata_filter_round_trips(
     long_term_memory,
     fake_episode_storage,
 ):
-    """`m.<field>` filter on the client-API translates to bare field on storage."""
+    """A property compares the caller's key, which is the key it is stored under."""
     episodes = [
         Episode(
             uid=_uid("m-1"),
@@ -370,7 +374,7 @@ async def test_user_metadata_filter_round_trips(
     scored = await long_term_memory.query(
         "fruit",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="m.color", op="=", value="red"),
+        property_filter=Equals(field=Property("color"), value="red"),
     )
     uids = {ep.uid for _, ep in scored}
     assert uids == {_uid("m-1")}
@@ -419,13 +423,14 @@ async def test_system_field_filter_round_trips(
     scored = await long_term_memory.query(
         "msg",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="producer_role", op="=", value="user"),
+        property_filter=Equals(field=SystemField("producer_role"), value="user"),
     )
 
     assert {ep.uid for _, ep in scored} == {_uid("s-1")}
     assert seen == [
-        FilterComparison(
-            field=reserved_property_key("ltm", "producer_role"), op="=", value="user"
+        Equals(
+            field=Property(reserved_property_key("ltm", "producer_role"), str),
+            value="user",
         )
     ]
 
@@ -436,50 +441,83 @@ async def test_a_filter_on_a_reserved_key_raises(long_term_memory):
         await long_term_memory.query(
             "msg",
             num_episodes_limit=10,
-            property_filter=FilterComparison(
-                field=f"m.{reserved_property_key('ltm', 'producer_id')}",
-                op="=",
+            property_filter=Equals(
+                field=Property(reserved_property_key("ltm", "producer_id")),
                 value="alice",
             ),
         )
 
 
-async def test_unknown_bare_filter_field_raises(long_term_memory):
-    """Typo'd bare system field surfaces as ValueError, not silent empty.
+async def test_event_memory_gets_each_system_field_as_its_stored_property(
+    long_term_memory, monkeypatch
+):
+    """The timestamp is EventMemory's own, and a caller's property is unchanged."""
+    seen = []
+    event_memory_partition = long_term_memory._memory
+    query = event_memory_partition.query
 
-    Without this guard, segment store / vector store would treat the unknown
-    name as an exact JSON property lookup and silently return zero results.
-    """
+    async def spy(*args, **kwargs):
+        seen.append(kwargs["property_filter"])
+        return await query(*args, **kwargs)
+
+    monkeypatch.setattr(event_memory_partition, "query", spy)
+    instant = datetime(2000, 1, 1, tzinfo=UTC)
+
+    await long_term_memory.query(
+        "msg",
+        num_episodes_limit=10,
+        property_filter=And(
+            (
+                Equals(SystemField("producer_id"), "alice"),
+                Ordering(SystemField("timestamp"), ">=", instant),
+                Equals(Property("color"), "red"),
+            )
+        ),
+    )
+
+    assert seen == [
+        And(
+            (
+                Equals(
+                    Property(reserved_property_key("ltm", "producer_id"), str), "alice"
+                ),
+                Ordering(SystemField("timestamp"), ">=", instant),
+                Equals(Property("color"), "red"),
+            )
+        )
+    ]
+
+
+async def test_unknown_bare_filter_field_raises(long_term_memory):
+    """Typo'd system field surfaces as ValueError, not silent empty."""
     with pytest.raises(ValueError, match="Unknown filter field 'producre_id'"):
         await long_term_memory.query(
             "msg",
             num_episodes_limit=10,
-            property_filter=FilterComparison(
-                field="producre_id", op="=", value="alice"
-            ),
+            property_filter=Equals(field=SystemField("producre_id"), value="alice"),
         )
 
 
 async def test_any_user_metadata_field_is_accepted(long_term_memory):
-    """Any `m.<x>` outside the reserved namespace is a valid filter field."""
+    """Any property outside the reserved namespace is a valid filter field."""
     # Doesn't raise.
     scored = await long_term_memory.query(
         "msg",
         num_episodes_limit=10,
-        property_filter=FilterComparison(field="m.anything", op="=", value="x"),
+        property_filter=Equals(field=Property("anything"), value="x"),
     )
     assert scored == []
 
 
 async def test_timestamp_filter_field_is_accepted(long_term_memory, episodes):
-    """`timestamp` is a valid bare filter field (segment store has it as a column)."""
+    """`timestamp` is a valid system field (segment store has it as a column)."""
     await long_term_memory.add_episodes(episodes)
     # Doesn't raise; whether anything matches depends on the embedder/score path.
     await long_term_memory.query(
         "anything",
         num_episodes_limit=10,
-        property_filter=FilterComparison(
-            field="timestamp",
+        property_filter=Ordering(
+            field=SystemField("timestamp"),
             op=">=",
             value=datetime(2000, 1, 1, tzinfo=UTC),
         ),

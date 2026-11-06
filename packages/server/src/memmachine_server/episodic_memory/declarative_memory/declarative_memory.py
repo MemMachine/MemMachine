@@ -12,8 +12,10 @@ from pydantic import BaseModel, Field, InstanceOf
 
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.embedder.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     FilterExpr,
+    Property,
+    SystemField,
     map_filter_fields,
 )
 from memmachine_server.common.reranker.reranker import Reranker
@@ -293,13 +295,17 @@ class DeclarativeMemory:
                 around each matched episode for additional context
                 (default: 0).
             property_filter (FilterExpr | None):
-                Filterable property keys and values
-                to use for filtering episodes
+                Filter on the episodes' filterable properties,
+                each a `Property` by its key
                 (default: None).
 
         Returns:
             list[Episode]:
                 A list of episodes relevant to the query, ordered chronologically.
+
+        Raises:
+            ValueError:
+                If the filter names a system field.
 
         """
         scored_episodes = await self.search_scored(
@@ -332,13 +338,17 @@ class DeclarativeMemory:
                 around each matched episode for additional context
                 (default: 0).
             property_filter (FilterExpr | None):
-                Filterable property keys and values
-                to use for filtering episodes
+                Filter on the episodes' filterable properties,
+                each a `Property` by its key
                 (default: None).
 
         Returns:
             list[tuple[float, Episode]]:
                 A list of scored episodes relevant to the query, ordered chronologically.
+
+        Raises:
+            ValueError:
+                If the filter names a system field.
 
         """
         mangled_property_filter = DeclarativeMemory._mangle_property_filter(
@@ -725,4 +735,15 @@ class DeclarativeMemory:
         if property_filter is None:
             return None
 
-        return map_filter_fields(property_filter, mangle_property_key)
+        return map_filter_fields(property_filter, DeclarativeMemory._mangled_field)
+
+    @staticmethod
+    def _mangled_field(field: SystemField | Property) -> Property:
+        match field:
+            case Property(key=key, type=declared):
+                return Property(mangle_property_key(key), declared)
+            case SystemField(name=name):
+                raise ValueError(
+                    f"Declarative memory filters on properties only, "
+                    f"not the system field {name!r}"
+                )

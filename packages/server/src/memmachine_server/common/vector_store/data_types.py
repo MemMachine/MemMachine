@@ -28,6 +28,10 @@ from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
 
+MIN_INT_VALUE = -(2**63)
+MAX_INT_VALUE = 2**63 - 1
+"""The range of an int a record or a filter holds: every backend holds an int in 64 signed bits."""
+
 
 def _coerce_property_types(value: object) -> object:
     # A caller may name a type or pass the type itself.
@@ -199,18 +203,38 @@ class UndeclaredPropertyKeyError(ValueError):
 
 
 class PropertyTypeMismatchError(ValueError):
-    """Raised when a record's value is not of its key's declared type."""
+    """
+    Raised when a record's or a filter's value is not one its key's declared type holds.
 
-    def __init__(self, key: str, declared: PropertyType, value: PropertyValue) -> None:
-        """Initialize with the key, its declared type and the offending value."""
+    An int is of a float key's type, as the float it equals, and a bool is
+    never a number; a float key holds and is compared with finite values
+    only, and any key with ints in 64 signed bits only. The message says
+    which of these the value breaks.
+    """
+
+    def __init__(
+        self,
+        key: str,
+        declared: PropertyType,
+        value: PropertyValue,
+        problem: str | None = None,
+    ) -> None:
+        """Initialize with the key, its declared type, the offending value and, when its type is admitted, what else is wrong with it."""
         self.key = key
         self.declared = declared
         self.value = value
-        super().__init__(
-            f"Property {key!r} is declared as "
-            f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}, "
-            f"got {type(value).__name__} {value!r}."
-        )
+        if problem is None:
+            message = (
+                f"Property {key!r} is declared as "
+                f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}, "
+                f"got {type(value).__name__} {value!r}."
+            )
+        else:
+            message = (
+                f"Property {key!r} got {type(value).__name__} {value!r}, "
+                f"which is {problem}."
+            )
+        super().__init__(message)
 
 
 class Record(BaseModel):

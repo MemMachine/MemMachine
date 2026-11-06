@@ -8,19 +8,18 @@ from uuid import UUID, uuid5
 
 from pydantic import JsonValue
 
-from memmachine_server.common.data_types import PropertyValue
+from memmachine_server.common.data_types import PropertyType, PropertyValue
 from memmachine_server.common.episode_store import (
     ContentType,
     Episode,
     EpisodeStorage,
     EpisodeType,
 )
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     FilterExpr,
-    demangle_user_metadata_key,
-    mangle_user_metadata_key,
+    Property,
+    SystemField,
     map_filter_fields,
-    normalize_filter_field,
 )
 from memmachine_server.common.property_keys import (
     is_reserved_property_key,
@@ -95,6 +94,11 @@ EVENT_BACKEND_SYSTEM_FIELDS: dict[str, type[PropertyValue]] = {
 _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES: frozenset[str] = frozenset(
     _SYSTEM_FIELD_KEYS
 ) | {"timestamp"}
+
+# The type of each system field a filter may name on the event backend.
+EVENT_BACKEND_FILTER_FIELD_TYPES: dict[str, PropertyType] = {
+    name: EVENT_BACKEND_SYSTEM_FIELDS[key] for name, key in _SYSTEM_FIELD_KEYS.items()
+} | {"timestamp": datetime.datetime}
 
 # Filterable-metadata sentinel: Episode.filterable_metadata=None vs {} carry
 # different semantics in the declarative backend; preserve that here too.
@@ -242,7 +246,7 @@ class LongTermMemory:
         property_filter: FilterExpr | None,
     ) -> list[tuple[float, Episode]]:
         assert self._episode_storage is not None
-        self._validate_event_backend_filter(property_filter)
+        event_memory_filter = LongTermMemory._event_memory_filter(property_filter)
         # `expand_context` is a window of segments, the unit EventMemory and
         # the segment store work in: neither knows episodes. Under the
         # passthrough segmenter one segment is one episode, and the window is
@@ -266,11 +270,7 @@ class LongTermMemory:
             query,
             vector_search_limit=vector_search_limit,
             expand_context=expand_context,
-            property_filter=map_filter_fields(
-                property_filter, LongTermMemory._event_memory_filter_field
-            )
-            if property_filter is not None
-            else None,
+            property_filter=event_memory_filter,
         )
 
         if expand_context > 0:
@@ -464,58 +464,57 @@ class LongTermMemory:
         if property_filter is None:
             return None
         return map_filter_fields(
-            property_filter,
-            lambda field: normalize_filter_field(field)[0],
+            property_filter, LongTermMemory._declarative_memory_field
         )
+
+    @staticmethod
+    def _declarative_memory_field(field: SystemField | Property) -> Property:
+        """The filterable property that stores a filter's field on the declarative backend."""
+        match field:
+            case SystemField(name=name):
+                return Property(name)
+            case Property(key=key):
+                return Property(LongTermMemory._mangle_filterable_metadata_key(key))
 
     # --- Episode <-> Event translation (event backend) ---
 
     @staticmethod
-    def _event_memory_filter_field(field: str) -> str:
-        """The EventMemory filter field a client filter field names.
-
-        A system field's bare name names its reserved key as a property;
-        any other name is the same field in both.
-        """
-        key = _SYSTEM_FIELD_KEYS.get(field)
-        if key is None:
-            return field
-        return mangle_user_metadata_key(key)
-
-    def _validate_event_backend_filter(
-        self,
+    def _event_memory_filter(
         property_filter: FilterExpr | None,
-    ) -> None:
-        """Reject filter fields that name no system field or a reserved key.
+    ) -> FilterExpr | None:
+        """The filter EventMemory takes in the place of a caller's.
 
-        A `m.<key>` / `metadata.<key>` name may be any caller key outside
-        the reserved namespace; a bare name is a system field or a mistake.
+        Each of the adapter's system fields becomes the property that stores
+        it under its reserved key, with its declared type; any other field
+        is the same field in both, and a caller's property in the reserved
+        namespace raises ValueError.
         """
         if property_filter is None:
-            return
+            return None
+        return map_filter_fields(property_filter, LongTermMemory._event_memory_field)
 
-        def _check(field: str) -> str:
-            internal_name, is_user_metadata = normalize_filter_field(field)
-            if is_user_metadata:
-                if is_reserved_property_key(demangle_user_metadata_key(internal_name)):
-                    raise ValueError(
-                        f"Filter field {field!r} names a reserved key; filter "
-                        f"a system field by its bare name: "
-                        f"{sorted(_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES)}."
-                    )
+    @staticmethod
+    def _event_memory_field(field: SystemField | Property) -> SystemField | Property:
+        match field:
+            case SystemField(name="timestamp"):
                 return field
-            if field not in _EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES:
+            case SystemField(name=name) if name in _SYSTEM_FIELD_KEYS:
+                key = _SYSTEM_FIELD_KEYS[name]
+                return Property(key, EVENT_BACKEND_SYSTEM_FIELDS[key])
+            case SystemField(name=name):
                 raise ValueError(
-                    f"Unknown filter field {field!r}. Valid system fields: "
+                    f"Unknown filter field {name!r}. Valid system fields: "
                     f"{sorted(_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES)}; "
                     "use 'm.<name>' for user metadata."
                 )
-            return field
-
-        # `map_filter_fields` walks the whole tree; we use it for its side
-        # effect of invoking `_check` on every leaf field. The returned tree
-        # is discarded.
-        map_filter_fields(property_filter, _check)
+            case Property(key=key) if is_reserved_property_key(key):
+                raise ValueError(
+                    f"Filter field {key!r} names a reserved key; filter "
+                    f"a system field by its bare name: "
+                    f"{sorted(_EVENT_BACKEND_SYSTEM_FIELD_CLIENT_NAMES)}."
+                )
+            case Property():
+                return field
 
     async def _unified_scored_event_episodes(
         self,
@@ -665,9 +664,8 @@ class LongTermMemory:
         - Context: ProducerContext for messages; NullContext otherwise.
         - One TextBlock per event (Episode.content is a string today).
         - Properties: system fields under the adapter's reserved keys, user
-          filterable metadata under its own keys; a search names a system
-          field by its bare name (`producer_id`) and a user key as
-          `m.<key>`.
+          filterable metadata under its own keys, as `_event_memory_filter`
+          resolves a filter's fields.
 
         A user key must be a legal user property key
         (`validate_user_property_key`): one in the reserved namespace would

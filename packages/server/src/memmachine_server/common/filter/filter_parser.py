@@ -1,110 +1,44 @@
-"""Module for parsing filter strings into dictionaries."""
+"""
+The server's textual filter language, parsed into filter expression trees.
+
+The HTTP API still speaks this language, so the parser stays as the server's
+translation into the tree in `filter_expression`; the tree is what every
+store compiles, and nothing below the API boundary parses text. The parser
+resolves each field name once: `m.<key>` and `metadata.<key>` name the
+property `<key>`, and any other name is a system field. It types each
+literal compared with a system field of a static type by that type; a
+literal compared with a property keeps its own type.
+"""
 
 import re
-from collections.abc import Callable
-from collections.abc import Set as AbstractSet
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from typing import Literal, NamedTuple, Protocol, cast, runtime_checkable
+from collections.abc import Mapping
+from datetime import datetime
+from typing import NamedTuple, cast
 
-from memmachine_server.common.data_types import PropertyValue
-from memmachine_server.common.utils import ensure_tz_aware
+from memmachine_server.common.data_types import (
+    PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
+    OrderedValue,
+    PropertyType,
+    PropertyValue,
+)
+
+from .filter_expression import (
+    And,
+    Equals,
+    FilterExpr,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
+    OrderingOp,
+    Property,
+    SystemField,
+)
 
 
 class FilterParseError(ValueError):
     """Raised when the textual filter specification is invalid."""
-
-
-@runtime_checkable
-class FilterExpr(Protocol):
-    """Marker protocol for filter expression nodes.
-
-    A value-carrying node normalizes datetime values to UTC-aware
-    instants at construction (naive means UTC); compilers rely on this
-    and bind instants without re-normalizing.
-    """
-
-
-ComparisonOp = Literal["=", "!=", ">", "<", ">=", "<="]
-
-
-@dataclass(frozen=True)
-class Comparison(FilterExpr):
-    """Scalar comparison of a field against a value."""
-
-    field: str
-    op: ComparisonOp
-    value: PropertyValue
-
-    def __post_init__(self) -> None:
-        """Normalize a datetime value to a UTC-aware instant.
-
-        The filter language defines datetime semantics: a value denotes
-        an instant, and a naive value means UTC. Normalizing at node
-        construction hands every consumer -- parsed and programmatically
-        built trees alike -- UTC-aware instants; compilers only choose a
-        representation.
-        """
-        if isinstance(self.value, datetime):
-            object.__setattr__(
-                self, "value", ensure_tz_aware(self.value).astimezone(UTC)
-            )
-
-
-@dataclass(frozen=True)
-class In(FilterExpr):
-    """Membership test of a field against a list of values."""
-
-    field: str
-    values: list[int] | list[str]
-
-    def __post_init__(self) -> None:
-        """Defensively normalize datetime members to UTC-aware instants.
-
-        The declared value types exclude datetimes, but runtime lists
-        are unchecked.
-        """
-        if any(isinstance(value, datetime) for value in self.values):
-            object.__setattr__(
-                self,
-                "values",
-                [
-                    ensure_tz_aware(value).astimezone(UTC)
-                    if isinstance(value, datetime)
-                    else value
-                    for value in self.values
-                ],
-            )
-
-
-@dataclass(frozen=True)
-class IsNull(FilterExpr):
-    """Nullity check on a field (field IS NULL)."""
-
-    field: str
-
-
-@dataclass(frozen=True)
-class And(FilterExpr):
-    """Logical conjunction of two filter expressions."""
-
-    left: FilterExpr
-    right: FilterExpr
-
-
-@dataclass(frozen=True)
-class Or(FilterExpr):
-    """Logical disjunction of two filter expressions."""
-
-    left: FilterExpr
-    right: FilterExpr
-
-
-@dataclass(frozen=True)
-class Not(FilterExpr):
-    """Logical negation of a filter expression."""
-
-    expr: FilterExpr
 
 
 class Token(NamedTuple):
@@ -163,9 +97,7 @@ def _tokenize(s: str) -> list[Token]:
     return tokens
 
 
-_SCALAR_OPS: dict[str, ComparisonOp] = {
-    "EQ": "=",
-    "NE": "!=",
+_ORDERING_OPS: dict[str, OrderingOp] = {
     "GE": ">=",
     "LE": "<=",
     "GT": ">",
@@ -174,9 +106,12 @@ _SCALAR_OPS: dict[str, ComparisonOp] = {
 
 
 class _Parser:
-    def __init__(self, tokens: list[Token]) -> None:
+    def __init__(
+        self, tokens: list[Token], system_fields: Mapping[str, PropertyType]
+    ) -> None:
         self.tokens = tokens
         self.pos = 0
+        self.system_fields = system_fields
 
     def _peek(self) -> Token | None:
         return self.tokens[self.pos] if self.pos < len(self.tokens) else None
@@ -219,10 +154,14 @@ class _Parser:
 
             self.pos += 1
             rhs = self._parse_expression(prec + 1)
+            # A chain of one operator is one n-ary node, so the tree's shape
+            # does not depend on how the text happened to group it.
             if tok.type == "AND":
-                expr = And(left=expr, right=rhs)
+                left = expr.operands if isinstance(expr, And) else (expr,)
+                expr = And((*left, rhs))
             else:
-                expr = Or(left=expr, right=rhs)
+                left = expr.operands if isinstance(expr, Or) else (expr,)
+                expr = Or((*left, rhs))
 
         return expr
 
@@ -232,7 +171,7 @@ class _Parser:
             self._expect("RPAREN")
             return expr
         if self._accept("NOT"):
-            return Not(expr=self._parse_primary())
+            return Not(self._parse_primary())
         return self._parse_predicate()
 
     def _parse_predicate(self) -> FilterExpr:
@@ -240,22 +179,38 @@ class _Parser:
         # - "NOT field IN (...)" is handled in _parse_primary via Not(parse_primary())
         # - "field NOT IN (...)" is handled below as a special case
         # Both produce Not(In(...)).
-        field_tok = self._expect("IDENT")
-        field = field_tok.value
+        name = self._expect("IDENT").value
+        field = _field_reference(name)
+        declared = None if isinstance(field, Property) else self.system_fields.get(name)
 
-        op_tok = self._accept("EQ", "NE", "GE", "LE", "GT", "LT")
+        if self._accept("EQ"):
+            return Equals(field, _typed(name, declared, self._parse_value()))
+        if self._accept("NE"):
+            return Not(Equals(field, _typed(name, declared, self._parse_value())))
+        op_tok = self._accept("GE", "LE", "GT", "LT")
         if op_tok:
-            value = self._parse_value()
-            return Comparison(field=field, op=_SCALAR_OPS[op_tok.type], value=value)
+            return Ordering(
+                field,
+                _ORDERING_OPS[op_tok.type],
+                _typed(name, declared, self._parse_ordered()),
+            )
 
         # IN / NOT IN
         negate = self._accept("NOT") is not None
         if self._accept("IN"):
+            if declared is float or declared is datetime:
+                raise FilterParseError(
+                    f"Field {name} is of type "
+                    f"{PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}, "
+                    "which IN does not compare"
+                )
             values = self._parse_value_list()
-            expr: FilterExpr = In(field=field, values=values)
-            return Not(expr=expr) if negate else expr
+            for value in values:
+                _typed(name, declared, value)
+            expr: FilterExpr = In(field, values)
+            return Not(expr) if negate else expr
         if negate:
-            raise FilterParseError(f"Expected IN after NOT for field {field}")
+            raise FilterParseError(f"Expected IN after NOT for field {name}")
 
         # IS NULL / IS NOT NULL
         if self._accept("IS"):
@@ -265,25 +220,25 @@ class _Parser:
                 raise FilterParseError(
                     "Expected NULL after IS/IS NOT",
                 )
-            expr = IsNull(field=field)
-            return Not(expr=expr) if negate else expr
+            expr = IsNull(field)
+            return Not(expr) if negate else expr
 
         raise FilterParseError(
-            f"Expected operator after field {field}: "
+            f"Expected operator after field {name}: "
             "comparison (=, !=, <>, >, <, >=, <=), "
             "membership (IN, NOT IN), or nullity (IS NULL, IS NOT NULL)"
         )
 
-    def _parse_value_list(self) -> list[int] | list[str]:
+    def _parse_value_list(self) -> tuple[int, ...] | tuple[str, ...]:
         self._expect("LPAREN")
         raw: list[int | str] = [self._parse_in_value()]
         while self._accept("COMMA"):
             raw.append(self._parse_in_value())
         self._expect("RPAREN")
         if all(isinstance(v, int) for v in raw):
-            return cast(list[int], raw)
+            return tuple(cast(list[int], raw))
         if all(isinstance(v, str) for v in raw):
-            return cast(list[str], raw)
+            return tuple(cast(list[str], raw))
         raise FilterParseError(
             "Mixed types in IN list: all values must be int or all str"
         )
@@ -294,6 +249,16 @@ class _Parser:
         if isinstance(value, bool) or not isinstance(value, int | str):
             raise FilterParseError(
                 f"IN lists only support int and str values, got {type(value).__name__}"
+            )
+        return value
+
+    def _parse_ordered(self) -> OrderedValue:
+        """Parse the value of an ordering comparison: a number or a date."""
+        value = self._parse_value()
+        if isinstance(value, bool) or not isinstance(value, int | float | datetime):
+            raise FilterParseError(
+                "Ordering comparisons (>, <, >=, <=) take a number or a date(), "
+                f"got {type(value).__name__}"
             )
         return value
 
@@ -325,6 +290,35 @@ class _Parser:
         return raw
 
 
+def _typed[V: PropertyValue](
+    name: str, declared: PropertyType | None, value: V
+) -> V | float:
+    """The literal as a field of the declared type holds it; a field of no static type takes any literal."""
+    if declared is None:
+        return value
+    if declared is float and type(value) is int:
+        return float(value)
+    # `bool` is an `int` at runtime and is its own property type here.
+    if type(value) is not declared:
+        written = " (written date('...'))" if declared is datetime else ""
+        raise FilterParseError(
+            f"Field {name} is of type {PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME[declared]}"
+            f"{written}, got {type(value).__name__} {value!r}"
+        )
+    return value
+
+
+_PROPERTY_PREFIXES = ("m.", "metadata.")
+
+
+def _field_reference(name: str) -> SystemField | Property:
+    """The field a name denotes: a property after a property prefix, else a system field."""
+    for prefix in _PROPERTY_PREFIXES:
+        if name.startswith(prefix):
+            return Property(name.removeprefix(prefix))
+    return SystemField(name)
+
+
 def _looks_like_float(value: str) -> bool:
     if value.count(".") != 1:
         return False
@@ -332,157 +326,56 @@ def _looks_like_float(value: str) -> bool:
     return bool(left) and bool(right) and left.isdigit() and right.isdigit()
 
 
-# ---------------------------------------------------------------------------
-# Centralized field name normalization utilities
-# ---------------------------------------------------------------------------
-
-# Query language prefixes for user-defined metadata
-USER_METADATA_QUERY_PREFIXES = ("m.", "metadata.")
-
-# Internal storage prefix for user metadata
-USER_METADATA_STORAGE_PREFIX = "metadata."
-
-
-def normalize_filter_field(field: str) -> tuple[str, bool]:
-    """Normalize a query field name to internal storage name.
-
-    Returns (internal_name, is_user_metadata).
-    - User metadata (m.foo, metadata.foo): returns ("metadata.foo", True)
-    - System field (producer_id): returns ("producer_id", False)
-    """
-    for prefix in USER_METADATA_QUERY_PREFIXES:
-        if field.startswith(prefix):
-            key = field.removeprefix(prefix)
-            return f"{USER_METADATA_STORAGE_PREFIX}{key}", True
-    return field, False
-
-
-def mangle_user_metadata_key(key: str) -> str:
-    """Add user metadata prefix to a key for storage."""
-    return USER_METADATA_STORAGE_PREFIX + key
-
-
-def demangle_user_metadata_key(mangled_key: str) -> str:
-    """Remove user metadata prefix from a storage key."""
-    return mangled_key.removeprefix(USER_METADATA_STORAGE_PREFIX)
-
-
-def is_user_metadata_key(candidate_key: str) -> bool:
-    """Check if a key has the user metadata prefix."""
-    return candidate_key.startswith(USER_METADATA_STORAGE_PREFIX)
-
-
-def map_filter_fields(
-    expr: FilterExpr,
-    transform: Callable[[str], str],
-) -> FilterExpr:
-    """Apply a field name transformation to all fields in a FilterExpr tree."""
-    if isinstance(expr, Comparison):
-        return Comparison(field=transform(expr.field), op=expr.op, value=expr.value)
-    if isinstance(expr, In):
-        return In(field=transform(expr.field), values=expr.values)
-    if isinstance(expr, IsNull):
-        return IsNull(field=transform(expr.field))
-    if isinstance(expr, And):
-        return And(
-            left=map_filter_fields(expr.left, transform),
-            right=map_filter_fields(expr.right, transform),
-        )
-    if isinstance(expr, Or):
-        return Or(
-            left=map_filter_fields(expr.left, transform),
-            right=map_filter_fields(expr.right, transform),
-        )
-    if isinstance(expr, Not):
-        return Not(expr=map_filter_fields(expr.expr, transform))
-    raise TypeError(f"Unsupported filter expression type: {type(expr)!r}")
-
-
-def filter_fields(expr: FilterExpr) -> frozenset[str]:
-    """Every field name a filter tree addresses."""
-    if isinstance(expr, (Comparison, In, IsNull)):
-        return frozenset((expr.field,))
-    if isinstance(expr, Not):
-        return filter_fields(expr.expr)
-    if isinstance(expr, (And, Or)):
-        return filter_fields(expr.left) | filter_fields(expr.right)
-    raise TypeError(f"Unsupported filter expression type: {type(expr)}")
-
-
-def extract_filter(
-    expr: FilterExpr, *, allowed_fields: AbstractSet[str]
+def parse_filter(
+    spec: str | None, *, system_fields: Mapping[str, PropertyType]
 ) -> FilterExpr | None:
-    """The part of a filter that names only the allowed fields; None when no part does.
-
-    Every record that matches the filter matches its part.
     """
-    return _extract_filter(expr, allowed_fields, negated=False)
+    Parse a textual filter specification for a system of the given fields.
 
-
-def _extract_filter(
-    expr: FilterExpr, allowed_fields: AbstractSet[str], *, negated: bool
-) -> FilterExpr | None:
-    """The part of a filter under an odd number of negations when `negated`.
-
-    The roles then swap: every record that matches the part matches the
-    filter, so the negation around the part is again the wider one.
+    `system_fields` maps the name of each system field of a static type to
+    that type. A literal compared with one is of its type: an int for a
+    float field is the float it equals, and any other literal of another
+    type, or a membership test on a float or datetime field, raises
+    FilterParseError.
     """
-    if isinstance(expr, Not):
-        part = _extract_filter(expr.expr, allowed_fields, negated=not negated)
-        return None if part is None else Not(expr=part)
-    if isinstance(expr, (And, Or)):
-        left = _extract_filter(expr.left, allowed_fields, negated=negated)
-        right = _extract_filter(expr.right, allowed_fields, negated=negated)
-        if left is not None and right is not None:
-            return type(expr)(left=left, right=right)
-        # Leaving out a side widens an And and narrows an Or; under a
-        # negation, the reverse.
-        if isinstance(expr, And) != negated:
-            return left if right is None else right
-        return None
-    return expr if filter_fields(expr) <= allowed_fields else None
-
-
-def parse_filter(spec: str | None) -> FilterExpr | None:
-    """Parse the given textual filter specification."""
     if spec is None:
         return None
     spec = spec.strip()
     if not spec:
         return None
     tokens = _tokenize(spec)
-    return _Parser(tokens).parse()
+    return _Parser(tokens, system_fields).parse()
 
 
 def to_property_filter(
     expr: FilterExpr | None,
 ) -> dict[str, PropertyValue | None] | None:
-    """Convert a filter expression into a legacy equality mapping."""
+    """Convert a filter expression into a legacy equality mapping, keyed by each field's name or key."""
     if expr is None:
         return None
 
-    comparisons = _flatten_conjunction(expr)
-    if not comparisons:
+    equalities = _flatten_conjunction(expr)
+    if not equalities:
         return None
 
-    property_filter: dict[str, PropertyValue | None] = {}
-    for comp in comparisons:
-        if comp.op != "=":
-            raise TypeError(
-                f"Legacy property filters only support '=' comparisons, not {comp.op}",
-            )
-        property_filter[comp.field] = comp.value
-    return property_filter
+    mapping: dict[str, PropertyValue | None] = {}
+    for equality in equalities:
+        match equality.field:
+            case SystemField(name=key) | Property(key=key):
+                mapping[key] = equality.value
+    return mapping
 
 
-def _flatten_conjunction(expr: FilterExpr) -> list[Comparison]:
-    if isinstance(expr, Comparison):
+def _flatten_conjunction(expr: FilterExpr) -> list[Equals]:
+    if isinstance(expr, Equals):
         return [expr]
     if isinstance(expr, And):
-        flattened: list[Comparison] = []
-        flattened.extend(_flatten_conjunction(expr.left))
-        flattened.extend(_flatten_conjunction(expr.right))
-        return flattened
+        return [
+            equality
+            for operand in expr.operands
+            for equality in _flatten_conjunction(operand)
+        ]
     raise TypeError(
-        "Legacy property filters only support AND expressions made of simple comparisons",
+        "Legacy property filters only support AND expressions made of simple "
+        "equality comparisons",
     )

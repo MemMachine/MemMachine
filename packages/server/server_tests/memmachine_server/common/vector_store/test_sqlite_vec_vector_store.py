@@ -14,12 +14,14 @@ from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.data_types import PropertyType, SimilarityMetric
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     In,
     Not,
     Or,
+    Ordering,
+    Property,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store import sqlite_vec_vector_store
@@ -39,6 +41,7 @@ from memmachine_server.common.vector_store.sqlite_vec_vector_store import (
     SQLiteVecVectorStorePartition,
     load_sqlite_vec_extension,
 )
+from server_tests.memmachine_server.common.filter.nodes import comparison
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
 )
@@ -488,6 +491,10 @@ class TestDeclaredSchema(DeclaredSchemaContract):
         # A write commits before it returns, so reads reflect it already.
         pass
 
+    @staticmethod
+    async def stored_value(partition, record_uuid, key):
+        return (await _stored(partition))[record_uuid][key]
+
 
 class TestFilters:
     async def _setup(self, partition):
@@ -542,7 +549,7 @@ class TestFilters:
         all_results = await partition.query(
             query_vectors=[query_vector],
             limit=10,
-            property_filter=Comparison(field=field, op=op, value=value),
+            property_filter=comparison(Property(field), op, value),
         )
         return {match.record_uuid for match in all_results[0].matches}
 
@@ -714,7 +721,7 @@ class TestFilters:
         query_results = await partition.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=In(field="name", values=["alice", "carol"]),
+            property_filter=In(field=Property("name"), values=("alice", "carol")),
         )
         uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
@@ -728,8 +735,10 @@ class TestFilters:
             query_vectors=[v1],
             limit=10,
             property_filter=And(
-                left=Comparison(field="active", op="=", value=True),
-                right=Comparison(field="age", op=">", value=30),
+                (
+                    Equals(field=Property("active"), value=True),
+                    Ordering(field=Property("age"), op=">", value=30),
+                )
             ),
         )
         matches = query_results[0].matches
@@ -743,8 +752,10 @@ class TestFilters:
             query_vectors=[v1],
             limit=10,
             property_filter=Or(
-                left=Comparison(field="name", op="=", value="alice"),
-                right=Comparison(field="name", op="=", value="carol"),
+                (
+                    Equals(field=Property("name"), value="alice"),
+                    Equals(field=Property("name"), value="carol"),
+                )
             ),
         )
         uuids = {match.record_uuid for match in query_results[0].matches}
@@ -758,7 +769,7 @@ class TestFilters:
         query_results = await partition.query(
             query_vectors=[v1],
             limit=10,
-            property_filter=Not(expr=Comparison(field="age", op=">", value=30)),
+            property_filter=Not(Ordering(field=Property("age"), op=">", value=30)),
         )
         uuids = {match.record_uuid for match in query_results[0].matches}
         assert r1.uuid in uuids
@@ -991,7 +1002,7 @@ class TestInputValidation:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("key", "value"),
-        [("age", "old"), ("age", 30.5), ("age", True), ("score", 3), ("score", "high")],
+        [("age", "old"), ("age", 30.5), ("age", True), ("score", "high")],
     )
     async def test_a_declared_property_of_another_type_is_refused(
         self, partition, key, value
@@ -1187,8 +1198,10 @@ class TestFilterEdgeCases:
             query_vectors=[v1],
             limit=10,
             property_filter=Or(
-                left=Comparison(field="name", op="=", value="alice"),
-                right=Comparison(field="name", op="=", value="carol"),
+                (
+                    Equals(field=Property("name"), value="alice"),
+                    Equals(field=Property("name"), value="carol"),
+                )
             ),
         )
         uuids = {m.record_uuid for m in results[0].matches}

@@ -7,7 +7,9 @@ import pytest
 
 from memmachine_server import MemMachine
 from memmachine_server.common.episode_store import EpisodeEntry
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
@@ -228,7 +230,7 @@ async def test_memmachine_search_sessions_filters_metadata(memmachine: MemMachin
         assert created_sessions[0] in all_sessions
         assert created_sessions[1] in all_sessions
 
-        filter_expr = parse_filter("topic = 'alpha'")
+        filter_expr = parse_filter("topic = 'alpha'", system_fields={})
         filtered = await memmachine.search_sessions(search_filter=filter_expr)
         assert set(filtered) == {created_sessions[0]}
     finally:
