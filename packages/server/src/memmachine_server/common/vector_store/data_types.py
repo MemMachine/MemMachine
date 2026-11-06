@@ -6,7 +6,6 @@ Imports nothing from this package; the rest of it builds on these types.
 
 import re
 from collections.abc import Collection, Iterable, Mapping
-from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -120,69 +119,6 @@ class VectorStoreSchema(BaseModel):
         ...,
         description="The properties every partition of the store declares",
     )
-
-
-class VectorStorePartitionAlreadyExistsError(Exception):
-    """Raised when creating a partition that already exists."""
-
-    def __init__(self, vector_store_name: str, partition_key: str) -> None:
-        """Initialize with the vector store and the key of the existing partition."""
-        self.vector_store_name = vector_store_name
-        self.partition_key = partition_key
-        super().__init__(
-            f"Partition {partition_key!r} of vector store {vector_store_name!r} already exists."
-        )
-
-
-class VectorStorePartitionPendingError(Exception):
-    """Raised when opening a partition whose creation has not completed."""
-
-    def __init__(
-        self,
-        vector_store_name: str,
-        partition_key: str,
-        registered_at: datetime,
-    ) -> None:
-        """Initialize with the pending partition's vector store, key, and registration time."""
-        self.vector_store_name = vector_store_name
-        self.partition_key = partition_key
-        self.registered_at = registered_at
-        super().__init__(
-            f"Partition {partition_key!r} of vector store {vector_store_name!r} has "
-            f"been pending since {registered_at.isoformat()}; if its creation was "
-            "abandoned, delete it to create it again."
-        )
-
-
-class VectorStorePartitionDeletedError(Exception):
-    """Raised when a partition is deleted before its creation completes."""
-
-    def __init__(self, vector_store_name: str, partition_key: str) -> None:
-        """Initialize with the vector store and the key of the deleted partition."""
-        self.vector_store_name = vector_store_name
-        self.partition_key = partition_key
-        super().__init__(
-            f"Partition {partition_key!r} of vector store {vector_store_name!r} was "
-            "deleted before its creation completed"
-        )
-
-
-class VectorStorePartitionHandleStaleError(Exception):
-    """Raised when a handle is used after its partition was deleted."""
-
-    def __init__(self, vector_store_name: str, partition_key: str) -> None:
-        """Record the vector store and the key the stale handle belonged to."""
-        self.vector_store_name = vector_store_name
-        self.partition_key = partition_key
-        super().__init__(
-            f"Stale handle for partition {partition_key!r} of vector store "
-            f"{vector_store_name!r}: the partition was deleted (or re-created) after this "
-            "handle was bound"
-        )
-
-
-class VectorStoreAttemptsExhaustedError(Exception):
-    """Raised when an operation gave up after repeated attempts that made no progress."""
 
 
 class UndeclaredPropertyKeyError(ValueError):

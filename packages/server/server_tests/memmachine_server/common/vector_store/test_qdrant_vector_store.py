@@ -35,6 +35,11 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
     Registration,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
@@ -45,11 +50,6 @@ from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     QueryResult,
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
     VectorStoreSchema,
 )
 from memmachine_server.common.vector_store.qdrant_vector_store import (
@@ -222,7 +222,7 @@ class TestPartitionLifecycle:
 
     @pytest.mark.asyncio
     async def test_duplicate_name_raises(self, store, partition):
-        with pytest.raises(VectorStorePartitionAlreadyExistsError):
+        with pytest.raises(PartitionAlreadyExistsError):
             await store.create_partition(NAME)
 
     @pytest.mark.asyncio
@@ -1665,7 +1665,7 @@ class _ModelRun:
     async def recreate(self, key: str) -> None:
         stale = self.handles[key]
         await self.store.delete_partition(key)
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await stale.query(query_vectors=[_MODEL_PROBE], limit=1)
         await self.create(key)
 
@@ -1751,11 +1751,11 @@ _CHURN_DEADLINE_SECONDS = 120
 # The outcomes the contract documents for an operation that races another
 # worker's: anything else fails the test.
 _CHURN_DOMAIN_ERRORS = (
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionPendingError,
-    VectorStorePartitionDeletedError,
-    VectorStoreAttemptsExhaustedError,
+    PartitionHandleStaleError,
+    PartitionAlreadyExistsError,
+    PartitionPendingError,
+    PartitionDeletedError,
+    AttemptsExhaustedError,
 )
 
 
@@ -1825,7 +1825,7 @@ class _ChurnWorker:
         handle = await self.handle(key)
         try:
             await handle.upsert(records=records)
-        except VectorStorePartitionHandleStaleError:
+        except PartitionHandleStaleError:
             self.unconfirmed.update(
                 (handle._incarnation, record.uuid) for record in records
             )
@@ -2180,7 +2180,7 @@ class TestCollectionProvisioningAcrossWorkers:
                 )
             assert sorted(type(r).__name__ for r in results) == [
                 "NoneType",
-                "VectorStorePartitionAlreadyExistsError",
+                "PartitionAlreadyExistsError",
             ], results
         finally:
             await store_a.delete_partition(name)

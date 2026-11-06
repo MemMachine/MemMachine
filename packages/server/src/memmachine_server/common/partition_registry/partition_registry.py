@@ -57,7 +57,7 @@ class Reservation(_RegistryEntry, ABC):
             Registration: The same life of the partition, live.
 
         Raises:
-            VectorStorePartitionDeletedError:
+            PartitionDeletedError:
                 If the partition is no longer pending: it was deleted.
         """
         raise NotImplementedError
@@ -93,7 +93,7 @@ class Registration(_RegistryEntry, ABC):
         it raise, and one committed after does not.
 
         Raises:
-            VectorStorePartitionHandleStaleError:
+            PartitionHandleStaleError:
                 If the partition was deleted, whether or not another was
                 registered under the key since.
         """
@@ -143,9 +143,9 @@ class VectorStorePartitionRegistry(ABC):
             Reservation: The new partition's reservation.
 
         Raises:
-            VectorStorePartitionAlreadyExistsError:
+            PartitionAlreadyExistsError:
                 The partition key is taken, by a live or a pending partition.
-            VectorStoreAttemptsExhaustedError:
+            AttemptsExhaustedError:
                 The registry gave up after repeated attempts to reserve
                 the free partition key failed.
         """
@@ -167,7 +167,7 @@ class VectorStorePartitionRegistry(ABC):
                 holds the key.
 
         Raises:
-            VectorStorePartitionPendingError:
+            PartitionPendingError:
                 If the partition registered under the key is pending.
         """
         raise NotImplementedError

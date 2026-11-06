@@ -29,7 +29,7 @@ class VectorStorePartition(ABC):
 
     A partition created again under a deleted one's key starts empty. An
     operation through a handle begun after its partition was deleted raises
-    VectorStorePartitionHandleStaleError, whether or not a partition was
+    PartitionHandleStaleError, whether or not a partition was
     created again under the key since.
 
     An `upsert` or `delete` is durable once it returns; queries may not
@@ -183,11 +183,11 @@ class VectorStore(ABC):
                 The key of the partition.
 
         Raises:
-            VectorStoreAttemptsExhaustedError: If the store gave up creating the
+            AttemptsExhaustedError: If the store gave up creating the
                 partition after repeated attempts that made no progress.
-            VectorStorePartitionAlreadyExistsError: If the partition already exists,
+            PartitionAlreadyExistsError: If the partition already exists,
                 or is being created.
-            VectorStorePartitionDeletedError: If the partition was deleted
+            PartitionDeletedError: If the partition was deleted
                 before its creation completed.
         """
         raise NotImplementedError
@@ -208,10 +208,10 @@ class VectorStore(ABC):
                 A handle bound to the partition's current life.
 
         Raises:
-            VectorStoreAttemptsExhaustedError: If the store gave up opening or
+            AttemptsExhaustedError: If the store gave up opening or
                 creating the partition after repeated attempts that made no
                 progress.
-            VectorStorePartitionPendingError: If the partition's creation, by
+            PartitionPendingError: If the partition's creation, by
                 another caller, did not complete within the store's attempts
                 to open it.
         """
@@ -232,7 +232,7 @@ class VectorStore(ABC):
                 does not exist.
 
         Raises:
-            VectorStorePartitionPendingError: If the partition's creation
+            PartitionPendingError: If the partition's creation
                 has not completed.
         """
         raise NotImplementedError

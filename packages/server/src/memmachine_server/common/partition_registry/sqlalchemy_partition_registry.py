@@ -49,17 +49,19 @@ from memmachine_server.common.sql import validate_engine_connections, write_conn
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store.data_types import (
     _IDENTIFIER_MAX_BYTES,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
     validate_vector_store_name,
 )
 from memmachine_server.common.vector_store.utils import (
     _PARTITION_KEY_MAX_BYTES,
 )
 
+from .data_types import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
+)
 from .partition_registry import (
     PurgeRound,
     Registration,
@@ -302,7 +304,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                 )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise VectorStoreAttemptsExhaustedError(
+                    raise AttemptsExhaustedError(
                         f"Creating partition {partition_key!r} made no progress "
                         f"after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err
@@ -351,7 +353,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                     )
                 ).scalar_one_or_none()
             if taken is not None:
-                raise VectorStorePartitionAlreadyExistsError(
+                raise PartitionAlreadyExistsError(
                     self._vector_store_name, partition_key
                 ) from err
             raise _RegistryInsertRejectedError(
@@ -376,7 +378,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         if row is None:
             return None
         if not row.live:
-            raise VectorStorePartitionPendingError(
+            raise PartitionPendingError(
                 self._vector_store_name,
                 partition_key,
                 ensure_tz_aware(row.registered_at),
@@ -670,9 +672,7 @@ class _SQLAlchemyReservation(Reservation):
                 .values(live=True)
             )
         if result.rowcount != 1:
-            raise VectorStorePartitionDeletedError(
-                self.vector_store_name, self.partition_key
-            )
+            raise PartitionDeletedError(self.vector_store_name, self.partition_key)
         return _SQLAlchemyRegistration(
             partition_key=self.partition_key,
             incarnation=self.incarnation,
@@ -711,9 +711,7 @@ class _SQLAlchemyRegistration(Registration):
                 )
             ).scalar_one_or_none()
         if current != self.incarnation:
-            raise VectorStorePartitionHandleStaleError(
-                self.vector_store_name, self.partition_key
-            )
+            raise PartitionHandleStaleError(self.vector_store_name, self.partition_key)
 
 
 async def _unregister_where(
