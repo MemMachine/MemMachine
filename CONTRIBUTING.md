@@ -116,7 +116,7 @@ follow the style of the surrounding code and these rules:
   `__eq__`. Narrow the value or change the code instead.
 - **Suppressions:** don't add `# noqa`, `# type: ignore`, or `# ty: ignore`,
   except where Python's or a third-party library's API forces one. Fix the
-  code, or change the rule in `pyproject.toml` if it is wrong for the whole
+  code, or change the tool's configuration if the rule is wrong for the whole
   project.
 - **Libraries:** use only their public, documented API. In async code, use a
   library's async client when it has one. Declare every package your code
@@ -164,7 +164,7 @@ explains how to preview and check it locally.
    ```
 
 3. Push the branch to your fork and open a pull request against `main`, filling
-   in the template. A draft pull request does not run CI; the checks run once
-   you mark it ready for review.
+   in the template. CI's pull request checks skip drafts and run once you mark
+   a draft ready for review.
 
 We look forward to your contributions!
