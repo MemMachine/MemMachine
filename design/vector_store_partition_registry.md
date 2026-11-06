@@ -37,7 +37,7 @@ through SQLAlchemy. The backend keeps only records, each carrying the
 
 ### Roles
 
-- `VectorStorePartitionRegistry` (`common/vector_store/partition_registry/`)
+- `VectorStorePartitionRegistry` (`common/partition_registry/`)
   is the ABC. A registry belongs to one store and is addressed by partition
   key. Its operations are `startup`, `reserve`, `resolve`, `unregister`, and
   `run_purge_round`.

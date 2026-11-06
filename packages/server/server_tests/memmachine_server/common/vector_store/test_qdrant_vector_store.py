@@ -34,6 +34,13 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+from memmachine_server.common.partition_registry import (
+    Registration,
+)
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyVectorStorePartitionRegistry,
+    SQLAlchemyVectorStorePartitionRegistryParams,
+)
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     QueryResult,
@@ -44,13 +51,6 @@ from memmachine_server.common.vector_store.data_types import (
     VectorStorePartitionHandleStaleError,
     VectorStorePartitionPendingError,
     VectorStoreSchema,
-)
-from memmachine_server.common.vector_store.partition_registry import (
-    Registration,
-)
-from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
 )
 from memmachine_server.common.vector_store.qdrant_vector_store import (
     _PAYLOAD_INCARNATION,

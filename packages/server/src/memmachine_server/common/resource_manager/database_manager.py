@@ -36,6 +36,10 @@ from memmachine_server.common.errors import (
     VectorStoreConfigurationError,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyVectorStorePartitionRegistry,
+    SQLAlchemyVectorStorePartitionRegistryParams,
+)
 from memmachine_server.common.sql import (
     enable_sqlite_explicit_begin,
     enable_sqlite_foreign_keys,
@@ -46,10 +50,6 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStoreParams,
 )
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
-from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
-)
 from memmachine_server.common.vector_store.vector_search_engine import (
     VectorSearchEngine,
 )

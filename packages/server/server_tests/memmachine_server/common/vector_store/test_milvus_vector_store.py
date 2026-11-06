@@ -45,6 +45,14 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
+from memmachine_server.common.partition_registry import (
+    Registration,
+    VectorStorePartitionRegistry,
+)
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyVectorStorePartitionRegistry,
+    SQLAlchemyVectorStorePartitionRegistryParams,
+)
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     Record,
@@ -59,14 +67,6 @@ from memmachine_server.common.vector_store.milvus_vector_store import (
     MilvusVectorStore,
     MilvusVectorStoreParams,
     MilvusVectorStorePartition,
-)
-from memmachine_server.common.vector_store.partition_registry import (
-    Registration,
-    VectorStorePartitionRegistry,
-)
-from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
 )
 from server_tests.memmachine_server.common.vector_store.declared_schema_contract import (
     DeclaredSchemaContract,
