@@ -62,23 +62,26 @@ the repository root before you push.
   ```
 
   Integration tests are marked `integration`; run them by adding
-  `-m integration`. Most start their databases in Docker. The rest connect to
-  a server you run:
+  `-m integration`. Most start their databases in Docker or download models
+  from Hugging Face. The rest connect to a server you run:
 
   - NebulaGraph Enterprise 5.0 or later, at `NEBULA_HOST` (default
     `127.0.0.1:9669`), with `NEBULA_USER` and `NEBULA_PASSWORD`. These tests
     skip when they can't connect.
   - A MemMachine server, for the Python client's tests, at
     `MEMORY_BACKEND_URL` (default `http://localhost:8080`). These tests skip
-    when it doesn't answer.
+    when it doesn't answer. The
+    [quickstart](https://docs.memmachine.ai/getting_started/quickstart) shows
+    how to start one.
   - An OpenAI-compatible server serving `qwen3:8b`, such as Ollama, at the
     base URL in `OLLAMA_HOST`, such as `http://localhost:11434/v1`. These
-    tests skip only when `OLLAMA_HOST` is unset. They fail when the server is
-    down, or when `OLLAMA_HOST` holds Ollama's own `host:port` form.
+    tests skip when `OLLAMA_HOST` is unset, but don't check the server: they
+    fail when it is down, or when `OLLAMA_HOST` holds Ollama's own
+    `host:port` form.
 
-  Tests that call OpenAI, Amazon Bedrock, or Cohere use the real APIs, billed
-  to the keys you give them. They read test-only variables and run only when
-  those are set:
+  Some integration tests call OpenAI, Amazon Bedrock, or Cohere, using the
+  real APIs billed to the keys you give them. They read test-only variables
+  and run only when those are set:
 
   - OpenAI: `MEMMACHINE_TEST_OPENAI_API_KEY`
   - Amazon Bedrock: `MEMMACHINE_TEST_AWS_ACCESS_KEY_ID`,
@@ -88,6 +91,13 @@ the repository root before you push.
 
   [Running PyTest Unit Tests](maintainers/running-unit-tests.md) shows more ways
   to select tests.
+
+- After changing dependencies in any `pyproject.toml`, update the lockfile and
+  commit `uv.lock` with your change:
+
+  ```bash
+  uv lock
+  ```
 
 The TypeScript client in `packages/ts-client/` has its own commands, listed in
 its [README](packages/ts-client/README.md#development).
