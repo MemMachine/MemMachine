@@ -4,6 +4,7 @@ import logging
 import socket
 from collections.abc import Iterable
 from datetime import UTC
+from pathlib import Path
 from typing import Any, TypeVar, overload
 from uuid import UUID
 
@@ -58,6 +59,7 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.sql import write_session
 from memmachine_server.common.utils import ensure_tz_aware
 
@@ -137,6 +139,13 @@ class Episode(BaseEpisodeStore):
         )
 
 
+EPISODE_STORE_LINEAGE = Lineage(
+    name="episode_store",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BaseEpisodeStore.metadata,
+)
+
+
 class SqlAlchemyEpisodeStore(EpisodeStorage):
     """SQLAlchemy episode store implementation."""
 
@@ -158,6 +167,9 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
 
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
+
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._engine, EPISODE_STORE_LINEAGE)
 
     async def startup(self) -> None:
         try:

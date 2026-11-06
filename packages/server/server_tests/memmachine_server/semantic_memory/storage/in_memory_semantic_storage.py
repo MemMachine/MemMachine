@@ -87,6 +87,9 @@ class InMemorySemanticStorage(SemanticStorage):
         self._next_history_id = 1
         self._lock = asyncio.Lock()
 
+    async def migrate(self):
+        return None
+
     async def startup(self):
         return None
 

@@ -1,6 +1,7 @@
 """Atomic SQL storage for exclusive leases."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -20,6 +21,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.sql import write_connection
 
 _metadata = MetaData()
@@ -36,6 +38,13 @@ _counter = Table(
     _metadata,
     Column("id", Integer, primary_key=True),
     Column("value", BigInteger, nullable=False),
+)
+
+
+LEASE_LOCK_LINEAGE = Lineage(
+    name="lease_lock",
+    versions=Path(__file__).parent / "migrations",
+    metadata=_metadata,
 )
 
 
@@ -56,6 +65,10 @@ class SQLLeaseStore:
         if engine.dialect.name not in {"postgresql", "sqlite"}:
             raise ValueError("SQL lease locks require PostgreSQL or SQLite")
         self._engine = engine
+
+    async def migrate(self) -> None:
+        """Create the lock and fencing counter tables, or bring them up to date."""
+        await upgrade_lineage(self._engine, LEASE_LOCK_LINEAGE)
 
     async def startup(self) -> None:
         """Create the lock and durable fencing counter tables."""

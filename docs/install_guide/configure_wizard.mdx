@@ -74,8 +74,13 @@ Once all prompts are answered, the wizard will generate a `cfg.yml` file in
 `<HOME>/.config/memmachine/cfg.yml` by default.
 This file contains all the configuration settings needed to run MemMachine.
 
-You can now start the MemMachine server with the generated configuration:
+Once the configured databases are running, create their schema, then start
+the MemMachine server with the generated configuration:
 
 ```bash
+memmachine-server migrate
 memmachine-server
 ```
+
+Run `memmachine-server migrate` again after every upgrade, before starting the
+new version.

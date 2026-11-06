@@ -15,6 +15,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import override
 from uuid import UUID, uuid4
 
@@ -47,6 +48,7 @@ from sqlalchemy.orm import (
     mapped_column,
 )
 
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.sql import validate_engine_connections, write_connection
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store.data_types import (
@@ -139,6 +141,13 @@ class PurgeQueueRow(BasePartitionRegistry):
     __table_args__ = (
         Index("partition_registry_gc__vs_ea", "vector_store_name", "enqueued_at"),
     )
+
+
+PARTITION_REGISTRY_LINEAGE = Lineage(
+    name="partition_registry",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BasePartitionRegistry.metadata,
+)
 
 
 class _RegistryInsertRejectedError(Exception):
@@ -279,6 +288,10 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         self._base_purge_retry_backoff_seconds = params.base_purge_retry_backoff_seconds
         self._max_purge_retry_backoff_seconds = params.max_purge_retry_backoff_seconds
         self._tombstone_claim_endings: set[asyncio.Task[None]] = set()
+
+    @override
+    async def migrate(self) -> None:
+        await upgrade_lineage(self._engine, PARTITION_REGISTRY_LINEAGE)
 
     @override
     async def startup(self) -> None:

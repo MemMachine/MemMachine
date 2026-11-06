@@ -284,6 +284,7 @@ def session_setup():
 
 @pytest_asyncio.fixture
 async def memmachine(memmachine_top: MemMachine):
+    await memmachine_top.resource_manager.migrate()
     await memmachine_top.delete_all()
     await memmachine_top.start()
     yield memmachine_top
