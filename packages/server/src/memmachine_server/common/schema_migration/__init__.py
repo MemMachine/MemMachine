@@ -1,6 +1,6 @@
-"""Revision histories of stores' tables, upgraded by the setup step and checked by serving processes."""
+"""Revision histories of stores' tables, upgraded by the setup step."""
 
 from .lineage import Lineage
-from .runner import check_lineage, upgrade_lineage
+from .runner import upgrade_lineage
 
-__all__ = ["Lineage", "check_lineage", "upgrade_lineage"]
+__all__ = ["Lineage", "upgrade_lineage"]
