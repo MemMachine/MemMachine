@@ -16,19 +16,21 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
+)
 from memmachine_server.common.vector_store import (
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
     registry_backed_vector_store,
 )
 
-LIFECYCLE_KEY = "lifecycle"
-# A partition key of the longest length, with characters no identifier allows.
-ANY_CHARACTERS_KEY = "Session/ID-1 ü".ljust(254, "x")
+LIFECYCLE_NAME = "lifecycle"
+# A partition name of the longest length, with characters no identifier allows.
+ANY_CHARACTERS_NAME = "Session/ID-1 ü".ljust(254, "x")
 
 # Purge rounds a drain runs before it fails the test: far more than the few
 # deleted partitions a test leaves need, so only a round that keeps finding
@@ -86,58 +88,60 @@ class PartitionLifecycleContract:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("partition_key", ["", "k" * 256, "ü" * 128, "with\x00nul"])
-    async def test_a_partition_key_outside_the_rule_is_refused(
-        self, store, partition_key
+    @pytest.mark.parametrize(
+        "partition_name", ["", "k" * 256, "ü" * 128, "with\x00nul"]
+    )
+    async def test_a_partition_name_outside_the_rule_is_refused(
+        self, store, partition_name
     ):
-        with pytest.raises(ValueError, match="Partition key"):
-            await store.create_partition(partition_key)
+        with pytest.raises(ValueError, match="Partition name"):
+            await store.create_partition(partition_name)
 
     @pytest.mark.asyncio
-    async def test_a_partition_key_of_any_characters_and_the_longest_length_works(
+    async def test_a_partition_name_of_any_characters_and_the_longest_length_works(
         self, store
     ):
-        partition = await _fresh(store, ANY_CHARACTERS_KEY)
+        partition = await _fresh(store, ANY_CHARACTERS_NAME)
         record = _records(1)[0]
         await partition.upsert(records=[record])
         assert await self.stored_uuids(partition) == {record.uuid}
 
-        await store.delete_partition(ANY_CHARACTERS_KEY)
-        assert await store.open_partition(ANY_CHARACTERS_KEY) is None
+        await store.delete_partition(ANY_CHARACTERS_NAME)
+        assert await store.open_partition(ANY_CHARACTERS_NAME) is None
 
     @pytest.mark.asyncio
     async def test_a_handle_is_stale_once_its_partition_is_deleted(self, store):
-        partition = await _fresh(store, LIFECYCLE_KEY)
+        partition = await _fresh(store, LIFECYCLE_NAME)
         record = _records(1)[0]
         await partition.upsert(records=[record])
 
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
 
-        assert await store.open_partition(LIFECYCLE_KEY) is None
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        assert await store.open_partition(LIFECYCLE_NAME) is None
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
             await partition.upsert(records=[record])
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
             await partition.query(query_vectors=[record.vector], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
             await partition.delete(record_uuids=[record.uuid])
         # So does an operation with nothing to send to the backend.
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
             await partition.upsert(records=[])
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
             await partition.query(query_vectors=[], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
             await partition.delete(record_uuids=[])
 
     @pytest.mark.asyncio
     async def test_a_recreated_partition_starts_empty_and_the_old_handle_stays_stale(
         self, store
     ):
-        old = await _fresh(store, LIFECYCLE_KEY)
+        old = await _fresh(store, LIFECYCLE_NAME)
         old_record, new_record = _records(2)
         await old.upsert(records=[old_record])
 
-        await store.delete_partition(LIFECYCLE_KEY)
-        new = await _fresh(store, LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
+        new = await _fresh(store, LIFECYCLE_NAME)
 
         # Once the store's reads reflect the old life's write, the new life
         # still does not hold it.
@@ -149,54 +153,54 @@ class PartitionLifecycleContract:
         assert await self.stored_uuids(new) == {new_record.uuid}
 
         # The old life's handle cannot reach the new life's records.
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await old.query(query_vectors=[new_record.vector], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await old.delete(record_uuids=[new_record.uuid])
         assert await self.stored_uuids(new) == {new_record.uuid}
 
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
 
     @pytest.mark.asyncio
     async def test_open_or_create_adopts_the_live_incarnation(self, store):
         """Opening an existing partition binds to its life; creating one mints a new life."""
-        await store.delete_partition(LIFECYCLE_KEY)
-        first = await store.open_or_create_partition(LIFECYCLE_KEY)
-        second = await store.open_or_create_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
+        first = await store.open_or_create_partition(LIFECYCLE_NAME)
+        second = await store.open_or_create_partition(LIFECYCLE_NAME)
         record = _records(1)[0]
         await first.upsert(records=[record])
         assert await self.stored_uuids(second) == {record.uuid}
 
-        await store.delete_partition(LIFECYCLE_KEY)
-        third = await store.open_or_create_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
+        third = await store.open_or_create_partition(LIFECYCLE_NAME)
         await self.settle(third)
         [empty] = await third.query(query_vectors=[record.vector], limit=5)
         assert empty.matches == []
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await first.query(query_vectors=[record.vector], limit=5)
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
 
     @pytest.mark.asyncio
     async def test_deleting_twice_and_deleting_nothing_are_no_ops(self, store):
-        await _fresh(store, LIFECYCLE_KEY)
-        await store.delete_partition(LIFECYCLE_KEY)
-        await store.delete_partition(LIFECYCLE_KEY)
-        assert await store.open_partition(LIFECYCLE_KEY) is None
-        await store.delete_partition(f"{LIFECYCLE_KEY}_never_created")
+        await _fresh(store, LIFECYCLE_NAME)
+        await store.delete_partition(LIFECYCLE_NAME)
+        await store.delete_partition(LIFECYCLE_NAME)
+        assert await store.open_partition(LIFECYCLE_NAME) is None
+        await store.delete_partition(f"{LIFECYCLE_NAME}_never_created")
 
     @pytest.mark.asyncio
     async def test_purge_reclaims_what_deletion_deferred(self, store):
-        partition = await _fresh(store, LIFECYCLE_KEY)
+        partition = await _fresh(store, LIFECYCLE_NAME)
         baseline = await self._drained_count(store)
         records = _records(5)
         await partition.upsert(records=records)
         await self.settle(partition)
         assert await self.count_stored(store) == baseline + 5
 
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
         # Unreachable at once, and the records are left for the purge:
         # deletion touches the registry alone, whatever the partition holds.
-        assert await store.open_partition(LIFECYCLE_KEY) is None
+        assert await store.open_partition(LIFECYCLE_NAME) is None
         assert await self.count_stored(store) == baseline + 5
 
         assert await self._drained_count(store) == baseline
@@ -205,9 +209,9 @@ class PartitionLifecycleContract:
 
     @pytest.mark.asyncio
     async def test_purge_leaves_a_live_partition_alone(self, store):
-        live_name = f"{LIFECYCLE_KEY}_live"
+        live_name = f"{LIFECYCLE_NAME}_live"
         live = await _fresh(store, live_name)
-        dead = await _fresh(store, LIFECYCLE_KEY)
+        dead = await _fresh(store, LIFECYCLE_NAME)
         baseline = await self._drained_count(store)
         kept = _records(3)
         gone = _records(3)
@@ -216,7 +220,7 @@ class PartitionLifecycleContract:
         await self.settle(live)
         await self.settle(dead)
 
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
 
         assert await self._drained_count(store) == baseline + 3
         assert await self.stored_uuids(live) == {record.uuid for record in kept}
@@ -227,7 +231,7 @@ class PartitionLifecycleContract:
     async def test_a_write_landing_under_a_dead_incarnation_raises_and_is_reclaimed(
         self, store, monkeypatch
     ):
-        partition = await _fresh(store, LIFECYCLE_KEY)
+        partition = await _fresh(store, LIFECYCLE_NAME)
         baseline = await self._drained_count(store)
         records = _records(2)
 
@@ -237,11 +241,11 @@ class PartitionLifecycleContract:
 
         async def deleted_once_checked(registration) -> None:
             await require_current(registration)
-            await store.delete_partition(registration.partition_key)
+            await store.delete_partition(registration.partition_name)
 
         monkeypatch.setattr(registration_type, "require_current", deleted_once_checked)
 
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
             await partition.upsert(records=records)
         await self.settle(partition)
 
@@ -255,13 +259,13 @@ class PartitionLifecycleContract:
     async def test_a_stale_upsert_writes_nothing(self, store):
         """An upsert through a handle whose partition is already deleted
         raises before it writes: the dead life keeps exactly what it held."""
-        partition = await _fresh(store, LIFECYCLE_KEY)
+        partition = await _fresh(store, LIFECYCLE_NAME)
         kept, refused = _records(2)
         await partition.upsert(records=[kept])
 
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
 
-        with pytest.raises(VectorStorePartitionHandleStaleError, match=LIFECYCLE_KEY):
+        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
             await partition.upsert(records=[refused])
         assert await self.stored_uuids(partition) == {kept.uuid}
 
@@ -273,15 +277,13 @@ class PartitionLifecycleContract:
         up after a bounded number of attempts instead of looping."""
         registry = store._partition_registry
 
-        async def lost(partition_key):
+        async def lost(partition_name):
             # Yields as a real round trip would, so an unbounded loop fails
             # the timeout below instead of starving the event loop.
             await asyncio.sleep(0)
-            raise VectorStorePartitionAlreadyExistsError(
-                store._vector_store_name, partition_key
-            )
+            raise PartitionAlreadyExistsError(store._vector_store_name, partition_name)
 
-        async def vanished(partition_key) -> None:
+        async def vanished(partition_name) -> None:
             return None
 
         monkeypatch.setattr(registry, "reserve", lost)
@@ -290,8 +292,8 @@ class PartitionLifecycleContract:
             registry_backed_vector_store, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0
         )
 
-        with pytest.raises(VectorStoreAttemptsExhaustedError):
-            await asyncio.wait_for(store.open_or_create_partition(LIFECYCLE_KEY), 30)
+        with pytest.raises(AttemptsExhaustedError):
+            await asyncio.wait_for(store.open_or_create_partition(LIFECYCLE_NAME), 30)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("create", ["create_partition", "open_or_create_partition"])
@@ -300,19 +302,19 @@ class PartitionLifecycleContract:
     ):
         """A creation whose storage preparation fails unregisters its
         pending partition: nothing opens, and the key is free again."""
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
 
-        async def refused(partition_key, incarnation) -> None:
+        async def refused(partition_name, incarnation) -> None:
             raise RuntimeError("the backend refused")
 
         monkeypatch.setattr(store, "_prepare_partition_storage", refused)
         with pytest.raises(RuntimeError, match="refused"):
-            await getattr(store, create)(LIFECYCLE_KEY)
+            await getattr(store, create)(LIFECYCLE_NAME)
         monkeypatch.undo()
 
-        assert await store.open_partition(LIFECYCLE_KEY) is None
-        await store.create_partition(LIFECYCLE_KEY)
-        await store.delete_partition(LIFECYCLE_KEY)
+        assert await store.open_partition(LIFECYCLE_NAME) is None
+        await store.create_partition(LIFECYCLE_NAME)
+        await store.delete_partition(LIFECYCLE_NAME)
 
     @pytest.mark.asyncio
     async def test_open_or_create_opens_the_winner_after_losing_the_create(
@@ -320,41 +322,39 @@ class PartitionLifecycleContract:
     ):
         """A creator whose reservation loses to another process's opens
         the winner's partition, bound to the winner's life."""
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
         registry = store._partition_registry
         reserve = registry.reserve
         lost_reservations = 0
 
-        async def another_process_wins(partition_key):
+        async def another_process_wins(partition_name):
             # The other process creates the partition between this caller's
             # lookup and its own reservation.
             nonlocal lost_reservations
             lost_reservations += 1
-            reservation = await reserve(partition_key)
+            reservation = await reserve(partition_name)
             await store._prepare_partition_storage(
-                partition_key, reservation.incarnation
+                partition_name, reservation.incarnation
             )
             await reservation.confirm()
-            raise VectorStorePartitionAlreadyExistsError(
-                store._vector_store_name, partition_key
-            )
+            raise PartitionAlreadyExistsError(store._vector_store_name, partition_name)
 
         monkeypatch.setattr(registry, "reserve", another_process_wins)
-        partition = await store.open_or_create_partition(LIFECYCLE_KEY)
+        partition = await store.open_or_create_partition(LIFECYCLE_NAME)
         monkeypatch.undo()
 
         # It lost once, then found the winner instead of registering again.
         assert lost_reservations == 1
 
-        winner = await registry.resolve(LIFECYCLE_KEY)
+        winner = await registry.resolve(LIFECYCLE_NAME)
         assert winner is not None
         assert partition._incarnation == winner.incarnation
         record = _records(1)[0]
         await partition.upsert(records=[record])
-        opened = await store.open_partition(LIFECYCLE_KEY)
+        opened = await store.open_partition(LIFECYCLE_NAME)
         assert opened is not None
         assert await self.stored_uuids(opened) == {record.uuid}
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
 
     @pytest.mark.asyncio
     async def test_open_or_create_creates_again_when_the_winner_is_gone(
@@ -362,23 +362,23 @@ class PartitionLifecycleContract:
     ):
         """Losing the create to a winner that is deleted before it can be
         opened is not an error: open-or-create creates the partition again."""
-        await store.delete_partition(LIFECYCLE_KEY)
+        await store.delete_partition(LIFECYCLE_NAME)
         registry = store._partition_registry
         reserve = registry.reserve
         lost = False
 
-        async def lose_once(partition_key):
+        async def lose_once(partition_name):
             nonlocal lost
             if not lost:
                 lost = True
-                raise VectorStorePartitionAlreadyExistsError(
-                    store._vector_store_name, partition_key
+                raise PartitionAlreadyExistsError(
+                    store._vector_store_name, partition_name
                 )
-            return await reserve(partition_key)
+            return await reserve(partition_name)
 
         monkeypatch.setattr(registry, "reserve", lose_once)
 
-        partition = await store.open_or_create_partition(LIFECYCLE_KEY)
+        partition = await store.open_or_create_partition(LIFECYCLE_NAME)
 
         assert lost
         record = _records(1)[0]
@@ -389,7 +389,7 @@ class PartitionLifecycleContract:
     async def test_lifecycle_churn_raises_only_domain_errors(self, store):
         """Concurrent create, open-or-create, get and delete of a few keys
         raise nothing but the domain's own outcomes."""
-        keys = [f"{LIFECYCLE_KEY}_{index}" for index in range(4)]
+        keys = [f"{LIFECYCLE_NAME}_{index}" for index in range(4)]
 
         async def worker(seed: int) -> None:
             rng = random.Random(seed)
@@ -406,10 +406,10 @@ class PartitionLifecycleContract:
                     else:
                         await store.delete_partition(key)
                 except (
-                    VectorStoreAttemptsExhaustedError,
-                    VectorStorePartitionAlreadyExistsError,
-                    VectorStorePartitionDeletedError,
-                    VectorStorePartitionPendingError,
+                    AttemptsExhaustedError,
+                    PartitionAlreadyExistsError,
+                    PartitionDeletedError,
+                    PartitionPendingError,
                 ):
                     pass
 

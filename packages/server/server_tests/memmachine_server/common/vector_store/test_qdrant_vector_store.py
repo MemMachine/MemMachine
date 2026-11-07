@@ -34,23 +34,23 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
+    Registration,
+)
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
+)
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     QueryResult,
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
     VectorStoreSchema,
-)
-from memmachine_server.common.vector_store.partition_registry import (
-    Registration,
-)
-from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
 )
 from memmachine_server.common.vector_store.qdrant_vector_store import (
     _PAYLOAD_INCARNATION,
@@ -158,10 +158,10 @@ async def _params(client, registry_engine, **overrides) -> QdrantVectorStorePara
         "store_schema": _schema(),
     }
     params.update(overrides)
-    params["partition_registry"] = SQLAlchemyVectorStorePartitionRegistry(
-        SQLAlchemyVectorStorePartitionRegistryParams(
+    params["partition_registry"] = SQLAlchemyPartitionRegistry(
+        SQLAlchemyPartitionRegistryParams(
             engine=registry_engine,
-            vector_store_name=params["vector_store_name"],
+            partition_namespace=params["vector_store_name"],
             # Tombstones come due at once, so a test can purge right after
             # deleting.
             tombstone_retention_seconds=0,
@@ -222,7 +222,7 @@ class TestPartitionLifecycle:
 
     @pytest.mark.asyncio
     async def test_duplicate_name_raises(self, store, partition):
-        with pytest.raises(VectorStorePartitionAlreadyExistsError):
+        with pytest.raises(PartitionAlreadyExistsError):
             await store.create_partition(NAME)
 
     @pytest.mark.asyncio
@@ -246,9 +246,9 @@ class TestPartitionLifecycle:
     async def test_partitions_share_the_store_collection(self, store):
         """Every partition's records are points in the store's one native collection."""
         stored_before = await _count_stored(store)
-        for partition_key in ("part_a", "part_b"):
-            await store.create_partition(partition_key)
-            partition = await store.open_partition(partition_key)
+        for partition_name in ("part_a", "part_b"):
+            await store.create_partition(partition_name)
+            partition = await store.open_partition(partition_name)
             assert partition is not None
             await partition.upsert(
                 records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
@@ -475,7 +475,7 @@ def _partition_on(client: AsyncQdrantClient) -> QdrantVectorStorePartition:
         client=client,
         vector_store_name=VECTOR_STORE_NAME,
         registration=_CurrentRegistration(
-            partition_key=NAME,
+            partition_name=NAME,
             incarnation=uuid4(),
         ),
         store_schema=VectorStoreSchema(
@@ -1338,7 +1338,7 @@ class TestPartitionIsolation:
         self, store, registry_engine
     ):
         """Stores of two names share no storage, even on one client and
-        under one partition key and schema."""
+        under one partition name and schema."""
         other = QdrantVectorStore(
             await _params(
                 store._client,
@@ -1438,7 +1438,7 @@ class TestPurge:
         tombstone under which Qdrant holds no point: its purge round finds
         nothing there and retires it, raising nothing."""
 
-        async def refused(partition_key, incarnation) -> None:
+        async def refused(partition_name, incarnation) -> None:
             raise RuntimeError("the backend refused")
 
         monkeypatch.setattr(store, "_prepare_partition_storage", refused)
@@ -1518,7 +1518,7 @@ _MODEL_SEED = 1735
 _MODEL_STEPS = 200
 _MODEL_POOL_SIZE = 12
 _MODEL_STORE_NAME = "model"
-_MODEL_KEYS = ("model_a", "model_b")
+_MODEL_NAMES = ("model_a", "model_b")
 _MODEL_INDEXED_PROPERTIES: dict[str, PropertyType] = {
     "color": str,
     "size": int,
@@ -1665,7 +1665,7 @@ class _ModelRun:
     async def recreate(self, key: str) -> None:
         stale = self.handles[key]
         await self.store.delete_partition(key)
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await stale.query(query_vectors=[_MODEL_PROBE], limit=1)
         await self.create(key)
 
@@ -1707,7 +1707,7 @@ class TestAgainstAModel:
         await store.startup()
         rng = random.Random(_MODEL_SEED)
         run = _ModelRun(store, rng, sorted(uuid4() for _ in range(_MODEL_POOL_SIZE)))
-        for key in _MODEL_KEYS:
+        for key in _MODEL_NAMES:
             await run.create(key)
         run.baseline = await _count_stored(store)
 
@@ -1719,7 +1719,7 @@ class TestAgainstAModel:
             run.drain: 1,
         }
         for step in range(_MODEL_STEPS):
-            key = rng.choice(_MODEL_KEYS)
+            key = rng.choice(_MODEL_NAMES)
             [operation] = rng.choices(
                 list(operations), weights=list(operations.values())
             )
@@ -1731,7 +1731,7 @@ class TestAgainstAModel:
                     f"step {step}: {operation.__name__} on {key}"
                 ) from error
 
-        for key in _MODEL_KEYS:
+        for key in _MODEL_NAMES:
             await store.delete_partition(key)
         await _drain(store)
         assert await _count_stored(store) == run.baseline
@@ -1744,18 +1744,18 @@ _CHURN_SEED = 1735
 _CHURN_WORKERS = 8
 _CHURN_STEPS = 50
 _CHURN_OWNED = 4
-_CHURN_KEYS = ("churn_a", "churn_b", "churn_c")
+_CHURN_NAMES = ("churn_a", "churn_b", "churn_c")
 _CHURN_INDEXED_PROPERTIES: dict[str, PropertyType] = {"owner": int}
 # Bounds the whole churn, so a deadlock fails the test instead of hanging it.
 _CHURN_DEADLINE_SECONDS = 120
 # The outcomes the contract documents for an operation that races another
 # worker's: anything else fails the test.
 _CHURN_DOMAIN_ERRORS = (
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionPendingError,
-    VectorStorePartitionDeletedError,
-    VectorStoreAttemptsExhaustedError,
+    PartitionHandleStaleError,
+    PartitionAlreadyExistsError,
+    PartitionPendingError,
+    PartitionDeletedError,
+    AttemptsExhaustedError,
 )
 
 
@@ -1799,7 +1799,7 @@ class _ChurnWorker:
     async def run(self) -> None:
         operations = {self.upsert: 4, self.delete: 2, self.query: 3, self.drop: 1}
         for _ in range(_CHURN_STEPS):
-            key = self.rng.choice(_CHURN_KEYS)
+            key = self.rng.choice(_CHURN_NAMES)
             [operation] = self.rng.choices(
                 list(operations), weights=list(operations.values())
             )
@@ -1825,7 +1825,7 @@ class _ChurnWorker:
         handle = await self.handle(key)
         try:
             await handle.upsert(records=records)
-        except VectorStorePartitionHandleStaleError:
+        except PartitionHandleStaleError:
             self.unconfirmed.update(
                 (handle._incarnation, record.uuid) for record in records
             )
@@ -1957,7 +1957,7 @@ async def _assert_churned_state(
 ) -> None:
     """Each live partition holds what its workers wrote and kept; a deleted one holds nothing written successfully."""
     live: set[UUID] = set()
-    for key in _CHURN_KEYS:
+    for key in _CHURN_NAMES:
         handle = await store.open_partition(key)
         if handle is None:
             continue
@@ -2019,7 +2019,7 @@ class TestConcurrentChurn:
         await _churn(stores, workers)
         await _assert_churned_state(stores[0], workers)
 
-        for key in _CHURN_KEYS:
+        for key in _CHURN_NAMES:
             await stores[0].delete_partition(key)
         await _drain(stores[0])
 
@@ -2180,7 +2180,7 @@ class TestCollectionProvisioningAcrossWorkers:
                 )
             assert sorted(type(r).__name__ for r in results) == [
                 "NoneType",
-                "VectorStorePartitionAlreadyExistsError",
+                "PartitionAlreadyExistsError",
             ], results
         finally:
             await store_a.delete_partition(name)

@@ -1,7 +1,7 @@
 """
 A partition registry in a relational database, through SQLAlchemy.
 
-A table of registered partitions keyed by vector store and partition key,
+A table of registered partitions keyed by namespace and partition name,
 each with its incarnation and whether it is live (its storage prepared), and
 a queue of deleted incarnations claimed in the order they come due. The
 primary key arbitrates registration across processes, a conditional update
@@ -28,8 +28,6 @@ from sqlalchemy import (
     Interval,
     String,
     Uuid,
-    and_,
-    case,
     delete,
     func,
     insert,
@@ -39,7 +37,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.orm import (
     DeclarativeBase,
     InstrumentedAttribute,
@@ -49,24 +47,22 @@ from sqlalchemy.orm import (
 
 from memmachine_server.common.sql import validate_engine_connections, write_connection
 from memmachine_server.common.utils import ensure_tz_aware
-from memmachine_server.common.vector_store.data_types import (
-    _IDENTIFIER_MAX_BYTES,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
-    validate_vector_store_name,
-)
-from memmachine_server.common.vector_store.utils import (
-    _PARTITION_KEY_MAX_BYTES,
-)
 
+from .data_types import (
+    _PARTITION_NAME_MAX_BYTES,
+    _PARTITION_NAMESPACE_MAX_BYTES,
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionHandleStaleError,
+    PartitionPendingError,
+    validate_partition_namespace,
+)
 from .partition_registry import (
+    PartitionRegistry,
     PurgeRound,
     Registration,
     Reservation,
-    VectorStorePartitionRegistry,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,15 +81,15 @@ class BasePartitionRegistry(DeclarativeBase):
 
 
 class PartitionRow(BasePartitionRegistry):
-    """A registered partition of a vector store, pending or live."""
+    """A registered partition in a namespace, pending or live."""
 
     __tablename__ = "partition_registry_pt"
 
-    vector_store_name: MappedColumn[str] = mapped_column(
-        String(_IDENTIFIER_MAX_BYTES), primary_key=True
+    partition_namespace: MappedColumn[str] = mapped_column(
+        String(_PARTITION_NAMESPACE_MAX_BYTES), primary_key=True
     )
-    partition_key: MappedColumn[str] = mapped_column(
-        String(_PARTITION_KEY_MAX_BYTES), primary_key=True
+    partition_name: MappedColumn[str] = mapped_column(
+        String(_PARTITION_NAME_MAX_BYTES), primary_key=True
     )
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
     # Whether the partition's storage is prepared; it is pending until then.
@@ -112,8 +108,8 @@ class PurgeQueueRow(BasePartitionRegistry):
     __tablename__ = "partition_registry_gc"
 
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    vector_store_name: MappedColumn[str] = mapped_column(
-        String(_IDENTIFIER_MAX_BYTES), nullable=False
+    partition_namespace: MappedColumn[str] = mapped_column(
+        String(_PARTITION_NAMESPACE_MAX_BYTES), nullable=False
     )
     enqueued_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -123,12 +119,10 @@ class PurgeQueueRow(BasePartitionRegistry):
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    # When a purge round last raised.
-    last_failed_at: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # When the open claim was taken; None when no claim is open.
-    claimed_at: MappedColumn[datetime | None] = mapped_column(
+    # When a claim may next take the tombstone: once the open claim's lease
+    # and the backoff pass, or the backoff after a raise; None when no claim
+    # or raise since the last progress set one.
+    claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # Incremented by each claim; a round ends only its own claim.
@@ -137,12 +131,12 @@ class PurgeQueueRow(BasePartitionRegistry):
     )
 
     __table_args__ = (
-        Index("partition_registry_gc__vs_ea", "vector_store_name", "enqueued_at"),
+        Index("partition_registry_gc__ns_ea", "partition_namespace", "enqueued_at"),
     )
 
 
 class _RegistryInsertRejectedError(Exception):
-    """A registry insert was rejected for a reason other than the key being taken."""
+    """A registry insert was rejected for a reason other than the name being taken."""
 
 
 @dataclass(frozen=True)
@@ -155,24 +149,29 @@ class _TombstoneClaim:
     attempt: int
 
 
-class SQLAlchemyVectorStorePartitionRegistryParams(BaseModel):
+class SQLAlchemyPartitionRegistryParams(BaseModel):
     """
-    Parameters for SQLAlchemyVectorStorePartitionRegistry.
+    Parameters for SQLAlchemyPartitionRegistry.
 
     Attributes:
         engine (AsyncEngine):
             Async SQLAlchemy engine, on PostgreSQL or SQLite. On SQLite, set
             up by `enable_sqlite_explicit_begin` at its creation: the
             registry's write transactions take SQLite's write lock at BEGIN.
-        vector_store_name (str):
-            The name of the store the registry serves: registry objects with
-            the same name on the same database are one registry. It follows
-            the vector store name rule.
+        partition_namespace (str):
+            The namespace the registry serves: registry objects with the same
+            namespace on the same database are one registry. It is non-empty,
+            at most `_PARTITION_NAMESPACE_MAX_BYTES` bytes, and free of NUL.
         tombstone_retention_seconds (int):
             Seconds a deleted partition's records are kept before its purge
             starts, on the database clock. It must exceed, by orders of
             magnitude, the longest a write to the backend can be in flight and
             the delay before the store's reads reflect a write.
+        pending_partition_timeout_seconds (int):
+            Seconds after its reservation, on the database clock, past which a
+            pending partition's creation is taken to have stopped, so the next
+            creation of its name replaces it; it should exceed the longest
+            creation (default: 300).
         purge_lease_seconds (int):
             Seconds a purge round's claim holds its tombstone, on the database
             clock; it should exceed the longest round (default: 300).
@@ -190,12 +189,11 @@ class SQLAlchemyVectorStorePartitionRegistryParams(BaseModel):
             "up by enable_sqlite_explicit_begin at its creation"
         ),
     )
-    vector_store_name: str = Field(
+    partition_namespace: str = Field(
         ...,
         description=(
-            "The name of the store the registry serves: registry objects with "
-            "the same name on the same database are one registry. It follows the "
-            "vector store name rule"
+            "The namespace the registry serves: registry objects with the same "
+            "namespace on the same database are one registry"
         ),
     )
     tombstone_retention_seconds: int = Field(
@@ -206,6 +204,15 @@ class SQLAlchemyVectorStorePartitionRegistryParams(BaseModel):
             "starts, on the database clock. It must exceed, by orders of "
             "magnitude, the longest a write to the backend can be in flight and "
             "the delay before the store's reads reflect a write"
+        ),
+    )
+    pending_partition_timeout_seconds: int = Field(
+        300,
+        gt=0,
+        description=(
+            "Seconds after its reservation, on the database clock, past which a "
+            "pending partition is replaced by the next creation of its name; it "
+            "should exceed the longest creation"
         ),
     )
     purge_lease_seconds: int = Field(
@@ -249,32 +256,36 @@ class SQLAlchemyVectorStorePartitionRegistryParams(BaseModel):
             )
         return engine
 
-    @field_validator("vector_store_name")
+    @field_validator("partition_namespace")
     @classmethod
-    def _validate_vector_store_name(cls, vector_store_name: str) -> str:
-        validate_vector_store_name(vector_store_name)
-        return vector_store_name
+    def _validate_partition_namespace(cls, partition_namespace: str) -> str:
+        validate_partition_namespace(partition_namespace)
+        return partition_namespace
 
 
-class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
+class SQLAlchemyPartitionRegistry(PartitionRegistry):
     """
-    The registry of one vector store's partitions.
+    The registry of one partition namespace.
 
-    Registries of different vector stores share the tables, keyed by vector
-    store name. A purge claim holds its tombstone for the purge lease, or
+    Registries of different namespaces share the tables, keyed by namespace.
+    A purge claim holds its tombstone for the purge lease, or
     until its round ends, and no transaction stays open during the round.
     After `_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS` attempts without progress, a
     tombstone is dead-lettered: kept, its incarnation reserved, and skipped by
     claims; a last attempt that raises is reported in an error log. Setting its
-    `attempts_without_progress` back to 0 returns it to the purge.
+    `attempts_without_progress` back to 0 and its `claimable_at` to NULL
+    returns it to the purge.
     """
 
-    def __init__(self, params: SQLAlchemyVectorStorePartitionRegistryParams) -> None:
+    def __init__(self, params: SQLAlchemyPartitionRegistryParams) -> None:
         """Initialize with the provided parameters."""
         self._engine = params.engine
         self._is_sqlite = params.engine.dialect.name == "sqlite"
-        self._vector_store_name = params.vector_store_name
+        self._partition_namespace = params.partition_namespace
         self._tombstone_retention_seconds = params.tombstone_retention_seconds
+        self._pending_partition_timeout_seconds = (
+            params.pending_partition_timeout_seconds
+        )
         self._purge_lease_seconds = params.purge_lease_seconds
         self._base_purge_retry_backoff_seconds = params.base_purge_retry_backoff_seconds
         self._max_purge_retry_backoff_seconds = params.max_purge_retry_backoff_seconds
@@ -286,83 +297,145 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
             await connection.run_sync(BasePartitionRegistry.metadata.create_all)
 
     @override
-    async def reserve(self, partition_key: str) -> Reservation:
-        # The primary key arbitrates the partition key across processes.
+    async def reserve(self, partition_name: str) -> Reservation:
+        # The primary key arbitrates the partition name across processes.
         # An insert rejected for another reason, such as a minted incarnation
         # that is registered or awaiting purge, is tried again with a fresh one.
         attempts = 0
         while True:
             incarnation = uuid4()
             try:
-                await self._insert_pending_partition(partition_key, incarnation)
+                await self._insert_pending_partition(partition_name, incarnation)
             except _RegistryInsertRejectedError as err:
                 logger.warning(
                     "Reserving partition %r under incarnation %s was rejected: "
                     "%s; minting another",
-                    partition_key,
+                    partition_name,
                     incarnation,
                     err,
                 )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise VectorStoreAttemptsExhaustedError(
-                        f"Creating partition {partition_key!r} made no progress "
+                    raise AttemptsExhaustedError(
+                        f"Creating partition {partition_name!r} made no progress "
                         f"after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err
                 continue
             return _SQLAlchemyReservation(
-                partition_key=partition_key,
+                partition_name=partition_name,
                 incarnation=incarnation,
                 engine=self._engine,
-                vector_store_name=self._vector_store_name,
+                partition_namespace=self._partition_namespace,
             )
 
     async def _insert_pending_partition(
-        self, partition_key: str, incarnation: UUID
+        self, partition_name: str, incarnation: UUID
     ) -> None:
-        # The queue check runs after the insert, so a concurrent deletion
-        # queuing a colliding incarnation, which the insert waited on, is
-        # visible to it; the locking read sees the latest committed state.
         try:
             async with write_connection(self._engine) as connection:
-                await connection.execute(
-                    insert(PartitionRow).values(
-                        vector_store_name=self._vector_store_name,
-                        partition_key=partition_key,
-                        incarnation=incarnation,
-                        live=False,
-                        registered_at=func.now(),
-                    )
+                await self._write_pending_partition(
+                    connection, partition_name, incarnation
                 )
-                queued = (
-                    await connection.execute(
-                        select(PurgeQueueRow.incarnation)
-                        .where(PurgeQueueRow.incarnation == incarnation)
-                        .with_for_update(read=True)
-                    )
-                ).scalar_one_or_none()
-                if queued is not None:
-                    raise _RegistryInsertRejectedError("the incarnation awaits purge")
         except IntegrityError as err:
             async with self._engine.connect() as connection:
                 taken = (
                     await connection.execute(
-                        select(PartitionRow.incarnation).where(
-                            PartitionRow.vector_store_name == self._vector_store_name,
-                            PartitionRow.partition_key == partition_key,
+                        select(
+                            PartitionRow.incarnation,
+                            PartitionRow.live,
+                            PartitionRow.registered_at,
+                            self._has_elapsed(
+                                self._pending_partition_timeout_seconds,
+                                since=PartitionRow.registered_at,
+                            ).label("timed_out"),
+                        ).where(
+                            PartitionRow.partition_namespace
+                            == self._partition_namespace,
+                            PartitionRow.partition_name == partition_name,
                         )
                     )
-                ).scalar_one_or_none()
-            if taken is not None:
-                raise VectorStorePartitionAlreadyExistsError(
-                    self._vector_store_name, partition_key
+                ).one_or_none()
+            if taken is None:
+                raise _RegistryInsertRejectedError(
+                    "the insert failed and no row exists under the name"
                 ) from err
+            if taken.live or not taken.timed_out:
+                raise PartitionAlreadyExistsError(
+                    self._partition_namespace, partition_name
+                ) from err
+            await self._replace_pending_partition(
+                partition_name, taken.incarnation, taken.registered_at, incarnation
+            )
+
+    async def _replace_pending_partition(
+        self,
+        partition_name: str,
+        replaced: UUID,
+        replaced_registered_at: datetime,
+        incarnation: UUID,
+    ) -> None:
+        """Replace a pending partition whose creation timed out with a pending one under `incarnation`, in one transaction.
+
+        The replaced life is unregistered only while it is still pending
+        under its incarnation, so a confirmation or another replacement that
+        commits first makes this one fail. Once it commits, the replaced
+        creator's `confirm` matches nothing.
+        """
+        logger.warning(
+            "Replacing partition %r, pending under incarnation %s since %s, "
+            "whose creation timed out",
+            partition_name,
+            replaced,
+            ensure_tz_aware(replaced_registered_at).isoformat(),
+        )
+        try:
+            async with write_connection(self._engine) as connection:
+                if not await _unregister_where(
+                    connection,
+                    self._partition_namespace,
+                    PartitionRow.partition_name == partition_name,
+                    PartitionRow.incarnation == replaced,
+                    PartitionRow.live.is_(False),
+                ):
+                    raise _RegistryInsertRejectedError(
+                        "the pending partition to replace changed first"
+                    )
+                await self._write_pending_partition(
+                    connection, partition_name, incarnation
+                )
+        except IntegrityError as err:
             raise _RegistryInsertRejectedError(
-                "the insert failed and no row exists under the key"
+                "the insert replacing a pending partition failed"
             ) from err
 
+    async def _write_pending_partition(
+        self, connection: AsyncConnection, partition_name: str, incarnation: UUID
+    ) -> None:
+        """Insert a pending partition's row under `incarnation`, unless the incarnation awaits purge."""
+        # The queue check runs after the insert, so a concurrent deletion
+        # queuing a colliding incarnation, which the insert waited on, is
+        # visible to it; the locking read sees the latest committed state.
+        await connection.execute(
+            insert(PartitionRow).values(
+                partition_namespace=self._partition_namespace,
+                partition_name=partition_name,
+                incarnation=incarnation,
+                live=False,
+                registered_at=func.now(),
+            )
+        )
+        queued = (
+            await connection.execute(
+                select(PurgeQueueRow.incarnation)
+                .where(PurgeQueueRow.incarnation == incarnation)
+                .with_for_update(read=True)
+            )
+        ).scalar_one_or_none()
+        if queued is not None:
+            raise _RegistryInsertRejectedError("the incarnation awaits purge")
+
     @override
-    async def resolve(self, partition_key: str) -> Registration | None:
+    async def resolve(self, partition_name: str) -> Registration | None:
         async with self._engine.connect() as connection:
             row = (
                 await connection.execute(
@@ -371,33 +444,34 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                         PartitionRow.live,
                         PartitionRow.registered_at,
                     ).where(
-                        PartitionRow.vector_store_name == self._vector_store_name,
-                        PartitionRow.partition_key == partition_key,
+                        PartitionRow.partition_namespace == self._partition_namespace,
+                        PartitionRow.partition_name == partition_name,
                     )
                 )
             ).one_or_none()
         if row is None:
             return None
         if not row.live:
-            raise VectorStorePartitionPendingError(
-                self._vector_store_name,
-                partition_key,
+            raise PartitionPendingError(
+                self._partition_namespace,
+                partition_name,
                 ensure_tz_aware(row.registered_at),
             )
         return _SQLAlchemyRegistration(
-            partition_key=partition_key,
+            partition_name=partition_name,
             incarnation=row.incarnation,
             engine=self._engine,
-            vector_store_name=self._vector_store_name,
+            partition_namespace=self._partition_namespace,
         )
 
     @override
-    async def unregister(self, partition_key: str) -> None:
-        await _unregister_where(
-            self._engine,
-            self._vector_store_name,
-            PartitionRow.partition_key == partition_key,
-        )
+    async def unregister(self, partition_name: str) -> None:
+        async with write_connection(self._engine) as connection:
+            await _unregister_where(
+                connection,
+                self._partition_namespace,
+                PartitionRow.partition_name == partition_name,
+            )
 
     @override
     async def run_purge_round(self, purge_round: PurgeRound) -> bool:
@@ -433,38 +507,18 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
         the work, since rounds are safe to repeat. A claim whose round never
         ended is taken again once its lease, and then the backoff, have passed.
         """
-        backoff_seconds = self._purge_retry_backoff_seconds()
         oldest_due = (
             select(PurgeQueueRow.incarnation)
             .where(
-                PurgeQueueRow.vector_store_name == self._vector_store_name,
+                PurgeQueueRow.partition_namespace == self._partition_namespace,
                 self._has_elapsed(
                     self._tombstone_retention_seconds, since=PurgeQueueRow.enqueued_at
                 ),
                 PurgeQueueRow.attempts_without_progress
                 < _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
                 or_(
-                    # No attempt since the last progress.
-                    PurgeQueueRow.attempts_without_progress == 0,
-                    # No claim is open: the backoff runs from the last raise.
-                    and_(
-                        PurgeQueueRow.claimed_at.is_(None),
-                        or_(
-                            PurgeQueueRow.last_failed_at.is_(None),
-                            self._has_elapsed(
-                                backoff_seconds, since=PurgeQueueRow.last_failed_at
-                            ),
-                        ),
-                    ),
-                    # The open claim's round never ended: the backoff runs
-                    # from when its lease passed.
-                    and_(
-                        PurgeQueueRow.claimed_at.is_not(None),
-                        self._has_elapsed(
-                            backoff_seconds + self._purge_lease_seconds,
-                            since=PurgeQueueRow.claimed_at,
-                        ),
-                    ),
+                    PurgeQueueRow.claimable_at.is_(None),
+                    PurgeQueueRow.claimable_at <= func.now(),
                 ),
             )
             .order_by(PurgeQueueRow.enqueued_at)
@@ -482,7 +536,12 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                         attempts_without_progress=(
                             PurgeQueueRow.attempts_without_progress + 1
                         ),
-                        claimed_at=func.now(),
+                        claimable_at=self._seconds_from_now(
+                            self._purge_lease_seconds
+                            + self._purge_retry_backoff_seconds(
+                                PurgeQueueRow.attempts_without_progress + 1
+                            )
+                        ),
                         claim_generation=PurgeQueueRow.claim_generation + 1,
                     )
                     .returning(
@@ -500,15 +559,12 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
             attempt=row.attempts_without_progress,
         )
 
-    def _purge_retry_backoff_seconds(self) -> ColumnElement[int]:
-        """Each tombstone's purge retry backoff in seconds, computed by the database."""
-        # 1 << (a - 1) is 2 ** (a - 1) on both dialects. a is clamped at 0:
-        # the claim evaluates this for tombstones with no attempts too, and
-        # PostgreSQL leaves a negative shift undefined.
-        attempts = PurgeQueueRow.attempts_without_progress
-        doublings = literal(1, Integer).op("<<")(
-            case((attempts > 0, attempts - 1), else_=0)
-        )
+    def _purge_retry_backoff_seconds(
+        self, attempts: ColumnElement[int] | InstrumentedAttribute[int]
+    ) -> ColumnElement[int]:
+        """The purge retry backoff in seconds after `attempts` attempts, computed by the database."""
+        # 1 << (a - 1) is 2 ** (a - 1) on both dialects.
+        doublings = literal(1, Integer).op("<<")(attempts - 1)
         smaller = func.min if self._is_sqlite else func.least
         return smaller(
             self._base_purge_retry_backoff_seconds * doublings,
@@ -535,6 +591,18 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
             cutoff = func.now() - literal(timedelta(seconds=1), Interval) * seconds
         return since <= cutoff
 
+    def _seconds_from_now(
+        self, seconds: int | ColumnElement[int]
+    ) -> ColumnElement[datetime]:
+        """The time `seconds` from now, on the database clock."""
+        if self._is_sqlite:
+            return func.datetime(
+                "now",
+                func.printf("+%d seconds", seconds),
+                type_=DateTime(timezone=True),
+            )
+        return func.now() + literal(timedelta(seconds=1), Interval) * seconds
+
     async def _end_tombstone_claim_after_failure(
         self, claim: _TombstoneClaim, error: Exception
     ) -> None:
@@ -550,7 +618,13 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                     PurgeQueueRow.incarnation == claim.incarnation,
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
-                .values(claimed_at=None, last_failed_at=func.now())
+                .values(
+                    claimable_at=self._seconds_from_now(
+                        self._purge_retry_backoff_seconds(
+                            PurgeQueueRow.attempts_without_progress
+                        )
+                    )
+                )
             )
         if ended.rowcount != 1:
             self._report_purge_round_outlasting_its_claim(claim)
@@ -560,8 +634,8 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
             logger.error(
                 "Purge of incarnation %s is dead-lettered after %d attempts "
                 "without progress: its records stay and it is no longer claimed. "
-                "Last error: %r. Set its attempts_without_progress to 0 in %s to "
-                "retry it.",
+                "Last error: %r. Set its attempts_without_progress to 0 and its "
+                "claimable_at to NULL in %s to retry it.",
                 claim.incarnation,
                 claim.attempt,
                 error,
@@ -603,7 +677,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
                 .values(
-                    claimed_at=None,
+                    claimable_at=None,
                     attempts_without_progress=(
                         PurgeQueueRow.attempts_without_progress - 1
                     ),
@@ -635,7 +709,7 @@ class SQLAlchemyVectorStorePartitionRegistry(VectorStorePartitionRegistry):
                     PurgeQueueRow.incarnation == claim.incarnation,
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
-                .values(attempts_without_progress=0, claimed_at=None)
+                .values(attempts_without_progress=0, claimable_at=None)
             )
         if ended.rowcount != 1:
             self._report_purge_round_outlasting_its_claim(claim)
@@ -655,7 +729,7 @@ class _SQLAlchemyReservation(Reservation):
     """A reservation whose methods write the registry's tables directly."""
 
     engine: AsyncEngine = field(repr=False, compare=False)
-    vector_store_name: str = field(repr=False)
+    partition_namespace: str = field(repr=False)
 
     @override
     async def confirm(self) -> Registration:
@@ -665,34 +739,33 @@ class _SQLAlchemyReservation(Reservation):
             result = await connection.execute(
                 update(PartitionRow)
                 .where(
-                    PartitionRow.vector_store_name == self.vector_store_name,
-                    PartitionRow.partition_key == self.partition_key,
+                    PartitionRow.partition_namespace == self.partition_namespace,
+                    PartitionRow.partition_name == self.partition_name,
                     PartitionRow.incarnation == self.incarnation,
                     PartitionRow.live.is_(False),
                 )
                 .values(live=True)
             )
         if result.rowcount != 1:
-            raise VectorStorePartitionDeletedError(
-                self.vector_store_name, self.partition_key
-            )
+            raise PartitionDeletedError(self.partition_namespace, self.partition_name)
         return _SQLAlchemyRegistration(
-            partition_key=self.partition_key,
+            partition_name=self.partition_name,
             incarnation=self.incarnation,
             engine=self.engine,
-            vector_store_name=self.vector_store_name,
+            partition_namespace=self.partition_namespace,
         )
 
     @override
     async def cancel(self) -> None:
         # Conditional on the row being pending, as confirm is, so a cancel
         # after a confirmation that committed leaves the live partition.
-        await _unregister_where(
-            self.engine,
-            self.vector_store_name,
-            PartitionRow.incarnation == self.incarnation,
-            PartitionRow.live.is_(False),
-        )
+        async with write_connection(self.engine) as connection:
+            await _unregister_where(
+                connection,
+                self.partition_namespace,
+                PartitionRow.incarnation == self.incarnation,
+                PartitionRow.live.is_(False),
+            )
 
 
 @dataclass(frozen=True)
@@ -700,7 +773,7 @@ class _SQLAlchemyRegistration(Registration):
     """A registration whose method reads the registry's tables directly."""
 
     engine: AsyncEngine = field(repr=False, compare=False)
-    vector_store_name: str = field(repr=False)
+    partition_namespace: str = field(repr=False)
 
     @override
     async def require_current(self) -> None:
@@ -708,40 +781,42 @@ class _SQLAlchemyRegistration(Registration):
             current = (
                 await connection.execute(
                     select(PartitionRow.incarnation).where(
-                        PartitionRow.vector_store_name == self.vector_store_name,
-                        PartitionRow.partition_key == self.partition_key,
+                        PartitionRow.partition_namespace == self.partition_namespace,
+                        PartitionRow.partition_name == self.partition_name,
                     )
                 )
             ).scalar_one_or_none()
         if current != self.incarnation:
-            raise VectorStorePartitionHandleStaleError(
-                self.vector_store_name, self.partition_key
+            raise PartitionHandleStaleError(
+                self.partition_namespace, self.partition_name
             )
 
 
 async def _unregister_where(
-    engine: AsyncEngine, vector_store_name: str, *conditions: ColumnElement[bool]
-) -> None:
-    """Delete the partition row of a vector store the conditions select, and queue its tombstone.
+    connection: AsyncConnection,
+    partition_namespace: str,
+    *conditions: ColumnElement[bool],
+) -> bool:
+    """Delete the partition row in a namespace the conditions select, queue its tombstone, and return whether there was one.
 
-    One transaction, so the partition is unreachable once it commits. The
-    DELETE goes first and takes the row's write lock, so racing deleters
-    serialize on it and the loser finds no row and returns.
+    In the caller's write transaction, so the partition is unreachable once
+    it commits. The DELETE goes first and takes the row's write lock, so
+    racing deleters serialize on it and the loser finds no row.
     """
-    async with write_connection(engine) as connection:
-        row = (
-            await connection.execute(
-                delete(PartitionRow)
-                .where(PartitionRow.vector_store_name == vector_store_name, *conditions)
-                .returning(PartitionRow.incarnation)
-            )
-        ).one_or_none()
-        if row is None:
-            return
+    row = (
         await connection.execute(
-            insert(PurgeQueueRow).values(
-                incarnation=row.incarnation,
-                vector_store_name=vector_store_name,
-                enqueued_at=func.now(),
-            )
+            delete(PartitionRow)
+            .where(PartitionRow.partition_namespace == partition_namespace, *conditions)
+            .returning(PartitionRow.incarnation)
         )
+    ).one_or_none()
+    if row is None:
+        return False
+    await connection.execute(
+        insert(PurgeQueueRow).values(
+            incarnation=row.incarnation,
+            partition_namespace=partition_namespace,
+            enqueued_at=func.now(),
+        )
+    )
+    return True

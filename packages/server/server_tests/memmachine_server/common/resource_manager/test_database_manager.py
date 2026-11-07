@@ -26,13 +26,13 @@ from memmachine_server.common.errors import (
     QdrantConfigurationError,
     VectorStoreConfigurationError,
 )
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyPartitionRegistryParams,
+)
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.sql import write_connection, write_session
 from memmachine_server.common.vector_graph_store import VectorGraphStore
 from memmachine_server.common.vector_store import VectorStoreSchema
-from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistryParams,
-)
 
 requires_pymilvus = pytest.mark.skipif(
     importlib.util.find_spec("pymilvus") is None,
@@ -432,7 +432,7 @@ async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
             "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
-            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyVectorStorePartitionRegistry",
+            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyPartitionRegistry",
         ) as mock_registry_cls,
         patch(
             "qdrant_client.AsyncQdrantClient",
@@ -445,9 +445,9 @@ async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
         await builder.get_vector_store("qdrant1", **_STORE)
 
     mock_registry_cls.assert_called_once_with(
-        SQLAlchemyVectorStorePartitionRegistryParams(
+        SQLAlchemyPartitionRegistryParams(
             engine=builder.sql_engines["registry"],
-            vector_store_name="c",
+            partition_namespace="c",
             tombstone_retention_seconds=3600,
         )
     )
@@ -705,7 +705,7 @@ async def test_get_vector_store_builds_a_milvus_store(tmp_path):
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
         patch(
-            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyVectorStorePartitionRegistry",
+            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyPartitionRegistry",
         ) as mock_registry_cls,
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
@@ -715,9 +715,9 @@ async def test_get_vector_store_builds_a_milvus_store(tmp_path):
         await builder.get_vector_store("milvus1", **_STORE)
 
     mock_registry_cls.assert_called_once_with(
-        SQLAlchemyVectorStorePartitionRegistryParams(
+        SQLAlchemyPartitionRegistryParams(
             engine=builder.sql_engines["registry"],
-            vector_store_name="c",
+            partition_namespace="c",
             tombstone_retention_seconds=3600,
         )
     )

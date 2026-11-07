@@ -12,24 +12,24 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionDeletedError,
+    PartitionPendingError,
+    Registration,
+    sqlalchemy_partition_registry,
+)
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
+)
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store import (
     QueryResult,
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionPendingError,
     VectorStoreSchema,
     registry_backed_vector_store,
-)
-from memmachine_server.common.vector_store.partition_registry import (
-    Registration,
-    sqlalchemy_partition_registry,
-)
-from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
 )
 from memmachine_server.common.vector_store.registry_backed_vector_store import (
     RegistryBackedVectorStore,
@@ -37,7 +37,7 @@ from memmachine_server.common.vector_store.registry_backed_vector_store import (
     RegistryBackedVectorStorePartition,
 )
 
-KEY = "p"
+NAME = "p"
 VECTOR_DIMENSIONS = 3
 
 type Preparation = Callable[[str, UUID], Awaitable[None]]
@@ -69,7 +69,7 @@ class _Store(RegistryBackedVectorStore[_Partition]):
 
     def __init__(
         self,
-        registry: SQLAlchemyVectorStorePartitionRegistry,
+        registry: SQLAlchemyPartitionRegistry,
         vector_dimensions: int = VECTOR_DIMENSIONS,
     ) -> None:
         super().__init__(
@@ -91,9 +91,9 @@ class _Store(RegistryBackedVectorStore[_Partition]):
 
     @override
     async def _prepare_partition_storage(
-        self, partition_key: str, incarnation: UUID
+        self, partition_name: str, incarnation: UUID
     ) -> None:
-        await self.prepare(partition_key, incarnation)
+        await self.prepare(partition_name, incarnation)
 
     @override
     def _partition_handle(self, registration: Registration) -> _Partition:
@@ -110,7 +110,7 @@ class _Store(RegistryBackedVectorStore[_Partition]):
         return False
 
 
-async def _prepared(partition_key: str, incarnation: UUID) -> None:
+async def _prepared(partition_name: str, incarnation: UUID) -> None:
     return None
 
 
@@ -118,9 +118,9 @@ async def _prepared(partition_key: str, incarnation: UUID) -> None:
 async def registry(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
     enable_sqlite_explicit_begin(engine)
-    registry = SQLAlchemyVectorStorePartitionRegistry(
-        SQLAlchemyVectorStorePartitionRegistryParams(
-            engine=engine, vector_store_name="store", tombstone_retention_seconds=0
+    registry = SQLAlchemyPartitionRegistry(
+        SQLAlchemyPartitionRegistryParams(
+            engine=engine, partition_namespace="store", tombstone_retention_seconds=0
         )
     )
     await registry.startup()
@@ -159,25 +159,25 @@ async def test_a_partition_is_pending_while_its_storage_is_prepared(store):
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow(partition_key, incarnation) -> None:
+    async def slow(partition_name, incarnation) -> None:
         started.set()
         await release.wait()
 
     store.prepare = slow
-    creating = asyncio.create_task(store.create_partition(KEY))
+    creating = asyncio.create_task(store.create_partition(NAME))
     await started.wait()
 
-    with pytest.raises(VectorStorePartitionPendingError) as pending:
-        await store.open_partition(KEY)
-    with pytest.raises(VectorStorePartitionPendingError) as registered:
-        await store._partition_registry.resolve(KEY)
+    with pytest.raises(PartitionPendingError) as pending:
+        await store.open_partition(NAME)
+    with pytest.raises(PartitionPendingError) as registered:
+        await store._partition_registry.resolve(NAME)
     assert pending.value.registered_at == registered.value.registered_at
-    with pytest.raises(VectorStorePartitionAlreadyExistsError):
-        await store.create_partition(KEY)
+    with pytest.raises(PartitionAlreadyExistsError):
+        await store.create_partition(NAME)
 
     release.set()
     await creating
-    assert await store.open_partition(KEY) is not None
+    assert await store.open_partition(NAME) is not None
 
 
 @pytest.mark.asyncio
@@ -188,25 +188,25 @@ async def test_open_or_create_waits_for_a_pending_partition(store, monkeypatch):
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow(partition_key, incarnation) -> None:
+    async def slow(partition_name, incarnation) -> None:
         started.set()
         await release.wait()
 
     store.prepare = slow
-    creating = asyncio.create_task(store.create_partition(KEY))
+    creating = asyncio.create_task(store.create_partition(NAME))
     await started.wait()
     store.prepare = _prepared
     registry = store._partition_registry
     reserve = registry.reserve
     reservations = 0
 
-    async def counted(partition_key):
+    async def counted(partition_name):
         nonlocal reservations
         reservations += 1
-        return await reserve(partition_key)
+        return await reserve(partition_name)
 
     monkeypatch.setattr(registry, "reserve", counted)
-    opening = asyncio.create_task(store.open_or_create_partition(KEY))
+    opening = asyncio.create_task(store.open_or_create_partition(NAME))
     await asyncio.sleep(0.1)
     assert not opening.done()
     # It waits on the pending partition instead of trying to reserve it.
@@ -216,7 +216,7 @@ async def test_open_or_create_waits_for_a_pending_partition(store, monkeypatch):
     await creating
     opened = await opening
 
-    created = await store._partition_registry.resolve(KEY)
+    created = await store._partition_registry.resolve(NAME)
     assert created is not None
     assert opened._incarnation == created.incarnation
 
@@ -226,17 +226,15 @@ async def test_open_or_create_gives_up_from_the_race_it_last_lost(store, monkeyp
     monkeypatch.setattr(
         registry_backed_vector_store, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0
     )
-    lost = VectorStorePartitionAlreadyExistsError(store._vector_store_name, KEY)
+    lost = PartitionAlreadyExistsError(store._vector_store_name, NAME)
 
-    async def taken(partition_key):
+    async def taken(partition_name):
         raise lost
 
     monkeypatch.setattr(store._partition_registry, "reserve", taken)
 
-    with pytest.raises(
-        VectorStoreAttemptsExhaustedError, match="no progress"
-    ) as gave_up:
-        await store.open_or_create_partition(KEY)
+    with pytest.raises(AttemptsExhaustedError, match="no progress") as gave_up:
+        await store.open_or_create_partition(NAME)
     assert gave_up.value.__cause__ is lost
 
 
@@ -247,19 +245,19 @@ async def test_a_failed_preparation_frees_the_key_and_queues_its_incarnation(
 ):
     incarnations: list[UUID] = []
 
-    async def refused(partition_key, incarnation) -> None:
+    async def refused(partition_name, incarnation) -> None:
         incarnations.append(incarnation)
         raise RuntimeError("the backend refused")
 
     store.prepare = refused
     with pytest.raises(RuntimeError, match="refused"):
-        await getattr(store, create)(KEY)
+        await getattr(store, create)(NAME)
 
-    assert await store.open_partition(KEY) is None
+    assert await store.open_partition(NAME) is None
     assert await _purged(store) == incarnations
     store.prepare = _prepared
-    await store.create_partition(KEY)
-    assert await store.open_partition(KEY) is not None
+    await store.create_partition(NAME)
+    assert await store.open_partition(NAME) is not None
 
 
 @pytest.mark.asyncio
@@ -269,19 +267,19 @@ async def test_a_cancelled_preparation_frees_the_key_and_queues_its_incarnation(
     started = asyncio.Event()
     incarnations: list[UUID] = []
 
-    async def hangs(partition_key, incarnation) -> None:
+    async def hangs(partition_name, incarnation) -> None:
         incarnations.append(incarnation)
         started.set()
         await asyncio.Event().wait()
 
     store.prepare = hangs
-    creating = asyncio.create_task(store.create_partition(KEY))
+    creating = asyncio.create_task(store.create_partition(NAME))
     await started.wait()
     creating.cancel()
     with pytest.raises(asyncio.CancelledError):
         await creating
 
-    assert await store.open_partition(KEY) is None
+    assert await store.open_partition(NAME) is None
     assert await _purged(store) == incarnations
 
 
@@ -295,7 +293,7 @@ async def test_cancelling_the_reservation_after_a_cancelled_preparation_survives
     reservation_type = sqlalchemy_partition_registry._SQLAlchemyReservation
     cancel = reservation_type.cancel
 
-    async def hangs(partition_key, incarnation) -> None:
+    async def hangs(partition_name, incarnation) -> None:
         started.set()
         await asyncio.Event().wait()
 
@@ -306,7 +304,7 @@ async def test_cancelling_the_reservation_after_a_cancelled_preparation_survives
 
     store.prepare = hangs
     monkeypatch.setattr(reservation_type, "cancel", slow)
-    creating = asyncio.create_task(store.create_partition(KEY))
+    creating = asyncio.create_task(store.create_partition(NAME))
     await started.wait()
     creating.cancel()
     await asyncio.wait_for(cancelling.wait(), 5)
@@ -316,7 +314,7 @@ async def test_cancelling_the_reservation_after_a_cancelled_preparation_survives
 
     release.set()
     await asyncio.wait_for(asyncio.gather(*store._reservation_cancellations), 5)
-    assert await store.open_partition(KEY) is None
+    assert await store.open_partition(NAME) is None
 
 
 @pytest.mark.asyncio
@@ -329,10 +327,10 @@ async def test_every_lifecycle_call_is_tracked(store, monkeypatch):
         return tracker(operation)
 
     monkeypatch.setattr(store, "_tracker", recording)
-    await store.create_partition(KEY)
-    await store.open_partition(KEY)
-    await store.open_or_create_partition(KEY)
-    await store.delete_partition(KEY)
+    await store.create_partition(NAME)
+    await store.open_partition(NAME)
+    await store.open_or_create_partition(NAME)
+    await store.delete_partition(NAME)
     await store.purge_deleted_partitions()
 
     assert tracked == [
@@ -354,7 +352,7 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
     cancelling = asyncio.Event()
     release = asyncio.Event()
 
-    async def hangs(partition_key, incarnation) -> None:
+    async def hangs(partition_name, incarnation) -> None:
         started.set()
         await asyncio.Event().wait()
 
@@ -367,7 +365,7 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
     monkeypatch.setattr(
         sqlalchemy_partition_registry._SQLAlchemyReservation, "cancel", fails_late
     )
-    creating = asyncio.create_task(store.create_partition(KEY))
+    creating = asyncio.create_task(store.create_partition(NAME))
     await started.wait()
     creating.cancel()
     await asyncio.wait_for(cancelling.wait(), 5)
@@ -385,7 +383,7 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
         r
         for r in caplog.records
         if r.levelno == logging.ERROR
-        and repr(KEY) in r.getMessage()
+        and repr(NAME) in r.getMessage()
         and isinstance(r.exc_info[1], ConnectionError)
     ]
     assert not store._reservation_cancellations
@@ -403,11 +401,11 @@ async def test_a_confirmation_that_fails_frees_the_key(store, monkeypatch):
             unreachable,
         )
         with pytest.raises(ConnectionError):
-            await store.create_partition(KEY)
+            await store.create_partition(NAME)
 
-    assert await store.open_partition(KEY) is None
-    await store.create_partition(KEY)
-    assert await store.open_partition(KEY) is not None
+    assert await store.open_partition(NAME) is None
+    await store.create_partition(NAME)
+    assert await store.open_partition(NAME) is not None
 
 
 @pytest.mark.asyncio
@@ -423,14 +421,14 @@ async def test_a_cancelled_confirmation_frees_the_key(store, monkeypatch):
         patched.setattr(
             sqlalchemy_partition_registry._SQLAlchemyReservation, "confirm", hangs
         )
-        creating = asyncio.create_task(store.create_partition(KEY))
+        creating = asyncio.create_task(store.create_partition(NAME))
         await confirming.wait()
         creating.cancel()
         with pytest.raises(asyncio.CancelledError):
             await creating
         await asyncio.wait_for(asyncio.gather(*store._reservation_cancellations), 5)
 
-    assert await store.open_partition(KEY) is None
+    assert await store.open_partition(NAME) is None
 
 
 @pytest.mark.asyncio
@@ -450,9 +448,9 @@ async def test_a_confirmation_that_committed_before_failing_stands(store, monkey
             commits_then_fails,
         )
         with pytest.raises(ConnectionError):
-            await store.create_partition(KEY)
+            await store.create_partition(NAME)
 
-    assert await store.open_partition(KEY) is not None
+    assert await store.open_partition(NAME) is not None
 
 
 @pytest.mark.asyncio
@@ -463,7 +461,7 @@ async def test_a_failed_preparation_the_registry_cannot_undo_stays_pending_until
         registry_backed_vector_store, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0
     )
 
-    async def refused(partition_key, incarnation) -> None:
+    async def refused(partition_name, incarnation) -> None:
         raise RuntimeError("the backend refused")
 
     async def unreachable(reservation) -> None:
@@ -477,19 +475,19 @@ async def test_a_failed_preparation_the_registry_cannot_undo_stays_pending_until
             unreachable,
         )
         with pytest.raises(RuntimeError, match="refused"):
-            await store.create_partition(KEY)
+            await store.create_partition(NAME)
     store.prepare = _prepared
 
-    with pytest.raises(VectorStorePartitionPendingError):
-        await store.open_partition(KEY)
-    with pytest.raises(VectorStorePartitionAlreadyExistsError):
-        await store.create_partition(KEY)
-    with pytest.raises(VectorStorePartitionPendingError):
-        await store.open_or_create_partition(KEY)
+    with pytest.raises(PartitionPendingError):
+        await store.open_partition(NAME)
+    with pytest.raises(PartitionAlreadyExistsError):
+        await store.create_partition(NAME)
+    with pytest.raises(PartitionPendingError):
+        await store.open_or_create_partition(NAME)
 
-    await store.delete_partition(KEY)
-    await store.create_partition(KEY)
-    assert await store.open_partition(KEY) is not None
+    await store.delete_partition(NAME)
+    await store.create_partition(NAME)
+    assert await store.open_partition(NAME) is not None
 
 
 @pytest.mark.asyncio
@@ -499,15 +497,15 @@ async def test_a_partition_deleted_while_its_storage_is_prepared_is_not_marked_l
     """The creation raises, and the partition stays deleted."""
     incarnations: list[UUID] = []
 
-    async def deleted_meanwhile(partition_key, incarnation) -> None:
+    async def deleted_meanwhile(partition_name, incarnation) -> None:
         incarnations.append(incarnation)
-        await store.delete_partition(KEY)
+        await store.delete_partition(NAME)
 
     store.prepare = deleted_meanwhile
-    with pytest.raises(VectorStorePartitionDeletedError):
-        await store.create_partition(KEY)
+    with pytest.raises(PartitionDeletedError):
+        await store.create_partition(NAME)
 
-    assert await store.open_partition(KEY) is None
+    assert await store.open_partition(NAME) is None
     assert await _purged(store) == incarnations
 
 
@@ -520,13 +518,13 @@ async def test_open_or_create_creates_again_after_a_deletion_during_preparation(
     )
     incarnations: list[UUID] = []
 
-    async def deleted_the_first_time(partition_key, incarnation) -> None:
+    async def deleted_the_first_time(partition_name, incarnation) -> None:
         incarnations.append(incarnation)
         if len(incarnations) == 1:
-            await store.delete_partition(KEY)
+            await store.delete_partition(NAME)
 
     store.prepare = deleted_the_first_time
-    opened = await store.open_or_create_partition(KEY)
+    opened = await store.open_or_create_partition(NAME)
 
     assert len(incarnations) == 2
     assert opened._incarnation == incarnations[1]
@@ -540,12 +538,12 @@ async def test_calling_the_purge_until_it_returns_false_drains_every_tombstone(
     """A round that finds nothing still ran, so the calls go on to the next
     due tombstone."""
     incarnations = []
-    for partition_key in ("a", "b"):
-        await store.create_partition(partition_key)
-        live = await store._partition_registry.resolve(partition_key)
+    for partition_name in ("a", "b"):
+        await store.create_partition(partition_name)
+        live = await store._partition_registry.resolve(partition_name)
         assert live is not None
         incarnations.append(live.incarnation)
-        await store.delete_partition(partition_key)
+        await store.delete_partition(partition_name)
 
     assert sorted(await _purged(store)) == sorted(incarnations)
 
@@ -556,8 +554,8 @@ async def test_calling_the_purge_until_it_returns_false_drains_every_tombstone(
 async def test_a_query_limit_that_is_not_positive_is_refused(
     store, query_vectors, limit
 ):
-    await store.create_partition(KEY)
-    partition = await store.open_partition(KEY)
+    await store.create_partition(NAME)
+    partition = await store.open_partition(NAME)
     assert partition is not None
 
     with pytest.raises(ValueError, match="not positive"):

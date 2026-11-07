@@ -1,18 +1,19 @@
 """
 Abstract base classes for a partition registry, its reservations, and registrations.
 
-The catalog of a vector store whose backend cannot arbitrate one: which
-partitions exist, under which incarnation, and which deleted incarnations
-await purge. Its calls are arbitrated across every process sharing it: a reservation mints an
-incarnation no registered or queued partition carries, unregistration makes
-the partition unreachable when it returns, and a purge round runs on a due
-tombstone, possibly on two purgers at once.
+The catalog of one partition namespace, for stores whose backends cannot
+arbitrate one: which partitions exist, under which incarnation, and which
+deleted incarnations await purge. Its calls are arbitrated across every
+process sharing it: a reservation mints an incarnation no registered or
+queued partition carries, unregistration makes the partition unreachable
+when it returns, and a purge round runs on a due tombstone, possibly on two
+purgers at once.
 
-The registry is addressed by partition key. Reserving a key answers a
+The registry is addressed by partition name. Reserving a name answers a
 `Reservation`, which the partition's creator confirms once the partition's
-storage is prepared, or cancels. Confirming it, or resolving a key, answers a
+storage is prepared, or cancels. Confirming it, or resolving a name, answers a
 `Registration`, through which a handle checks that the partition has not been
-deleted. Each acts on one life of the partition alone, and a deletion by key
+deleted. Each acts on one life of the partition alone, and a deletion by name
 voids either.
 """
 
@@ -31,14 +32,14 @@ class _RegistryEntry:
     value its records carry.
     """
 
-    partition_key: str
+    partition_name: str
     incarnation: UUID
 
 
 @dataclass(frozen=True)
 class Reservation(_RegistryEntry, ABC):
     """
-    A partition's hold on its key, kept by its creator while it prepares the partition's storage.
+    A partition's hold on its name, kept by its creator while it prepares the partition's storage.
 
     The partition is pending until the reservation is confirmed. A registry
     implementation supplies the methods, each of which writes the registry.
@@ -57,7 +58,7 @@ class Reservation(_RegistryEntry, ABC):
             Registration: The same life of the partition, live.
 
         Raises:
-            VectorStorePartitionDeletedError:
+            PartitionDeletedError:
                 If the partition is no longer pending: it was deleted.
         """
         raise NotImplementedError
@@ -69,8 +70,8 @@ class Reservation(_RegistryEntry, ABC):
 
         The pending partition is unreachable when this returns, and purge
         rounds reclaim its records later. Once the reservation is confirmed,
-        cancelling it does nothing: only a deletion by key ends a live
-        partition. A partition reserved since under the same key is another
+        cancelling it does nothing: only a deletion by name ends a live
+        partition. A partition reserved since under the same name is another
         life and stays. Idempotent.
         """
         raise NotImplementedError
@@ -87,15 +88,15 @@ class Registration(_RegistryEntry, ABC):
     @abstractmethod
     async def require_current(self) -> None:
         """
-        Raise unless this life is still the partition registered under its key.
+        Raise unless this life is still the partition registered under its name.
 
         One read of the registry: a deletion committed before the read makes
         it raise, and one committed after does not.
 
         Raises:
-            VectorStorePartitionHandleStaleError:
+            PartitionHandleStaleError:
                 If the partition was deleted, whether or not another was
-                registered under the key since.
+                registered under the name since.
         """
         raise NotImplementedError
 
@@ -104,9 +105,9 @@ type PurgeRound = Callable[[UUID], Awaitable[bool]]
 """A purge round: deletes the records under an incarnation in the store, and returns whether it found any."""
 
 
-class VectorStorePartitionRegistry(ABC):
+class PartitionRegistry(ABC):
     """
-    The partition registry of one vector store.
+    The partition registry of one partition namespace.
 
     A deleted partition's incarnation waits on a queue as a tombstone. A
     write checked as live before the deletion can land in the backend after
@@ -126,63 +127,66 @@ class VectorStorePartitionRegistry(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def reserve(self, partition_key: str) -> Reservation:
+    async def reserve(self, partition_name: str) -> Reservation:
         """
-        Reserve a partition key for a new pending partition under a freshly minted incarnation.
+        Reserve a partition name for a new pending partition under a freshly minted incarnation.
 
-        The partition key is arbitrated across processes, and the
+        The partition name is arbitrated across processes, and the
         incarnation is one no registered or queued partition carries, so the
         new partition starts empty and no purge reclaims its records. The
         partition is pending until its reservation is confirmed, and holds its
-        key meanwhile.
+        name meanwhile. A pending partition whose creation the registry takes
+        to have stopped is replaced: in the same step it is unregistered, as
+        `unregister` does, and its creator's `confirm` then raises.
 
         Args:
-            partition_key (str): The key of the partition.
+            partition_name (str): The name of the partition.
 
         Returns:
             Reservation: The new partition's reservation.
 
         Raises:
-            VectorStorePartitionAlreadyExistsError:
-                The partition key is taken, by a live or a pending partition.
-            VectorStoreAttemptsExhaustedError:
+            PartitionAlreadyExistsError:
+                The partition name is taken, by a live partition or by a
+                pending one whose creation may still be running.
+            AttemptsExhaustedError:
                 The registry gave up after repeated attempts to reserve
-                the free partition key failed.
+                the free partition name failed.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def resolve(self, partition_key: str) -> Registration | None:
+    async def resolve(self, partition_name: str) -> Registration | None:
         """
-        Resolve a partition key to the live partition registered under it.
+        Resolve a partition name to the live partition registered under it.
 
         One read of the registry decides the outcome.
 
         Args:
-            partition_key (str): The key of the partition.
+            partition_name (str): The name of the partition.
 
         Returns:
             Registration | None:
                 The live partition's registration, or None when no partition
-                holds the key.
+                holds the name.
 
         Raises:
-            VectorStorePartitionPendingError:
-                If the partition registered under the key is pending.
+            PartitionPendingError:
+                If the partition registered under the name is pending.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def unregister(self, partition_key: str) -> None:
+    async def unregister(self, partition_name: str) -> None:
         """
-        Unregister the partition under a key and queue its incarnation for purge.
+        Unregister the partition under a name and queue its incarnation for purge.
 
         The partition, pending or live, is unreachable when this returns,
         which voids its reservation or registration, and purge rounds reclaim
         its records later. Idempotent.
 
         Args:
-            partition_key (str): The key of the partition.
+            partition_name (str): The name of the partition.
         """
         raise NotImplementedError
 

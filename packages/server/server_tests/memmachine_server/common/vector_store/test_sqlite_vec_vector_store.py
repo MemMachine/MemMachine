@@ -21,13 +21,15 @@ from memmachine_server.common.filter.filter_parser import (
     Not,
     Or,
 )
+from memmachine_server.common.partition_registry import (
+    AttemptsExhaustedError,
+    PartitionAlreadyExistsError,
+    PartitionHandleStaleError,
+)
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store import sqlite_vec_vector_store
 from memmachine_server.common.vector_store.data_types import (
     Record,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionHandleStaleError,
     VectorStoreSchema,
 )
 from memmachine_server.common.vector_store.sqlite_properties import (
@@ -51,8 +53,8 @@ pytestmark = pytest.mark.skipif(
 VECTOR_STORE_NAME = "test_vector_store"
 NAME = "test_name"
 VECTOR_DIM = 3
-# A partition key of the longest length, with characters no identifier allows.
-ANY_CHARACTERS_KEY = "Session/ID-1 ü".ljust(254, "x")
+# A partition name of the longest length, with characters no identifier allows.
+ANY_CHARACTERS_NAME = "Session/ID-1 ü".ljust(254, "x")
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 INDEXED_PROPERTIES: dict[str, PropertyType] = {
@@ -185,7 +187,7 @@ class TestPartitionLifecycle:
 
     @pytest.mark.asyncio
     async def test_duplicate_name_raises(self, store, partition):
-        with pytest.raises(VectorStorePartitionAlreadyExistsError):
+        with pytest.raises(PartitionAlreadyExistsError):
             await store.create_partition(NAME)
 
     @pytest.mark.asyncio
@@ -239,12 +241,12 @@ class TestPartitionLifecycle:
     ):
         attempts: list[UUID] = []
 
-        async def always_rejected(partition_key: str, incarnation: UUID) -> None:
+        async def always_rejected(partition_name: str, incarnation: UUID) -> None:
             attempts.append(incarnation)
             raise sqlite_vec_vector_store._RegistryInsertRejectedError(str(incarnation))
 
         monkeypatch.setattr(store, "_insert_partition", always_rejected)
-        with pytest.raises(VectorStoreAttemptsExhaustedError):
+        with pytest.raises(AttemptsExhaustedError):
             await store.create_partition("capped")
         assert len(attempts) == sqlite_vec_vector_store._MAX_MINT_ATTEMPTS
 
@@ -260,12 +262,14 @@ class TestPartitionLifecycle:
             )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("partition_key", ["", "k" * 256, "ü" * 128, "with\x00nul"])
-    async def test_a_partition_key_outside_the_rule_is_refused(
-        self, store, partition_key
+    @pytest.mark.parametrize(
+        "partition_name", ["", "k" * 256, "ü" * 128, "with\x00nul"]
+    )
+    async def test_a_partition_name_outside_the_rule_is_refused(
+        self, store, partition_name
     ):
-        with pytest.raises(ValueError, match="Partition key"):
-            await store.create_partition(partition_key)
+        with pytest.raises(ValueError, match="Partition name"):
+            await store.create_partition(partition_name)
 
     @pytest.mark.parametrize(
         "vector_store_name",
@@ -279,10 +283,10 @@ class TestPartitionLifecycle:
             _params(engine, vector_store_name=vector_store_name)
 
     @pytest.mark.asyncio
-    async def test_a_partition_key_of_any_characters_and_the_longest_length_works(
+    async def test_a_partition_name_of_any_characters_and_the_longest_length_works(
         self, store
     ):
-        key = ANY_CHARACTERS_KEY
+        key = ANY_CHARACTERS_NAME
         await store.create_partition(key)
         partition = await store.open_partition(key)
         assert partition is not None
@@ -304,18 +308,18 @@ class TestPartitionLifecycle:
 
         await store.delete_partition("lifecycle")
 
-        with pytest.raises(VectorStorePartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
             await partition.upsert(records=[record])
-        with pytest.raises(VectorStorePartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
             await partition.query(query_vectors=[record.vector], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
             await partition.delete(record_uuids=[record.uuid])
         # So does an operation with nothing to do.
-        with pytest.raises(VectorStorePartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
             await partition.upsert(records=[])
-        with pytest.raises(VectorStorePartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
             await partition.query(query_vectors=[], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
             await partition.delete(record_uuids=[])
 
     @pytest.mark.asyncio
@@ -338,11 +342,11 @@ class TestPartitionLifecycle:
         await new.upsert(records=[new_record])
 
         # The old life's handle cannot reach the new life's records.
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await old.upsert(records=[old_record])
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await old.query(query_vectors=[new_record.vector], limit=5)
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await old.delete(record_uuids=[new_record.uuid])
         assert set(await _stored(new)) == {new_record.uuid}
 
@@ -361,7 +365,7 @@ class TestPartitionLifecycle:
         third = await store.open_or_create_partition("lifecycle")
         [empty] = await third.query(query_vectors=[record.vector], limit=5)
         assert empty.matches == []
-        with pytest.raises(VectorStorePartitionHandleStaleError):
+        with pytest.raises(PartitionHandleStaleError):
             await second.query(query_vectors=[record.vector], limit=5)
 
         await store.delete_partition("lifecycle")
@@ -1242,7 +1246,7 @@ class TestPartitionResources:
 
         assert sorted(type(outcome).__name__ for outcome in outcomes) == [
             "NoneType",
-            "VectorStorePartitionAlreadyExistsError",
+            "PartitionAlreadyExistsError",
         ]
         assert len(await _table_names(engine) - baseline) == tables_per_partition
         await store.delete_partition(NAME)

@@ -20,17 +20,17 @@ from .data_types import (
 
 class VectorStorePartition(ABC):
     """
-    One partition of a vector store, bound to its key.
+    One partition of a vector store, bound to its name.
 
     All data operations are scoped to the partition: a record's UUID names
     it in this partition only, and the same UUID in another partition names
     another record. The handle owns nothing: a caller builds one with
     `VectorStore.open_partition`, drops it, and builds another at will.
 
-    A partition created again under a deleted one's key starts empty. An
+    A partition created again under a deleted one's name starts empty. An
     operation through a handle begun after its partition was deleted raises
-    VectorStorePartitionHandleStaleError, whether or not a partition was
-    created again under the key since.
+    PartitionHandleStaleError, whether or not a partition was
+    created again under the name since.
 
     An `upsert` or `delete` is durable once it returns; queries may not
     reflect it right away. A store that guarantees more states it.
@@ -144,8 +144,8 @@ class VectorStore(ABC):
     The schema is fixed for the life of the store's data: changing it is a
     migration.
 
-    A partition is identified by its key. A partition deleted and created
-    again under the same key starts empty, and reclaiming the deleted one's
+    A partition is identified by its name. A partition deleted and created
+    again under the same name starts empty, and reclaiming the deleted one's
     storage leaves it untouched. Each store states which processes may share
     its partitions.
 
@@ -153,8 +153,8 @@ class VectorStore(ABC):
         - Vector store names and property keys must match `[a-z0-9_]+`
           (lowercase alphanumeric and underscores only) and be at most 32
           bytes. Every such name works on every backend.
-        - Partition keys are non-empty strings of at most 255 bytes, free of
-          NUL characters. Every such key works on every backend.
+        - Partition names are non-empty strings of at most 255 bytes, free of
+          NUL characters. Every such name works on every backend.
     """
 
     @property
@@ -174,57 +174,57 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def create_partition(self, partition_key: str) -> None:
+    async def create_partition(self, partition_name: str) -> None:
         """
         Create a partition.
 
         Args:
-            partition_key (str):
-                The key of the partition.
+            partition_name (str):
+                The name of the partition.
 
         Raises:
-            VectorStoreAttemptsExhaustedError: If the store gave up creating the
+            AttemptsExhaustedError: If the store gave up creating the
                 partition after repeated attempts that made no progress.
-            VectorStorePartitionAlreadyExistsError: If the partition already exists,
+            PartitionAlreadyExistsError: If the partition already exists,
                 or is being created.
-            VectorStorePartitionDeletedError: If the partition was deleted
+            PartitionDeletedError: If the partition was deleted
                 before its creation completed.
         """
         raise NotImplementedError
 
     @abstractmethod
     async def open_or_create_partition(
-        self, partition_key: str
+        self, partition_name: str
     ) -> VectorStorePartition:
         """
         Get a handle for the partition, creating the partition if it does not exist.
 
         Args:
-            partition_key (str):
-                The key of the partition.
+            partition_name (str):
+                The name of the partition.
 
         Returns:
             VectorStorePartition:
                 A handle bound to the partition's current life.
 
         Raises:
-            VectorStoreAttemptsExhaustedError: If the store gave up opening or
+            AttemptsExhaustedError: If the store gave up opening or
                 creating the partition after repeated attempts that made no
                 progress.
-            VectorStorePartitionPendingError: If the partition's creation, by
+            PartitionPendingError: If the partition's creation, by
                 another caller, did not complete within the store's attempts
                 to open it.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(self, partition_key: str) -> VectorStorePartition | None:
+    async def open_partition(self, partition_name: str) -> VectorStorePartition | None:
         """
         Get a handle for an existing partition.
 
         Args:
-            partition_key (str):
-                The key of the partition.
+            partition_name (str):
+                The name of the partition.
 
         Returns:
             VectorStorePartition | None:
@@ -232,13 +232,13 @@ class VectorStore(ABC):
                 does not exist.
 
         Raises:
-            VectorStorePartitionPendingError: If the partition's creation
+            PartitionPendingError: If the partition's creation
                 has not completed.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_partition(self, partition_key: str) -> None:
+    async def delete_partition(self, partition_name: str) -> None:
         """
         Delete a partition and all of its records.
 
@@ -247,8 +247,8 @@ class VectorStore(ABC):
         `purge_deleted_partitions`. Idempotent.
 
         Args:
-            partition_key (str):
-                The key of the partition to delete.
+            partition_name (str):
+                The name of the partition to delete.
         """
         raise NotImplementedError
 
