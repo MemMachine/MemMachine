@@ -21,8 +21,8 @@ from memmachine_server.common.partition_registry import (
     sqlalchemy_partition_registry,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store import (
@@ -69,7 +69,7 @@ class _Store(RegistryBackedVectorStore[_Partition]):
 
     def __init__(
         self,
-        registry: SQLAlchemyVectorStorePartitionRegistry,
+        registry: SQLAlchemyPartitionRegistry,
         vector_dimensions: int = VECTOR_DIMENSIONS,
     ) -> None:
         super().__init__(
@@ -118,9 +118,9 @@ async def _prepared(partition_key: str, incarnation: UUID) -> None:
 async def registry(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
     enable_sqlite_explicit_begin(engine)
-    registry = SQLAlchemyVectorStorePartitionRegistry(
-        SQLAlchemyVectorStorePartitionRegistryParams(
-            engine=engine, vector_store_name="store", tombstone_retention_seconds=0
+    registry = SQLAlchemyPartitionRegistry(
+        SQLAlchemyPartitionRegistryParams(
+            engine=engine, partition_namespace="store", tombstone_retention_seconds=0
         )
     )
     await registry.startup()

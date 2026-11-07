@@ -239,7 +239,7 @@ class PartitionLifecycleContract:
 
         async def deleted_once_checked(registration) -> None:
             await require_current(registration)
-            await store.delete_partition(registration.partition_key)
+            await store.delete_partition(registration.partition_name)
 
         monkeypatch.setattr(registration_type, "require_current", deleted_once_checked)
 

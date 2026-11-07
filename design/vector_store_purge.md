@@ -81,7 +81,7 @@ both SQLite stores, whose deletion reclaims physically, return `False`.
    claim: it counts an attempt without progress, sets the tombstone's
    `claimable_at` to when its lease and then the backoff will have passed, and
    increments its `claim_generation`. The tombstone is picked by one range on
-   the `(vector_store_name, enqueued_at)` index, `LIMIT 1`. On PostgreSQL the
+   the `(partition_namespace, enqueued_at)` index, `LIMIT 1`. On PostgreSQL the
    pick is `FOR UPDATE SKIP LOCKED`, so a concurrent claim skips a row another
    claim is taking and purgers on every process split a backlog without
    coordinating. SQLite drops the locking clause; there the claim's write

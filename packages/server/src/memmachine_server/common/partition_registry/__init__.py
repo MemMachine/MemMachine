@@ -8,10 +8,10 @@ from .data_types import (
     PartitionPendingError,
 )
 from .partition_registry import (
+    PartitionRegistry,
     PurgeRound,
     Registration,
     Reservation,
-    VectorStorePartitionRegistry,
 )
 
 __all__ = [
@@ -20,8 +20,8 @@ __all__ = [
     "PartitionDeletedError",
     "PartitionHandleStaleError",
     "PartitionPendingError",
+    "PartitionRegistry",
     "PurgeRound",
     "Registration",
     "Reservation",
-    "VectorStorePartitionRegistry",
 ]

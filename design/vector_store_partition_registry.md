@@ -37,13 +37,13 @@ through SQLAlchemy. The backend keeps only records, each carrying the
 
 ### Roles
 
-- `VectorStorePartitionRegistry` (`common/partition_registry/`)
-  is the ABC. A registry belongs to one store and is addressed by partition
-  key. Its operations are `startup`, `reserve`, `resolve`, `unregister`, and
+- `PartitionRegistry` (`common/partition_registry/`)
+  is the ABC. A registry belongs to one partition namespace and is addressed
+  by partition name. Its operations are `startup`, `reserve`, `resolve`, `unregister`, and
   `run_purge_round`.
 - `Reservation` and `Registration` are handles on one life of a partition (see
   [Reservations and registrations](#reservations-and-registrations)).
-- `SQLAlchemyVectorStorePartitionRegistry` is the one implementation. It
+- `SQLAlchemyPartitionRegistry` is the one implementation. It
   supports PostgreSQL and SQLite 3.35 or newer (for `RETURNING`), and its
   params refuse any other dialect or an older SQLite.
 - `RegistryBackedVectorStore` (`common/vector_store/registry_backed_vector_store.py`)
@@ -87,7 +87,7 @@ reservation, or a registration.
 
 | Object | Operations | Answered by |
 |---|---|---|
-| `VectorStorePartitionRegistry` | `reserve`, `resolve`, `unregister` (by key), `run_purge_round` | |
+| `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `run_purge_round` | |
 | `Reservation` | `confirm`, `cancel` | `reserve` |
 | `Registration` | `require_current` | `resolve`, `confirm` |
 
@@ -135,18 +135,19 @@ reservation, or a registration.
 
 ### Tables
 
-The registries of every vector store share two tables, defined once at module
-level as the segment store's are, and keyed by `vector_store_name`. Two
-registry objects under one name are one registry. One table pair with a key
-column, rather than a table pair per vector store, keeps the schema static.
+The registries of every namespace share two tables, defined once at module
+level as the segment store's are, and keyed by `partition_namespace`. Two
+registry objects under one namespace are one registry. One table pair with a
+namespace column, rather than a table pair per namespace, keeps the schema
+static.
 
 `partition_registry_pt`, the registered partitions, pending or live:
 
 | Column | Type | Role |
 |---|---|---|
-| `vector_store_name`, `partition_key` | string, primary key | The partition's identity. The primary key arbitrates creation. |
+| `partition_namespace`, `partition_name` | string, primary key | The partition's identity. The primary key arbitrates creation. |
 | `incarnation` | UUID, unique | The partition's current life. Its records carry it. |
-| `live` | boolean | Whether the partition's storage is prepared. A pending partition holds its key; only a live one is opened. |
+| `live` | boolean | Whether the partition's storage is prepared. A pending partition holds its name; only a live one is opened. |
 | `registered_at` | timestamp | When the partition was registered, on the database clock. An operator finds a partition stuck pending by it, and opening a pending partition reports it. |
 
 `partition_registry_gc`, the purge queue, one row per deleted incarnation
@@ -155,13 +156,13 @@ column, rather than a table pair per vector store, keeps the schema static.
 | Column | Type | Role |
 |---|---|---|
 | `incarnation` | UUID, primary key | The deleted life whose records remain. |
-| `vector_store_name` | string | Whose purge claims the tombstone. |
+| `partition_namespace` | string | Whose purge claims the tombstone. |
 | `enqueued_at` | timestamp | When the deletion committed, on the database clock. |
 | `attempts_without_progress` | integer | Purge rounds claimed since a round last found records and deleted them, the open one included; a cancelled round's attempt is taken back. |
 | `claimable_at` | timestamp, nullable | When a claim may next take the tombstone, on the database clock: once the open claim's lease and the backoff pass, or the backoff after a raise; null when no claim or raise since the last progress set one. |
 | `claim_generation` | integer | Incremented by each claim; a round's writes that end its claim are conditioned on it. |
 
-Index `partition_registry_gc__vs_ea` on (`vector_store_name`, `enqueued_at`)
+Index `partition_registry_gc__ns_ea` on (`partition_namespace`, `enqueued_at`)
 bounds the purge claim, equality before order. The index follows the
 repository's naming scheme (table, two letters per column).
 
@@ -171,7 +172,7 @@ what the purge reads.
 
 ### Operations
 
-**`reserve(partition_key) -> Reservation`.** Mints a random
+**`reserve(partition_name) -> Reservation`.** Mints a random
 UUID (version 4) and inserts the partition's row, pending. In the same
 transaction, *after* the insert, a locking read checks that the incarnation is
 not waiting in the purge queue. After the insert, a concurrent deletion that
@@ -191,7 +192,7 @@ when it matches nothing. A creation whose partition was deleted while its
 storage was prepared matches nothing, so it cannot confirm a partition
 reserved under the key since.
 
-**`resolve(partition_key)`** reads the partition's row once and answers by its
+**`resolve(partition_name)`** reads the partition's row once and answers by its
 state: a `Registration` when it is live, `PartitionPendingError`,
 with when the partition was reserved, when it is pending, and `None` when there is none. It is how a
 handle is opened: callers address partitions by key, and the key is resolved
@@ -201,7 +202,7 @@ to a live incarnation once, at open.
 registration's key and raises `PartitionHandleStaleError` unless it
 carries the registration's incarnation. It is how a handle is fenced (below).
 
-**`unregister(partition_key)`** is one transaction: `DELETE ... RETURNING` the
+**`unregister(partition_name)`** is one transaction: `DELETE ... RETURNING` the
 partition's row, pending or live, then insert its tombstone with
 `enqueued_at = now()`. The partition is unreachable when it commits.
 **`Reservation.cancel()`** does the same for the row carrying the
@@ -354,7 +355,7 @@ the backend is remote:
   solves with a primary key.
 - **The incarnation as the only key**, with keys resolved elsewhere. Callers
   address partitions by key, so the key lookup has to be arbitrated somewhere;
-  the primary key on `(vector_store_name, partition_key)` is that place.
+  the primary key on `(partition_namespace, partition_name)` is that place.
 
 ## Consequences
 

@@ -53,12 +53,12 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.partition_registry import (
+    PartitionRegistry,
     Registration,
-    VectorStorePartitionRegistry,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
@@ -129,10 +129,10 @@ async def _params(client, registry_engine, **overrides) -> MilvusVectorStorePara
         "purge_batch_size": PURGE_BATCH_SIZE,
     }
     params.update(overrides)
-    params["partition_registry"] = SQLAlchemyVectorStorePartitionRegistry(
-        SQLAlchemyVectorStorePartitionRegistryParams(
+    params["partition_registry"] = SQLAlchemyPartitionRegistry(
+        SQLAlchemyPartitionRegistryParams(
             engine=registry_engine,
-            vector_store_name=params["vector_store_name"],
+            partition_namespace=params["vector_store_name"],
             # Tombstones come due at once, so a test can purge right after
             # deleting.
             tombstone_retention_seconds=0,
@@ -443,7 +443,7 @@ def test_a_setting_that_is_not_positive_is_refused(setting):
     with pytest.raises(ValueError, match=setting):
         MilvusVectorStoreParams(
             client=MagicMock(spec=AsyncMilvusClient),
-            partition_registry=MagicMock(spec=VectorStorePartitionRegistry),
+            partition_registry=MagicMock(spec=PartitionRegistry),
             vector_store_name=VECTOR_STORE_NAME,
             store_schema=VectorStoreSchema(
                 vector_dimensions=VECTOR_DIM, indexed_properties=INDEXED_PROPERTIES
@@ -1677,7 +1677,7 @@ def _partition_on(client: AsyncMilvusClient) -> MilvusVectorStorePartition:
         collection_name=f"sys_{VECTOR_STORE_NAME}",
         vector_store_name=VECTOR_STORE_NAME,
         registration=_CurrentRegistration(
-            partition_key=NAME,
+            partition_name=NAME,
             incarnation=uuid4(),
         ),
         store_schema=VectorStoreSchema(

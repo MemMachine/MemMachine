@@ -43,8 +43,8 @@ from memmachine_server.common.partition_registry import (
     Registration,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
@@ -158,10 +158,10 @@ async def _params(client, registry_engine, **overrides) -> QdrantVectorStorePara
         "store_schema": _schema(),
     }
     params.update(overrides)
-    params["partition_registry"] = SQLAlchemyVectorStorePartitionRegistry(
-        SQLAlchemyVectorStorePartitionRegistryParams(
+    params["partition_registry"] = SQLAlchemyPartitionRegistry(
+        SQLAlchemyPartitionRegistryParams(
             engine=registry_engine,
-            vector_store_name=params["vector_store_name"],
+            partition_namespace=params["vector_store_name"],
             # Tombstones come due at once, so a test can purge right after
             # deleting.
             tombstone_retention_seconds=0,
@@ -475,7 +475,7 @@ def _partition_on(client: AsyncQdrantClient) -> QdrantVectorStorePartition:
         client=client,
         vector_store_name=VECTOR_STORE_NAME,
         registration=_CurrentRegistration(
-            partition_key=NAME,
+            partition_name=NAME,
             incarnation=uuid4(),
         ),
         store_schema=VectorStoreSchema(
