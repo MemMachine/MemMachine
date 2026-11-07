@@ -412,11 +412,9 @@ async def test_a_partition_name_of_any_characters_and_the_longest_length_is_kept
     assert await registry.resolve(ANY_CHARACTERS_NAME) is None
 
 
-@pytest.mark.parametrize(
-    "invalid_name", ["", "Upper", "with-hyphen", "trailing_newline\n", "x" * 33]
-)
-def test_a_partition_namespace_must_be_an_identifier(invalid_name, tmp_path):
-    with pytest.raises(ValueError, match="Vector store name"):
+@pytest.mark.parametrize("invalid_name", ["", "with_nul\x00", "x" * 33, "ü" * 17])
+def test_a_partition_namespace_must_fit_the_registry(invalid_name, tmp_path):
+    with pytest.raises(ValueError, match="Partition namespace"):
         SQLAlchemyPartitionRegistryParams(
             engine=create_async_engine(
                 f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"

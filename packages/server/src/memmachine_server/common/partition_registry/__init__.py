@@ -6,6 +6,7 @@ from .data_types import (
     PartitionDeletedError,
     PartitionHandleStaleError,
     PartitionPendingError,
+    validate_partition_name,
 )
 from .partition_registry import (
     PartitionRegistry,
@@ -24,4 +25,5 @@ __all__ = [
     "PurgeRound",
     "Registration",
     "Reservation",
+    "validate_partition_name",
 ]
