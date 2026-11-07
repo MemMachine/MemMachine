@@ -85,7 +85,7 @@ with fresh properties, because `upsert` replaces a whole record.
 Returned properties were copies of what the callers' own stores hold, only as
 fresh as the store's reads, and an invitation to treat them as the record; no
 caller needs them. Each caller resolves a hit through the store that owns the
-mapping: event memory through the segment store's derivative rows, semantic
+mapping: event memory through the event memory store's derivative rows, semantic
 memory through the feature row's `vector_uuid` column. Properties are still
 stored and filtered on.
 

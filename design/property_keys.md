@@ -2,7 +2,7 @@
 
 An event carries properties: keys with scalar values that a search can
 filter on. The caller and MemMachine's own components both write them,
-into one space of names that the event memory's segment store and its
+into one space of names that the event memory's event memory store and its
 vector store both hold. This document fixes how that space is divided
 between them.
 

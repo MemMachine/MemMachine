@@ -73,7 +73,7 @@ episodic_memory:
   long_term_memory:
     backend: event
     vector_store: milvus_vector_store
-    segment_store: profile_storage
+    event_memory_store: profile_storage
 ```
 
 Upgrading does not carry existing vector store data over. The stores name
