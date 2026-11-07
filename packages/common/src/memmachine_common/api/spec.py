@@ -186,7 +186,7 @@ class ProjectConfig(BaseModel):
 
     Backend selection:
     - `backend="event"` (default for new projects): uses the server's event
-      memory, its vector store, segment store, and embedder.
+      memory, its vector store, event memory store, embedder, and reranker.
     - `backend="declarative"`: uses VectorGraphStore. Requires
       `vector_graph_store`.
     - Empty/null `backend`: server falls back to its parse-time default
