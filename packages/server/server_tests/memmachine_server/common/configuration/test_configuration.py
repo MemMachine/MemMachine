@@ -14,9 +14,7 @@ from memmachine_server.common.configuration.episodic_config import (
     EpisodicMemoryConf,
     EventLongTermMemoryConf,
     LongTermMemoryConfPartial,
-    PassthroughSegmenterConf,
     ShortTermMemoryConfPartial,
-    WholeTextDeriverConf,
 )
 from memmachine_server.common.configuration.log_conf import LogLevel
 
@@ -268,7 +266,7 @@ def test_old_param_data_without_backend_loads_as_declarative():
 
 
 def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
-    """A saved event session loads without the stores and embedder it once recorded."""
+    """A saved event session loads without the resources and settings it once recorded."""
     data = {
         "session_key": "s",
         "long_term_memory": {
@@ -277,20 +275,15 @@ def test_episodic_memory_conf_with_explicit_event_backend_loads_as_event():
             "vector_store": "vstore",
             "segment_store": "pg_engine",
             "embedder": "openai_embedder",
+            "reranker": "cohere_reranker",
+            "segmenter": {"type": "text"},
+            "deriver": {"type": "sentence_text"},
         },
         "short_term_memory": _ltm_minimal_short_term_block(),
     }
 
     conf = EpisodicMemoryConf.model_validate(data)
-    assert isinstance(conf.long_term_memory, EventLongTermMemoryConf)
-    assert not {"vector_store", "segment_store", "embedder"} & set(
-        conf.long_term_memory.model_dump()
-    )
-    # Default sub-configs.
-    assert isinstance(conf.long_term_memory.segmenter, PassthroughSegmenterConf)
-    assert isinstance(conf.long_term_memory.deriver, WholeTextDeriverConf)
-    # Reranker is optional on the event backend.
-    assert conf.long_term_memory.reranker is None
+    assert conf.long_term_memory == EventLongTermMemoryConf(session_id="s")
 
 
 def test_episodic_memory_conf_with_explicit_declarative_backend_loads_as_declarative():
@@ -339,9 +332,7 @@ def test_partial_merge_with_event_backend_resolves_to_event():
     override = LongTermMemoryConfPartial()
 
     merged = override.merge(base)
-    assert isinstance(merged, EventLongTermMemoryConf)
-    assert merged.session_id == "s"
-    assert merged.reranker is None
+    assert merged == EventLongTermMemoryConf(session_id="s")
 
 
 def test_partial_merge_explicit_declarative_backend():
