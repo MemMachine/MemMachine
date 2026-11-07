@@ -138,6 +138,21 @@ async def _blocked_or_done(engine: AsyncEngine, task: asyncio.Task) -> str:
     return "done"
 
 
+async def _age_registration(
+    registry: SQLAlchemyPartitionRegistry, partition_name: str, ago: timedelta
+) -> None:
+    """Move the partition's registration back to `ago` before now, on the database clock."""
+    async with registry._engine.begin() as connection:
+        await connection.execute(
+            update(PartitionRow)
+            .where(
+                PartitionRow.partition_namespace == registry._partition_namespace,
+                PartitionRow.partition_name == partition_name,
+            )
+            .values(registered_at=_database_time_ago(registry._engine, ago))
+        )
+
+
 async def _attempts(registry: SQLAlchemyPartitionRegistry, incarnation: UUID) -> int:
     """The tombstone's count of purge attempts without progress."""
     async with registry._engine.connect() as connection:
@@ -383,6 +398,126 @@ async def test_a_registration_is_current_until_its_partition_is_deleted(
     await (await registry.reserve("c")).confirm()
     with pytest.raises(PartitionHandleStaleError):
         await live.require_current()
+
+
+@pytest.mark.asyncio
+async def test_a_creation_replaces_a_partition_pending_past_the_timeout(
+    sqlalchemy_engine, partition_namespace
+):
+    """A creation that stopped part way leaves its partition pending; once
+    the timeout has passed, the next creation of the name unregisters it,
+    queuing its incarnation, and reserves the name under a new incarnation.
+    The stopped creator's confirmation then fails."""
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    stopped = await registry.reserve("c")
+    await _age_registration(registry, "c", timedelta(seconds=301))
+
+    replacing = await registry.reserve("c")
+
+    assert replacing.incarnation != stopped.incarnation
+    assert await _queued(registry) == [stopped.incarnation]
+    with pytest.raises(PartitionDeletedError):
+        await stopped.confirm()
+    registration = await replacing.confirm()
+    resolved = await registry.resolve("c")
+    assert resolved is not None
+    assert resolved.incarnation == registration.incarnation
+
+
+@pytest.mark.asyncio
+async def test_a_partition_pending_within_the_timeout_holds_its_name(
+    sqlalchemy_engine, partition_namespace
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    pending = await registry.reserve("c")
+    await _age_registration(registry, "c", timedelta(seconds=290))
+
+    with pytest.raises(PartitionAlreadyExistsError):
+        await registry.reserve("c")
+
+    assert await _queued(registry) == []
+    await pending.confirm()
+
+
+@pytest.mark.asyncio
+async def test_a_live_partition_is_never_replaced(
+    sqlalchemy_engine, partition_namespace
+):
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    registration = await (await registry.reserve("c")).confirm()
+    await _age_registration(registry, "c", timedelta(days=1))
+
+    with pytest.raises(PartitionAlreadyExistsError):
+        await registry.reserve("c")
+
+    assert await _queued(registry) == []
+    await registration.require_current()
+
+
+@pytest.mark.asyncio
+async def test_a_confirmation_that_commits_first_keeps_the_partition_from_replacement(
+    sqlalchemy_engine, partition_namespace, monkeypatch
+):
+    """The replacement acts only on the life still pending under the
+    incarnation it read, so a confirmation that commits between the read and
+    the replacement leaves the partition live, and the creation finds the
+    name taken."""
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    slow = await registry.reserve("c")
+    await _age_registration(registry, "c", timedelta(seconds=301))
+    replace = SQLAlchemyPartitionRegistry._replace_pending_partition
+
+    async def confirmed_first(self, *args, **kwargs) -> None:
+        await slow.confirm()
+        await replace(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        SQLAlchemyPartitionRegistry, "_replace_pending_partition", confirmed_first
+    )
+
+    with pytest.raises(PartitionAlreadyExistsError):
+        await registry.reserve("c")
+
+    assert await _queued(registry) == []
+    resolved = await registry.resolve("c")
+    assert resolved is not None
+    assert resolved.incarnation == slow.incarnation
+
+
+@pytest.mark.asyncio
+async def test_racing_creations_replace_a_timed_out_partition_once(
+    sqlalchemy_engine, partition_namespace
+):
+    """Creators on separate engines that find the same partition pending past
+    the timeout replace it once between them: one reserves the name, and the
+    others find it taken."""
+    engines = [create_async_engine(sqlalchemy_engine.url) for _ in range(4)]
+    for engine in engines:
+        enable_sqlite_explicit_begin(engine)
+    try:
+        creators = [await _registry(engine, partition_namespace) for engine in engines]
+        stopped = await creators[0].reserve("c")
+        await _age_registration(creators[0], "c", timedelta(seconds=301))
+
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(
+                *(creator.reserve("c") for creator in creators),
+                return_exceptions=True,
+            ),
+            30,
+        )
+        reservations = [o for o in outcomes if not isinstance(o, BaseException)]
+        assert len(reservations) == 1, outcomes
+        assert all(
+            isinstance(o, PartitionAlreadyExistsError)
+            for o in outcomes
+            if isinstance(o, BaseException)
+        ), outcomes
+        assert await _queued(creators[0]) == [stopped.incarnation]
+        await reservations[0].confirm()
+    finally:
+        for engine in engines:
+            await engine.dispose()
 
 
 @pytest.mark.asyncio

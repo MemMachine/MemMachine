@@ -135,7 +135,9 @@ class PartitionRegistry(ABC):
         incarnation is one no registered or queued partition carries, so the
         new partition starts empty and no purge reclaims its records. The
         partition is pending until its reservation is confirmed, and holds its
-        name meanwhile.
+        name meanwhile. A pending partition whose creation the registry takes
+        to have stopped is replaced: in the same step it is unregistered, as
+        `unregister` does, and its creator's `confirm` then raises.
 
         Args:
             partition_name (str): The name of the partition.
@@ -145,7 +147,8 @@ class PartitionRegistry(ABC):
 
         Raises:
             PartitionAlreadyExistsError:
-                The partition name is taken, by a live or a pending partition.
+                The partition name is taken, by a live partition or by a
+                pending one whose creation may still be running.
             AttemptsExhaustedError:
                 The registry gave up after repeated attempts to reserve
                 the free partition name failed.

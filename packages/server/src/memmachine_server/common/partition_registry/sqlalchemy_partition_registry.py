@@ -37,7 +37,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.orm import (
     DeclarativeBase,
     InstrumentedAttribute,
@@ -167,6 +167,11 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             starts, on the database clock. It must exceed, by orders of
             magnitude, the longest a write to the backend can be in flight and
             the delay before the store's reads reflect a write.
+        pending_partition_timeout_seconds (int):
+            Seconds after its reservation, on the database clock, past which a
+            pending partition's creation is taken to have stopped, so the next
+            creation of its name replaces it; it should exceed the longest
+            creation (default: 300).
         purge_lease_seconds (int):
             Seconds a purge round's claim holds its tombstone, on the database
             clock; it should exceed the longest round (default: 300).
@@ -199,6 +204,15 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             "starts, on the database clock. It must exceed, by orders of "
             "magnitude, the longest a write to the backend can be in flight and "
             "the delay before the store's reads reflect a write"
+        ),
+    )
+    pending_partition_timeout_seconds: int = Field(
+        300,
+        gt=0,
+        description=(
+            "Seconds after its reservation, on the database clock, past which a "
+            "pending partition is replaced by the next creation of its name; it "
+            "should exceed the longest creation"
         ),
     )
     purge_lease_seconds: int = Field(
@@ -269,6 +283,9 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         self._is_sqlite = params.engine.dialect.name == "sqlite"
         self._partition_namespace = params.partition_namespace
         self._tombstone_retention_seconds = params.tombstone_retention_seconds
+        self._pending_partition_timeout_seconds = (
+            params.pending_partition_timeout_seconds
+        )
         self._purge_lease_seconds = params.purge_lease_seconds
         self._base_purge_retry_backoff_seconds = params.base_purge_retry_backoff_seconds
         self._max_purge_retry_backoff_seconds = params.max_purge_retry_backoff_seconds
@@ -314,47 +331,108 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     async def _insert_pending_partition(
         self, partition_name: str, incarnation: UUID
     ) -> None:
-        # The queue check runs after the insert, so a concurrent deletion
-        # queuing a colliding incarnation, which the insert waited on, is
-        # visible to it; the locking read sees the latest committed state.
         try:
             async with write_connection(self._engine) as connection:
-                await connection.execute(
-                    insert(PartitionRow).values(
-                        partition_namespace=self._partition_namespace,
-                        partition_name=partition_name,
-                        incarnation=incarnation,
-                        live=False,
-                        registered_at=func.now(),
-                    )
+                await self._write_pending_partition(
+                    connection, partition_name, incarnation
                 )
-                queued = (
-                    await connection.execute(
-                        select(PurgeQueueRow.incarnation)
-                        .where(PurgeQueueRow.incarnation == incarnation)
-                        .with_for_update(read=True)
-                    )
-                ).scalar_one_or_none()
-                if queued is not None:
-                    raise _RegistryInsertRejectedError("the incarnation awaits purge")
         except IntegrityError as err:
             async with self._engine.connect() as connection:
                 taken = (
                     await connection.execute(
-                        select(PartitionRow.incarnation).where(
+                        select(
+                            PartitionRow.incarnation,
+                            PartitionRow.live,
+                            PartitionRow.registered_at,
+                            self._has_elapsed(
+                                self._pending_partition_timeout_seconds,
+                                since=PartitionRow.registered_at,
+                            ).label("timed_out"),
+                        ).where(
                             PartitionRow.partition_namespace
                             == self._partition_namespace,
                             PartitionRow.partition_name == partition_name,
                         )
                     )
-                ).scalar_one_or_none()
-            if taken is not None:
+                ).one_or_none()
+            if taken is None:
+                raise _RegistryInsertRejectedError(
+                    "the insert failed and no row exists under the name"
+                ) from err
+            if taken.live or not taken.timed_out:
                 raise PartitionAlreadyExistsError(
                     self._partition_namespace, partition_name
                 ) from err
+            await self._replace_pending_partition(
+                partition_name, taken.incarnation, taken.registered_at, incarnation
+            )
+
+    async def _replace_pending_partition(
+        self,
+        partition_name: str,
+        replaced: UUID,
+        replaced_registered_at: datetime,
+        incarnation: UUID,
+    ) -> None:
+        """Replace a pending partition whose creation timed out with a pending one under `incarnation`, in one transaction.
+
+        The replaced life is unregistered only while it is still pending
+        under its incarnation, so a confirmation or another replacement that
+        commits first makes this one fail. Once it commits, the replaced
+        creator's `confirm` matches nothing.
+        """
+        logger.warning(
+            "Replacing partition %r, pending under incarnation %s since %s, "
+            "whose creation timed out",
+            partition_name,
+            replaced,
+            ensure_tz_aware(replaced_registered_at).isoformat(),
+        )
+        try:
+            async with write_connection(self._engine) as connection:
+                if not await _unregister_where(
+                    connection,
+                    self._partition_namespace,
+                    PartitionRow.partition_name == partition_name,
+                    PartitionRow.incarnation == replaced,
+                    PartitionRow.live.is_(False),
+                ):
+                    raise _RegistryInsertRejectedError(
+                        "the pending partition to replace changed first"
+                    )
+                await self._write_pending_partition(
+                    connection, partition_name, incarnation
+                )
+        except IntegrityError as err:
             raise _RegistryInsertRejectedError(
-                "the insert failed and no row exists under the name"
+                "the insert replacing a pending partition failed"
             ) from err
+
+    async def _write_pending_partition(
+        self, connection: AsyncConnection, partition_name: str, incarnation: UUID
+    ) -> None:
+        """Insert a pending partition's row under `incarnation`, unless the incarnation awaits purge."""
+        # The queue check runs after the insert, so a concurrent deletion
+        # queuing a colliding incarnation, which the insert waited on, is
+        # visible to it; the locking read sees the latest committed state.
+        await connection.execute(
+            insert(PartitionRow).values(
+                partition_namespace=self._partition_namespace,
+                partition_name=partition_name,
+                incarnation=incarnation,
+                live=False,
+                registered_at=func.now(),
+            )
+        )
+        queued = (
+            await connection.execute(
+                select(PurgeQueueRow.incarnation)
+                .where(PurgeQueueRow.incarnation == incarnation)
+                .with_for_update(read=True)
+            )
+        ).scalar_one_or_none()
+        if queued is not None:
+            raise _RegistryInsertRejectedError("the incarnation awaits purge")
 
     @override
     async def resolve(self, partition_name: str) -> Registration | None:
@@ -388,11 +466,12 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
 
     @override
     async def unregister(self, partition_name: str) -> None:
-        await _unregister_where(
-            self._engine,
-            self._partition_namespace,
-            PartitionRow.partition_name == partition_name,
-        )
+        async with write_connection(self._engine) as connection:
+            await _unregister_where(
+                connection,
+                self._partition_namespace,
+                PartitionRow.partition_name == partition_name,
+            )
 
     @override
     async def run_purge_round(self, purge_round: PurgeRound) -> bool:
@@ -680,12 +759,13 @@ class _SQLAlchemyReservation(Reservation):
     async def cancel(self) -> None:
         # Conditional on the row being pending, as confirm is, so a cancel
         # after a confirmation that committed leaves the live partition.
-        await _unregister_where(
-            self.engine,
-            self.partition_namespace,
-            PartitionRow.incarnation == self.incarnation,
-            PartitionRow.live.is_(False),
-        )
+        async with write_connection(self.engine) as connection:
+            await _unregister_where(
+                connection,
+                self.partition_namespace,
+                PartitionRow.incarnation == self.incarnation,
+                PartitionRow.live.is_(False),
+            )
 
 
 @dataclass(frozen=True)
@@ -713,30 +793,30 @@ class _SQLAlchemyRegistration(Registration):
 
 
 async def _unregister_where(
-    engine: AsyncEngine, partition_namespace: str, *conditions: ColumnElement[bool]
-) -> None:
-    """Delete the partition row in a namespace the conditions select, and queue its tombstone.
+    connection: AsyncConnection,
+    partition_namespace: str,
+    *conditions: ColumnElement[bool],
+) -> bool:
+    """Delete the partition row in a namespace the conditions select, queue its tombstone, and return whether there was one.
 
-    One transaction, so the partition is unreachable once it commits. The
-    DELETE goes first and takes the row's write lock, so racing deleters
-    serialize on it and the loser finds no row and returns.
+    In the caller's write transaction, so the partition is unreachable once
+    it commits. The DELETE goes first and takes the row's write lock, so
+    racing deleters serialize on it and the loser finds no row.
     """
-    async with write_connection(engine) as connection:
-        row = (
-            await connection.execute(
-                delete(PartitionRow)
-                .where(
-                    PartitionRow.partition_namespace == partition_namespace, *conditions
-                )
-                .returning(PartitionRow.incarnation)
-            )
-        ).one_or_none()
-        if row is None:
-            return
+    row = (
         await connection.execute(
-            insert(PurgeQueueRow).values(
-                incarnation=row.incarnation,
-                partition_namespace=partition_namespace,
-                enqueued_at=func.now(),
-            )
+            delete(PartitionRow)
+            .where(PartitionRow.partition_namespace == partition_namespace, *conditions)
+            .returning(PartitionRow.incarnation)
         )
+    ).one_or_none()
+    if row is None:
+        return False
+    await connection.execute(
+        insert(PurgeQueueRow).values(
+            incarnation=row.incarnation,
+            partition_namespace=partition_namespace,
+            enqueued_at=func.now(),
+        )
+    )
+    return True
