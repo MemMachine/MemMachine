@@ -1697,6 +1697,56 @@ async def test_failed_claim_backs_off_doubling_up_to_the_cap(
 
 @pytest.mark.asyncio
 @_CLAIMED_TABLES
+async def test_a_cancelled_claim_takes_back_its_attempt(
+    store: SQLAlchemySegmentStore,
+    table: type[PendingWriteRow | TombstoneRow],
+) -> None:
+    """A cancelled claim is not a failed one: its record is claimable at once, under the same attempt."""
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    record_uuid = await _add_claimable_record(partition, table)
+    cancelled = await _claim(store, table)
+    assert cancelled is not None
+
+    await _cancel_claim(store, cancelled)
+
+    again = await _claim(store, table)
+    assert again is not None
+    assert (_claimed_record_uuid(again), again.generation, again.attempt) == (
+        record_uuid,
+        2,
+        1,
+    )
+
+
+@pytest.mark.asyncio
+@_CLAIMED_TABLES
+async def test_cancelling_a_superseded_claim_changes_nothing(
+    store: SQLAlchemySegmentStore,
+    table: type[PendingWriteRow | TombstoneRow],
+) -> None:
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    record_uuid = await _add_claimable_record(partition, table)
+    superseded = await _claim(store, table)
+    assert superseded is not None
+    await _backdate(store, table.claimable_at, timedelta(days=1))
+    assert await _claim(store, table) is not None
+    scheduled = await _claimable_at(store, table, record_uuid)
+
+    await _cancel_claim(store, superseded)
+
+    assert await _claimable_at(store, table, record_uuid) == scheduled
+    await _backdate(store, table.claimable_at, timedelta(days=1))
+    third = await _claim(store, table)
+    assert third is not None
+    assert third.attempt == 3
+
+
+@pytest.mark.asyncio
+@_CLAIMED_TABLES
 async def test_record_is_no_longer_claimed_after_the_maximum_failed_claims(
     store: SQLAlchemySegmentStore,
     caplog: pytest.LogCaptureFixture,
@@ -2089,6 +2139,17 @@ async def _fail_claim(
         await store.fail_pending_write_claim(claim, error)
     else:
         await store.fail_tombstone_claim(claim, error)
+
+
+async def _cancel_claim(
+    store: SQLAlchemySegmentStore,
+    claim: PendingWriteClaim | TombstoneClaim,
+) -> None:
+    """End `claim` as cancelled."""
+    if isinstance(claim, PendingWriteClaim):
+        await store.cancel_pending_write_claim(claim)
+    else:
+        await store.cancel_tombstone_claim(claim)
 
 
 async def _shift_earlier(

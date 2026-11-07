@@ -6,7 +6,7 @@ import datetime
 import json
 import logging
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Coroutine, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, Self, cast
 from uuid import UUID, uuid4
@@ -216,6 +216,7 @@ class EventMemory:
 
         self._similarity_metric = store_schema.similarity_metric
         self._background_work: asyncio.Task[None] | None = None
+        self._claim_endings: set[asyncio.Task[None]] = set()
 
     async def startup(self) -> None:
         """Start the background work."""
@@ -316,6 +317,12 @@ class EventMemory:
             )
             await self._params.segment_store.fail_pending_write_claim(claim, error)
             return True
+        except BaseException:
+            await self._end_claim_after_cancellation(
+                self._params.segment_store.cancel_pending_write_claim(claim),
+                f"pending write {claim.pending_write.uuid}",
+            )
+            raise
         if written:
             await self._params.segment_store.finish_pending_write_claim(claim)
         return True
@@ -380,8 +387,38 @@ class EventMemory:
             )
             await self._params.segment_store.fail_tombstone_claim(claim, error)
             return True
+        except BaseException:
+            await self._end_claim_after_cancellation(
+                self._params.segment_store.cancel_tombstone_claim(claim),
+                f"tombstone {claim.tombstone.uuid}",
+            )
+            raise
         await self._params.segment_store.finish_tombstone_claim(claim)
         return True
+
+    async def _end_claim_after_cancellation(
+        self, ending: Coroutine[object, object, None], claimed: str
+    ) -> None:
+        """End a cancelled claim without counting its attempt.
+
+        Shielded, so a second cancellation cannot cut it short. The task logs
+        its own failure; the claim then ends with its lease.
+        """
+        task = asyncio.create_task(ending)
+        self._claim_endings.add(task)
+
+        def finish(task: asyncio.Task[None]) -> None:
+            self._claim_endings.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                logger.error(
+                    "Could not end the cancelled claim on %s; it ends with its lease",
+                    claimed,
+                    exc_info=task.exception(),
+                )
+
+        task.add_done_callback(finish)
+        with contextlib.suppress(Exception):
+            await asyncio.shield(task)
 
     @staticmethod
     def string_from_segment_context(

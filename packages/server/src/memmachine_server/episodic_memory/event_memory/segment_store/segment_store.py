@@ -480,6 +480,20 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def cancel_pending_write_claim(self, claim: PendingWriteClaim) -> None:
+        """
+        End a claim whose work was cancelled, if the claim is the latest on its record.
+
+        The attempt the claim counted is taken back, and the record is
+        claimable at once.
+
+        Args:
+            claim (PendingWriteClaim):
+                The claim.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def claim_tombstone(self) -> TombstoneClaim | None:
         """
         Claim the oldest tombstone due for a delete.
@@ -530,5 +544,19 @@ class SegmentStore(ABC):
                 The claim.
             error (Exception):
                 What the delete raised.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def cancel_tombstone_claim(self, claim: TombstoneClaim) -> None:
+        """
+        End a claim whose delete was cancelled, if the claim is the latest on its tombstone.
+
+        The attempt the claim counted is taken back, and the tombstone is
+        claimable at once if its delete is due.
+
+        Args:
+            claim (TombstoneClaim):
+                The claim.
         """
         raise NotImplementedError

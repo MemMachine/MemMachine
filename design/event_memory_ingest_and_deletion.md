@@ -61,8 +61,9 @@ delete to the background work.
 
 Each record stores when a claim may next take it. A claim holds its record
 for a lease, and one that never ends is taken again once the lease and
-then the backoff have passed. A failed claim backs off, doubling, and a
-record is no longer taken after repeated failures, which is reported. The second delete's retention
+then the backoff have passed. A failed claim backs off, doubling, a
+cancelled one takes back its attempt, and a record is no longer taken
+after repeated failures, which is reported. The second delete's retention
 is a condition of its own, so no schedule brings it forward.
 
 The records name no vector store or embedder: a deployment has one
