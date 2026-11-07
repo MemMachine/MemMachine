@@ -38,7 +38,10 @@ try:
     logger.info("Decomposer imported successfully!")
 except ImportError:
     DECOMPOSER_AVAILABLE = False
-    logger.exception("Decomposer import FAILED")
+    logger.info(
+        "Multi-hop decomposer disabled (spaCy is not installed), using LLM-based "
+        "query splitting; install it with `uv sync --group multihop`"
+    )
 
 # Citation: Luo et al. (2025), "Agent Lightning: Train ANY AI Agents with
 # Reinforcement Learning", arXiv:2508.03680.
