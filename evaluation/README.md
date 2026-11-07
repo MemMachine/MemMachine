@@ -154,18 +154,34 @@ curl -fL -o evaluation/data/locomo10.json \
   https://raw.githubusercontent.com/snap-research/locomo/cbfbc1dba6bc53d00625212a0f22d55ffee7c1fc/data/locomo10.json
 ```
 
+Optionally, check the download:
+
+```sh
+echo "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4  evaluation/data/locomo10.json" | shasum -a 256 -c
+```
+
 ### WikiMultiHop
 
 The dev split of the original `data.zip` release from the
-[2WikiMultihopQA repository](https://github.com/Alab-NII/2wikimultihop).
-The benchmark scripts read one JSON object per line, with `context`,
-`supporting_facts`, and `evidences` encoded as JSON strings, so convert the
-downloaded `dev.json`:
+[2WikiMultihopQA repository](https://github.com/Alab-NII/2wikimultihop):
 
 ```sh
 mkdir -p evaluation/data
 curl -fL -o 2wikimultihop.zip \
   'https://www.dropbox.com/s/npidmtadreo6df2/data.zip?dl=1'
+```
+
+Optionally, check the download:
+
+```sh
+echo "e8e57c0aafc4a26d41131e320ebb5afb6f2aca86b8a6e6611b08f52033cb7d04  2wikimultihop.zip" | shasum -a 256 -c
+```
+
+The benchmark scripts read one JSON object per line, with `context`,
+`supporting_facts`, and `evidences` encoded as JSON strings, so convert the
+downloaded `dev.json`:
+
+```sh
 unzip -p 2wikimultihop.zip data/dev.json | python3 -c '
 import json, sys
 for row in json.load(sys.stdin.buffer):
