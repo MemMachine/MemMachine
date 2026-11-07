@@ -541,12 +541,12 @@ class TestPartitionLifecycle:
     async def test_partitions_share_the_store_collection(self, store):
         """Every partition's records are entities in the store's one native collection."""
         records = {
-            partition_key: _make_record(vector=[1.0, 0.0, 0.0])
-            for partition_key in ("part_a", "part_b")
+            partition_name: _make_record(vector=[1.0, 0.0, 0.0])
+            for partition_name in ("part_a", "part_b")
         }
-        for partition_key, record in records.items():
-            await store.create_partition(partition_key)
-            partition = await store.open_partition(partition_key)
+        for partition_name, record in records.items():
+            await store.create_partition(partition_name)
+            partition = await store.open_partition(partition_name)
             assert partition is not None
             await partition.upsert(records=[record])
 
@@ -1302,27 +1302,27 @@ class _ModelPartitions:
     records: dict[str, dict[UUID, Record]]
     dead_incarnations: list[UUID] = field(default_factory=list)
 
-    async def upsert(self, partition_key: str, batch: list[Record]) -> list[Record]:
+    async def upsert(self, partition_name: str, batch: list[Record]) -> list[Record]:
         """Upsert a batch, and return the records it replaced."""
-        await self.handles[partition_key].upsert(records=batch)
-        records = self.records[partition_key]
+        await self.handles[partition_name].upsert(records=batch)
+        records = self.records[partition_name]
         replaced = [records[record.uuid] for record in batch if record.uuid in records]
         records.update({record.uuid: record for record in batch})
         return replaced
 
-    async def delete(self, partition_key: str, record_uuids: list[UUID]) -> None:
-        await self.handles[partition_key].delete(record_uuids=record_uuids)
+    async def delete(self, partition_name: str, record_uuids: list[UUID]) -> None:
+        await self.handles[partition_name].delete(record_uuids=record_uuids)
         for record_uuid in record_uuids:
-            self.records[partition_key].pop(record_uuid, None)
+            self.records[partition_name].pop(record_uuid, None)
 
-    async def recreate(self, partition_key: str) -> None:
-        self.dead_incarnations.append(self.handles[partition_key]._incarnation)
-        await self.store.delete_partition(partition_key)
-        await self.store.create_partition(partition_key)
-        handle = await self.store.open_partition(partition_key)
+    async def recreate(self, partition_name: str) -> None:
+        self.dead_incarnations.append(self.handles[partition_name]._incarnation)
+        await self.store.delete_partition(partition_name)
+        await self.store.create_partition(partition_name)
+        handle = await self.store.open_partition(partition_name)
         assert handle is not None
-        self.handles[partition_key] = handle
-        self.records[partition_key] = {}
+        self.handles[partition_name] = handle
+        self.records[partition_name] = {}
 
     async def purge(self) -> None:
         """Drain the purge, and check that no deleted partition's record remains."""
@@ -1337,31 +1337,31 @@ class _ModelPartitions:
 
     async def check(self, rng: random.Random) -> None:
         """Check what each partition holds, and what its settled queries select."""
-        for partition_key, handle in self.handles.items():
-            records = self.records[partition_key]
+        for partition_name, handle in self.handles.items():
+            records = self.records[partition_name]
             stored = await _incarnation_uuids(
                 self.store._client, handle._collection_name, handle._incarnation
             )
-            assert sorted(stored) == sorted(records), partition_key
+            assert sorted(stored) == sorted(records), partition_name
             await _settle(handle)
-            assert await _model_matches(handle, None) == set(records), partition_key
+            assert await _model_matches(handle, None) == set(records), partition_name
             for _ in range(3):
                 property_filter = _model_filter(rng)
                 assert await _model_matches(handle, property_filter) == {
                     record.uuid
                     for record in records.values()
                     if evaluate_filter(property_filter, record.properties)
-                }, (partition_key, property_filter)
+                }, (partition_name, property_filter)
 
-    async def check_replaced(self, partition_key: str, replaced: list[Record]) -> None:
+    async def check_replaced(self, partition_name: str, replaced: list[Record]) -> None:
         """Check that a replaced record's old values select it no more."""
         for old in replaced:
-            current = self.records[partition_key][old.uuid]
+            current = self.records[partition_name][old.uuid]
             for key, value in old.properties.items():
                 old_value = Comparison(field=key, op="=", value=value)
                 if not evaluate_filter(old_value, current.properties):
                     assert old.uuid not in await _model_matches(
-                        self.handles[partition_key], old_value
+                        self.handles[partition_name], old_value
                     ), old_value
 
 
@@ -1381,23 +1381,23 @@ class TestOperationModel:
             vector_store_name="operation_model",
             store_schema=_schema(indexed_properties=_MODEL_DECLARED),
         )
-        partition_keys = ("alpha", "beta")
+        partition_names = ("alpha", "beta")
         # Few UUIDs, so each recurs in both partitions and across their lives.
         pool = sorted(uuid4() for _ in range(12))
         handles = {}
-        for partition_key in partition_keys:
-            await modeled.create_partition(partition_key)
-            handle = await modeled.open_partition(partition_key)
+        for partition_name in partition_names:
+            await modeled.create_partition(partition_name)
+            handle = await modeled.open_partition(partition_name)
             assert handle is not None
-            handles[partition_key] = handle
+            handles[partition_name] = handle
         model = _ModelPartitions(
             store=modeled,
             handles=handles,
-            records={partition_key: {} for partition_key in partition_keys},
+            records={partition_name: {} for partition_name in partition_names},
         )
 
         for step in range(60):
-            partition_key = rng.choice(partition_keys)
+            partition_name = rng.choice(partition_names)
             replaced: list[Record] = []
             action = rng.choices(
                 ("upsert", "delete", "recreate", "purge"), weights=(8, 3, 1, 1)
@@ -1405,7 +1405,7 @@ class TestOperationModel:
             match action:
                 case "upsert":
                     replaced = await model.upsert(
-                        partition_key,
+                        partition_name,
                         [
                             Record(
                                 uuid=record_uuid,
@@ -1417,22 +1417,22 @@ class TestOperationModel:
                     )
                 case "delete":
                     await model.delete(
-                        partition_key, rng.sample(pool, k=rng.randint(1, 4))
+                        partition_name, rng.sample(pool, k=rng.randint(1, 4))
                     )
                 case "recreate":
-                    await model.recreate(partition_key)
+                    await model.recreate(partition_name)
                 case _:
                     await model.purge()
             try:
                 await model.check(rng)
-                await model.check_replaced(partition_key, replaced)
+                await model.check_replaced(partition_name, replaced)
             except AssertionError as error:
                 raise AssertionError(
-                    f"after step {step}, {action} {partition_key}"
+                    f"after step {step}, {action} {partition_name}"
                 ) from error
 
-        for partition_key in partition_keys:
-            await modeled.delete_partition(partition_key)
+        for partition_name in partition_names:
+            await modeled.delete_partition(partition_name)
 
 
 class TestScores:
@@ -1863,9 +1863,9 @@ class TestPartitionIsolation:
         )
         vector = _normalize([1.0, 0.0, 0.0])
         own_records = {}
-        for partition_key in ("query_a", "query_b"):
-            await isolated.create_partition(partition_key)
-            partition = await isolated.open_partition(partition_key)
+        for partition_name in ("query_a", "query_b"):
+            await isolated.create_partition(partition_name)
+            partition = await isolated.open_partition(partition_name)
             assert partition is not None
             records = [
                 _make_record(
@@ -1874,7 +1874,7 @@ class TestPartitionIsolation:
                 for _ in range(2)
             ]
             await partition.upsert(records=records)
-            own_records[partition_key] = (
+            own_records[partition_name] = (
                 partition,
                 {record.uuid for record in records},
             )
@@ -1894,8 +1894,8 @@ class TestPartitionIsolation:
                     property_filter
                 )
 
-        for partition_key in own_records:
-            await isolated.delete_partition(partition_key)
+        for partition_name in own_records:
+            await isolated.delete_partition(partition_name)
 
 
 class TestPurgeBatches:
@@ -1970,9 +1970,9 @@ class TestPurge:
         batches, reclaim every deleted partition's records and leave the live
         partition's."""
         handles = {}
-        for partition_key in ("live", "dead_0", "dead_1", "dead_2", "dead_3"):
-            await store.create_partition(partition_key)
-            handle = await store.open_partition(partition_key)
+        for partition_name in ("live", "dead_0", "dead_1", "dead_2", "dead_3"):
+            await store.create_partition(partition_name)
+            handle = await store.open_partition(partition_name)
             assert handle is not None
             await handle.upsert(
                 records=[
@@ -1980,14 +1980,14 @@ class TestPurge:
                     for index in range(7)
                 ]
             )
-            handles[partition_key] = handle
+            handles[partition_name] = handle
         live = handles.pop("live")
         live_uuids = await _incarnation_uuids(
             store._client, live._collection_name, live._incarnation
         )
         await _settle(live)
-        for partition_key in handles:
-            await store.delete_partition(partition_key)
+        for partition_name in handles:
+            await store.delete_partition(partition_name)
         purgers = [
             _with_purge_batch_size(purging, 3) for purging in (store, other_store)
         ]
@@ -2015,7 +2015,7 @@ class TestPurge:
 
 
 _CHURN_VECTOR_STORE_NAME = "churn"
-_CHURN_PARTITION_KEYS = ("churn_0", "churn_1", "churn_2")
+_CHURN_PARTITION_NAMES = ("churn_0", "churn_1", "churn_2")
 _CHURN_DECLARED: dict[str, PropertyType] = {
     "owner": str,
     "tag": str,
@@ -2036,7 +2036,7 @@ _DOMAIN_ERRORS = (
 class _ChurnStep:
     """A worker's step: the partition, the action, and the records it writes or deletes."""
 
-    partition_key: str
+    partition_name: str
     action: str
     records: list[Record]
 
@@ -2063,7 +2063,7 @@ def _churn_script(worker: int) -> tuple[str, set[UUID], list[_ChurnStep]]:
     own = sorted(uuid4() for _ in range(6))
     steps = []
     for _ in range(40):
-        partition_key = rng.choice(_CHURN_PARTITION_KEYS)
+        partition_name = rng.choice(_CHURN_PARTITION_NAMES)
         action = rng.choices(
             ("upsert", "delete", "query", "recreate"), weights=(4, 2, 3, 1)
         )[0]
@@ -2080,7 +2080,7 @@ def _churn_script(worker: int) -> tuple[str, set[UUID], list[_ChurnStep]]:
             for record_uuid in rng.sample(own, k=rng.randint(1, 3))
         ]
         steps.append(
-            _ChurnStep(partition_key=partition_key, action=action, records=records)
+            _ChurnStep(partition_name=partition_name, action=action, records=records)
         )
     return owner, set(own), steps
 
@@ -2131,18 +2131,18 @@ async def _churn_worker(
     for step in steps:
         try:
             if step.action == "recreate":
-                handles.pop(step.partition_key, None)
-                await store.delete_partition(step.partition_key)
+                handles.pop(step.partition_name, None)
+                await store.delete_partition(step.partition_name)
                 deleted.set()
-                await store.create_partition(step.partition_key)
+                await store.create_partition(step.partition_name)
                 continue
-            if step.partition_key not in handles:
-                handles[step.partition_key] = await store.open_or_create_partition(
-                    step.partition_key
+            if step.partition_name not in handles:
+                handles[step.partition_name] = await store.open_or_create_partition(
+                    step.partition_name
                 )
-            await _churn_on(handles[step.partition_key], step, owner, own, ledger)
+            await _churn_on(handles[step.partition_name], step, owner, own, ledger)
         except PartitionHandleStaleError:
-            handles.pop(step.partition_key, None)
+            handles.pop(step.partition_name, None)
         except _DOMAIN_ERRORS:
             pass
 
@@ -2265,8 +2265,8 @@ class TestChurn:
             await _drain(purging)
 
         live = set()
-        for partition_key in _CHURN_PARTITION_KEYS:
-            handle = await stores[0].open_partition(partition_key)
+        for partition_name in _CHURN_PARTITION_NAMES:
+            handle = await stores[0].open_partition(partition_name)
             if handle is not None:
                 live.add(handle._incarnation)
                 await _check_live_partition(

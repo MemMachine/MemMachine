@@ -16,9 +16,9 @@ correctness:
 The goal is that any number of MemMachine server processes, on any hosts, can
 serve any partition of a Qdrant or Milvus store they share, with:
 
-- creation of a partition key arbitrated once;
+- creation of a partition name arbitrated once;
 - deletion final, not undone by a write in flight;
-- a re-created key starting empty;
+- a re-created name starting empty;
 - reclamation of deleted data bounded in cost and safe to run from every
   process;
 - reads whose relation to earlier writes the contract states;
@@ -34,7 +34,7 @@ similarity metric, and declared properties. Every record it holds has a vector
 of that dimensionality, and any declared property it carries has its declared
 type. The composition root builds the stores its services
 need, and the name keeps two stores over one backend apart. Within a store, a
-partition holds one tenant's records, addressed by a string key, and every
+partition holds one tenant's records, addressed by a string name, and every
 search runs within one partition. Every partition of a store shares its
 dimensions, metric, and schema.
 
@@ -59,13 +59,13 @@ behind its choices.
 
 ## Lifecycle of a partition
 
-1. **Create.** The store reserves the key, inserting a pending registry row
+1. **Create.** The store reserves the name, inserting a pending registry row
    under a freshly minted incarnation, prepares the storage the partition
    needs of its own (on Qdrant and Milvus, none: its records go into the
    store's one native collection, which startup prepared), and confirms the
    reservation, which marks the row live. A racing creator loses at the
    registry's primary key, and a pending partition is not opened.
-2. **Open.** The registry resolves the partition key to the live incarnation;
+2. **Open.** The registry resolves the partition name to the live incarnation;
    the handle is bound to that incarnation.
 3. **Use.** Every record a handle writes carries its incarnation, and every
    read and delete is scoped to it. Before each upsert and query, and after

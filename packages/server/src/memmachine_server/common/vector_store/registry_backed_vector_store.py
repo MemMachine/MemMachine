@@ -2,7 +2,7 @@
 Base classes for a vector store whose partitions a partition registry arbitrates.
 
 The registry mints each partition's incarnation and arbitrates creation,
-deletion, and reclamation across processes. A partition's key is reserved,
+deletion, and reclamation across processes. A partition's name is reserved,
 its storage is prepared, and the reservation is confirmed, which makes the
 partition live; only a live partition is opened. The backend holds records,
 each carrying its partition's incarnation, and a subclass decides how: it
@@ -52,7 +52,7 @@ from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 logger = logging.getLogger(__name__)
 
 # Attempts open-or-create makes, _OPEN_OR_CREATE_RETRY_DELAY_SECONDS apart,
-# before it gives up on a partition that stays pending or a key it keeps
+# before it gives up on a partition that stays pending or a name it keeps
 # losing.
 _MAX_OPEN_OR_CREATE_ATTEMPTS = 10
 _OPEN_OR_CREATE_RETRY_DELAY_SECONDS = 1
@@ -253,7 +253,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
     Any process sharing the backend and the registry may serve any partition.
     A partition is pending until its storage is prepared: meanwhile opening it
     raises PartitionPendingError, `open_or_create_partition` waits
-    a bounded time for it, and creating its key raises
+    a bounded time for it, and creating its name raises
     PartitionAlreadyExistsError. A partition a crash left pending
     stays pending until `delete_partition` deletes it.
 
@@ -297,22 +297,22 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         pass
 
     @override
-    async def create_partition(self, partition_key: str) -> None:
-        validate_partition_name(partition_key)
+    async def create_partition(self, partition_name: str) -> None:
+        validate_partition_name(partition_name)
         async with self._tracker("create_partition"):
             # The registry decides a creation race. The partition stays
             # pending until its storage is prepared; if it is deleted
             # meanwhile, confirming the reservation raises.
-            reservation = await self._partition_registry.reserve(partition_key)
+            reservation = await self._partition_registry.reserve(partition_name)
             await self._prepare_and_confirm_or_cancel(reservation)
 
     @override
-    async def open_or_create_partition(self, partition_key: str) -> PartitionT:
-        validate_partition_name(partition_key)
+    async def open_or_create_partition(self, partition_name: str) -> PartitionT:
+        validate_partition_name(partition_name)
         async with self._tracker("open_or_create_partition"):
             # Read-then-create, retried: a pending partition is another
             # creator's (open it once it is live), losing the reservation
-            # means another creator took the key meanwhile, and losing the
+            # means another creator took the name meanwhile, and losing the
             # confirmation means a deleter removed this one while its storage
             # was prepared (create again).
             pending_error: PartitionPendingError | None = None
@@ -321,7 +321,9 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
                 if attempt:
                     await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
                 try:
-                    registration = await self._partition_registry.resolve(partition_key)
+                    registration = await self._partition_registry.resolve(
+                        partition_name
+                    )
                 except PartitionPendingError as err:
                     pending_error = err
                     continue
@@ -329,7 +331,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
                 if registration is not None:
                     return self._partition_handle(registration)
                 try:
-                    reservation = await self._partition_registry.reserve(partition_key)
+                    reservation = await self._partition_registry.reserve(partition_name)
                 except PartitionAlreadyExistsError as err:
                     lost_race = err
                     continue
@@ -345,7 +347,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
             if pending_error is not None:
                 raise pending_error
             raise AttemptsExhaustedError(
-                f"Opening or creating partition {partition_key!r} of vector store "
+                f"Opening or creating partition {partition_name!r} of vector store "
                 f"{self._vector_store_name!r} made no progress after "
                 f"{_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
             ) from lost_race
@@ -366,7 +368,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
             )
             return await reservation.confirm()
         except BaseException:
-            # Shielded, so a cancelled creation still frees the key. The task
+            # Shielded, so a cancelled creation still frees the name. The task
             # reports its own failure, since a creation cancelled again stops
             # awaiting it before it ends.
             cancellation = asyncio.create_task(reservation.cancel())
@@ -390,21 +392,21 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
             raise
 
     @override
-    async def open_partition(self, partition_key: str) -> PartitionT | None:
-        validate_partition_name(partition_key)
+    async def open_partition(self, partition_name: str) -> PartitionT | None:
+        validate_partition_name(partition_name)
         async with self._tracker("open_partition"):
-            registration = await self._partition_registry.resolve(partition_key)
+            registration = await self._partition_registry.resolve(partition_name)
             if registration is None:
                 return None
             return self._partition_handle(registration)
 
     @override
-    async def delete_partition(self, partition_key: str) -> None:
-        validate_partition_name(partition_key)
+    async def delete_partition(self, partition_name: str) -> None:
+        validate_partition_name(partition_name)
         async with self._tracker("delete_partition"):
             # The partition is unreachable once unregister returns, and its
             # incarnation awaits the purge.
-            await self._partition_registry.unregister(partition_key)
+            await self._partition_registry.unregister(partition_name)
 
     @override
     async def purge_deleted_partitions(self) -> bool:
@@ -432,7 +434,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
     @abstractmethod
     async def _prepare_partition_storage(
-        self, partition_key: str, incarnation: UUID
+        self, partition_name: str, incarnation: UUID
     ) -> None:
         """
         Prepare the storage a newly reserved partition needs of its own.
@@ -445,7 +447,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         once its pending partition is deleted.
 
         Args:
-            partition_key (str):
+            partition_name (str):
                 Key of the partition being created.
             incarnation (UUID):
                 The incarnation the partition's records will carry.
@@ -468,7 +470,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
         Args:
             registration (Registration):
-                The live partition's registration, which carries its key and
+                The live partition's registration, which carries its name and
                 incarnation.
 
         Returns:
