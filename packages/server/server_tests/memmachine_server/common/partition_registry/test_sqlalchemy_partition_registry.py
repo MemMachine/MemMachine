@@ -1,4 +1,4 @@
-"""The SQLAlchemy partition registry of one vector store: creation arbitrated by the database, deletion queued, purge claimed."""
+"""The SQLAlchemy partition registry of one partition namespace: creation arbitrated by the database, deletion queued, purge claimed."""
 
 import asyncio
 import logging
@@ -36,8 +36,8 @@ from memmachine_server.common.partition_registry.sqlalchemy_partition_registry i
     _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
     PartitionRow,
     PurgeQueueRow,
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
     _TombstoneClaim,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
@@ -45,27 +45,27 @@ from memmachine_server.common.sql import enable_sqlite_explicit_begin
 RETENTION = timedelta(days=1)
 RETENTION_SECONDS = int(RETENTION.total_seconds())
 PURGE_LEASE = timedelta(minutes=5)
-# A partition key of the longest length, with characters no identifier allows.
-ANY_CHARACTERS_KEY = "Session/ID-1 ü".ljust(254, "x")
+# A partition name of the longest length, with characters no identifier allows.
+ANY_CHARACTERS_NAME = "Session/ID-1 ü".ljust(254, "x")
 
 
 @pytest.fixture
-def vector_store_name() -> str:
-    """A vector store name no other test (or earlier run on a shared server) used."""
+def partition_namespace() -> str:
+    """A partition namespace no other test (or earlier run on a shared server) used."""
     return f"test_{uuid4().hex[:12]}"
 
 
 async def _registry(
     engine: AsyncEngine,
-    vector_store_name: str,
+    partition_namespace: str,
     tombstone_retention_seconds: int = RETENTION_SECONDS,
     purge_lease_seconds: int = int(PURGE_LEASE.total_seconds()),
     base_purge_retry_backoff_seconds: int = 30,
-) -> SQLAlchemyVectorStorePartitionRegistry:
-    registry = SQLAlchemyVectorStorePartitionRegistry(
-        SQLAlchemyVectorStorePartitionRegistryParams(
+) -> SQLAlchemyPartitionRegistry:
+    registry = SQLAlchemyPartitionRegistry(
+        SQLAlchemyPartitionRegistryParams(
             engine=engine,
-            vector_store_name=vector_store_name,
+            partition_namespace=partition_namespace,
             tombstone_retention_seconds=tombstone_retention_seconds,
             purge_lease_seconds=purge_lease_seconds,
             base_purge_retry_backoff_seconds=base_purge_retry_backoff_seconds,
@@ -75,12 +75,12 @@ async def _registry(
     return registry
 
 
-async def _queued(registry: SQLAlchemyVectorStorePartitionRegistry) -> list[UUID]:
+async def _queued(registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
     """The registry's tombstones, oldest first."""
     async with registry._engine.connect() as connection:
         rows = await connection.execute(
             select(PurgeQueueRow.incarnation)
-            .where(PurgeQueueRow.vector_store_name == registry._vector_store_name)
+            .where(PurgeQueueRow.partition_namespace == registry._partition_namespace)
             .order_by(PurgeQueueRow.enqueued_at)
         )
         return list(rows.scalars())
@@ -94,7 +94,7 @@ def _database_time_ago(engine: AsyncEngine, delta: timedelta) -> ColumnElement:
 
 
 async def _age_deletion(
-    registry: SQLAlchemyVectorStorePartitionRegistry,
+    registry: SQLAlchemyPartitionRegistry,
     incarnation: UUID,
     extra: timedelta = timedelta(0),
 ) -> None:
@@ -138,9 +138,7 @@ async def _blocked_or_done(engine: AsyncEngine, task: asyncio.Task) -> str:
     return "done"
 
 
-async def _attempts(
-    registry: SQLAlchemyVectorStorePartitionRegistry, incarnation: UUID
-) -> int:
+async def _attempts(registry: SQLAlchemyPartitionRegistry, incarnation: UUID) -> int:
     """The tombstone's count of purge attempts without progress."""
     async with registry._engine.connect() as connection:
         return (
@@ -153,7 +151,7 @@ async def _attempts(
 
 
 async def _age_claimable_at(
-    registry: SQLAlchemyVectorStorePartitionRegistry,
+    registry: SQLAlchemyPartitionRegistry,
     incarnation: UUID,
     by: timedelta = PURGE_LEASE + timedelta(minutes=1),
 ) -> None:
@@ -193,7 +191,7 @@ class _HeldRound:
 
 
 async def _start_held_round(
-    registry: SQLAlchemyVectorStorePartitionRegistry,
+    registry: SQLAlchemyPartitionRegistry,
 ) -> tuple[_HeldRound, asyncio.Task[bool]]:
     """A purge round started on the oldest due tombstone, held until released."""
     held = _HeldRound()
@@ -203,7 +201,7 @@ async def _start_held_round(
 
 
 async def _abandon_claim(
-    registry: SQLAlchemyVectorStorePartitionRegistry,
+    registry: SQLAlchemyPartitionRegistry,
     monkeypatch: pytest.MonkeyPatch,
 ) -> UUID:
     """Claim the oldest due tombstone and stop, as a purger that dies during its round: nothing after the claim reaches the database. The claimed incarnation."""
@@ -248,7 +246,7 @@ async def _no_round(incarnation: UUID) -> bool:
     raise AssertionError("a round ran where none was due")
 
 
-async def _failing_round(registry: SQLAlchemyVectorStorePartitionRegistry) -> UUID:
+async def _failing_round(registry: SQLAlchemyPartitionRegistry) -> UUID:
     """One purge round that raises; the incarnation it ran on."""
     ran: list[UUID] = []
 
@@ -262,7 +260,7 @@ async def _failing_round(registry: SQLAlchemyVectorStorePartitionRegistry) -> UU
 
 
 async def _round(
-    registry: SQLAlchemyVectorStorePartitionRegistry, any_records_found: bool
+    registry: SQLAlchemyPartitionRegistry, any_records_found: bool
 ) -> UUID | None:
     """One purge round on the oldest due tombstone, reporting `any_records_found`; its incarnation, or None."""
     ran: list[UUID] = []
@@ -278,9 +276,9 @@ async def _round(
 
 @pytest.mark.asyncio
 async def test_a_reservation_mints_a_fresh_incarnation(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
 
     pending = await registry.reserve("c")
     live = await pending.confirm()
@@ -294,9 +292,9 @@ async def test_a_reservation_mints_a_fresh_incarnation(
 
 @pytest.mark.asyncio
 async def test_a_partition_is_pending_until_its_reservation_is_confirmed(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
 
     pending = await registry.reserve("c")
 
@@ -313,11 +311,11 @@ async def test_a_partition_is_pending_until_its_reservation_is_confirmed(
 
 @pytest.mark.asyncio
 async def test_only_the_reserved_incarnation_is_confirmed(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """A creation whose partition was deleted while its storage was
-    prepared cannot confirm a partition reserved under the key since."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    prepared cannot confirm a partition reserved under the name since."""
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     deleted = await registry.reserve("c")
     await registry.unregister("c")
     with pytest.raises(PartitionDeletedError):
@@ -334,10 +332,10 @@ async def test_only_the_reserved_incarnation_is_confirmed(
 
 
 @pytest.mark.asyncio
-async def test_cancelling_a_reservation_spares_the_key_reserved_since(
-    sqlalchemy_engine, vector_store_name
+async def test_cancelling_a_reservation_spares_the_name_reserved_since(
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     old = await registry.reserve("c")
     await registry.unregister("c")
     since = await registry.reserve("c")
@@ -357,11 +355,11 @@ async def test_cancelling_a_reservation_spares_the_key_reserved_since(
 
 @pytest.mark.asyncio
 async def test_cancelling_a_confirmed_reservation_leaves_the_partition_live(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    """Only a deletion by key ends a live partition, so a creator that
+    """Only a deletion by name ends a live partition, so a creator that
     cancels after a confirmation it did not see succeed takes nothing back."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     reservation = await registry.reserve("c")
     live = await reservation.confirm()
 
@@ -372,9 +370,9 @@ async def test_cancelling_a_confirmed_reservation_leaves_the_partition_live(
 
 @pytest.mark.asyncio
 async def test_a_registration_is_current_until_its_partition_is_deleted(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     live = await (await registry.reserve("c")).confirm()
     await live.require_current()
 
@@ -388,9 +386,9 @@ async def test_a_registration_is_current_until_its_partition_is_deleted(
 
 
 @pytest.mark.asyncio
-async def test_a_taken_key_is_already_exists(sqlalchemy_engine, vector_store_name):
+async def test_a_taken_name_is_already_exists(sqlalchemy_engine, partition_namespace):
     """Taken by a pending partition, then by a live one."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     registration = await registry.reserve("c")
 
     for pending in (True, False):
@@ -401,29 +399,29 @@ async def test_a_taken_key_is_already_exists(sqlalchemy_engine, vector_store_nam
 
 
 @pytest.mark.asyncio
-async def test_a_partition_key_of_any_characters_and_the_longest_length_is_kept(
-    sqlalchemy_engine, vector_store_name
+async def test_a_partition_name_of_any_characters_and_the_longest_length_is_kept(
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
-    registration = await (await registry.reserve(ANY_CHARACTERS_KEY)).confirm()
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    registration = await (await registry.reserve(ANY_CHARACTERS_NAME)).confirm()
 
-    resolved = await registry.resolve(ANY_CHARACTERS_KEY)
+    resolved = await registry.resolve(ANY_CHARACTERS_NAME)
     assert resolved is not None
     assert resolved.incarnation == registration.incarnation
-    await registry.unregister(ANY_CHARACTERS_KEY)
-    assert await registry.resolve(ANY_CHARACTERS_KEY) is None
+    await registry.unregister(ANY_CHARACTERS_NAME)
+    assert await registry.resolve(ANY_CHARACTERS_NAME) is None
 
 
 @pytest.mark.parametrize(
     "invalid_name", ["", "Upper", "with-hyphen", "trailing_newline\n", "x" * 33]
 )
-def test_a_vector_store_name_must_be_an_identifier(invalid_name, tmp_path):
+def test_a_partition_namespace_must_be_an_identifier(invalid_name, tmp_path):
     with pytest.raises(ValueError, match="Vector store name"):
-        SQLAlchemyVectorStorePartitionRegistryParams(
+        SQLAlchemyPartitionRegistryParams(
             engine=create_async_engine(
                 f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
             ),
-            vector_store_name=invalid_name,
+            partition_namespace=invalid_name,
             tombstone_retention_seconds=RETENTION_SECONDS,
         )
 
@@ -432,9 +430,9 @@ def test_an_engine_of_another_dialect_is_refused(monkeypatch, tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
     monkeypatch.setattr(engine.dialect, "name", "mssql")
     with pytest.raises(ValueError, match="mssql"):
-        SQLAlchemyVectorStorePartitionRegistryParams(
+        SQLAlchemyPartitionRegistryParams(
             engine=engine,
-            vector_store_name="store",
+            partition_namespace="store",
             tombstone_retention_seconds=RETENTION_SECONDS,
         )
 
@@ -445,11 +443,11 @@ def test_a_sqlite_runtime_without_returning_is_refused(monkeypatch, tmp_path):
         (3, 34, 1),
     )
     with pytest.raises(ValueError, match="RETURNING"):
-        SQLAlchemyVectorStorePartitionRegistryParams(
+        SQLAlchemyPartitionRegistryParams(
             engine=create_async_engine(
                 f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
             ),
-            vector_store_name="store",
+            partition_namespace="store",
             tombstone_retention_seconds=RETENTION_SECONDS,
         )
 
@@ -461,9 +459,9 @@ def test_an_engine_sharing_one_connection_is_refused(tmp_path):
         f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}", poolclass=StaticPool
     )
     with pytest.raises(ValueError, match="StaticPool"):
-        SQLAlchemyVectorStorePartitionRegistryParams(
+        SQLAlchemyPartitionRegistryParams(
             engine=engine,
-            vector_store_name="store",
+            partition_namespace="store",
             tombstone_retention_seconds=RETENTION_SECONDS,
         )
 
@@ -473,22 +471,22 @@ def test_an_in_memory_sqlite_engine_is_refused(url):
     """Each connection to in-memory SQLite gets a separate database, so the
     registry's state would not be shared, even within one process."""
     with pytest.raises(ValueError, match="in-memory"):
-        SQLAlchemyVectorStorePartitionRegistryParams(
+        SQLAlchemyPartitionRegistryParams(
             engine=create_async_engine(url, poolclass=NullPool),
-            vector_store_name="store",
+            partition_namespace="store",
             tombstone_retention_seconds=RETENTION_SECONDS,
         )
 
 
 @pytest.mark.asyncio
-async def test_registries_of_two_vector_stores_share_a_database_and_nothing_else(
-    sqlalchemy_engine, vector_store_name
+async def test_registries_of_two_namespaces_share_a_database_and_nothing_else(
+    sqlalchemy_engine, partition_namespace
 ):
-    """The same key in two vector stores' registries is two partitions: each
+    """The same name in two namespaces' registries is two partitions: each
     resolves, deletes and purges apart from the other, and a purge round
     claims only its own registry's tombstones."""
-    first = await _registry(sqlalchemy_engine, f"{vector_store_name}_a")
-    second = await _registry(sqlalchemy_engine, f"{vector_store_name}_b")
+    first = await _registry(sqlalchemy_engine, f"{partition_namespace}_a")
+    second = await _registry(sqlalchemy_engine, f"{partition_namespace}_b")
 
     one = await (await first.reserve("c")).confirm()
     two = await (await second.reserve("c")).confirm()
@@ -519,10 +517,12 @@ async def test_registries_of_two_vector_stores_share_a_database_and_nothing_else
 
 
 @pytest.mark.asyncio
-async def test_concurrent_creators_get_one_winner(sqlalchemy_engine, vector_store_name):
+async def test_concurrent_creators_get_one_winner(
+    sqlalchemy_engine, partition_namespace
+):
     """Two registries on one database, the two-process shape in one process."""
-    first = await _registry(sqlalchemy_engine, vector_store_name)
-    second = await _registry(sqlalchemy_engine, vector_store_name)
+    first = await _registry(sqlalchemy_engine, partition_namespace)
+    second = await _registry(sqlalchemy_engine, partition_namespace)
 
     results = await asyncio.gather(
         *(registry.reserve("c") for registry in (first, second) * 3),
@@ -541,9 +541,9 @@ async def test_concurrent_creators_get_one_winner(sqlalchemy_engine, vector_stor
 
 @pytest.mark.asyncio
 async def test_delete_queues_the_incarnation_and_is_idempotent(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("c")).incarnation
 
     await registry.unregister("c")
@@ -556,10 +556,10 @@ async def test_delete_queues_the_incarnation_and_is_idempotent(
 
 
 @pytest.mark.asyncio
-async def test_a_recreated_key_gets_a_new_incarnation(
-    sqlalchemy_engine, vector_store_name
+async def test_a_recreated_name_gets_a_new_incarnation(
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     old = (await registry.reserve("c")).incarnation
     await registry.unregister("c")
 
@@ -573,10 +573,10 @@ async def test_a_recreated_key_gets_a_new_incarnation(
 
 @pytest.mark.asyncio
 async def test_a_round_is_given_where_the_records_are(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """The round is given the incarnation the deleted partition's records carry."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("c")).incarnation
     await registry.unregister("c")
     await _age_deletion(registry, incarnation)
@@ -592,9 +592,9 @@ async def test_a_round_is_given_where_the_records_are(
 
 @pytest.mark.asyncio
 async def test_a_tombstone_is_not_due_before_the_retention(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
 
@@ -604,9 +604,9 @@ async def test_a_tombstone_is_not_due_before_the_retention(
 
 @pytest.mark.asyncio
 async def test_due_tombstones_go_oldest_deletion_first_until_a_round_finds_nothing(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     minted = iter([UUID(int=1), UUID(int=2)])
     monkeypatch.setattr(
         "memmachine_server.common.partition_registry.sqlalchemy_partition_registry.uuid4",
@@ -632,13 +632,13 @@ async def test_due_tombstones_go_oldest_deletion_first_until_a_round_finds_nothi
 
 @pytest.mark.asyncio
 async def test_a_tombstone_queued_by_a_real_deletion_comes_due_by_the_database_clock(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """The claim compares the stamp the database clock wrote, by the
     database's arithmetic: with no retention the first round claims the
     tombstone, and no stamp is rewritten by the test."""
     registry = await _registry(
-        sqlalchemy_engine, vector_store_name, tombstone_retention_seconds=0
+        sqlalchemy_engine, partition_namespace, tombstone_retention_seconds=0
     )
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
@@ -650,17 +650,17 @@ async def test_a_tombstone_queued_by_a_real_deletion_comes_due_by_the_database_c
 
 @pytest.mark.asyncio
 async def test_a_changed_retention_applies_to_tombstones_already_queued(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """Only the deletion's time is stored; the retention in force when a
     claim is decided applies, including to tombstones queued under another."""
-    queued_under_a_day = await _registry(sqlalchemy_engine, vector_store_name)
+    queued_under_a_day = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await queued_under_a_day.reserve("a")).incarnation
     await queued_under_a_day.unregister("a")
     assert await _round(queued_under_a_day, any_records_found=False) is None
 
     no_retention = await _registry(
-        sqlalchemy_engine, vector_store_name, tombstone_retention_seconds=0
+        sqlalchemy_engine, partition_namespace, tombstone_retention_seconds=0
     )
     assert await _round(no_retention, any_records_found=False) == incarnation
     assert await _queued(no_retention) == []
@@ -668,9 +668,9 @@ async def test_a_changed_retention_applies_to_tombstones_already_queued(
 
 @pytest.mark.asyncio
 async def test_a_round_that_raises_keeps_the_tombstone_and_names_it_in_the_error(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -698,9 +698,9 @@ async def test_a_round_that_raises_keeps_the_tombstone_and_names_it_in_the_error
 
 @pytest.mark.asyncio
 async def test_a_failed_tombstone_backs_off_while_the_ones_behind_it_are_claimed(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     failing = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, failing, extra=timedelta(hours=1))
@@ -714,9 +714,9 @@ async def test_a_failed_tombstone_backs_off_while_the_ones_behind_it_are_claimed
 
 @pytest.mark.asyncio
 async def test_the_backoff_doubles_with_each_failure_and_runs_from_the_last_one(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     # Due for days: the backoff still runs from the last failure, not from
@@ -735,12 +735,12 @@ async def test_the_backoff_doubles_with_each_failure_and_runs_from_the_last_one(
 
 @pytest.mark.asyncio
 async def test_the_backoff_stops_doubling_at_its_maximum(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = SQLAlchemyVectorStorePartitionRegistry(
-        SQLAlchemyVectorStorePartitionRegistryParams(
+    registry = SQLAlchemyPartitionRegistry(
+        SQLAlchemyPartitionRegistryParams(
             engine=sqlalchemy_engine,
-            vector_store_name=vector_store_name,
+            partition_namespace=partition_namespace,
             tombstone_retention_seconds=RETENTION_SECONDS,
             base_purge_retry_backoff_seconds=30,
             max_purge_retry_backoff_seconds=120,
@@ -763,9 +763,9 @@ async def test_the_backoff_stops_doubling_at_its_maximum(
 
 @pytest.mark.asyncio
 async def test_a_tombstone_whose_rounds_keep_failing_is_dead_lettered_and_reported(
-    sqlalchemy_engine, vector_store_name, caplog
+    sqlalchemy_engine, partition_namespace, caplog
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     failing = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, failing, extra=timedelta(hours=1))
@@ -792,12 +792,12 @@ async def test_a_tombstone_whose_rounds_keep_failing_is_dead_lettered_and_report
 
 @pytest.mark.asyncio
 async def test_resetting_a_dead_lettered_tombstones_attempts_returns_it_to_the_purge(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """Setting the attempts without progress back to 0 and the claimable time
     to NULL, as the dead-letter report says, makes the tombstone claimable at
     once, its last failure just now."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -818,9 +818,9 @@ async def test_resetting_a_dead_lettered_tombstones_attempts_returns_it_to_the_p
 
 @pytest.mark.asyncio
 async def test_a_round_that_finds_points_resets_the_attempts_without_progress(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -834,11 +834,11 @@ async def test_a_round_that_finds_points_resets_the_attempts_without_progress(
 
 @pytest.mark.asyncio
 async def test_a_cancelled_round_ends_its_claim_without_counting_it(
-    sqlalchemy_engine, vector_store_name, caplog
+    sqlalchemy_engine, partition_namespace, caplog
 ):
     """A cancelled round is not a failed round, and its tombstone is
     claimable at once, without waiting out the lease."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -856,13 +856,13 @@ async def test_a_cancelled_round_ends_its_claim_without_counting_it(
 
 @pytest.mark.asyncio
 async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backoff_pass(
-    sqlalchemy_engine, vector_store_name, monkeypatch, caplog
+    sqlalchemy_engine, partition_namespace, monkeypatch, caplog
 ):
     """A purger that dies during its round writes nothing after its claim,
     which counted the attempt. The tombstone stays claimed until the lease
     passes and then backs off; the claim after that is the next attempt, and
     is logged as a retry."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -897,11 +897,11 @@ async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backof
 
 @pytest.mark.asyncio
 async def test_rounds_that_never_end_dead_letter_the_tombstone(
-    sqlalchemy_engine, vector_store_name, monkeypatch, caplog
+    sqlalchemy_engine, partition_namespace, monkeypatch, caplog
 ):
     """A tombstone whose rounds keep killing their purger is dead-lettered
     like one whose rounds keep raising, each retry logged with its attempt."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -928,12 +928,12 @@ async def test_rounds_that_never_end_dead_letter_the_tombstone(
 
 @pytest.mark.asyncio
 async def test_a_cancelled_retry_of_a_round_that_never_ended_leaves_it_claimable(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
     """A cancelled round takes back its attempt even when the attempt before
     it never ended and no round ever raised, so the tombstone is claimable at
     once."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -951,7 +951,7 @@ async def test_a_cancelled_retry_of_a_round_that_never_ended_leaves_it_claimable
 
 @pytest.mark.asyncio
 async def test_racing_purgers_retry_a_round_that_never_ended_once(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
     """Purgers on separate engines that find the same claim whose round never
     ended claim it once between them, as its next attempt."""
@@ -960,7 +960,7 @@ async def test_racing_purgers_retry_a_round_that_never_ended_once(
         enable_sqlite_explicit_begin(engine)
     ran: list[UUID] = []
     try:
-        purgers = [await _registry(engine, vector_store_name) for engine in engines]
+        purgers = [await _registry(engine, partition_namespace) for engine in engines]
         incarnation = (await purgers[0].reserve("a")).incarnation
         await purgers[0].unregister("a")
         await _age_deletion(purgers[0], incarnation)
@@ -987,11 +987,11 @@ async def test_racing_purgers_retry_a_round_that_never_ended_once(
 
 @pytest.mark.asyncio
 async def test_a_claimed_tombstone_is_skipped_while_its_round_runs(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """A second purger takes the next due tombstone, and finds none once the
     rest are taken; the claimed one is not claimed again until its round ends."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     older = (await registry.reserve("older")).incarnation
     newer = (await registry.reserve("newer")).incarnation
     await registry.unregister("older")
@@ -1018,12 +1018,12 @@ async def test_a_claimed_tombstone_is_skipped_while_its_round_runs(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stale_outcome", ["records found", "raised"])
 async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
-    sqlalchemy_engine, vector_store_name, caplog, stale_outcome
+    sqlalchemy_engine, partition_namespace, caplog, stale_outcome
 ):
     """Once a round's lease and the backoff have passed, the tombstone is
     claimed again as the next attempt. The first round's end then changes
     nothing: the later claim holds, and each round counts once."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -1064,11 +1064,11 @@ async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
 
 @pytest.mark.asyncio
 async def test_a_round_that_finds_nothing_removes_the_tombstone_under_any_claim(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """An incarnation found empty after the retention stays empty, so a round
     that outlasted its lease still removes the tombstone it found empty."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -1094,7 +1094,7 @@ async def test_a_round_that_finds_nothing_removes_the_tombstone_under_any_claim(
 
 @pytest.mark.asyncio
 async def test_concurrent_purgers_claim_each_tombstone_once(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """Purgers on separate engines, as in separate processes, split a backlog
     between them: every tombstone is claimed once, whatever the interleaving."""
@@ -1103,14 +1103,14 @@ async def test_concurrent_purgers_claim_each_tombstone_once(
         enable_sqlite_explicit_begin(engine)
     try:
         purgers = [
-            await _registry(engine, vector_store_name, tombstone_retention_seconds=0)
+            await _registry(engine, partition_namespace, tombstone_retention_seconds=0)
             for engine in engines
         ]
         incarnations = []
         for index in range(12):
-            key = f"c{index}"
-            incarnations.append((await purgers[0].reserve(key)).incarnation)
-            await purgers[0].unregister(key)
+            name = f"c{index}"
+            incarnations.append((await purgers[0].reserve(name)).incarnation)
+            await purgers[0].unregister(name)
         ran: list[UUID] = []
 
         async def purge_round(incarnation: UUID) -> bool:
@@ -1118,7 +1118,7 @@ async def test_concurrent_purgers_claim_each_tombstone_once(
             await asyncio.sleep(0.01)
             return False
 
-        async def drain(purger: SQLAlchemyVectorStorePartitionRegistry) -> None:
+        async def drain(purger: SQLAlchemyPartitionRegistry) -> None:
             while await purger.run_purge_round(purge_round):
                 pass
 
@@ -1132,10 +1132,10 @@ async def test_concurrent_purgers_claim_each_tombstone_once(
 
 @pytest.mark.asyncio
 async def test_an_incarnation_awaiting_purge_is_never_reminted(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
     """A minted incarnation colliding with a queued tombstone is rejected and re-minted."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     dead = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     minted = iter([dead, uuid4()])
@@ -1152,9 +1152,9 @@ async def test_an_incarnation_awaiting_purge_is_never_reminted(
 
 @pytest.mark.asyncio
 async def test_creation_that_never_mints_a_free_incarnation_gives_up(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     dead = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     monkeypatch.setattr(
@@ -1197,7 +1197,7 @@ async def _engine_ten_days_behind(
 
 @pytest.mark.asyncio
 async def test_purge_rounds_keep_time_by_the_database_clock(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """Every time the queue stores, and the retention's cutoff, come from the
     database's clock, never the client's.
@@ -1209,7 +1209,7 @@ async def test_purge_rounds_keep_time_by_the_database_clock(
     if sqlalchemy_engine.dialect.name != "postgresql":
         pytest.skip("SQLite's clock cannot be shadowed")
     async with _engine_ten_days_behind(sqlalchemy_engine) as skewed_engine:
-        registry = await _registry(skewed_engine, vector_store_name)
+        registry = await _registry(skewed_engine, partition_namespace)
         incarnation = (await registry.reserve("a")).incarnation
         await registry.unregister("a")
 
@@ -1228,7 +1228,7 @@ async def test_purge_rounds_keep_time_by_the_database_clock(
 
 @pytest.mark.asyncio
 async def test_a_purge_lease_runs_by_the_database_clock(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """A claim's lease is scheduled, and measured, by the database's clock.
 
@@ -1239,7 +1239,7 @@ async def test_a_purge_lease_runs_by_the_database_clock(
         pytest.skip("SQLite's clock cannot be shadowed")
     async with _engine_ten_days_behind(sqlalchemy_engine) as skewed_engine:
         registry = await _registry(
-            skewed_engine, vector_store_name, tombstone_retention_seconds=0
+            skewed_engine, partition_namespace, tombstone_retention_seconds=0
         )
         incarnation = (await registry.reserve("a")).incarnation
         await registry.unregister("a")
@@ -1266,14 +1266,14 @@ async def test_a_purge_lease_runs_by_the_database_clock(
 
 @pytest.mark.asyncio
 async def test_no_transaction_is_open_while_a_round_runs(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """The claim commits before the round, so no backend sits idle in a
     transaction, holding a row lock or vacuum's horizon, during its remote calls."""
     if sqlalchemy_engine.dialect.name != "postgresql":
         pytest.skip("pg_stat_activity is PostgreSQL's")
     registry = await _registry(
-        sqlalchemy_engine, vector_store_name, tombstone_retention_seconds=0
+        sqlalchemy_engine, partition_namespace, tombstone_retention_seconds=0
     )
     await registry.reserve("a")
     await registry.unregister("a")
@@ -1301,12 +1301,12 @@ async def test_no_transaction_is_open_while_a_round_runs(
 
 @pytest.mark.asyncio
 async def test_a_claim_skips_a_tombstone_another_purger_holds(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """A purger never waits on a claim another purger is taking: it takes the next due tombstone."""
     if sqlalchemy_engine.dialect.name != "postgresql":
         pytest.skip("SQLite holds no row locks to skip")
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     held = (await registry.reserve("held")).incarnation
     free = (await registry.reserve("free")).incarnation
     await registry.unregister("held")
@@ -1334,7 +1334,7 @@ async def test_a_claim_skips_a_tombstone_another_purger_holds(
 
 
 @pytest.mark.asyncio
-async def test_sqlite_stays_writable_while_a_round_runs(tmp_path, vector_store_name):
+async def test_sqlite_stays_writable_while_a_round_runs(tmp_path, partition_namespace):
     """On SQLite the claim's write commits before the round, so while the
     round runs, another connection writes at once, under a busy timeout far
     shorter than the round, and another purger claims the next tombstone."""
@@ -1344,8 +1344,8 @@ async def test_sqlite_stays_writable_while_a_round_runs(tmp_path, vector_store_n
     enable_sqlite_explicit_begin(purger_engine)
     enable_sqlite_explicit_begin(impatient_engine)
     try:
-        purger = await _registry(purger_engine, vector_store_name)
-        impatient = await _registry(impatient_engine, vector_store_name)
+        purger = await _registry(purger_engine, partition_namespace)
+        impatient = await _registry(impatient_engine, partition_namespace)
         older = (await purger.reserve("older")).incarnation
         newer = (await purger.reserve("newer")).incarnation
         await purger.unregister("older")
@@ -1372,12 +1372,12 @@ async def test_sqlite_stays_writable_while_a_round_runs(tmp_path, vector_store_n
 
 @pytest.mark.asyncio
 async def test_racing_deletions_of_a_partition_queue_one_tombstone(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """Racing deletions serialize on the partition's row: the losers delete
-    nothing, one tombstone is queued, and the key can be created again."""
+    nothing, one tombstone is queued, and the name can be created again."""
     registries = [
-        await _registry(sqlalchemy_engine, vector_store_name) for _ in range(4)
+        await _registry(sqlalchemy_engine, partition_namespace) for _ in range(4)
     ]
     for cycle in range(10):
         await registries[0].reserve("c")
@@ -1391,13 +1391,13 @@ async def test_racing_deletions_of_a_partition_queue_one_tombstone(
 
 @pytest.mark.asyncio
 async def test_a_deletion_racing_another_waits_and_queues_nothing_more(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """A deletion that finds another process's deletion in flight waits for
     it, then finds nothing to delete: one tombstone, and no error."""
     if sqlalchemy_engine.dialect.name != "postgresql":
         pytest.skip("SQLite serializes whole write transactions")
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("c")).incarnation
 
     local = None
@@ -1410,7 +1410,7 @@ async def test_a_deletion_racing_another_waits_and_queues_nothing_more(
             await remote.execute(
                 insert(PurgeQueueRow).values(
                     incarnation=incarnation,
-                    vector_store_name=vector_store_name,
+                    partition_namespace=partition_namespace,
                     enqueued_at=func.now(),
                 )
             )
@@ -1426,11 +1426,11 @@ async def test_a_deletion_racing_another_waits_and_queues_nothing_more(
 
 @pytest.mark.asyncio
 async def test_an_incarnation_colliding_with_a_live_partition_is_reminted(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
-    """A mint rejected by the incarnation's unique constraint, with the key
-    free, is a collision to mint again, not a taken key."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    """A mint rejected by the incarnation's unique constraint, with the name
+    free, is a collision to mint again, not a taken name."""
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     live = (await (await registry.reserve("live")).confirm()).incarnation
     minted = iter([live, uuid4()])
     monkeypatch.setattr(
@@ -1448,7 +1448,7 @@ async def test_an_incarnation_colliding_with_a_live_partition_is_reminted(
 
 @pytest.mark.asyncio
 async def test_a_mint_checks_the_queue_after_its_insert(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
     """A mint colliding with a deletion in flight sees the deletion's tombstone.
 
@@ -1459,7 +1459,7 @@ async def test_a_mint_checks_the_queue_after_its_insert(
     commits: one made before reads the queue too early and registers a
     partition under an incarnation awaiting purge.
     """
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     victim = (await registry.reserve("victim")).incarnation
     minted = iter([victim, uuid4()])
     monkeypatch.setattr(
@@ -1484,7 +1484,7 @@ async def test_a_mint_checks_the_queue_after_its_insert(
             await remote.execute(
                 insert(PurgeQueueRow).values(
                     incarnation=victim,
-                    vector_store_name=vector_store_name,
+                    partition_namespace=partition_namespace,
                     enqueued_at=func.now(),
                 )
             )
@@ -1503,10 +1503,10 @@ async def test_a_mint_checks_the_queue_after_its_insert(
 
 
 @pytest.mark.asyncio
-async def test_a_round_claims_one_tombstone(sqlalchemy_engine, vector_store_name):
+async def test_a_round_claims_one_tombstone(sqlalchemy_engine, partition_namespace):
     """A claim takes one tombstone and leaves the others to other purgers."""
     registry = await _registry(
-        sqlalchemy_engine, vector_store_name, tombstone_retention_seconds=0
+        sqlalchemy_engine, partition_namespace, tombstone_retention_seconds=0
     )
     for name in ("a", "b", "c"):
         await registry.reserve(name)
@@ -1519,11 +1519,11 @@ async def test_a_round_claims_one_tombstone(sqlalchemy_engine, vector_store_name
 
 @pytest.mark.asyncio
 async def test_a_persistent_database_error_surfaces_with_its_cause(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
     """A rejected insert is retried a bounded number of times, then the
     database's own error is chained to the one that gives up."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     # A NOT NULL violation stands in for a cause that is not a collision.
     monkeypatch.setattr(
         "memmachine_server.common.partition_registry.sqlalchemy_partition_registry.uuid4",
@@ -1541,14 +1541,14 @@ async def test_a_persistent_database_error_surfaces_with_its_cause(
 
 @pytest.mark.asyncio
 async def test_a_claim_holds_for_the_lease_it_was_taken_under(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """The lease is scheduled when a claim is taken: a claim taken under a
     five-minute lease holds against a one-minute lease past a minute and a
     half, until its own five minutes and the 30-second backoff pass."""
-    five_minutes = await _registry(sqlalchemy_engine, vector_store_name)
+    five_minutes = await _registry(sqlalchemy_engine, partition_namespace)
     one_minute = await _registry(
-        sqlalchemy_engine, vector_store_name, purge_lease_seconds=60
+        sqlalchemy_engine, partition_namespace, purge_lease_seconds=60
     )
     incarnation = (await five_minutes.reserve("a")).incarnation
     await five_minutes.unregister("a")
@@ -1569,12 +1569,12 @@ async def test_a_claim_holds_for_the_lease_it_was_taken_under(
 
 @pytest.mark.asyncio
 async def test_the_first_purge_backoff_comes_from_its_parameter(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """With a ten-second first backoff, a failed tombstone is claimed again
     after ten seconds, and after twenty once it has failed twice."""
     registry = await _registry(
-        sqlalchemy_engine, vector_store_name, base_purge_retry_backoff_seconds=10
+        sqlalchemy_engine, partition_namespace, base_purge_retry_backoff_seconds=10
     )
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
@@ -1593,12 +1593,12 @@ async def test_the_first_purge_backoff_comes_from_its_parameter(
 
 @pytest.mark.asyncio
 async def test_a_deletion_whose_tombstone_cannot_be_queued_changes_nothing(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """A deletion and its tombstone commit together: when queuing the
     tombstone fails, the partition stays registered and nothing is queued,
     so no deleted incarnation is ever left without a tombstone."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     live = await (await registry.reserve("c")).confirm()
 
     with (
@@ -1621,12 +1621,12 @@ async def test_a_deletion_whose_tombstone_cannot_be_queued_changes_nothing(
 
 
 @pytest.mark.asyncio
-async def test_a_reservation_whose_queue_check_fails_leaves_the_key_free(
-    sqlalchemy_engine, vector_store_name
+async def test_a_reservation_whose_queue_check_fails_leaves_the_name_free(
+    sqlalchemy_engine, partition_namespace
 ):
     """A reservation and its check of the purge queue commit together: when
-    the check fails, no pending partition holds the key."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    the check fails, no pending partition holds the name."""
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
 
     with (
         _failing_statement(sqlalchemy_engine, f"SELECT {PurgeQueueRow.__tablename__}"),
@@ -1640,12 +1640,12 @@ async def test_a_reservation_whose_queue_check_fails_leaves_the_key_free(
 
 @pytest.mark.asyncio
 async def test_a_round_whose_outcome_cannot_be_written_is_retried_once_its_lease_passes(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """A round whose outcome is lost is, to the registry, a round that never
     ended: its error propagates, the claim holds until the lease and the
     backoff pass, and the tombstone is then claimed as the next attempt."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     incarnation = (await registry.reserve("a")).incarnation
     await registry.unregister("a")
     await _age_deletion(registry, incarnation)
@@ -1673,12 +1673,12 @@ async def test_a_round_whose_outcome_cannot_be_written_is_retried_once_its_lease
 
 @pytest.mark.asyncio
 async def test_a_reservation_colliding_with_a_tombstone_under_purge_does_not_wait_for_the_round(
-    sqlalchemy_engine, vector_store_name, monkeypatch
+    sqlalchemy_engine, partition_namespace, monkeypatch
 ):
     """A purge round holds no lock while it runs, so a reservation whose
     minted incarnation collides with the tombstone being purged finds the
     collision and mints again at once, on PostgreSQL and SQLite alike."""
-    registry = await _registry(sqlalchemy_engine, vector_store_name)
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
     dead = (await registry.reserve("dead")).incarnation
     await registry.unregister("dead")
     await _age_deletion(registry, dead)
@@ -1728,26 +1728,26 @@ _REFUSALS = (
 
 
 async def _churn(
-    registry: SQLAlchemyVectorStorePartitionRegistry,
+    registry: SQLAlchemyPartitionRegistry,
     seed: int,
     purge_round: _OverlapWatch,
 ) -> None:
-    """A seeded run of creations, cancellations, deletions, reads and purge rounds over a few keys."""
+    """A seeded run of creations, cancellations, deletions, reads and purge rounds over a few names."""
     rng = random.Random(seed)
     for _ in range(40):
-        key = rng.choice(["a", "b", "c"])
+        name = rng.choice(["a", "b", "c"])
         choice = rng.random()
         try:
             if choice < 0.35:
-                reservation = await registry.reserve(key)
+                reservation = await registry.reserve(name)
                 if rng.random() < 0.8:
                     await (await reservation.confirm()).require_current()
                 else:
                     await reservation.cancel()
             elif choice < 0.6:
-                await registry.unregister(key)
+                await registry.unregister(name)
             elif choice < 0.8:
-                registration = await registry.resolve(key)
+                registration = await registry.resolve(name)
                 if registration is not None:
                     await registration.require_current()
             else:
@@ -1762,10 +1762,10 @@ async def _found_nothing(incarnation: UUID) -> bool:
 
 @pytest.mark.asyncio
 async def test_mixed_operations_across_engines_finish_cleanly_and_strand_nothing(
-    sqlalchemy_engine, vector_store_name
+    sqlalchemy_engine, partition_namespace
 ):
     """Creators, deleters, readers and purgers on separate engines, as in
-    separate processes, race over a few shared keys. Every operation ends in
+    separate processes, race over a few shared names. Every operation ends in
     its result or a documented refusal, never a database error or a deadlock;
     no tombstone's rounds overlap; and once they stop, no incarnation is both
     registered and queued, and the purge drains every tombstone."""
@@ -1775,7 +1775,7 @@ async def test_mixed_operations_across_engines_finish_cleanly_and_strand_nothing
     watch = _OverlapWatch()
     try:
         registries = [
-            await _registry(engine, vector_store_name, tombstone_retention_seconds=0)
+            await _registry(engine, partition_namespace, tombstone_retention_seconds=0)
             for engine in engines
         ]
         await asyncio.wait_for(
@@ -1794,7 +1794,7 @@ async def test_mixed_operations_across_engines_finish_cleanly_and_strand_nothing
                 (
                     await connection.execute(
                         select(PartitionRow.incarnation).where(
-                            PartitionRow.vector_store_name == vector_store_name
+                            PartitionRow.partition_namespace == partition_namespace
                         )
                     )
                 ).scalars()
@@ -1813,7 +1813,7 @@ async def test_mixed_operations_across_engines_finish_cleanly_and_strand_nothing
 class _ModelCheckedRegistry:
     """A registry driven step by step beside a model of its contract.
 
-    The model holds which partition holds each key and whether it is live,
+    The model holds which partition holds each name and whether it is live,
     which incarnations are queued and whether each is backing off, and the
     reservations and registrations handed out. Each step performs one
     operation, checks its outcome against the model, and updates the model.
@@ -1821,7 +1821,7 @@ class _ModelCheckedRegistry:
 
     def __init__(
         self,
-        registry: SQLAlchemyVectorStorePartitionRegistry,
+        registry: SQLAlchemyPartitionRegistry,
         rng: random.Random,
     ) -> None:
         self.registry = registry
@@ -1832,17 +1832,17 @@ class _ModelCheckedRegistry:
         self.confirmed: set[UUID] = set()
         self.registrations: list[Registration] = []
 
-    async def reserve(self, key: str) -> None:
-        if key in self.partitions:
+    async def reserve(self, name: str) -> None:
+        if name in self.partitions:
             with pytest.raises(PartitionAlreadyExistsError):
-                await self.registry.reserve(key)
+                await self.registry.reserve(name)
             return
-        reservation = await self.registry.reserve(key)
+        reservation = await self.registry.reserve(name)
         assert reservation.incarnation not in self.backing_off
-        self.partitions[key] = (reservation.incarnation, False)
+        self.partitions[name] = (reservation.incarnation, False)
         self.reservations.append(reservation)
 
-    async def confirm(self, key: str) -> None:
+    async def confirm(self, name: str) -> None:
         unconfirmed = [
             r for r in self.reservations if r.incarnation not in self.confirmed
         ]
@@ -1850,7 +1850,7 @@ class _ModelCheckedRegistry:
             return
         reservation = self.rng.choice(unconfirmed)
         self.confirmed.add(reservation.incarnation)
-        if self.partitions.get(reservation.partition_key) != (
+        if self.partitions.get(reservation.partition_name) != (
             reservation.incarnation,
             False,
         ):
@@ -1858,44 +1858,44 @@ class _ModelCheckedRegistry:
                 await reservation.confirm()
             return
         self.registrations.append(await reservation.confirm())
-        self.partitions[reservation.partition_key] = (reservation.incarnation, True)
+        self.partitions[reservation.partition_name] = (reservation.incarnation, True)
 
-    async def cancel(self, key: str) -> None:
+    async def cancel(self, name: str) -> None:
         if not self.reservations:
             return
         reservation = self.rng.choice(self.reservations)
         await reservation.cancel()
-        if self.partitions.get(reservation.partition_key) == (
+        if self.partitions.get(reservation.partition_name) == (
             reservation.incarnation,
             False,
         ):
-            del self.partitions[reservation.partition_key]
+            del self.partitions[reservation.partition_name]
             self.backing_off[reservation.incarnation] = False
 
-    async def unregister(self, key: str) -> None:
-        await self.registry.unregister(key)
-        if key in self.partitions:
-            self.backing_off[self.partitions.pop(key)[0]] = False
+    async def unregister(self, name: str) -> None:
+        await self.registry.unregister(name)
+        if name in self.partitions:
+            self.backing_off[self.partitions.pop(name)[0]] = False
 
-    async def resolve(self, key: str) -> None:
-        if key not in self.partitions:
-            assert await self.registry.resolve(key) is None
+    async def resolve(self, name: str) -> None:
+        if name not in self.partitions:
+            assert await self.registry.resolve(name) is None
             return
-        incarnation, live = self.partitions[key]
+        incarnation, live = self.partitions[name]
         if not live:
             with pytest.raises(PartitionPendingError):
-                await self.registry.resolve(key)
+                await self.registry.resolve(name)
             return
-        registration = await self.registry.resolve(key)
+        registration = await self.registry.resolve(name)
         assert registration is not None
         assert registration.incarnation == incarnation
         self.registrations.append(registration)
 
-    async def require_current(self, key: str) -> None:
+    async def require_current(self, name: str) -> None:
         if not self.registrations:
             return
         registration = self.rng.choice(self.registrations)
-        if self.partitions.get(registration.partition_key) == (
+        if self.partitions.get(registration.partition_name) == (
             registration.incarnation,
             True,
         ):
@@ -1904,7 +1904,7 @@ class _ModelCheckedRegistry:
         with pytest.raises(PartitionHandleStaleError):
             await registration.require_current()
 
-    async def purge(self, key: str) -> None:
+    async def purge(self, name: str) -> None:
         outcome = self.rng.choice(["nothing", "records", "raise"])
         claimed: list[UUID] = []
 
@@ -1935,14 +1935,15 @@ class _ModelCheckedRegistry:
         async with self.registry._engine.connect() as connection:
             rows = await connection.execute(
                 select(
-                    PartitionRow.partition_key,
+                    PartitionRow.partition_name,
                     PartitionRow.incarnation,
                     PartitionRow.live,
                 ).where(
-                    PartitionRow.vector_store_name == self.registry._vector_store_name
+                    PartitionRow.partition_namespace
+                    == self.registry._partition_namespace
                 )
             )
-            stored = {row.partition_key: (row.incarnation, row.live) for row in rows}
+            stored = {row.partition_name: (row.incarnation, row.live) for row in rows}
         assert stored == self.partitions
         assert set(await _queued(self.registry)) == set(self.backing_off)
 
@@ -1950,14 +1951,14 @@ class _ModelCheckedRegistry:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("seed", [0, 1, 2])
 async def test_random_operation_sequences_agree_with_a_model(
-    sqlalchemy_engine, vector_store_name, seed
+    sqlalchemy_engine, partition_namespace, seed
 ):
     """Seeded sequences of every registry operation, checked step by step
-    against a model of the contract: which partitions hold which keys and
+    against a model of the contract: which partitions hold which names and
     whether they are live, what each reservation and registration may do, and
     which tombstones a purge round may claim and what its outcome leaves."""
     registry = await _registry(
-        sqlalchemy_engine, vector_store_name, tombstone_retention_seconds=0
+        sqlalchemy_engine, partition_namespace, tombstone_retention_seconds=0
     )
     rng = random.Random(seed)
     model = _ModelCheckedRegistry(registry, rng)

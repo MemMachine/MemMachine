@@ -37,8 +37,8 @@ from memmachine_server.common.errors import (
 )
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
 )
 from memmachine_server.common.sql import (
     enable_sqlite_explicit_begin,
@@ -700,10 +700,10 @@ class DatabaseManager:
         vector_store_name: str,
         store_schema: VectorStoreSchema,
     ) -> VectorStore:
-        partition_registry = SQLAlchemyVectorStorePartitionRegistry(
-            SQLAlchemyVectorStorePartitionRegistryParams(
+        partition_registry = SQLAlchemyPartitionRegistry(
+            SQLAlchemyPartitionRegistryParams(
                 engine=await self.async_get_sql_engine(conf.partition_registry),
-                vector_store_name=vector_store_name,
+                partition_namespace=vector_store_name,
                 tombstone_retention_seconds=conf.tombstone_retention_seconds,
             )
         )
@@ -801,10 +801,10 @@ class DatabaseManager:
         vector_store_name: str,
         store_schema: VectorStoreSchema,
     ) -> VectorStore:
-        partition_registry = SQLAlchemyVectorStorePartitionRegistry(
-            SQLAlchemyVectorStorePartitionRegistryParams(
+        partition_registry = SQLAlchemyPartitionRegistry(
+            SQLAlchemyPartitionRegistryParams(
                 engine=await self.async_get_sql_engine(conf.partition_registry),
-                vector_store_name=vector_store_name,
+                partition_namespace=vector_store_name,
                 tombstone_retention_seconds=conf.tombstone_retention_seconds,
             )
         )

@@ -28,9 +28,9 @@ from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionDeletedError,
     PartitionPendingError,
+    PartitionRegistry,
     Registration,
     Reservation,
-    VectorStorePartitionRegistry,
 )
 
 from .data_types import (
@@ -223,7 +223,7 @@ class RegistryBackedVectorStoreParams(VectorStoreParams):
     Parameters for a RegistryBackedVectorStore.
 
     Attributes:
-        partition_registry (VectorStorePartitionRegistry):
+        partition_registry (PartitionRegistry):
             Registry of the store's partitions, shared by every process
             serving this store, and by no other store. Started by the
             caller.
@@ -232,7 +232,7 @@ class RegistryBackedVectorStoreParams(VectorStoreParams):
             (default: None).
     """
 
-    partition_registry: InstanceOf[VectorStorePartitionRegistry] = Field(
+    partition_registry: InstanceOf[PartitionRegistry] = Field(
         ...,
         description=(
             "Registry of the store's partitions, shared by every process serving "
@@ -248,7 +248,7 @@ class RegistryBackedVectorStoreParams(VectorStoreParams):
 class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
     VectorStore
 ):
-    """A vector store whose partitions a VectorStorePartitionRegistry arbitrates.
+    """A vector store whose partitions a PartitionRegistry arbitrates.
 
     Any process sharing the backend and the registry may serve any partition.
     A partition is pending until its storage is prepared: meanwhile opening it
@@ -362,7 +362,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
         """
         try:
             await self._prepare_partition_storage(
-                reservation.partition_key, reservation.incarnation
+                reservation.partition_name, reservation.incarnation
             )
             return await reservation.confirm()
         except BaseException:
@@ -379,7 +379,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
                         "Could not cancel the reservation of partition %r of "
                         "vector store %r after its creation failed or was "
                         "cancelled; it stays pending until deleted",
-                        reservation.partition_key,
+                        reservation.partition_name,
                         self._vector_store_name,
                         exc_info=task.exception(),
                     )
