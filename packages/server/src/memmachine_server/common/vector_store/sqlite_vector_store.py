@@ -51,6 +51,10 @@ from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
     PartitionHandleStaleError,
+    validate_partition_name,
+)
+from memmachine_server.common.partition_registry.data_types import (
+    _PARTITION_NAME_MAX_BYTES,
 )
 from memmachine_server.common.sql import validate_engine_connections, write_session
 
@@ -68,11 +72,9 @@ from .sqlite_properties import (
     property_indexes,
 )
 from .utils import (
-    _PARTITION_KEY_MAX_BYTES,
     validate_declared_properties,
     validate_dimensions,
     validate_limit,
-    validate_partition_key,
     validate_query_vector,
     validate_score_threshold,
     validate_supported_filter,
@@ -120,7 +122,7 @@ class _PartitionRow(BaseSQLiteVectorStore):
         String(_IDENTIFIER_MAX_BYTES), primary_key=True
     )
     partition_key: MappedColumn[str] = mapped_column(
-        String(_PARTITION_KEY_MAX_BYTES), primary_key=True
+        String(_PARTITION_NAME_MAX_BYTES), primary_key=True
     )
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
     # Flips to True after the first successful index save.
@@ -792,7 +794,7 @@ class SQLiteVectorStore(VectorStore):
     @override
     async def create_partition(self, partition_key: str) -> None:
         self._require_started()
-        validate_partition_key(partition_key)
+        validate_partition_name(partition_key)
 
         attempts = 0
         while True:
@@ -819,7 +821,7 @@ class SQLiteVectorStore(VectorStore):
         self, partition_key: str
     ) -> VectorStorePartition:
         self._require_started()
-        validate_partition_key(partition_key)
+        validate_partition_name(partition_key)
 
         # Read-then-insert, retried: losing the insert means another creator
         # won (open its partition next), and finding no partition after
@@ -857,7 +859,7 @@ class SQLiteVectorStore(VectorStore):
     @override
     async def open_partition(self, partition_key: str) -> VectorStorePartition | None:
         self._require_started()
-        validate_partition_key(partition_key)
+        validate_partition_name(partition_key)
 
         async with self._create_session() as session:
             incarnation = await self._partition_incarnation(session, partition_key)
@@ -888,7 +890,7 @@ class SQLiteVectorStore(VectorStore):
     @override
     async def delete_partition(self, partition_key: str) -> None:
         self._require_started()
-        validate_partition_key(partition_key)
+        validate_partition_name(partition_key)
 
         async with write_session(self._create_session) as session:
             incarnation = await self._partition_incarnation(session, partition_key)

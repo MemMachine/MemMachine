@@ -266,7 +266,7 @@ class TestPartitionLifecycle:
     async def test_a_partition_key_outside_the_rule_is_refused(
         self, store, partition_key
     ):
-        with pytest.raises(ValueError, match="Partition key"):
+        with pytest.raises(ValueError, match="Partition name"):
             await store.create_partition(partition_key)
 
     @pytest.mark.parametrize(

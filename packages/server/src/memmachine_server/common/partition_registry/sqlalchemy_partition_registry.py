@@ -47,20 +47,16 @@ from sqlalchemy.orm import (
 
 from memmachine_server.common.sql import validate_engine_connections, write_connection
 from memmachine_server.common.utils import ensure_tz_aware
-from memmachine_server.common.vector_store.data_types import (
-    _IDENTIFIER_MAX_BYTES,
-    validate_vector_store_name,
-)
-from memmachine_server.common.vector_store.utils import (
-    _PARTITION_KEY_MAX_BYTES,
-)
 
 from .data_types import (
+    _PARTITION_NAME_MAX_BYTES,
+    _PARTITION_NAMESPACE_MAX_BYTES,
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
     PartitionDeletedError,
     PartitionHandleStaleError,
     PartitionPendingError,
+    validate_partition_namespace,
 )
 from .partition_registry import (
     PartitionRegistry,
@@ -90,10 +86,10 @@ class PartitionRow(BasePartitionRegistry):
     __tablename__ = "partition_registry_pt"
 
     partition_namespace: MappedColumn[str] = mapped_column(
-        String(_IDENTIFIER_MAX_BYTES), primary_key=True
+        String(_PARTITION_NAMESPACE_MAX_BYTES), primary_key=True
     )
     partition_name: MappedColumn[str] = mapped_column(
-        String(_PARTITION_KEY_MAX_BYTES), primary_key=True
+        String(_PARTITION_NAME_MAX_BYTES), primary_key=True
     )
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
     # Whether the partition's storage is prepared; it is pending until then.
@@ -113,7 +109,7 @@ class PurgeQueueRow(BasePartitionRegistry):
 
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     partition_namespace: MappedColumn[str] = mapped_column(
-        String(_IDENTIFIER_MAX_BYTES), nullable=False
+        String(_PARTITION_NAMESPACE_MAX_BYTES), nullable=False
     )
     enqueued_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -163,9 +159,9 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             up by `enable_sqlite_explicit_begin` at its creation: the
             registry's write transactions take SQLite's write lock at BEGIN.
         partition_namespace (str):
-            The name of the store the registry serves: registry objects with
-            the same name on the same database are one registry. It follows
-            the vector store name rule.
+            The namespace the registry serves: registry objects with the same
+            namespace on the same database are one registry. It is non-empty,
+            at most `_PARTITION_NAMESPACE_MAX_BYTES` bytes, and free of NUL.
         tombstone_retention_seconds (int):
             Seconds a deleted partition's records are kept before its purge
             starts, on the database clock. It must exceed, by orders of
@@ -191,9 +187,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
     partition_namespace: str = Field(
         ...,
         description=(
-            "The name of the store the registry serves: registry objects with "
-            "the same name on the same database are one registry. It follows the "
-            "vector store name rule"
+            "The namespace the registry serves: registry objects with the same "
+            "namespace on the same database are one registry"
         ),
     )
     tombstone_retention_seconds: int = Field(
@@ -249,8 +244,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
 
     @field_validator("partition_namespace")
     @classmethod
-    def _validate_vector_store_name(cls, partition_namespace: str) -> str:
-        validate_vector_store_name(partition_namespace)
+    def _validate_partition_namespace(cls, partition_namespace: str) -> str:
+        validate_partition_namespace(partition_namespace)
         return partition_namespace
 
 

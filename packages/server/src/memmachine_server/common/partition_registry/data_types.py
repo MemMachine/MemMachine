@@ -6,6 +6,38 @@ Imports nothing from this package; the rest of it builds on these types.
 
 from datetime import datetime
 
+# The longest partition namespace and partition name, in bytes, a registry
+# holds.
+_PARTITION_NAMESPACE_MAX_BYTES = 32
+_PARTITION_NAME_MAX_BYTES = 255
+
+
+def validate_partition_namespace(partition_namespace: str) -> None:
+    """Raise ValueError unless the namespace is non-empty, at most `_PARTITION_NAMESPACE_MAX_BYTES` bytes, and free of NUL."""
+    if (
+        not partition_namespace
+        or "\x00" in partition_namespace
+        or len(partition_namespace.encode()) > _PARTITION_NAMESPACE_MAX_BYTES
+    ):
+        raise ValueError(
+            f"Partition namespace {partition_namespace!r} must be non-empty, at "
+            f"most {_PARTITION_NAMESPACE_MAX_BYTES} bytes, and free of NUL "
+            "characters"
+        )
+
+
+def validate_partition_name(partition_name: str) -> None:
+    """Raise ValueError unless the partition name is non-empty, at most `_PARTITION_NAME_MAX_BYTES` bytes, and free of NUL."""
+    if (
+        not partition_name
+        or "\x00" in partition_name
+        or len(partition_name.encode()) > _PARTITION_NAME_MAX_BYTES
+    ):
+        raise ValueError(
+            f"Partition name {partition_name!r} must be non-empty, at most "
+            f"{_PARTITION_NAME_MAX_BYTES} bytes, and free of NUL characters"
+        )
+
 
 class PartitionAlreadyExistsError(Exception):
     """Raised when creating a partition that already exists."""

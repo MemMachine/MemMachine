@@ -31,6 +31,7 @@ from memmachine_server.common.partition_registry import (
     PartitionRegistry,
     Registration,
     Reservation,
+    validate_partition_name,
 )
 
 from .data_types import (
@@ -42,7 +43,6 @@ from .utils import (
     validate_declared_properties,
     validate_dimensions,
     validate_limit,
-    validate_partition_key,
     validate_query_vector,
     validate_score_threshold,
     validate_supported_filter,
@@ -298,7 +298,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
     @override
     async def create_partition(self, partition_key: str) -> None:
-        validate_partition_key(partition_key)
+        validate_partition_name(partition_key)
         async with self._tracker("create_partition"):
             # The registry decides a creation race. The partition stays
             # pending until its storage is prepared; if it is deleted
@@ -308,7 +308,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
     @override
     async def open_or_create_partition(self, partition_key: str) -> PartitionT:
-        validate_partition_key(partition_key)
+        validate_partition_name(partition_key)
         async with self._tracker("open_or_create_partition"):
             # Read-then-create, retried: a pending partition is another
             # creator's (open it once it is live), losing the reservation
@@ -391,7 +391,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
     @override
     async def open_partition(self, partition_key: str) -> PartitionT | None:
-        validate_partition_key(partition_key)
+        validate_partition_name(partition_key)
         async with self._tracker("open_partition"):
             registration = await self._partition_registry.resolve(partition_key)
             if registration is None:
@@ -400,7 +400,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
 
     @override
     async def delete_partition(self, partition_key: str) -> None:
-        validate_partition_key(partition_key)
+        validate_partition_name(partition_key)
         async with self._tracker("delete_partition"):
             # The partition is unreachable once unregister returns, and its
             # incarnation awaits the purge.
