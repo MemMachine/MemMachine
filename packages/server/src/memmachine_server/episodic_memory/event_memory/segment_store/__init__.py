@@ -1,9 +1,9 @@
 """Segment store data models and interfaces."""
 
 from .data_types import (
-    PendingDerivatives,
+    PendingWrite,
     SegmentStoreAttemptsExhaustedError,
-    SegmentStoreEventAlreadyStoredError,
+    SegmentStoreEventAlreadyExistsError,
     SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
     SegmentStorePartitionConfigMismatchError,
@@ -11,18 +11,18 @@ from .data_types import (
     Tombstone,
 )
 from .segment_store import (
-    PendingDerivativesClaim,
+    PendingWriteClaim,
     SegmentStore,
     SegmentStorePartition,
     TombstoneClaim,
 )
 
 __all__ = [
-    "PendingDerivatives",
-    "PendingDerivativesClaim",
+    "PendingWrite",
+    "PendingWriteClaim",
     "SegmentStore",
     "SegmentStoreAttemptsExhaustedError",
-    "SegmentStoreEventAlreadyStoredError",
+    "SegmentStoreEventAlreadyExistsError",
     "SegmentStorePartition",
     "SegmentStorePartitionAlreadyExistsError",
     "SegmentStorePartitionConfig",

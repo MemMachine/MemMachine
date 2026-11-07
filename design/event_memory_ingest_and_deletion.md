@@ -24,7 +24,7 @@ complete and a forget stays complete anyway.
 ## The protocol
 
 **State.** Besides events, segments and links, the segment store keeps
-pending derivatives (one record per event, holding its derivatives until
+pending writes (one record per event, holding its derivatives until
 the vector store has them) and tombstones (one per forget, naming the
 derivatives it unlinked), in its own database and transactions. Neither
 holds a value the caller chose.
@@ -34,23 +34,23 @@ holds a value the caller chose.
 1. Segment, derive and embed.
 2. Start the write budget, before anything is stored.
 3. In one transaction, store the events, their segments, the derivative
-   links, and the pending derivatives. A batch naming an event already
+   links, and the pending writes. A batch naming an event already
    stored is rejected whole.
 4. Upsert the vectors, cancelled when the budget runs out.
-5. Delete the pending derivatives.
+5. Delete the pending writes.
 
 A failure or a stop after step 3 leaves the events stored with their
 derivatives pending, and the background work writes them.
 
 **Forget.** One transaction locks the events, reads their links, deletes
-their pending derivatives, writes a tombstone naming the linked
+their pending writes, writes a tombstone naming the linked
 derivatives, and deletes the events, which cascades to segments and links.
 The vectors are then deleted once, and the tombstone awaits its second
 delete. A failure here leaves the first delete to the background work.
 
 **Background work.** Any process claims, from the segment store:
 
-- pending derivatives older than the budget plus a margin: it embeds
+- pending writes older than the budget plus a margin: it embeds
   them, starts a budget of its own, and renews its claim, then writes
   them and deletes the record;
 - tombstones due for a delete, at once for the first and after R for the
@@ -106,7 +106,7 @@ reads its own snapshot, so the forget follows three rules:
 2. **The tombstone's time is that of its insert statement**, after the
    locks. The transaction's start time could precede an ingest the locks
    waited for.
-3. **It deletes the pending derivatives before stamping the tombstone.** A
+3. **It deletes the pending writes before stamping the tombstone.** A
    claim's renewal holds its record, so the delete waits for a renewal in
    progress: a renewal either committed before the stamp or finds its
    record gone.
