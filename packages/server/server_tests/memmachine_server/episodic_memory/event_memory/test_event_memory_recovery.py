@@ -32,10 +32,10 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
-    SegmentStoreEventAlreadyStoredError,
+    SegmentStoreEventAlreadyExistsError,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
-    PendingDerivativesRow,
+    PendingWriteRow,
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
     TombstoneRow,
@@ -119,7 +119,7 @@ async def partition(
 # ---------------------------------------------------------------------------
 
 
-async def test_encode_clears_the_pending_derivatives_once_the_vectors_are_written(
+async def test_encode_clears_the_pending_writes_once_the_vectors_are_written(
     partition: EventMemoryPartition,
     fake_segment_store_partition: InMemorySegmentStorePartition,
     vector_store_partition: _FailingVectorStorePartition,
@@ -128,7 +128,7 @@ async def test_encode_clears_the_pending_derivatives_once_the_vectors_are_writte
 
     assert len(fake_segment_store_partition.event_to_segments) == 2
     assert len(vector_store_partition.records) == 2
-    assert fake_segment_store_partition.pending_derivatives == {}
+    assert fake_segment_store_partition.pending_writes == {}
 
 
 async def test_a_failed_upsert_leaves_the_events_stored_and_their_derivatives_pending(
@@ -143,7 +143,7 @@ async def test_a_failed_upsert_leaves_the_events_stored_and_their_derivatives_pe
         await partition.encode_events([event])
 
     assert event.uuid in fake_segment_store_partition.event_to_segments
-    (pending,) = fake_segment_store_partition.pending_derivatives.values()
+    (pending,) = fake_segment_store_partition.pending_writes.values()
     assert pending.event_uuid == event.uuid
     linked = await fake_segment_store_partition.get_segment_uuids_by_derivative_uuids(
         derivative.uuid for derivative in pending.derivatives
@@ -179,7 +179,7 @@ async def test_an_upsert_outlasting_the_write_budget_is_cancelled(
         await asyncio.wait_for(partition.encode_events([_event("hello")]), timeout=10)
 
     assert vector_store_partition.records == {}
-    assert len(fake_segment_store_partition.pending_derivatives) == 1
+    assert len(fake_segment_store_partition.pending_writes) == 1
 
 
 async def test_encoding_a_held_event_again_is_rejected_whole(
@@ -190,7 +190,7 @@ async def test_encoding_a_held_event_again_is_rejected_whole(
     await partition.encode_events([held])
     new = _event("new")
 
-    with pytest.raises(SegmentStoreEventAlreadyStoredError) as raised:
+    with pytest.raises(SegmentStoreEventAlreadyExistsError) as raised:
         await partition.encode_events([new, held])
 
     assert raised.value.event_uuids == {held.uuid}
@@ -376,12 +376,10 @@ def _database_time_ago(engine: AsyncEngine, delta: timedelta) -> ColumnElement:
     return func.now() - delta
 
 
-async def _age_pending_derivatives(engine: AsyncEngine, delta: timedelta) -> None:
+async def _age_pending_writes(engine: AsyncEngine, delta: timedelta) -> None:
     async with engine.begin() as connection:
         await connection.execute(
-            update(PendingDerivativesRow).values(
-                created_at=_database_time_ago(engine, delta)
-            )
+            update(PendingWriteRow).values(created_at=_database_time_ago(engine, delta))
         )
 
 
@@ -410,17 +408,17 @@ async def test_background_work_writes_the_derivatives_an_encode_left_pending(
         await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
 
-    assert not await event_memory._finish_pending_derivatives()
-    await _age_pending_derivatives(sqlalchemy_sqlite_engine, timedelta(hours=1))
-    assert await event_memory._finish_pending_derivatives()
+    assert not await event_memory._finish_pending_write()
+    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    assert await event_memory._finish_pending_write()
 
     assert len(vector_store_partition.records) == 1
-    assert not await event_memory._finish_pending_derivatives()
+    assert not await event_memory._finish_pending_write()
     result = await partition.query("hello")
     assert len(result.scored_segment_contexts) == 1
 
 
-async def test_background_work_retries_pending_derivatives_after_a_failed_write(
+async def test_background_work_retries_pending_writes_after_a_failed_write(
     event_memory: EventMemory,
     vector_store_partition: _FailingVectorStorePartition,
     sqlalchemy_sqlite_engine: AsyncEngine,
@@ -429,12 +427,12 @@ async def test_background_work_retries_pending_derivatives_after_a_failed_write(
     vector_store_partition.fail_upserts = True
     with pytest.raises(ConnectionError):
         await partition.encode_events([_event("hello")])
-    await _age_pending_derivatives(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
-    assert await event_memory._finish_pending_derivatives()
+    assert await event_memory._finish_pending_write()
     assert vector_store_partition.records == {}
     # In its backoff now.
-    assert not await event_memory._finish_pending_derivatives()
+    assert not await event_memory._finish_pending_write()
 
 
 async def test_background_work_deletes_a_forgotten_events_vectors_twice(
@@ -473,9 +471,9 @@ async def test_a_forget_ends_the_derivatives_pending_with_it(
     vector_store_partition.fail_upserts = False
 
     await partition.forget_events([event.uuid])
-    await _age_pending_derivatives(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
-    assert not await event_memory._finish_pending_derivatives()
+    assert not await event_memory._finish_pending_write()
     assert vector_store_partition.records == {}
 
 
@@ -536,16 +534,16 @@ async def test_background_work_embeds_before_its_write_budget_starts(
     with pytest.raises(ConnectionError):
         await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
-    await _age_pending_derivatives(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
     async def embed_slower_than_the_budget() -> None:
         await asyncio.sleep(1.5)
 
     embedder.hook = embed_slower_than_the_budget
-    assert await event_memory._finish_pending_derivatives()
+    assert await event_memory._finish_pending_write()
 
     assert len(vector_store_partition.records) == 1
-    assert not await event_memory._finish_pending_derivatives()
+    assert not await event_memory._finish_pending_write()
 
 
 async def test_a_forget_while_the_background_work_embeds_ends_its_write(
@@ -564,17 +562,17 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
     with pytest.raises(ConnectionError):
         await partition.encode_events([event])
     vector_store_partition.fail_upserts = False
-    await _age_pending_derivatives(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
     async def forget_the_event() -> None:
         embedder.hook = None
         await partition.forget_events([event.uuid])
 
     embedder.hook = forget_the_event
-    assert await event_memory._finish_pending_derivatives()
+    assert await event_memory._finish_pending_write()
 
     assert vector_store_partition.records == {}
-    assert not await event_memory._finish_pending_derivatives()
+    assert not await event_memory._finish_pending_write()
 
 
 async def test_startup_runs_the_background_work_until_shutdown(

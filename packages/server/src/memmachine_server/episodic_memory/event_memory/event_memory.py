@@ -57,8 +57,8 @@ from .data_types import (
 from .deriver import Deriver
 from .formatting import format_timestamp
 from .segment_store import (
-    PendingDerivatives,
-    PendingDerivativesClaim,
+    PendingWrite,
+    PendingWriteClaim,
     SegmentStore,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
@@ -76,7 +76,7 @@ EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
 
 _BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY})
 
-# Seconds a claim on pending derivatives waits past their writer's budget,
+# Seconds a claim on a pending write waits past its writer's budget,
 # and holds them past its own: the margin between the database's clock,
 # which ages the records, and the writers' clocks, which run the budgets.
 _CLAIM_MARGIN_SECONDS = 60
@@ -275,7 +275,7 @@ class EventMemory:
 
         The segment store's partition is deleted first. Its text is gone
         then, no write can start on it, and the background work stops
-        taking up its pending derivatives and tombstones, whose vectors
+        taking up its pending writes and tombstones, whose vectors
         the vector store's partition deletion removes.
 
         Args:
@@ -286,10 +286,10 @@ class EventMemory:
         await self._params.vector_store.delete_partition(partition_key)
 
     async def _work_in_background(self) -> None:
-        """Finish pending derivatives and delete tombstoned ones until cancelled."""
+        """Finish pending writes and delete tombstoned derivatives until cancelled."""
         while True:
             try:
-                worked = await self._finish_pending_derivatives()
+                worked = await self._finish_pending_write()
                 worked = await self._delete_tombstoned_derivatives() or worked
             except Exception:
                 logger.exception("Event memory background work failed; pausing")
@@ -297,9 +297,9 @@ class EventMemory:
             if not worked:
                 await asyncio.sleep(self._params.background_idle_seconds)
 
-    async def _finish_pending_derivatives(self) -> bool:
-        """Write one claimed record of pending derivatives to the vector store; whether one was claimed."""
-        claim = await self._params.segment_store.claim_pending_derivatives(
+    async def _finish_pending_write(self) -> bool:
+        """Write one claimed pending write's derivatives to the vector store; whether one was claimed."""
+        claim = await self._params.segment_store.claim_pending_write(
             min_age_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
             lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
         )
@@ -309,26 +309,24 @@ class EventMemory:
             written = await self._write_pending_derivatives(claim)
         except Exception as error:
             logger.warning(
-                "Writing pending derivatives %s of partition %r failed on attempt %d",
-                claim.pending_derivatives.uuid,
+                "Writing pending write %s of partition %r failed on attempt %d",
+                claim.pending_write.uuid,
                 claim.partition_key,
                 claim.attempt,
                 exc_info=True,
             )
-            await self._params.segment_store.fail_pending_derivatives_claim(
-                claim, error
-            )
+            await self._params.segment_store.fail_pending_write_claim(claim, error)
             return True
         if written:
-            await self._params.segment_store.finish_pending_derivatives_claim(claim)
+            await self._params.segment_store.finish_pending_write_claim(claim)
         return True
 
-    async def _write_pending_derivatives(self, claim: PendingDerivativesClaim) -> bool:
+    async def _write_pending_derivatives(self, claim: PendingWriteClaim) -> bool:
         """Write a claim's derivatives to the vector store within a budget; whether the claim still held."""
         vector_store_partition = await self._params.vector_store.open_partition(
             claim.partition_key
         )
-        derivatives = claim.pending_derivatives.derivatives
+        derivatives = claim.pending_write.derivatives
         embeddings = await self._params.embedder.ingest_embed(
             _derivative_texts(derivatives)
         )
@@ -338,7 +336,7 @@ class EventMemory:
         # a partition leaves the segment store first, that vector store
         # partition belongs to the claimed partition.
         budget = _WriteBudget.start(self._params.write_budget_seconds)
-        if not await self._params.segment_store.renew_pending_derivatives_claim(
+        if not await self._params.segment_store.renew_pending_write_claim(
             claim,
             lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
         ):
@@ -718,7 +716,7 @@ class EventMemoryPartition:
             ValueError:
                 If any event supplies an illegal property key, or one of
                 the memory's own reserved keys.
-            SegmentStoreEventAlreadyStoredError:
+            SegmentStoreEventAlreadyExistsError:
                 If the partition already holds any of the events; nothing
                 is stored.
             TimeoutError:
@@ -780,19 +778,19 @@ class EventMemoryPartition:
         }
         for segment, segment_derivatives in segments_to_derivatives.items():
             derivatives_by_event[segment.event_uuid].extend(segment_derivatives)
-        pending_derivatives = [
-            PendingDerivatives(
+        pending_writes = [
+            PendingWrite(
                 uuid=uuid4(), event_uuid=event_uuid, derivatives=event_derivatives
             )
             for event_uuid, event_derivatives in derivatives_by_event.items()
             if event_derivatives
         ]
-        await self._segment_store_partition.add_events(
+        await self._segment_store_partition.add_event_segments(
             {
                 event.uuid: segment_list
                 for event, segment_list in zip(events, segment_lists, strict=True)
             },
-            pending_derivatives,
+            pending_writes,
         )
         t_segment_store = time.monotonic()
 
@@ -813,10 +811,10 @@ class EventMemoryPartition:
             )
         t_vector_store = time.monotonic()
 
-        await self._segment_store_partition.delete_pending_derivatives(
-            pending.uuid for pending in pending_derivatives
+        await self._segment_store_partition.delete_pending_writes(
+            pending.uuid for pending in pending_writes
         )
-        t_pending_derivatives = time.monotonic()
+        t_pending_writes = time.monotonic()
 
         phase_durations = {
             "segmentation": t_segmentation - t_start,
@@ -824,7 +822,7 @@ class EventMemoryPartition:
             "embedding": t_embedding - t_derivation,
             "segment_store": t_segment_store - t_embedding,
             "vector_store": t_vector_store - t_segment_store,
-            "pending_derivatives": t_pending_derivatives - t_vector_store,
+            "pending_writes": t_pending_writes - t_vector_store,
         }
 
         logger.debug(
@@ -833,7 +831,7 @@ class EventMemoryPartition:
                 f"{phase}={duration:.3f}s"
                 for phase, duration in phase_durations.items()
             ),
-            t_pending_derivatives - t_start,
+            t_pending_writes - t_start,
         )
 
         if self._encode_events_phase_seconds is not None:
@@ -1106,7 +1104,9 @@ class EventMemoryPartition:
             await self._forget_events(event_uuids)
 
     async def _forget_events(self, event_uuids: set[UUID]) -> None:
-        tombstone = await self._segment_store_partition.forget_events(event_uuids)
+        tombstone = await self._segment_store_partition.delete_event_segments(
+            event_uuids
+        )
         if tombstone is None:
             return
         # The forget is complete once its tombstone commits: the background
