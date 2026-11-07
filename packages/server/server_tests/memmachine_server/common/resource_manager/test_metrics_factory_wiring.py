@@ -145,7 +145,7 @@ def test_event_memory_params_carries_a_factory_through(mock_metrics_factory):
     )
 
 
-def test_event_memory_supplies_a_factory(mock_metrics_factory):
+def test_event_memory_from_config_supplies_a_factory(mock_metrics_factory):
     """The service locator must put a factory into EventMemoryParams.
 
     EventMemory reads ``params.metrics_factory``; if the locator never sets it,
@@ -155,9 +155,10 @@ def test_event_memory_supplies_a_factory(mock_metrics_factory):
 
     from memmachine_server.episodic_memory.long_term_memory import service_locator
 
-    source = inspect.getsource(service_locator._event_memory)
+    source = inspect.getsource(service_locator.event_memory_from_config)
     assert "metrics_factory=" in source, (
-        "_event_memory builds EventMemoryParams without a metrics_factory, so "
+        "event_memory_from_config builds EventMemoryParams without a "
+        "metrics_factory, so "
         "EventMemory's OperationTracker discards every timing silently"
     )
 
