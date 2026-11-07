@@ -123,7 +123,9 @@ async def _add_segments(
 ) -> None:
     """Add the segments' events as a finished ingest leaves them: linked, nothing pending."""
     segments_by_event, pending_writes = _events(segments_to_derivative_uuids)
-    await partition.add_event_segments(segments_by_event, pending_writes)
+    await partition.add_event_segments(
+        segments_by_event, pending_writes, lease_seconds=0
+    )
     await partition.delete_pending_writes(pending.uuid for pending in pending_writes)
 
 
@@ -467,7 +469,7 @@ async def test_timestamp_filter_compares_instants_not_wall_clocks(
 async def test_add_event_segments_empty(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    await partition.add_event_segments({}, [])
+    await partition.add_event_segments({}, [], lease_seconds=0)
 
 
 @pytest.mark.asyncio
@@ -486,7 +488,9 @@ async def test_add_event_segments_rejects_a_batch_naming_a_held_event(
     segments_by_event, pending_writes = _events(batch)
 
     with pytest.raises(SegmentStoreEventAlreadyExistsError) as exc_info:
-        await partition.add_event_segments(segments_by_event, pending_writes)
+        await partition.add_event_segments(
+            segments_by_event, pending_writes, lease_seconds=0
+        )
 
     assert exc_info.value.event_uuids == {segment.event_uuid for segment in held}
     assert await _row_counts(partition, partition._incarnation) == (2, 2)
@@ -531,7 +535,9 @@ async def test_add_event_segments_rejects_mismatched_event_naming(
         at_fault = pending_writes[1].derivatives[0].uuid
 
     with pytest.raises(ValueError, match=str(at_fault)):
-        await partition.add_event_segments(segments_by_event, pending_writes)
+        await partition.add_event_segments(
+            segments_by_event, pending_writes, lease_seconds=0
+        )
 
     assert await _row_counts(partition, partition._incarnation) == (0, 0)
     assert (
@@ -553,7 +559,9 @@ async def test_add_event_segments_failing_partway_writes_nothing(
     )
 
     with pytest.raises(IntegrityError):
-        await partition.add_event_segments(segments_by_event, pending_writes)
+        await partition.add_event_segments(
+            segments_by_event, pending_writes, lease_seconds=0
+        )
 
     assert await _row_counts(partition, partition._incarnation) == (1, 1)
     assert (
@@ -584,7 +592,10 @@ async def test_concurrent_adds_of_one_event_store_it_once(
     ]
 
     outcomes = await asyncio.gather(
-        *(partition.add_event_segments(*_events(batch)) for batch in batches),
+        *(
+            partition.add_event_segments(*_events(batch), lease_seconds=0)
+            for batch in batches
+        ),
         return_exceptions=True,
     )
 
@@ -647,9 +658,11 @@ async def test_pending_writes_roundtrip_through_a_claim(
     pending_writes = PendingWrite(
         uuid=uuid4(), event_uuid=event_uuid, derivatives=derivatives
     )
-    await partition.add_event_segments({event_uuid: segments}, [pending_writes])
+    await partition.add_event_segments(
+        {event_uuid: segments}, [pending_writes], lease_seconds=0
+    )
 
-    claim = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    claim = await store.claim_pending_write(lease_seconds=60)
 
     assert claim is not None
     assert claim.partition_key == PARTITION_KEY
@@ -684,7 +697,9 @@ async def test_delete_pending_writes_removes_only_the_pending_record(
     segments_by_event, pending_writes = _events(
         {finished: [uuid4(), uuid4()], unfinished: [uuid4()]}
     )
-    await partition.add_event_segments(segments_by_event, pending_writes)
+    await partition.add_event_segments(
+        segments_by_event, pending_writes, lease_seconds=0
+    )
     finished_pending, unfinished_pending = pending_writes
 
     for _ in range(2):
@@ -702,10 +717,10 @@ async def test_delete_pending_writes_removes_only_the_pending_record(
         )
         == 0
     )
-    claim = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    claim = await store.claim_pending_write(lease_seconds=60)
     assert claim is not None
     assert claim.pending_write.uuid == unfinished_pending.uuid
-    assert await store.claim_pending_write(min_age_seconds=0, lease_seconds=60) is None
+    assert await store.claim_pending_write(lease_seconds=60) is None
 
 
 # ===================================================================
@@ -1373,7 +1388,9 @@ async def test_delete_event_segments_deletes_pending_writes(
     )
     segment = _seg()
     segments_by_event, pending_writes = _events({segment: [uuid4(), uuid4()]})
-    await partition.add_event_segments(segments_by_event, pending_writes)
+    await partition.add_event_segments(
+        segments_by_event, pending_writes, lease_seconds=0
+    )
     [pending] = pending_writes
 
     tombstone = await partition.delete_event_segments([segment.event_uuid])
@@ -1389,7 +1406,7 @@ async def test_delete_event_segments_deletes_pending_writes(
         )
         == 0
     )
-    assert await store.claim_pending_write(min_age_seconds=0, lease_seconds=60) is None
+    assert await store.claim_pending_write(lease_seconds=60) is None
 
 
 @pytest.mark.asyncio
@@ -1456,8 +1473,10 @@ async def test_claim_on_a_pending_write_of_a_forgotten_event_ends_without_effect
     )
     segment = _seg()
     segments_by_event, pending_writes = _events(_links(segment))
-    await partition.add_event_segments(segments_by_event, pending_writes)
-    claim = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    await partition.add_event_segments(
+        segments_by_event, pending_writes, lease_seconds=0
+    )
+    claim = await store.claim_pending_write(lease_seconds=60)
     assert claim is not None
 
     await partition.delete_event_segments([segment.event_uuid])
@@ -1490,7 +1509,9 @@ async def test_event_write_whose_commit_fails_changes_nothing(
     kept = _seg()
     await _add_segments(partition, _links(kept))
     write = (
-        partition.add_event_segments(*_events(_links(_seg(ts_offset_seconds=1))))
+        partition.add_event_segments(
+            *_events(_links(_seg(ts_offset_seconds=1))), lease_seconds=0
+        )
         if operation == "add_event_segments"
         else partition.delete_event_segments([kept.event_uuid])
     )
@@ -1526,23 +1547,23 @@ _CLAIMED_TABLES = pytest.mark.parametrize(
 
 
 @pytest.mark.asyncio
-async def test_pending_writes_are_claimable_once_min_age_has_passed(
+async def test_a_pending_write_is_claimable_once_its_writers_lease_has_passed(
     store: SQLAlchemySegmentStore,
 ) -> None:
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    pending_uuid = await _add_claimable_record(partition, PendingWriteRow)
+    segments_by_event, pending_writes = _events(_links(_seg()))
+    await partition.add_event_segments(
+        segments_by_event, pending_writes, lease_seconds=3600
+    )
 
-    for age in (timedelta(0), timedelta(minutes=50)):
-        await _backdate(store, PendingWriteRow.created_at, age)
-        assert (
-            await store.claim_pending_write(min_age_seconds=3600, lease_seconds=60)
-            is None
-        )
-    await _backdate(store, PendingWriteRow.created_at, timedelta(minutes=70))
-    claim = await store.claim_pending_write(min_age_seconds=3600, lease_seconds=60)
-    assert _claimed_record_uuid(claim) == pending_uuid
+    assert await store.claim_pending_write(lease_seconds=60) is None
+    await _shift_earlier(store, PendingWriteRow.claimable_at, timedelta(minutes=50))
+    assert await store.claim_pending_write(lease_seconds=60) is None
+    await _shift_earlier(store, PendingWriteRow.claimable_at, timedelta(minutes=20))
+    claim = await store.claim_pending_write(lease_seconds=60)
+    assert _claimed_record_uuid(claim) == pending_writes[0].uuid
 
 
 @pytest.mark.asyncio
@@ -1556,12 +1577,9 @@ async def test_claims_take_the_oldest_record_first(
     )
     newer = await _add_claimable_record(partition, table)
     older = await _add_claimable_record(partition, table)
-    age = (
-        PendingWriteRow.created_at
-        if table is PendingWriteRow
-        else TombstoneRow.enqueued_at
+    await _backdate(
+        store, table.claimable_at, timedelta(minutes=5), table.uuid == older
     )
-    await _backdate(store, age, timedelta(minutes=5), table.uuid == older)
 
     claimed = [_claimed_record_uuid(await _claim(store, table)) for _ in range(2)]
     assert claimed == [older, newer]
@@ -1588,7 +1606,7 @@ async def test_claim_holds_its_record_for_the_lease(
     )
     assert await _claim(store, table) is None
 
-    await _backdate(store, table.claimed_until, timedelta(days=1))
+    await _backdate(store, table.claimable_at, timedelta(days=1))
     second = await _claim(store, table)
     assert second is not None
     assert (_claimed_record_uuid(second), second.generation, second.attempt) == (
@@ -1607,9 +1625,9 @@ async def test_finishing_a_pending_write_claim_deletes_the_record_only_for_the_l
         PARTITION_KEY, _plaintext_partition_config()
     )
     pending_uuid = await _add_claimable_record(partition, PendingWriteRow)
-    superseded = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
-    await _backdate(store, PendingWriteRow.claimed_until, timedelta(days=1))
-    latest = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    superseded = await store.claim_pending_write(lease_seconds=60)
+    await _backdate(store, PendingWriteRow.claimable_at, timedelta(days=1))
+    latest = await store.claim_pending_write(lease_seconds=60)
     assert superseded is not None
     assert latest is not None
 
@@ -1636,22 +1654,14 @@ async def test_failing_a_superseded_claim_changes_nothing(
     )
     record_uuid = await _add_claimable_record(partition, table)
     superseded = await _claim(store, table)
-    await _backdate(store, table.claimed_until, timedelta(days=1))
+    await _backdate(store, table.claimable_at, timedelta(days=1))
     assert await _claim(store, table) is not None
     assert superseded is not None
+    scheduled = await _claimable_at(store, table, record_uuid)
 
     await _fail_claim(store, superseded)
 
-    async with store._create_session() as session:
-        claimed_until, last_failed_at = (
-            await session.execute(
-                select(table.claimed_until, table.last_failed_at).where(
-                    table.uuid == record_uuid
-                )
-            )
-        ).one()
-    assert claimed_until is not None
-    assert last_failed_at is None
+    assert await _claimable_at(store, table, record_uuid) == scheduled
 
 
 @pytest.mark.asyncio
@@ -1675,13 +1685,11 @@ async def test_failed_claim_backs_off_doubling_up_to_the_cap(
         assert claim.attempt == attempt
         await _fail_claim(store, claim)
         assert await _claim(store, table) is None
-        await _backdate(
-            store, table.last_failed_at, timedelta(seconds=backoff_seconds - 15)
+        await _shift_earlier(
+            store, table.claimable_at, timedelta(seconds=backoff_seconds - 15)
         )
         assert await _claim(store, table) is None
-        await _backdate(
-            store, table.last_failed_at, timedelta(seconds=backoff_seconds + 15)
-        )
+        await _shift_earlier(store, table.claimable_at, timedelta(seconds=30))
     claim = await _claim(store, table)
     assert claim is not None
     assert claim.attempt == 4
@@ -1707,7 +1715,7 @@ async def test_record_is_no_longer_claimed_after_the_maximum_failed_claims(
             assert claim is not None
             assert claim.attempt == attempt
             await _fail_claim(store, claim)
-            await _backdate(store, table.last_failed_at, timedelta(days=1))
+            await _backdate(store, table.claimable_at, timedelta(days=1))
 
     assert await _claim(store, table) is None
     reports = [
@@ -1728,13 +1736,11 @@ async def test_claims_skip_deleted_partitions(
     live = await store.open_or_create_partition("live_claims", config)
     live_uuid = await _add_claimable_record(live, table)
     await _add_claimable_record(doomed, table)
-    age = (
-        PendingWriteRow.created_at
-        if table is PendingWriteRow
-        else TombstoneRow.enqueued_at
-    )
     await _backdate(
-        store, age, timedelta(minutes=5), table.incarnation == doomed._incarnation
+        store,
+        table.claimable_at,
+        timedelta(minutes=5),
+        table.incarnation == doomed._incarnation,
     )
     await store.delete_partition("doomed_claims")
 
@@ -1754,15 +1760,19 @@ async def test_renewing_a_claim_holds_its_record_for_another_lease(
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    await partition.add_event_segments(*_events(_links(_seg())))
-    claim = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    await partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
+    claim = await store.claim_pending_write(lease_seconds=60)
     assert claim is not None
-    await _backdate(store, PendingWriteRow.claimed_until, timedelta(days=1))
+    await _backdate(store, PendingWriteRow.claimable_at, timedelta(days=1))
 
     assert await store.renew_pending_write_claim(claim, lease_seconds=60)
 
-    # The renewed lease holds the record again.
-    assert await store.claim_pending_write(min_age_seconds=0, lease_seconds=60) is None
+    # The renewed lease holds the record again, and then the backoff.
+    assert await store.claim_pending_write(lease_seconds=60) is None
+    await _shift_earlier(store, PendingWriteRow.claimable_at, timedelta(seconds=80))
+    assert await store.claim_pending_write(lease_seconds=60) is None
+    await _shift_earlier(store, PendingWriteRow.claimable_at, timedelta(seconds=20))
+    assert await store.claim_pending_write(lease_seconds=60) is not None
 
 
 @pytest.mark.asyncio
@@ -1772,11 +1782,11 @@ async def test_a_superseded_claim_is_not_renewed(
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    await partition.add_event_segments(*_events(_links(_seg())))
-    superseded = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    await partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
+    superseded = await store.claim_pending_write(lease_seconds=60)
     assert superseded is not None
-    await _backdate(store, PendingWriteRow.claimed_until, timedelta(days=1))
-    latest = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    await _backdate(store, PendingWriteRow.claimable_at, timedelta(days=1))
+    latest = await store.claim_pending_write(lease_seconds=60)
     assert latest is not None
 
     assert not await store.renew_pending_write_claim(superseded, lease_seconds=60)
@@ -1791,8 +1801,8 @@ async def test_a_claim_on_a_forgotten_event_is_not_renewed(
         PARTITION_KEY, _plaintext_partition_config()
     )
     segment = _seg()
-    await partition.add_event_segments(*_events(_links(segment)))
-    claim = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    await partition.add_event_segments(*_events(_links(segment)), lease_seconds=0)
+    claim = await store.claim_pending_write(lease_seconds=60)
     assert claim is not None
 
     await partition.delete_event_segments([segment.event_uuid])
@@ -1806,8 +1816,8 @@ async def test_a_claim_in_a_deleted_partition_is_not_renewed(
 ) -> None:
     config = _plaintext_partition_config()
     partition = await store.open_or_create_partition("claimed_incarnation", config)
-    await partition.add_event_segments(*_events(_links(_seg())))
-    claim = await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+    await partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
+    claim = await store.claim_pending_write(lease_seconds=60)
     assert claim is not None
 
     await store.delete_partition("claimed_incarnation")
@@ -1851,7 +1861,7 @@ async def test_tombstone_awaits_the_retention_after_its_first_delete(
     monkeypatch: pytest.MonkeyPatch,
     recorded_by: str,
 ) -> None:
-    """Its second delete falls due once the retention has passed since the forget.
+    """Its second delete falls due once the retention has passed since its first delete.
 
     Recording the first delete again, once the second is claimed, changes
     nothing.
@@ -1869,9 +1879,9 @@ async def test_tombstone_awaits_the_retention_after_its_first_delete(
         await store.finish_tombstone_claim(first)
 
     for age in (timedelta(0), timedelta(minutes=50)):
-        await _backdate(store, TombstoneRow.enqueued_at, age)
+        await _backdate(store, TombstoneRow.first_deleted_at, age)
         assert await store.claim_tombstone() is None
-    await _backdate(store, TombstoneRow.enqueued_at, timedelta(minutes=70))
+    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=70))
     second = await store.claim_tombstone()
     assert second is not None
     assert (second.tombstone.uuid, second.second_delete, second.attempt) == (
@@ -1895,7 +1905,7 @@ async def test_finishing_a_second_delete_claim_removes_the_tombstone(
     )
     tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
     await partition.record_tombstone_first_delete(tombstone_uuid)
-    await _backdate(store, TombstoneRow.enqueued_at, timedelta(hours=2))
+    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(hours=2))
     claim = await store.claim_tombstone()
     assert claim is not None
     assert claim.second_delete is True
@@ -1910,6 +1920,84 @@ async def test_finishing_a_second_delete_claim_removes_the_tombstone(
         == 0
     )
     assert await store.claim_tombstone() is None
+
+
+@pytest.mark.asyncio
+async def test_no_schedule_brings_a_second_delete_before_the_retention(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retention is its own condition: a tombstone scheduled as claimable
+    still waits for the retention since its first delete."""
+    monkeypatch.setattr(store, "_tombstone_retention_seconds", 3600)
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
+    await partition.record_tombstone_first_delete(tombstone_uuid)
+    await _backdate(store, TombstoneRow.claimable_at, timedelta(days=1))
+
+    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=50))
+    assert await store.claim_tombstone() is None
+    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=70))
+    second = await store.claim_tombstone()
+    assert second is not None
+    assert second.second_delete is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recorded_by", ["partition", "an_earlier_claim"])
+async def test_recording_the_first_delete_ends_an_open_claim(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_by: str,
+) -> None:
+    """A claim on the first delete that fails after the delete was recorded,
+    by the partition or by a claim its own superseded, changes nothing, so
+    the second delete keeps waiting for the retention."""
+    monkeypatch.setattr(store, "_tombstone_retention_seconds", 3600)
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
+    earlier = await store.claim_tombstone()
+    assert earlier is not None
+    await _backdate(store, TombstoneRow.claimable_at, timedelta(days=1))
+    open_claim = await store.claim_tombstone()
+    assert open_claim is not None
+    if recorded_by == "partition":
+        await partition.record_tombstone_first_delete(tombstone_uuid)
+    else:
+        await store.finish_tombstone_claim(earlier)
+
+    await _fail_claim(store, open_claim)
+
+    assert await _claimable_at(store, TombstoneRow, tombstone_uuid) is None
+    assert await store.claim_tombstone() is None
+
+
+@pytest.mark.asyncio
+@_CLAIMED_TABLES
+async def test_a_claim_that_never_ends_is_claimed_again_once_its_lease_and_the_backoff_pass(
+    store: SQLAlchemySegmentStore,
+    table: type[PendingWriteRow | TombstoneRow],
+) -> None:
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    await _add_claimable_record(partition, table)
+    lease = timedelta(
+        seconds=60 if table is PendingWriteRow else store._tombstone_lease_seconds
+    )
+    assert await _claim(store, table) is not None
+
+    # Past the lease, but not the 30-second backoff after it.
+    await _shift_earlier(store, table.claimable_at, lease + timedelta(seconds=20))
+    assert await _claim(store, table) is None
+    await _shift_earlier(store, table.claimable_at, timedelta(seconds=20))
+    retry = await _claim(store, table)
+    assert retry is not None
+    assert retry.attempt == 2
 
 
 @pytest.mark.asyncio
@@ -1934,12 +2022,13 @@ async def test_claim_timings_come_from_params(
         failed = await store.claim_tombstone()
         assert failed is not None
         await _fail_claim(store, failed)
-        await _backdate(store, TombstoneRow.last_failed_at, timedelta(seconds=20))
+        # Past the configured backoff, not the default's.
+        await _shift_earlier(store, TombstoneRow.claimable_at, timedelta(seconds=20))
         first = await store.claim_tombstone()
         assert first is not None
         await store.finish_tombstone_claim(first)
 
-        await _backdate(store, TombstoneRow.enqueued_at, timedelta(minutes=2))
+        await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=2))
         second = await store.claim_tombstone()
         assert second is not None
         assert second.second_delete is True
@@ -1959,7 +2048,9 @@ async def _add_claimable_record(
     """
     segment = _seg()
     segments_by_event, pending_writes = _events(_links(segment))
-    await partition.add_event_segments(segments_by_event, pending_writes)
+    await partition.add_event_segments(
+        segments_by_event, pending_writes, lease_seconds=0
+    )
     if table is PendingWriteRow:
         return pending_writes[0].uuid
     tombstone = await partition.delete_event_segments([segment.event_uuid])
@@ -1973,7 +2064,7 @@ async def _claim(
 ) -> PendingWriteClaim | TombstoneClaim | None:
     """Claim a record of `table`, taking pending writes at any age."""
     if table is PendingWriteRow:
-        return await store.claim_pending_write(min_age_seconds=0, lease_seconds=60)
+        return await store.claim_pending_write(lease_seconds=60)
     return await store.claim_tombstone()
 
 
@@ -1998,6 +2089,34 @@ async def _fail_claim(
         await store.fail_pending_write_claim(claim, error)
     else:
         await store.fail_tombstone_claim(claim, error)
+
+
+async def _shift_earlier(
+    store: SQLAlchemySegmentStore,
+    column: InstrumentedAttribute[datetime] | InstrumentedAttribute[datetime | None],
+    by: timedelta,
+) -> None:
+    """Move `column` back by `by` in every row of its table, as if that much more time had passed since it was set."""
+    if store._is_sqlite:
+        earlier = func.datetime(column, f"-{int(by.total_seconds())} seconds")
+    else:
+        earlier = column - by
+    async with store._create_session() as session, session.begin():
+        await session.execute(update(column.table).values({column.key: earlier}))
+
+
+async def _claimable_at(
+    store: SQLAlchemySegmentStore,
+    table: type[PendingWriteRow | TombstoneRow],
+    record_uuid: UUID,
+) -> datetime | None:
+    """When a claim may next take the record."""
+    async with store._create_session() as session:
+        return (
+            await session.execute(
+                select(table.claimable_at).where(table.uuid == record_uuid)
+            )
+        ).scalar_one()
 
 
 async def _backdate(
@@ -2420,11 +2539,11 @@ async def test_stale_handle_raises_after_delete(
     await store.delete_partition("fenced")
 
     # Empty input may skip the handle check (the ABC-permitted shortcut).
-    await partition.add_event_segments({}, [])
+    await partition.add_event_segments({}, [], lease_seconds=0)
     assert await partition.delete_event_segments([]) is None
 
     with pytest.raises(SegmentStorePartitionHandleStaleError):
-        await partition.add_event_segments(*_events(_links(_seg())))
+        await partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
     with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.delete_pending_writes([uuid4()])
     with pytest.raises(SegmentStorePartitionHandleStaleError):
@@ -2759,7 +2878,9 @@ async def test_purge_reclaims_every_row_of_a_deleted_partition(
         kept, pending_segment, forgotten = _seg(), _seg(), _seg()
         await _add_segments(partition, _links(kept, forgotten))
         segments_by_event, pending_writes = _events(_links(pending_segment))
-        await partition.add_event_segments(segments_by_event, pending_writes)
+        await partition.add_event_segments(
+            segments_by_event, pending_writes, lease_seconds=0
+        )
         tombstone = await partition.delete_event_segments([forgotten.event_uuid])
         assert tombstone is not None
         records[partition._incarnation] = (pending_writes[0].uuid, tombstone.uuid)
@@ -2813,7 +2934,7 @@ async def test_purge_continues_through_every_table_within_the_bound(
         _links(*(_seg(event_uuid=event_uuid, index=index) for index in range(3))),
     )
     await _add_segments(partition, _links(_seg()))
-    await partition.add_event_segments(*_events(_links(_seg())))
+    await partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
     for forgotten in (_seg(), _seg()):
         await _add_segments(partition, _links(forgotten))
         await partition.delete_event_segments([forgotten.event_uuid])
@@ -3103,7 +3224,9 @@ async def test_write_landing_during_delete_is_never_orphaned(
 
     monkeypatch.setattr(partition, "_insert_segments", pausing_insert_segments)
 
-    writer = asyncio.create_task(partition.add_event_segments(*_events(_links(_seg()))))
+    writer = asyncio.create_task(
+        partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
+    )
     deleter = None
     try:
         await asyncio.wait_for(reached_pause.wait(), 30)
@@ -3500,7 +3623,9 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
 
     monkeypatch.setattr(partition, "_insert_segments", pausing_insert_segments)
 
-    writer = asyncio.create_task(partition.add_event_segments(*_events(_links(_seg()))))
+    writer = asyncio.create_task(
+        partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
+    )
     await asyncio.wait_for(reached_pause.wait(), 30)
 
     deleter_started = asyncio.Event()
@@ -3972,7 +4097,9 @@ async def test_write_pin_blocks_partition_delete(
 
     monkeypatch.setattr(partition, "_insert_segments", pausing_insert_segments)
 
-    writer = asyncio.create_task(partition.add_event_segments(*_events(_links(_seg()))))
+    writer = asyncio.create_task(
+        partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
+    )
     deleter = None
     try:
         await asyncio.wait_for(reached_pause.wait(), 30)

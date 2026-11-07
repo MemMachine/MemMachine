@@ -76,9 +76,9 @@ EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
 
 _BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY})
 
-# Seconds a claim on a pending write waits past its writer's budget,
-# and holds them past its own: the margin between the database's clock,
-# which ages the records, and the writers' clocks, which run the budgets.
+# Seconds past its budget that a writer, or a claim, holds a pending write:
+# the margin between the database's clock, which times the holds, and the
+# writers' clocks, which run the budgets.
 _CLAIM_MARGIN_SECONDS = 60
 
 
@@ -300,7 +300,6 @@ class EventMemory:
     async def _finish_pending_write(self) -> bool:
         """Write one claimed pending write's derivatives to the vector store; whether one was claimed."""
         claim = await self._params.segment_store.claim_pending_write(
-            min_age_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
             lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
         )
         if claim is None:
@@ -791,6 +790,7 @@ class EventMemoryPartition:
                 for event, segment_list in zip(events, segment_lists, strict=True)
             },
             pending_writes,
+            lease_seconds=self._write_budget_seconds + _CLAIM_MARGIN_SECONDS,
         )
         t_segment_store = time.monotonic()
 
