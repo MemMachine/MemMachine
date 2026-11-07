@@ -11,15 +11,12 @@ from memmachine_server.common.configuration.episodic_config import (
     DeriverConf,
     EventLongTermMemoryConf,
     LongTermMemoryConf,
-    PassthroughSegmenterConf,
     SegmenterConf,
     SentenceTextDeriverConf,
-    TextSegmenterConf,
     WholeTextDeriverConf,
 )
 from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.errors import ConfigurationError
-from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.declarative_memory import (
@@ -35,14 +32,11 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
+from memmachine_server.episodic_memory.event_memory.event_memory_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
-from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
-    PassthroughSegmenter,
-)
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
 )
@@ -70,13 +64,15 @@ async def long_term_memory_from_config(
         case DeclarativeLongTermMemoryConf():
             return LongTermMemory(await _declarative_memory(config, resource_manager))
         case EventLongTermMemoryConf():
+            # The deployment's EventMemory serves every session, with the
+            # deployment's segmenter, deriver, and reranker.
+            event_memory = await resource_manager.get_event_memory()
+            deployment = resource_manager.config.episodic_memory.long_term_memory
+            assert deployment is not None
             reranker = (
-                await resource_manager.get_reranker(config.reranker, validate=True)
-                if config.reranker is not None
+                await resource_manager.get_reranker(deployment.reranker, validate=True)
+                if deployment.reranker is not None
                 else None
-            )
-            event_memory = await _event_memory(
-                config, resource_manager, reranker=reranker
             )
             return LongTermMemory(
                 await event_memory.open_or_create_partition(
@@ -109,8 +105,7 @@ async def delete_long_term_memory_storage(
                 episode.uid for episode in episodes
             )
         case EventLongTermMemoryConf():
-            # Deleting a partition uses no reranker.
-            event_memory = await _event_memory(config, resource_manager, reranker=None)
+            event_memory = await resource_manager.get_event_memory()
             await event_memory.delete_partition(
                 partition_key_for_session(config.session_id)
             )
@@ -141,33 +136,9 @@ async def _declarative_memory(
     )
 
 
-async def _event_memory(
-    config: EventLongTermMemoryConf,
-    resource_manager: InstanceOf[CommonResourceManager],
-    *,
-    reranker: Reranker | None,
-) -> EventMemory:
-    """An EventMemory on the deployment's stores and embedder, with the session's segmenter and deriver."""
-    _, segment_store_id, embedder_id = deployment_event_memory_ids(
-        resource_manager.config
-    )
-    embedder = await resource_manager.get_embedder(embedder_id, validate=True)
-    return EventMemory(
-        EventMemoryParams(
-            segment_store=await resource_manager.get_segment_store(segment_store_id),
-            vector_store=await event_backend_vector_store(resource_manager),
-            segmenter=_build_segmenter(config.segmenter),
-            deriver=_build_deriver(config.deriver),
-            embedder=embedder,
-            reranker=reranker,
-            metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
-        )
-    )
-
-
 def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str, str]:
     """
-    The deployment's event memory vector store, segment store, and embedder ids.
+    The deployment's event memory vector store, event memory store, and embedder ids.
 
     Every session's event memory uses them.
 
@@ -179,11 +150,45 @@ def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str,
     if (
         deployment is None
         or deployment.vector_store is None
-        or deployment.segment_store is None
+        or deployment.event_memory_store is None
         or deployment.embedder is None
     ):
         raise ConfigurationError("The deployment configures no event memory")
-    return deployment.vector_store, deployment.segment_store, deployment.embedder
+    return deployment.vector_store, deployment.event_memory_store, deployment.embedder
+
+
+async def event_memory_from_config(
+    resource_manager: InstanceOf[CommonResourceManager],
+) -> EventMemory:
+    """
+    Build the deployment's EventMemory from its long-term memory configuration.
+
+    Raises:
+        ConfigurationError: If the deployment configures no event memory.
+
+    """
+    _, event_memory_store_id, embedder_id = deployment_event_memory_ids(
+        resource_manager.config
+    )
+    deployment = resource_manager.config.episodic_memory.long_term_memory
+    assert deployment is not None
+    embedder = await resource_manager.get_embedder(embedder_id, validate=True)
+    return EventMemory(
+        EventMemoryParams(
+            event_memory_store=await resource_manager.get_event_memory_store(
+                event_memory_store_id
+            ),
+            vector_store=await event_backend_vector_store(resource_manager),
+            segmenter=_build_segmenter(deployment.segmenter),
+            deriver=_build_deriver(
+                deployment.deriver
+                if deployment.deriver is not None
+                else WholeTextDeriverConf()
+            ),
+            embedder=embedder,
+            metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
+        )
+    )
 
 
 async def event_backend_vector_store(
@@ -215,7 +220,7 @@ def event_backend_indexed_properties() -> dict[str, PropertyType]:
 
 def partition_key_for_session(session_id: str) -> str:
     """
-    Derive a partition key satisfying the segment store's contract.
+    Derive a partition key satisfying the event memory store's contract.
 
     If the session_id already satisfies it (checked by the store's own
     validator, so the two can never disagree), use it directly to keep
@@ -240,24 +245,20 @@ def partition_key_for_session(session_id: str) -> str:
     return partition_key
 
 
-def _build_segmenter(conf: SegmenterConf) -> Segmenter:
-    match conf:
-        case PassthroughSegmenterConf():
-            return PassthroughSegmenter()
-        case TextSegmenterConf(max_chunk_length=max_chunk_length):
-            return TextSegmenter(max_chunk_length=max_chunk_length)
-        case _:
-            raise NotImplementedError(
-                f"Unsupported segmenter config: {type(conf).__name__}"
-            )
+def _build_segmenter(conf: SegmenterConf | None) -> Segmenter:
+    # No configured handler: the table's own fallback, one segment per
+    # block, unchanged.
+    if conf is None:
+        return Segmenter()
+    return Segmenter([TextSegmenter(max_chunk_length=conf.max_chunk_length)])
 
 
 def _build_deriver(conf: DeriverConf) -> Deriver:
     match conf:
         case WholeTextDeriverConf():
-            return WholeTextDeriver()
+            return Deriver([WholeTextDeriver()])
         case SentenceTextDeriverConf():
-            return SentenceTextDeriver()
+            return Deriver([SentenceTextDeriver()])
         case _:
             raise NotImplementedError(
                 f"Unsupported deriver config: {type(conf).__name__}"

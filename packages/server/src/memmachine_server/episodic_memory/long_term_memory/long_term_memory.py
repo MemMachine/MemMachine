@@ -3,7 +3,7 @@
 import datetime
 import logging
 from collections.abc import Iterable
-from typing import Final, cast
+from typing import Final, NamedTuple, cast
 from uuid import UUID, uuid5
 
 from pydantic import JsonValue
@@ -16,7 +16,10 @@ from memmachine_server.common.episode_store import (
     EpisodeType,
 )
 from memmachine_server.common.filter.filter_parser import (
+    And,
+    Comparison,
     FilterExpr,
+    In,
     demangle_user_metadata_key,
     mangle_user_metadata_key,
     map_filter_fields,
@@ -36,13 +39,15 @@ from memmachine_server.episodic_memory.declarative_memory.data_types import (
     Episode as DeclarativeMemoryEpisode,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Author,
+    Context,
+    DateTimeFormat,
     Event,
-    NullContext,
-    ProducerContext,
-    QueryResult,
+    QueryHit,
     TextBlock,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EventMemory,
     EventMemoryPartition,
 )
 
@@ -77,6 +82,10 @@ _EPISODE_TYPE_FIELD = _SYSTEM_FIELD_KEYS["episode_type"]
 _CONTENT_TYPE_FIELD = _SYSTEM_FIELD_KEYS["content_type"]
 _CREATED_AT_FIELD = _SYSTEM_FIELD_KEYS["created_at"]
 
+# The fields the adapter writes into every event's properties, with their
+# types. The event memory store holds them with the caller's properties; the
+# vector store declares them too, so a conjunct on them is evaluated at
+# the vector stage as well.
 EVENT_BACKEND_SYSTEM_FIELDS: dict[str, type[PropertyValue]] = {
     _EPISODE_UID_FIELD: str,
     _SESSION_KEY_FIELD: str,
@@ -107,6 +116,15 @@ _FILTERABLE_METADATA_NONE_FLAG = "_filterable_metadata_none"
 _EVENT_BACKEND_DEDUP_OVERFETCH = 4
 
 
+class _LiftedFilters(NamedTuple):
+    """A filter tree split into the memory's typed parameters and its post-filter."""
+
+    since: datetime.datetime | None
+    until: datetime.datetime | None
+    source_ids: list[str] | None
+    rest: FilterExpr | None
+
+
 class LongTermMemory:
     """Long-term memory routing each request to a session's declarative memory or event memory partition."""
 
@@ -121,7 +139,8 @@ class LongTermMemory:
         Route requests to a session's memory.
 
         An EventMemoryPartition needs `episode_storage`, which turns its
-        results into episodes; a `reranker` makes its scores higher-is-better.
+        results into episodes; a `reranker` reranks its hits, so their scores
+        are higher-is-better.
 
         Raises:
             ValueError: If `memory` is an EventMemoryPartition and
@@ -129,13 +148,16 @@ class LongTermMemory:
         """
         self._memory = memory
         self._episode_storage = episode_storage
-        # Event backend only: whether scores from `EventMemoryPartition.query`
-        # are higher-is-better. Matches the same derivation inside it
-        # (reranker scores are higher-is-better; raw vector scores depend on the
-        # vector store's similarity metric — cosine is higher-is-better, euclidean
-        # is lower-is-better). Used to apply `score_threshold` in the correct
-        # direction so it doesn't invert under euclidean with no reranker.
+        # Event backend only: whether the scores a query thresholds are
+        # higher-is-better. With a reranker they are its scores, which are;
+        # without one they are the vector search's, by the partition's
+        # similarity metric (cosine and dot are higher-is-better, euclidean
+        # and manhattan lower-is-better). Used to apply `score_threshold` in
+        # the correct direction so it doesn't invert under a distance metric.
         self._score_higher_is_better: bool = True
+        # Event backend only: reranking is a stage LongTermMemory runs on
+        # top of EventMemory's vector search.
+        self._reranker = reranker
 
         if isinstance(memory, EventMemoryPartition):
             if episode_storage is None:
@@ -146,6 +168,21 @@ class LongTermMemory:
             self._score_higher_is_better = (
                 reranker is not None or memory.similarity_metric.higher_is_better
             )
+
+    @property
+    def event_memory_partition(self) -> EventMemoryPartition | None:
+        """The event backend's handle on this session's partition, for a caller that speaks events.
+
+        None on the declarative backend.
+        """
+        if isinstance(self._memory, EventMemoryPartition):
+            return self._memory
+        return None
+
+    @property
+    def reranker(self) -> Reranker | None:
+        """The reranker this memory scores hits with, or None when it has none."""
+        return self._reranker
 
     async def add_episodes(self, episodes: Iterable[Episode]) -> None:
         episodes = list(episodes)
@@ -244,34 +281,49 @@ class LongTermMemory:
         assert self._episode_storage is not None
         self._validate_event_backend_filter(property_filter)
         # `expand_context` is a window of segments, the unit EventMemory and
-        # the segment store work in: neither knows episodes. Under the
-        # passthrough segmenter one segment is one episode, and the window is
+        # the event memory store work in: neither knows episodes. With no
+        # segmenter handler one segment is one episode, and the window is
         # the declarative backend's window of neighbor episodes; under a
         # splitting segmenter the same window covers fewer episodes, the ones
         # its segments belong to. The window can never exceed the remaining
         # quota in either unit (a segment belongs to one episode; declarative
         # parity), and can never go negative: a negative `expand_context`
-        # would ask the segment store for a negative window, which the
-        # SegmentStorePartition contract does not define.
+        # would ask the event memory store for a negative window, which the
+        # EventMemoryStorePartition contract does not define.
         expand_context = max(0, min(expand_context, num_episodes_limit - 1))
-        # Over-fetch from EventMemory: the per-segment results can have many
-        # segments per episode under non-passthrough segmenters, and we dedup
-        # them by episode uid below. Without headroom, the dedup loop can
-        # return fewer than `num_episodes_limit` distinct episodes.
+        # Over-fetch from EventMemory: a segmenter can cut an episode into
+        # many segments, so the per-segment results can carry one episode
+        # several times, and we dedup them by episode uid below. Without
+        # headroom, the dedup loop can return fewer than `num_episodes_limit`
+        # distinct episodes.
         vector_search_limit = max(
             num_episodes_limit * _EVENT_BACKEND_DEDUP_OVERFETCH,
             num_episodes_limit,
         )
-        result = await event_memory_partition.query(
+        # The fields ingestion maps onto the event come back typed: the
+        # memory filters by them at the vector stage, and the rest of the
+        # tree is the event memory store's post-filter.
+        lifted = LongTermMemory._lift_typed_filters(property_filter)
+        hits = await event_memory_partition.query(
             query,
             vector_search_limit=vector_search_limit,
             expand_context=expand_context,
+            since=lifted.since,
+            until=lifted.until,
+            source_ids=lifted.source_ids,
             property_filter=map_filter_fields(
-                property_filter, LongTermMemory._event_memory_filter_field
+                lifted.rest, LongTermMemory._event_memory_filter_field
             )
-            if property_filter is not None
+            if lifted.rest is not None
             else None,
         )
+        if self._reranker is not None:
+            hits = await EventMemory.rerank(
+                query,
+                hits,
+                reranker=self._reranker,
+                datetime_format=DateTimeFormat(time_style="short"),
+            )
 
         if expand_context > 0:
             # The expanded windows carry timeline-neighbor segments; fold
@@ -279,7 +331,7 @@ class LongTermMemory:
             # backend folds neighbor episodes around its matches: contexts
             # of the best matches first, filled until the limit is met.
             return await self._unified_scored_event_episodes(
-                result,
+                hits,
                 num_episodes_limit=num_episodes_limit,
                 score_threshold=score_threshold,
             )
@@ -293,13 +345,13 @@ class LongTermMemory:
         # ABOVE threshold.
         ordered_uids: list[UUID] = []
         scores_by_uid: dict[UUID, float] = {}
-        for scored_context in result.scored_segment_contexts:
-            if not self._score_passes_threshold(scored_context.score, score_threshold):
+        for hit in hits:
+            if not self._score_passes_threshold(hit.score, score_threshold):
                 continue
-            episode_uid = LongTermMemory._scored_context_episode_uid(scored_context)
+            episode_uid = LongTermMemory._hit_episode_uid(hit)
             if episode_uid is None or episode_uid in scores_by_uid:
                 continue
-            scores_by_uid[episode_uid] = scored_context.score
+            scores_by_uid[episode_uid] = hit.score
             ordered_uids.append(episode_uid)
             if len(ordered_uids) >= num_episodes_limit:
                 break
@@ -471,6 +523,71 @@ class LongTermMemory:
     # --- Episode <-> Event translation (event backend) ---
 
     @staticmethod
+    def _lift_typed_filters(property_filter: FilterExpr | None) -> _LiftedFilters:
+        """Lift the conjuncts on ingestion-mapped fields out of a filter tree.
+
+        `_episode_to_event` maps `created_at` onto the event's timestamp and
+        `producer_id` onto its source, so a top-level `timestamp >= x` or
+        `created_at >= x` is `since`, `< x` is `until` (the tightest of
+        each), and `producer_id = x` or `producer_id IN [...]` is
+        `source_ids` (the intersection; empty admits nothing). The tree of
+        the remaining conjuncts is `rest`, or None when nothing remains. A
+        predicate of another operator, or one under a disjunction or a
+        negation, stays in the tree as a post-filter.
+        """
+        since: datetime.datetime | None = None
+        until: datetime.datetime | None = None
+        source_ids: set[str] | None = None
+        rest: list[FilterExpr] = []
+        for conjunct in LongTermMemory._conjuncts(property_filter):
+            match conjunct:
+                case Comparison(
+                    field="timestamp" | "created_at",
+                    op=">=",
+                    value=datetime.datetime() as bound,
+                ):
+                    since = bound if since is None else max(since, bound)
+                case Comparison(
+                    field="timestamp" | "created_at",
+                    op="<",
+                    value=datetime.datetime() as bound,
+                ):
+                    until = bound if until is None else min(until, bound)
+                case Comparison(field="producer_id", op="=", value=str() as source):
+                    sources = {source}
+                    source_ids = sources if source_ids is None else source_ids & sources
+                case In(field="producer_id", values=values) if all(
+                    isinstance(value, str) for value in values
+                ):
+                    sources = set(cast(list[str], values))
+                    source_ids = sources if source_ids is None else source_ids & sources
+                case _:
+                    rest.append(conjunct)
+        remaining: FilterExpr | None = None
+        for conjunct in rest:
+            remaining = (
+                conjunct if remaining is None else And(left=remaining, right=conjunct)
+            )
+        return _LiftedFilters(
+            since=since,
+            until=until,
+            source_ids=None if source_ids is None else sorted(source_ids),
+            rest=remaining,
+        )
+
+    @staticmethod
+    def _conjuncts(expr: FilterExpr | None) -> list[FilterExpr]:
+        """The top-level conjuncts of a tree, nested conjunctions flattened."""
+        if expr is None:
+            return []
+        if isinstance(expr, And):
+            return [
+                *LongTermMemory._conjuncts(expr.left),
+                *LongTermMemory._conjuncts(expr.right),
+            ]
+        return [expr]
+
+    @staticmethod
     def _event_memory_filter_field(field: str) -> str:
         """The EventMemory filter field a client filter field names.
 
@@ -519,7 +636,7 @@ class LongTermMemory:
 
     async def _unified_scored_event_episodes(
         self,
-        result: QueryResult,
+        hits: Iterable[QueryHit],
         *,
         num_episodes_limit: int,
         score_threshold: float | None,
@@ -535,17 +652,13 @@ class LongTermMemory:
         """
         assert self._episode_storage is not None
         scored_uid_contexts: list[tuple[float, UUID, list[UUID]]] = []
-        for scored_context in result.scored_segment_contexts:
-            if not self._score_passes_threshold(scored_context.score, score_threshold):
+        for hit in hits:
+            if not self._score_passes_threshold(hit.score, score_threshold):
                 continue
-            nuclear_uid, context_uids = LongTermMemory._episode_uid_context(
-                scored_context
-            )
+            nuclear_uid, context_uids = LongTermMemory._episode_uid_context(hit)
             if nuclear_uid is None:
                 continue
-            scored_uid_contexts.append(
-                (scored_context.score, nuclear_uid, context_uids)
-            )
+            scored_uid_contexts.append((hit.score, nuclear_uid, context_uids))
 
         episode_scores = LongTermMemory._unify_scored_uid_contexts(
             scored_uid_contexts,
@@ -577,21 +690,17 @@ class LongTermMemory:
         )
 
     @staticmethod
-    def _episode_uid_context(
-        scored_context: object,
-    ) -> tuple[UUID | None, list[UUID]]:
+    def _episode_uid_context(hit: QueryHit) -> tuple[UUID | None, list[UUID]]:
         """Episode uids covered by one segment window.
 
         Returns the seed segment's episode uid (the nucleus) and the deduped
         episode uids of every segment in the window, in the window's
         chronological order.
         """
-        segments = getattr(scored_context, "segments", [])
-        seed_uuid = getattr(scored_context, "seed_segment_uuid", None)
         nuclear_uid: UUID | None = None
         context_uids: list[UUID] = []
         seen: set[UUID] = set()
-        for segment in segments:
+        for segment in hit.window():
             episode_uid = segment.properties.get(_EPISODE_UID_FIELD)
             if episode_uid is None:
                 continue
@@ -599,7 +708,7 @@ class LongTermMemory:
             if episode_uid not in seen:
                 seen.add(episode_uid)
                 context_uids.append(episode_uid)
-            if segment.uuid == seed_uuid:
+            if segment.uuid == hit.seed.uuid:
                 nuclear_uid = episode_uid
         return nuclear_uid, context_uids
 
@@ -643,16 +752,9 @@ class LongTermMemory:
         return episode_scores
 
     @staticmethod
-    def _scored_context_episode_uid(scored_context: object) -> UUID | None:
-        """Pull the episode uid from the seed segment of a ScoredSegmentContext."""
-        # We don't import ScoredSegmentContext here just for typing; the runtime
-        # shape (`segments`, `seed_segment_uuid`) is what matters.
-        segments = getattr(scored_context, "segments", [])
-        seed_uuid = getattr(scored_context, "seed_segment_uuid", None)
-        seed = next((s for s in segments if s.uuid == seed_uuid), None)
-        if seed is None:
-            return None
-        value = seed.properties.get(_EPISODE_UID_FIELD)
+    def _hit_episode_uid(hit: QueryHit) -> UUID | None:
+        """Pull the episode uid from the seed segment of a hit."""
+        value = hit.seed.properties.get(_EPISODE_UID_FIELD)
         return UUID(str(value)) if value is not None else None
 
     @staticmethod
@@ -662,12 +764,18 @@ class LongTermMemory:
         - Event.uuid = uuid5(NAMESPACE, episode.uid) so the mapping is
           deterministic and reversible (the episode uid field carries the
           original).
-        - Context: ProducerContext for messages; NullContext otherwise.
+        - The producer id is both the event's `source_id`, the one source
+          an episode has, and an `Author` part in its context, as the
+          `ProducerContext` was before, so a rendered segment keeps its
+          `producer: text` shape. The server API carries no readable name,
+          so the id stands in.
         - One TextBlock per event (Episode.content is a string today).
         - Properties: system fields under the adapter's reserved keys, user
           filterable metadata under its own keys; a search names a system
           field by its bare name (`producer_id`) and a user key as
-          `m.<key>`.
+          `m.<key>`. A search lifts the fields mapped above (`producer_id`,
+          `created_at`) back into the memory's typed filters
+          (`_lift_typed_filters`).
 
         A user key must be a legal user property key
         (`validate_user_property_key`): one in the reserved namespace would
@@ -689,15 +797,11 @@ class LongTermMemory:
                 validate_user_property_key(key)
             properties.update(episode.filterable_metadata)
 
-        if episode.episode_type == EpisodeType.MESSAGE:
-            context = ProducerContext(producer=episode.producer_id)
-        else:
-            context = NullContext()
-
         return Event(
             uuid=uuid5(_EVENT_UUID_NAMESPACE, str(episode.uid)),
             timestamp=episode.created_at,
-            context=context,
+            source_id=episode.producer_id,
+            context=Context(Author(name=episode.producer_id)),
             blocks=[TextBlock(text=episode.content)],
             properties=properties,
         )
