@@ -66,8 +66,9 @@ class PartitionPendingError(Exception):
         self.registered_at = registered_at
         super().__init__(
             f"Partition {partition_name!r} in namespace {partition_namespace!r} has "
-            f"been pending since {registered_at.isoformat()}; if its creation was "
-            "abandoned, delete it to create it again."
+            f"been pending since {registered_at.isoformat()}; if its creation "
+            "stopped, the next creation of it replaces it once the registry's "
+            "pending partition timeout has passed."
         )
 
 

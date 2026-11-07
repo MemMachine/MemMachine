@@ -179,8 +179,15 @@ not waiting in the purge queue. After the insert, a concurrent deletion that
 moved a colliding row to the queue has already committed, because the insert
 waited on it. After the check no queue row for this incarnation can appear
 before commit, because the only row carrying it is this uncommitted one. A
-primary-key violation with a row, pending or live, under the name raises
-`PartitionAlreadyExistsError`. A rejected incarnation (unique
+primary-key violation with a row under the name raises
+`PartitionAlreadyExistsError` when the row is live, or pending for less than
+`pending_partition_timeout_seconds` (a registry parameter; 300 by default)
+on the database clock. A row pending longer is a creation that stopped: one
+transaction unregisters it, conditional on its incarnation and on its still
+being pending, queues its tombstone, and inserts the new row with the same
+queue check, so a confirmation or another replacement that commits first
+leaves the name taken. The stopped creator's `confirm` then matches nothing.
+A rejected incarnation (unique
 violation, or queued) is re-minted, up to 10 attempts, then
 `AttemptsExhaustedError`. The loop and its bound are the segment
 store's.
@@ -237,7 +244,8 @@ makes the partition live:
   was observed stands, since the cancel acts only on a pending partition. The
   reservation's cancellation is shielded, so a cancellation of the creation
   does not cut it short. Otherwise, and after a crash, the partition stays
-  pending until it is deleted like any other.
+  pending until it is deleted like any other, or until the next creation of
+  its name replaces it once the pending partition timeout has passed.
 - Whatever a failed or interrupted preparation leaves is recoverable: the
   partition's own storage is reclaimed by its incarnation's purge rounds once
   the pending partition is deleted. The storage a store's partitions share is
