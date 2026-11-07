@@ -69,7 +69,7 @@ def _ltm_config_response_from_partial(
             reranker=None,
             vector_graph_store=None,
             vector_store=None,
-            segment_store=None,
+            event_memory_store=None,
             enabled=enabled if enabled is not None else True,
         )
     return LongTermMemoryConfigResponse(
@@ -78,7 +78,7 @@ def _ltm_config_response_from_partial(
         reranker=ltm.reranker,
         vector_graph_store=ltm.vector_graph_store,
         vector_store=ltm.vector_store,
-        segment_store=ltm.segment_store,
+        event_memory_store=ltm.event_memory_store,
         enabled=enabled if enabled is not None else True,
     )
 
@@ -192,9 +192,9 @@ def _handle_backend_change(
         if ltm.vector_store is not None:
             ltm.vector_store = None
             changes.append("episodic_memory.long_term_memory.vector_store=null")
-        if ltm.segment_store is not None:
-            ltm.segment_store = None
-            changes.append("episodic_memory.long_term_memory.segment_store=null")
+        if ltm.event_memory_store is not None:
+            ltm.event_memory_store = None
+            changes.append("episodic_memory.long_term_memory.event_memory_store=null")
     if new_backend == "event" and ltm.vector_graph_store is not None:
         # Wipe declarative-only state when arriving at the event backend.
         ltm.vector_graph_store = None
@@ -247,10 +247,10 @@ def _apply_ltm_updates(
         changes.append(
             f"episodic_memory.long_term_memory.vector_store={spec_ltm.vector_store}"
         )
-    if spec_ltm.segment_store is not None:
-        ltm.segment_store = spec_ltm.segment_store
+    if spec_ltm.event_memory_store is not None:
+        ltm.event_memory_store = spec_ltm.event_memory_store
         changes.append(
-            f"episodic_memory.long_term_memory.segment_store={spec_ltm.segment_store}"
+            f"episodic_memory.long_term_memory.event_memory_store={spec_ltm.event_memory_store}"
         )
     return changes
 
