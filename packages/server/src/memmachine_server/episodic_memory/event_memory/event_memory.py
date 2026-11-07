@@ -217,6 +217,7 @@ class EventMemory:
         self._similarity_metric = store_schema.similarity_metric
         self._background_work: asyncio.Task[None] | None = None
         self._claim_endings: set[asyncio.Task[None]] = set()
+        self._unlinked_record_deletions: set[asyncio.Task[None]] = set()
 
     async def startup(self) -> None:
         """Start the background work."""
@@ -224,11 +225,15 @@ class EventMemory:
 
     async def shutdown(self) -> None:
         """
-        Stop the background work.
+        Stop the background work, and the deletions of unlinked records that queries left running.
 
-        What it leaves unfinished is taken up again by background work
-        started later, in this process or another.
+        What the background work leaves unfinished is taken up again by
+        background work started later, in this process or another, and a
+        query that finds an unlinked record again deletes it again.
         """
+        for deletion in self._unlinked_record_deletions:
+            deletion.cancel()
+        await asyncio.gather(*self._unlinked_record_deletions, return_exceptions=True)
         if self._background_work is None:
             return
         self._background_work.cancel()
@@ -268,6 +273,7 @@ class EventMemory:
             vector_store_partition=vector_store_partition,
             schema_fields=self._schema_fields,
             similarity_metric=self._similarity_metric,
+            unlinked_record_deletions=self._unlinked_record_deletions,
         )
 
     async def delete_partition(self, partition_key: str) -> None:
@@ -656,6 +662,7 @@ class EventMemoryPartition:
         vector_store_partition: VectorStorePartition,
         schema_fields: frozenset[str],
         similarity_metric: SimilarityMetric,
+        unlinked_record_deletions: set[asyncio.Task[None]],
     ) -> None:
         """
         Initialize a handle on one partition of an EventMemory.
@@ -671,6 +678,9 @@ class EventMemoryPartition:
                 The properties the vector store declares.
             similarity_metric (SimilarityMetric):
                 The metric the vector store scores matches by.
+            unlinked_record_deletions (set[asyncio.Task[None]]):
+                The EventMemory's running deletions of unlinked records,
+                which its shutdown cancels.
         """
         self._segment_store_partition = segment_store_partition
         self._vector_store_partition = vector_store_partition
@@ -687,6 +697,7 @@ class EventMemoryPartition:
 
         self._schema_fields = schema_fields
         self._similarity_metric = similarity_metric
+        self._unlinked_record_deletions = unlinked_record_deletions
 
         self._encode_events_phase_seconds: MetricsFactory.Histogram | None = None
         self._query_phase_seconds: MetricsFactory.Histogram | None = None
@@ -999,7 +1010,12 @@ class EventMemoryPartition:
             if segment_uuid not in seed_embedding_scores:
                 seed_embedding_scores[segment_uuid] = match.score
         if unlinked_record_uuids:
-            await self._delete_unlinked_records(unlinked_record_uuids)
+            # The query does not wait for its cleanup.
+            deletion = asyncio.create_task(
+                self._delete_unlinked_records(unlinked_record_uuids)
+            )
+            self._unlinked_record_deletions.add(deletion)
+            deletion.add_done_callback(self._unlinked_record_deletions.discard)
 
         seed_segment_uuids = list(seed_embedding_scores)
 
@@ -1093,7 +1109,8 @@ class EventMemoryPartition:
         A link is written before its record and removed only by a forget,
         which deletes its record in the background, so such a record was
         left by a delete that did not reach the vector store. A delete
-        that fails here is tried again by the next query that finds it.
+        that fails here, or that shutdown cancels, is tried again by the
+        next query that finds it.
         """
         try:
             await self._vector_store_partition.delete(record_uuids=record_uuids)
