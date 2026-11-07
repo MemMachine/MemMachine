@@ -66,7 +66,7 @@ _RECORD_UUID_FIELD = "record_uuid"
 _PARTITION_KEY_FIELD = "partition_key"
 """The native partition-key field, holding the incarnation of the partition an entity belongs to.
 
-A partition created again under a deleted one's key gets a fresh
+A partition created again under a deleted one's name gets a fresh
 incarnation, so it holds only the entities written under that incarnation.
 """
 _VECTOR_FIELD = "vector"
@@ -249,7 +249,7 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
         """The primary key of a record: the incarnation and the record UUID.
 
         Primary keys are distinct across the partitions sharing the native
-        collection and across a key's incarnations.
+        collection and across a name's incarnations.
         """
         return f"{self._incarnation}:{record_uuid}"
 
@@ -569,7 +569,7 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
 
     @override
     async def _prepare_partition_storage(
-        self, partition_key: str, incarnation: UUID
+        self, partition_name: str, incarnation: UUID
     ) -> None:
         # Every partition lives in the native collection startup prepared.
         pass

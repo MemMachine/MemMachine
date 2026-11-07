@@ -30,7 +30,7 @@ names across processes, which no consumer did.
 
 A store holds records of one schema (dimensionality, similarity metric, and
 declared properties), fixed at construction, and a partition is one tenant's records in it, addressed by a
-string key. A partition's catalog entry lives where a primary
+string name. A partition's catalog entry lives where a primary
 key and a transaction can arbitrate it: a relational database, reached
 through SQLAlchemy. The backend keeps only records, each carrying the
 *incarnation* of the partition life that wrote it.
@@ -62,12 +62,12 @@ through SQLAlchemy. The backend keeps only records, each carrying the
   partition's unit when it prepares the partition's storage, which runs after
   the reservation that mints the incarnation naming it, and its purge round
   would drop it.
-- Every process serving a store must give it the same registry, and a
-  registry serves one store. The registries of every store share two tables,
-  keyed by the vector store name, so several stores keep their registries in
-  one database. A store name therefore identifies one store among all the
-  stores whose registries share a database, and whoever names a store keeps
-  it so: a deployment names its one event memory store `event_memory` and
+- Every process serving a store must give it the same registry, and a registry
+  serves one store. The registries of every store share two tables, keyed by
+  the partition namespace, the store's name, so several stores keep their
+  registries in one database. A store name therefore identifies one store among
+  all the stores whose registries share a database, and whoever names a store
+  keeps it so: a deployment names its one event memory store `event_memory` and
   its semantic memory store `semantic_memory`, so deployments whose stores
   differ keep their registries in different databases. A store reclaims its
   registry's tombstones through its own client: a round run through a client
@@ -81,7 +81,7 @@ through SQLAlchemy. The backend keeps only records, each carrying the
 
 ### Reservations and registrations
 
-The registry is addressed by partition key. What acts on one life of a
+The registry is addressed by partition name. What acts on one life of a
 partition is a handle bound to that life's incarnation: the creator's
 reservation, or a registration.
 
@@ -94,7 +94,7 @@ reservation, or a registration.
 - **Why handles.** Every operation on one life of a partition needs that
   life's incarnation: confirming it, cancelling it, and checking that it was
   not deleted. As methods of the registry, each would take the incarnation as
-  an argument. The registry would then have two addressing schemes, keys and
+  an argument. The registry would then have two addressing schemes, names and
   incarnations, and every caller would carry the UUID `reserve` minted back
   into later calls, where any UUID fits: another partition's, a deleted
   one's, or one compared by hand against a lookup. On a handle, the
@@ -103,9 +103,9 @@ reservation, or a registration.
   it back.
 - **Why two types.** What may be done with a partition depends on who holds
   it. Only its creator, holding the reservation, confirms or cancels it; a
-  registration is checked, and its partition is deleted only by key. With one
+  registration is checked, and its partition is deleted only by name. With one
   type, a registration would offer `confirm`, which could only fail, and
-  `cancel`, which would delete a live partition outside the key-addressed
+  `cancel`, which would delete a live partition outside the name-addressed
   path every deletion goes through. With two, each type offers its holder's
   operations and nothing else, and the wrong call is a type error.
 - **Why role names, not state names.** A partition moves from pending to
@@ -117,7 +117,7 @@ reservation, or a registration.
   known patterns: Try-Confirm/Cancel for the creator (reserve, then confirm
   or cancel), and the stale handle for everyone else (`require_current`,
   `PartitionHandleStaleError`).
-- **Why no state fields.** A handle's fields (partition key and
+- **Why no state fields.** A handle's fields (partition name and
   incarnation) belong to its life and never change. Whether the partition is
   pending, live, or deleted changes under every holder: a `live` field would
   be a snapshot, made stale by the creator's own `confirm`. The state is
@@ -127,7 +127,7 @@ reservation, or a registration.
   raises once it is deleted. Each is one read or one write, so an open takes
   one round trip and the fence one.
 - **What each part gains.** The registry's operations, beside `startup`, are
-  all addressed by key. A store's partition handle is built from one
+  all addressed by name. A store's partition handle is built from one
   registration, and its fence is one call. The store's creation flow reads as
   the lifecycle it implements: reserve, prepare storage under the
   reservation's incarnation, then confirm the reservation, or cancel it if
@@ -179,7 +179,7 @@ not waiting in the purge queue. After the insert, a concurrent deletion that
 moved a colliding row to the queue has already committed, because the insert
 waited on it. After the check no queue row for this incarnation can appear
 before commit, because the only row carrying it is this uncommitted one. A
-primary-key violation with a row, pending or live, under the key raises
+primary-key violation with a row, pending or live, under the name raises
 `PartitionAlreadyExistsError`. A rejected incarnation (unique
 violation, or queued) is re-minted, up to 10 attempts, then
 `AttemptsExhaustedError`. The loop and its bound are the segment
@@ -190,16 +190,16 @@ the reservation's incarnation, which is unique, and on the row being pending,
 and answers the `Registration`; it raises `PartitionDeletedError`
 when it matches nothing. A creation whose partition was deleted while its
 storage was prepared matches nothing, so it cannot confirm a partition
-reserved under the key since.
+reserved under the name since.
 
 **`resolve(partition_name)`** reads the partition's row once and answers by its
 state: a `Registration` when it is live, `PartitionPendingError`,
 with when the partition was reserved, when it is pending, and `None` when there is none. It is how a
-handle is opened: callers address partitions by key, and the key is resolved
+handle is opened: callers address partitions by name, and the name is resolved
 to a live incarnation once, at open.
 
 **`Registration.require_current()`** reads the row under the
-registration's key and raises `PartitionHandleStaleError` unless it
+registration's name and raises `PartitionHandleStaleError` unless it
 carries the registration's incarnation. It is how a handle is fenced (below).
 
 **`unregister(partition_name)`** is one transaction: `DELETE ... RETURNING` the
@@ -208,8 +208,8 @@ partition's row, pending or live, then insert its tombstone with
 **`Reservation.cancel()`** does the same for the row carrying the
 reservation's incarnation while it is pending: a creation whose storage
 preparation raised takes back its own reservation that way, never one made
-under the key since, and never its partition once confirmed, which only a
-deletion by key ends, even when the confirmation committed but its answer
+under the name since, and never its partition once confirmed, which only a
+deletion by name ends, even when the confirmation committed but its answer
 was lost. Racing deleters serialize on the row's write lock and the loser
 deletes nothing, on PostgreSQL and SQLite alike, so a deletion is idempotent
 and queues one tombstone.
@@ -220,19 +220,19 @@ and queues one tombstone.
 ### Creation
 
 Creation is *reserved, prepared, then confirmed*. The store reserves the
-partition's key, leaving it pending, prepares the storage the partition needs
+partition's name, leaving it pending, prepares the storage the partition needs
 of its own (on Qdrant and Milvus, none), and confirms the reservation, which
 makes the partition live:
 
 - The registry's primary key is the one arbiter: a racing creator on any
   process loses at the insert, never in the backend.
-- A pending partition holds its key but is not opened: `open_partition` raises
+- A pending partition holds its name but is not opened: `open_partition` raises
   `PartitionPendingError`, which says since when it has been
-  pending, a `create_partition` of the key raises
+  pending, a `create_partition` of the name raises
   `PartitionAlreadyExistsError`, and open-or-create waits for it.
-  `None` from `open_partition` means only that no partition holds the key.
+  `None` from `open_partition` means only that no partition holds the name.
 - A preparation or confirmation that raises, or is cancelled, cancels the
-  reservation when the registry can, which frees the key and queues the
+  reservation when the registry can, which frees the name and queues the
   incarnation's tombstone; a confirmation that committed before its failure
   was observed stands, since the cancel acts only on a pending partition. The
   reservation's cancellation is shielded, so a cancellation of the creation
@@ -251,7 +251,7 @@ makes the partition live:
 **`open_or_create_partition`** is read-then-create, retried a second apart: a
 live row is opened; a pending row is another creator's, so the loop waits for
 it rather than registering; no row means create; losing the create means a
-racing creator took the key; losing the mark means a racing deleter removed
+racing creator took the name; losing the mark means a racing deleter removed
 the partition while its storage was prepared, so the loop creates again.
 After 10 attempts it raises `PartitionPendingError` if the last
 lookup found the partition pending, and `AttemptsExhaustedError`
@@ -267,7 +267,7 @@ exactly one reservation is lost.
 A handle is bound to the incarnation it was opened under. After that life is
 deleted, every operation on the handle raises
 `PartitionHandleStaleError`, and a partition created again under
-the same key is a new life the old handle cannot reach.
+the same name is a new life the old handle cannot reach.
 
 - An upsert or query calls its registration's `require_current` once its
   inputs are checked and before its remote call; one with nothing to send (no
@@ -314,13 +314,13 @@ the backend is remote:
 - **A store's schema is fixed at construction.** The
   composition root builds the stores its services need, each with its
   dimensions, metric, and declared properties fixed at construction, and
-  partitions each by tenant. A partition key is all a
+  partitions each by tenant. A partition name is all a
   caller names; the store, not each call, carries what the records share.
-- **`unregister` is keyed by partition key.** Callers delete partitions by
-  key, and the key is resolved to its incarnation inside the deleting
+- **`unregister` is addressed by partition name.** Callers delete partitions by
+  name, and the name is resolved to its incarnation inside the deleting
   transaction. Keying it by incarnation alone would make every caller resolve
-  the key first, in a separate transaction, and would still need the
-  key-addressed path for a caller that holds no handle. A pending
+  the name first, in a separate transaction, and would still need the
+  name-addressed path for a caller that holds no handle. A pending
   reservation's `cancel` serves the creation taking back its own.
 - **`startup` creates the registry's tables when missing**, as every store's
   startup creates its own durable resources idempotently.
@@ -353,9 +353,10 @@ the backend is remote:
   but it would add a stateful dependency for a problem the deployment's
   relational database, which every SQL-backed component already requires,
   solves with a primary key.
-- **The incarnation as the only key**, with keys resolved elsewhere. Callers
-  address partitions by key, so the key lookup has to be arbitrated somewhere;
-  the primary key on `(partition_namespace, partition_name)` is that place.
+- **The incarnation as the only identifier**, with names resolved elsewhere.
+  Callers address partitions by name, so the name lookup has to be arbitrated
+  somewhere; the primary key on `(partition_namespace, partition_name)` is that
+  place.
 
 ## Consequences
 

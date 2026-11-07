@@ -88,25 +88,25 @@ logger = logging.getLogger(__name__)
 class IndexLoadError(RuntimeError):
     """Raised when a partition's on-disk index file cannot be loaded."""
 
-    def __init__(self, vector_store_name: str, partition_key: str, path: Path) -> None:
-        """Initialize with the vector store, the partition key, and the index file path."""
+    def __init__(self, vector_store_name: str, partition_name: str, path: Path) -> None:
+        """Initialize with the vector store, the partition name, and the index file path."""
         self.vector_store_name = vector_store_name
-        self.partition_key = partition_key
+        self.partition_name = partition_name
         self.path = path
         super().__init__(
-            f"Index for partition {partition_key!r} of vector store {vector_store_name!r} "
+            f"Index for partition {partition_name!r} of vector store {vector_store_name!r} "
             f"at {path} could not be loaded"
         )
 
 
 # Rejected inserts in a row before creating a partition gives up: each
 # retry needs a minted incarnation to collide, or another creator or a
-# deleter to change the key meanwhile, so this many means a lasting error.
+# deleter to change the name meanwhile, so this many means a lasting error.
 _MAX_MINT_ATTEMPTS = 10
 
 
 class _RegistryInsertRejectedError(Exception):
-    """A partition's registry insert was rejected although its key is free."""
+    """A partition's registry insert was rejected although its name is free."""
 
 
 class BaseSQLiteVectorStore(DeclarativeBase):
@@ -114,14 +114,14 @@ class BaseSQLiteVectorStore(DeclarativeBase):
 
 
 class _PartitionRow(BaseSQLiteVectorStore):
-    """The registry: one row per partition, keyed by its vector store name and key."""
+    """The registry: one row per partition, keyed by its vector store name and partition name."""
 
     __tablename__ = "vector_store_sqlite_pt"
 
     vector_store_name: MappedColumn[str] = mapped_column(
         String(_IDENTIFIER_MAX_BYTES), primary_key=True
     )
-    partition_key: MappedColumn[str] = mapped_column(
+    partition_name: MappedColumn[str] = mapped_column(
         String(_PARTITION_NAME_MAX_BYTES), primary_key=True
     )
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
@@ -260,7 +260,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         records_table: Table,
         search_engine: VectorSearchEngine,
         vector_store_name: str,
-        partition_key: str,
+        partition_name: str,
         incarnation: UUID,
         store_schema: VectorStoreSchema,
         index_path: str | None,
@@ -273,7 +273,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         self._search_engine = search_engine
 
         self._vector_store_name = vector_store_name
-        self._partition_key = partition_key
+        self._partition_name = partition_name
         self._incarnation = incarnation
 
         self._store_schema = store_schema
@@ -573,7 +573,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         ).scalar_one_or_none()
         if current is None:
             raise PartitionHandleStaleError(
-                self._vector_store_name, self._partition_key
+                self._vector_store_name, self._partition_name
             )
 
 
@@ -713,7 +713,7 @@ class SQLiteVectorStore(VectorStore):
         async with self._create_session() as session:
             rows = (
                 await session.execute(
-                    select(_PendingOperationRow, _PartitionRow.partition_key)
+                    select(_PendingOperationRow, _PartitionRow.partition_name)
                     .join(
                         _PartitionRow,
                         _PartitionRow.incarnation == _PendingOperationRow.incarnation,
@@ -725,24 +725,27 @@ class SQLiteVectorStore(VectorStore):
         operations_by_partition: dict[tuple[UUID, str], list[_PendingOperationRow]] = (
             defaultdict(list)
         )
-        for operation, partition_key in rows:
-            operations_by_partition[operation.incarnation, partition_key].append(
+        for operation, partition_name in rows:
+            operations_by_partition[operation.incarnation, partition_name].append(
                 operation
             )
 
-        for (incarnation, partition_key), operations in operations_by_partition.items():
+        for (
+            incarnation,
+            partition_name,
+        ), operations in operations_by_partition.items():
             await self._replay_partition_operations(
-                incarnation, partition_key, operations
+                incarnation, partition_name, operations
             )
 
     async def _replay_partition_operations(
         self,
         incarnation: UUID,
-        partition_key: str,
+        partition_name: str,
         operations: Iterable[_PendingOperationRow],
     ) -> None:
         search_engine = await self._get_or_create_vector_search_engine(
-            incarnation, partition_key
+            incarnation, partition_name
         )
 
         upserted_vectors: dict[int, list[float]] = {}
@@ -792,25 +795,25 @@ class SQLiteVectorStore(VectorStore):
         self._started = False
 
     @override
-    async def create_partition(self, partition_key: str) -> None:
+    async def create_partition(self, partition_name: str) -> None:
         self._require_started()
-        validate_partition_name(partition_key)
+        validate_partition_name(partition_name)
 
         attempts = 0
         while True:
             try:
-                await self._insert_partition(partition_key, uuid4())
+                await self._insert_partition(partition_name, uuid4())
             except _RegistryInsertRejectedError as err:
                 logger.warning(
                     "Creating partition %r was rejected: %s; minting another "
                     "incarnation",
-                    partition_key,
+                    partition_name,
                     err,
                 )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
                     raise AttemptsExhaustedError(
-                        f"Creating partition {partition_key!r} made no progress "
+                        f"Creating partition {partition_name!r} made no progress "
                         f"after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err
                 continue
@@ -818,10 +821,10 @@ class SQLiteVectorStore(VectorStore):
 
     @override
     async def open_or_create_partition(
-        self, partition_key: str
+        self, partition_name: str
     ) -> VectorStorePartition:
         self._require_started()
-        validate_partition_name(partition_key)
+        validate_partition_name(partition_name)
 
         # Read-then-insert, retried: losing the insert means another creator
         # won (open its partition next), and finding no partition after
@@ -829,13 +832,13 @@ class SQLiteVectorStore(VectorStore):
         attempts = 0
         while True:
             async with self._create_session() as session:
-                incarnation = await self._partition_incarnation(session, partition_key)
+                incarnation = await self._partition_incarnation(session, partition_name)
             if incarnation is not None:
-                return await self._partition_handle(partition_key, incarnation)
+                return await self._partition_handle(partition_name, incarnation)
 
             incarnation = uuid4()
             try:
-                await self._insert_partition(partition_key, incarnation)
+                await self._insert_partition(partition_name, incarnation)
             except (
                 PartitionAlreadyExistsError,
                 _RegistryInsertRejectedError,
@@ -844,32 +847,32 @@ class SQLiteVectorStore(VectorStore):
                     logger.warning(
                         "Creating partition %r was rejected: %s; minting another "
                         "incarnation",
-                        partition_key,
+                        partition_name,
                         err,
                     )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
                     raise AttemptsExhaustedError(
-                        f"Opening or creating partition {partition_key!r} made no "
+                        f"Opening or creating partition {partition_name!r} made no "
                         f"progress after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err
                 continue
-            return await self._partition_handle(partition_key, incarnation)
+            return await self._partition_handle(partition_name, incarnation)
 
     @override
-    async def open_partition(self, partition_key: str) -> VectorStorePartition | None:
+    async def open_partition(self, partition_name: str) -> VectorStorePartition | None:
         self._require_started()
-        validate_partition_name(partition_key)
+        validate_partition_name(partition_name)
 
         async with self._create_session() as session:
-            incarnation = await self._partition_incarnation(session, partition_key)
+            incarnation = await self._partition_incarnation(session, partition_name)
         if incarnation is None:
             return None
 
-        return await self._partition_handle(partition_key, incarnation)
+        return await self._partition_handle(partition_name, incarnation)
 
     async def _partition_handle(
-        self, partition_key: str, incarnation: UUID
+        self, partition_name: str, incarnation: UUID
     ) -> SQLiteVectorStorePartition:
         index_path = self._index_path(incarnation)
         return SQLiteVectorStorePartition(
@@ -877,10 +880,10 @@ class SQLiteVectorStore(VectorStore):
             sync_sqlalchemy_engine=self._sync_sqlalchemy_engine,
             records_table=self._records_table(incarnation),
             search_engine=await self._get_or_create_vector_search_engine(
-                incarnation, partition_key
+                incarnation, partition_name
             ),
             vector_store_name=self._vector_store_name,
-            partition_key=partition_key,
+            partition_name=partition_name,
             incarnation=incarnation,
             store_schema=self._store_schema,
             index_path=str(index_path) if index_path is not None else None,
@@ -888,12 +891,12 @@ class SQLiteVectorStore(VectorStore):
         )
 
     @override
-    async def delete_partition(self, partition_key: str) -> None:
+    async def delete_partition(self, partition_name: str) -> None:
         self._require_started()
-        validate_partition_name(partition_key)
+        validate_partition_name(partition_name)
 
         async with write_session(self._create_session) as session:
-            incarnation = await self._partition_incarnation(session, partition_key)
+            incarnation = await self._partition_incarnation(session, partition_name)
             if incarnation is None:
                 return
             records_table = self._records_table(incarnation)
@@ -920,19 +923,19 @@ class SQLiteVectorStore(VectorStore):
 
     # Helpers.
 
-    async def _insert_partition(self, partition_key: str, incarnation: UUID) -> None:
+    async def _insert_partition(self, partition_name: str, incarnation: UUID) -> None:
         """
         Insert a partition's registry row under a minted incarnation, and create its tables.
 
         The row goes in first, so the registry's unique constraints decide the
-        key and the incarnation, and the tables are created in its
+        name and the incarnation, and the tables are created in its
         transaction.
 
         Raises:
             PartitionAlreadyExistsError:
-                If the partition key is taken.
+                If the partition name is taken.
             _RegistryInsertRejectedError:
-                If the insert is rejected for a reason other than the key
+                If the insert is rejected for a reason other than the name
                 being taken.
         """
         try:
@@ -940,7 +943,7 @@ class SQLiteVectorStore(VectorStore):
                 session.add(
                     _PartitionRow(
                         vector_store_name=self._vector_store_name,
-                        partition_key=partition_key,
+                        partition_name=partition_name,
                         incarnation=incarnation,
                     )
                 )
@@ -952,14 +955,14 @@ class SQLiteVectorStore(VectorStore):
                 )
         except IntegrityError as err:
             async with self._create_session() as session:
-                taken = await self._partition_incarnation(session, partition_key)
+                taken = await self._partition_incarnation(session, partition_name)
             if taken is not None:
                 raise PartitionAlreadyExistsError(
-                    self._vector_store_name, partition_key
+                    self._vector_store_name, partition_name
                 ) from err
             raise _RegistryInsertRejectedError(
                 f"the insert of incarnation {incarnation} failed and no "
-                "partition exists under the key"
+                "partition exists under the name"
             ) from err
 
     def _partition_prefix(self, incarnation: UUID) -> str:
@@ -989,20 +992,20 @@ class SQLiteVectorStore(VectorStore):
         return self._index_directory / f"{self._partition_prefix(incarnation)}.idx"
 
     async def _partition_incarnation(
-        self, session: AsyncSession, partition_key: str
+        self, session: AsyncSession, partition_name: str
     ) -> UUID | None:
-        """Return the incarnation of the partition under a key, or None if there is none."""
+        """Return the incarnation of the partition under a name, or None if there is none."""
         return (
             await session.execute(
                 select(_PartitionRow.incarnation).where(
                     _PartitionRow.vector_store_name == self._vector_store_name,
-                    _PartitionRow.partition_key == partition_key,
+                    _PartitionRow.partition_name == partition_name,
                 )
             )
         ).scalar_one_or_none()
 
     async def _get_or_create_vector_search_engine(
-        self, incarnation: UUID, partition_key: str
+        self, incarnation: UUID, partition_name: str
     ) -> VectorSearchEngine:
         if incarnation in self._search_engines:
             return self._search_engines[incarnation]
@@ -1030,7 +1033,7 @@ class SQLiteVectorStore(VectorStore):
                     await search_engine.load(str(index_path))
                 except Exception as e:
                     raise IndexLoadError(
-                        self._vector_store_name, partition_key, index_path
+                        self._vector_store_name, partition_name, index_path
                     ) from e
 
         # Every handle of an incarnation shares one engine: an open that

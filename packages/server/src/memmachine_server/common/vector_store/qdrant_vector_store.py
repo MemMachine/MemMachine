@@ -63,7 +63,7 @@ _SYSTEM_KEY_PREFIX = "sys-"
 _PAYLOAD_INCARNATION = f"{_SYSTEM_KEY_PREFIX}incarnation"
 """The payload key holding the incarnation of the partition a point belongs to.
 
-A partition created again under a deleted one's key gets a fresh
+A partition created again under a deleted one's name gets a fresh
 incarnation, so it holds only the points written under that incarnation.
 """
 _PAYLOAD_RECORD_UUID = f"{_SYSTEM_KEY_PREFIX}record_uuid"
@@ -282,7 +282,7 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
         """The point id of a record: a UUIDv5 of the record UUID under the incarnation.
 
         Point ids are distinct across the partitions of the store's collection
-        and across a key's incarnations.
+        and across a name's incarnations.
         """
         return uuid5(self._incarnation, str(record_uuid))
 
@@ -541,7 +541,7 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
 
     @override
     async def _prepare_partition_storage(
-        self, partition_key: str, incarnation: UUID
+        self, partition_name: str, incarnation: UUID
     ) -> None:
         # Every partition lives in the native collection startup prepared.
         pass

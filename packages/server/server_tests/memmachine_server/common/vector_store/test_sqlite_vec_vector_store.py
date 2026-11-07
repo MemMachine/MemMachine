@@ -53,8 +53,8 @@ pytestmark = pytest.mark.skipif(
 VECTOR_STORE_NAME = "test_vector_store"
 NAME = "test_name"
 VECTOR_DIM = 3
-# A partition key of the longest length, with characters no identifier allows.
-ANY_CHARACTERS_KEY = "Session/ID-1 ü".ljust(254, "x")
+# A partition name of the longest length, with characters no identifier allows.
+ANY_CHARACTERS_NAME = "Session/ID-1 ü".ljust(254, "x")
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 INDEXED_PROPERTIES: dict[str, PropertyType] = {
@@ -241,7 +241,7 @@ class TestPartitionLifecycle:
     ):
         attempts: list[UUID] = []
 
-        async def always_rejected(partition_key: str, incarnation: UUID) -> None:
+        async def always_rejected(partition_name: str, incarnation: UUID) -> None:
             attempts.append(incarnation)
             raise sqlite_vec_vector_store._RegistryInsertRejectedError(str(incarnation))
 
@@ -262,12 +262,14 @@ class TestPartitionLifecycle:
             )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("partition_key", ["", "k" * 256, "ü" * 128, "with\x00nul"])
-    async def test_a_partition_key_outside_the_rule_is_refused(
-        self, store, partition_key
+    @pytest.mark.parametrize(
+        "partition_name", ["", "k" * 256, "ü" * 128, "with\x00nul"]
+    )
+    async def test_a_partition_name_outside_the_rule_is_refused(
+        self, store, partition_name
     ):
         with pytest.raises(ValueError, match="Partition name"):
-            await store.create_partition(partition_key)
+            await store.create_partition(partition_name)
 
     @pytest.mark.parametrize(
         "vector_store_name",
@@ -281,10 +283,10 @@ class TestPartitionLifecycle:
             _params(engine, vector_store_name=vector_store_name)
 
     @pytest.mark.asyncio
-    async def test_a_partition_key_of_any_characters_and_the_longest_length_works(
+    async def test_a_partition_name_of_any_characters_and_the_longest_length_works(
         self, store
     ):
-        key = ANY_CHARACTERS_KEY
+        key = ANY_CHARACTERS_NAME
         await store.create_partition(key)
         partition = await store.open_partition(key)
         assert partition is not None
