@@ -377,16 +377,22 @@ def _database_time_ago(engine: AsyncEngine, delta: timedelta) -> ColumnElement:
 
 
 async def _age_pending_writes(engine: AsyncEngine, delta: timedelta) -> None:
+    """Make every pending write claimable since `delta` ago, past its writer's lease."""
     async with engine.begin() as connection:
         await connection.execute(
-            update(PendingWriteRow).values(created_at=_database_time_ago(engine, delta))
+            update(PendingWriteRow).values(
+                claimable_at=_database_time_ago(engine, delta)
+            )
         )
 
 
 async def _age_tombstones(engine: AsyncEngine, delta: timedelta) -> None:
+    """Move every recorded first delete back to `delta` ago."""
     async with engine.begin() as connection:
         await connection.execute(
-            update(TombstoneRow).values(enqueued_at=_database_time_ago(engine, delta))
+            update(TombstoneRow)
+            .where(TombstoneRow.first_deleted_at.is_not(None))
+            .values(first_deleted_at=_database_time_ago(engine, delta))
         )
 
 
