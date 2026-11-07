@@ -71,6 +71,8 @@ class _FailingVectorStorePartition(InMemoryVectorStorePartition):
         self.fail_deletes = False
         self.upsert_delay_seconds = 0.0
         self.upserting = asyncio.Event()
+        self.deletes_released = asyncio.Event()
+        self.deletes_released.set()
         self.deleted = asyncio.Event()
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
@@ -82,6 +84,7 @@ class _FailingVectorStorePartition(InMemoryVectorStorePartition):
         await super().upsert(records=records)
 
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
+        await self.deletes_released.wait()
         if self.fail_deletes:
             raise ConnectionError("delete failed")
         await super().delete(record_uuids=record_uuids)
@@ -276,8 +279,39 @@ async def test_a_query_deletes_the_unlinked_records_it_finds(
 
     result = await partition.query("hello")
 
-    assert unlinked_uuid not in vector_store_partition.records
     assert len(result.scored_segment_contexts) == 1
+    await asyncio.wait_for(vector_store_partition.deleted.wait(), 30)
+    assert unlinked_uuid not in vector_store_partition.records
+
+
+async def test_a_query_does_not_wait_for_its_cleanup_of_unlinked_records(
+    event_memory: EventMemory,
+    vector_store_partition: _FailingVectorStorePartition,
+    fake_embedder: FakeEmbedder,
+):
+    """The query answers while its delete is held; shutdown cancels the delete."""
+    partition = await event_memory.open_or_create_partition("partition")
+    await partition.encode_events([_event("hello")])
+    unlinked_uuid = uuid4()
+    [embedding] = await fake_embedder.ingest_embed(["hello"])
+    await vector_store_partition.upsert(
+        records=[
+            Record(
+                uuid=unlinked_uuid,
+                vector=embedding,
+                properties={EVENT_TIMESTAMP_KEY: _T0},
+            )
+        ]
+    )
+    vector_store_partition.deletes_released.clear()
+
+    result = await asyncio.wait_for(partition.query("hello"), 30)
+
+    assert len(result.scored_segment_contexts) == 1
+    assert unlinked_uuid in vector_store_partition.records
+    await asyncio.wait_for(event_memory.shutdown(), 30)
+    assert event_memory._unlinked_record_deletions == set()
+    assert unlinked_uuid in vector_store_partition.records
 
 
 async def test_a_failed_cleanup_of_unlinked_records_leaves_the_query_answered(

@@ -73,8 +73,8 @@ background work writes and deletes with the EventMemory's own stores, and
 runs whether or not any session is opened.
 
 **Search.** A vector hit with no link is dropped from the results and its
-vector deleted once, best effort; the next search that finds it tries
-again.
+vector deleted once, best effort and without the search waiting for it;
+the next search that finds it tries again.
 
 **Partition deletion.** The segment store's partition goes first, so its
 text is gone at once and no write starts on it; the vector store's
