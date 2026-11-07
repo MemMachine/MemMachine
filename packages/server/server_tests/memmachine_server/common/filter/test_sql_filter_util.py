@@ -631,7 +631,7 @@ class TestColumnDatetimeNormalization:
 
 
 # ============================================================================
-# Raw JSON numeric gate - mixed-type values (#1917)
+# Raw JSON numeric casts - mixed-type and string-only values (#1917)
 # ============================================================================
 
 
@@ -681,12 +681,15 @@ async def _query_mixed_names(session: AsyncSession, filter_str: str) -> set[str]
     return {row[0] for row in (await session.execute(stmt))}
 
 
-class TestJsonNumericGateMixedTypes:
+class TestJsonNumericCastMixedTypes:
     @pytest.mark.asyncio
-    async def test_numeric_comparison_excludes_text_values(self, mixed_session):
+    async def test_numeric_comparison_excludes_unparseable_text(self, mixed_session):
         # PostgreSQL used to answer 500 here: CAST('large' AS INTEGER) fails
-        # for the whole query. The gate excludes the text row instead.
-        assert await _query_mixed_names(mixed_session, "m.size > 3") == {"big"}
+        # for the whole query. The CASE guard answers NULL for the text row.
+        assert await _query_mixed_names(mixed_session, "m.size > 3") == {
+            "big",
+            "decimal_text",
+        }
 
     @pytest.mark.asyncio
     async def test_numeric_equality_matches_only_numbers(self, mixed_session):
@@ -704,12 +707,48 @@ class TestJsonNumericGateMixedTypes:
         assert await _query_mixed_names(mixed_session, "m.size = 'large'") == {"text"}
 
 
-def test_json_numeric_gate_compiles_jsonb_typeof_on_postgresql():
+@pytest_asyncio.fixture
+async def rest_session(sqlalchemy_engine):
+    """Rows shaped like REST-written metadata: every value a string (#1932)."""
+    async with sqlalchemy_engine.begin() as conn:
+        await conn.run_sync(_MixedBase.metadata.create_all)
+
+    async with AsyncSession(sqlalchemy_engine) as s:
+        s.add_all(
+            [
+                _MixedRow(name="str_123", json_metadata={"user_id": "123"}),
+                _MixedRow(name="str_45", json_metadata={"user_id": "45"}),
+                _MixedRow(name="str_text", json_metadata={"user_id": "abc"}),
+            ]
+        )
+        await s.commit()
+        yield s
+
+
+class TestNumericLiteralOverStringMetadata:
+    @pytest.mark.asyncio
+    async def test_documented_example_finds_numeric_string(self, rest_session):
+        # The API documents `metadata.user_id=123` (Examples.FILTER_MEM) while
+        # the REST API stores metadata values as strings; the numeric literal
+        # must still find the stored "123".
+        assert await _query_mixed_names(rest_session, "m.user_id = 123") == {"str_123"}
+
+    @pytest.mark.asyncio
+    async def test_ordering_compares_numeric_strings_numerically(self, rest_session):
+        assert await _query_mixed_names(rest_session, "m.user_id > 100") == {"str_123"}
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_string_excluded_without_error(self, rest_session):
+        assert await _query_mixed_names(rest_session, "m.user_id = 999") == set()
+
+
+def test_json_numeric_cast_compiles_case_guard_on_postgresql():
     expr = parse_filter("m.size > 3")
     clause = compile_sql_filter(expr, _resolve_mixed_field, dialect_name="postgresql")
     compiled = str(clause.compile(dialect=postgresql_dialect.dialect()))
-    assert "jsonb_typeof" in compiled
-    assert "CAST" in compiled
+    assert "CASE" in compiled
+    assert "~" in compiled
+    assert "NUMERIC" in compiled
 
 
 def test_json_numeric_gate_absent_without_dialect():

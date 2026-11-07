@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, false, func, or_
+from sqlalchemy import ColumnElement, Numeric, and_, case, false, or_
 
 from memmachine_server.common.data_types import (
     PROPERTY_TYPE_TO_PROPERTY_TYPE_NAME,
@@ -126,42 +126,44 @@ def _compile_json_leaf(
         if not expr.values:
             return false()
         value = _check_json_value(expr.values[0])
-        casted = _cast_json_value(column, value)
-        gate = _json_numeric_gate(column, value, dialect_name)
-        if gate is not None:
-            return and_(gate, casted.in_(expr.values))
-        return casted.in_(expr.values)
+        casted = _numeric_json_clause(column, value, dialect_name)
+        if casted is not None:
+            return casted.in_(expr.values)
+        return _cast_json_value(column, value).in_(expr.values)
     value = _check_json_value(expr.value)
-    casted = _cast_json_value(column, value)
-    gate = _json_numeric_gate(column, value, dialect_name)
-    if gate is not None:
-        return and_(gate, _get_op(expr.op)(casted, expr.value))
-    return _get_op(expr.op)(casted, expr.value)
+    casted = _numeric_json_clause(column, value, dialect_name)
+    if casted is not None:
+        return _get_op(expr.op)(casted, expr.value)
+    return _get_op(expr.op)(_cast_json_value(column, value), expr.value)
 
 
-def _json_numeric_gate(
+# Numeric text a PostgreSQL numeric cast accepts, so every row the CASE
+# guard passes to the cast parses and the query cannot raise (#1917).
+_NUMERIC_TEXT_PATTERN = r"^\s*[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?\s*$"
+
+
+def _numeric_json_clause(
     column: ColumnElement,
     value: bool | float | str,
     dialect_name: str | None,
-) -> ColumnElement[bool] | None:
-    """Gate a numeric JSON cast on the stored value actually being a number.
+) -> ColumnElement | None:
+    """Cast a raw JSON path for a numeric literal, matching numeric strings.
 
-    PostgreSQL raises for the whole query when a CAST over a text value does
-    not parse, so one episode holding e.g. ``"large"`` for the filtered key
-    turns the comparison into a 500. SQLite instead casts non-numeric text
-    to 0. Gating on the backend's JSON type function excludes rows whose
-    stored value is not a number, keeping both backends in agreement and
-    answering instead of erroring. Unknown dialects keep the ungated
-    behavior.
+    The REST API stores every metadata value as a string, so the documented
+    filter `metadata.user_id=123` must still find a stored "123" (issue
+    #1917). PostgreSQL raises for the whole query when a cast over a text
+    value does not parse, so the cast is guarded by a CASE on a numeric
+    pattern instead of the stored type; JSON numbers reach it as their own
+    text and are admitted too. SQLite casts never raise, and non-numeric
+    text casts to 0. Unknown dialects keep the unguarded cast.
     """
     if not isinstance(value, int | float) or isinstance(value, bool):
         return None
     if dialect_name == "postgresql":
-        return func.jsonb_typeof(column) == "number"
+        text = column.as_string()
+        return case((text.regexp_match(_NUMERIC_TEXT_PATTERN), text.cast(Numeric)))
     if dialect_name == "sqlite":
-        # `column` renders as JSON_QUOTE(JSON_EXTRACT(...)), so json_type
-        # sees valid JSON text: 'integer' for numbers, 'text' for strings.
-        return func.json_type(column).in_(("integer", "real"))
+        return column.as_string().cast(Numeric)
     return None
 
 
