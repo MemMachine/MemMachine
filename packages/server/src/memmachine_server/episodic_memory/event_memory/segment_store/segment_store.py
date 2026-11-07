@@ -50,13 +50,16 @@ class SegmentStorePartition(ABC):
         self,
         segments_by_event: Mapping[UUID, Iterable[Segment]],
         pending_writes: Iterable[PendingWrite],
+        *,
+        lease_seconds: int,
     ) -> None:
         """
         Add events with their segments, derivative links, and pending writes.
 
         All of it commits together or not at all. A batch naming an event
         the partition already holds is rejected whole, before anything is
-        stored.
+        stored. The caller holds the pending writes for `lease_seconds`,
+        on the store's clock, before a claim may take them.
 
         Args:
             segments_by_event (Mapping[UUID, Iterable[Segment]]):
@@ -65,6 +68,8 @@ class SegmentStorePartition(ABC):
                 Each event's derivatives, each linked to the segment it
                 names, and held as pending until
                 `delete_pending_writes` removes them.
+            lease_seconds (int):
+                Seconds the caller holds the pending writes.
 
         Raises:
             SegmentStoreEventAlreadyExistsError:
@@ -161,11 +166,9 @@ class SegmentStorePartition(ABC):
         Delete events, with their segments, derivative links, and pending writes.
 
         All of it commits together or not at all, with a tombstone naming
-        every derivative the forget unlinked. The tombstone's time is taken
-        after the events are locked, so a write that claims pending
-        derivatives of these events either finishes its claim before that
-        time or finds them gone. An event the partition does not hold is
-        skipped. Idempotent.
+        every derivative the forget unlinked. A renewal of a claim on these
+        events' pending writes either commits first or finds them gone. An
+        event the partition does not hold is skipped. Idempotent.
 
         Args:
             event_uuids (Iterable[UUID]):
@@ -184,8 +187,9 @@ class SegmentStorePartition(ABC):
         Record that a tombstone's derivatives were deleted from their index once.
 
         The tombstone then awaits only its second delete, which falls due
-        once the store's retention has passed since the forget. Idempotent,
-        and a no-op for a tombstone no longer awaiting its first delete.
+        once the store's retention has passed since this record, on the
+        store's clock. An open claim on the tombstone ends. Idempotent, and
+        a no-op for a tombstone no longer awaiting its first delete.
 
         Args:
             tombstone_uuid (UUID):
@@ -394,23 +398,21 @@ class SegmentStore(ABC):
     async def claim_pending_write(
         self,
         *,
-        min_age_seconds: int,
         lease_seconds: int,
     ) -> PendingWriteClaim | None:
         """
-        Claim the oldest pending write that has waited long enough.
+        Claim the pending write that came due first.
 
-        A pending write is due once `min_age_seconds` have passed
-        since they were added, on the store's clock. A due record is
-        claimable unless a claim on it holds its lease, or its last claim
-        failed and its backoff has not passed, or its claims failed the
-        store's maximum number of times in a row. A claim holds its record
-        for `lease_seconds`. Claims skip deleted partitions. Safe to call
-        from several processes at once.
+        A pending write is due once its writer's lease has passed, on the
+        store's clock. It is claimable then unless a claim on it holds its
+        lease, or its last claim failed and its backoff has not passed, or
+        its claims failed the store's maximum number of times in a row. A
+        claim holds its record for `lease_seconds`, and a claim that never
+        ends is followed by the backoff before the record is claimed again.
+        Claims skip deleted partitions. Safe to call from several processes
+        at once.
 
         Args:
-            min_age_seconds (int):
-                Seconds a pending write must have waited.
             lease_seconds (int):
                 Seconds the claim holds its record.
 
@@ -484,7 +486,8 @@ class SegmentStore(ABC):
 
         A tombstone awaiting its first delete is due at once. One awaiting
         its second is due once the store's retention has passed since its
-        forget, on the store's clock. A due tombstone is claimable unless a
+        first delete was recorded, on the store's clock; no claim's
+        schedule brings that forward. A due tombstone is claimable unless a
         claim on it holds its lease, or its last claim failed and its
         backoff has not passed, or its claims failed the store's maximum
         number of times in a row. Claims skip deleted partitions. Safe to
@@ -501,8 +504,9 @@ class SegmentStore(ABC):
         """
         Record a claimed delete as done.
 
-        After its first delete, the tombstone awaits its second; after its
-        second, it is removed.
+        After its first delete, the tombstone awaits its second, due once
+        the store's retention has passed since this record, and any other
+        open claim on it ends; after its second, it is removed.
 
         Args:
             claim (TombstoneClaim):

@@ -17,7 +17,6 @@ from pydantic import (
 )
 from sqlalchemy import (
     JSON,
-    Boolean,
     ColumnCollection,
     ColumnElement,
     DateTime,
@@ -30,9 +29,7 @@ from sqlalchemy import (
     String,
     Tuple,
     Uuid,
-    and_,
     bindparam,
-    case,
     delete,
     func,
     insert,
@@ -284,21 +281,16 @@ class PendingWriteRow(BaseSegmentStore):
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
     event_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
-    created_at: MappedColumn[datetime] = mapped_column(
+    # When a claim may take the record: once its writer's lease has passed,
+    # once an open claim's lease and then the backoff have passed, or once
+    # the backoff after a failed claim has passed.
+    claimable_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
     # Claims since the record was last claimed without failing, the open one
     # included.
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
-    )
-    # When a claim on the record last failed.
-    last_failed_at: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # When the open claim's lease ends; None when no claim is open.
-    claimed_until: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
     )
     # Incremented by each claim; a claim ends only itself.
     claim_generation: MappedColumn[int] = mapped_column(
@@ -314,9 +306,9 @@ class PendingWriteRow(BaseSegmentStore):
             ],
             ondelete="CASCADE",
         ),
-        # Serves the forget's delete and the cascade from the event row.
+        # Serves the cascade from the event row.
         Index("segment_store_pw__in_ev", "incarnation", "event_uuid"),
-        Index("segment_store_pw__ca", "created_at"),
+        Index("segment_store_pw__ca", "claimable_at"),
     )
 
 
@@ -352,40 +344,40 @@ class PendingWriteDerivativeRow(BaseSegmentStore):
 class TombstoneRow(BaseSegmentStore):
     """A forget's tombstone: the derivatives it unlinked.
 
-    Their derived index entries are deleted once at once and once more
-    after the store's retention. It holds only what the deletes read.
+    Their derived index entries are deleted once at once, and once more
+    after the store's retention has passed since the first delete. It holds
+    only what the deletes read.
     """
 
     __tablename__ = "segment_store_tb"
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
-    enqueued_at: MappedColumn[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
+    # When the first delete was recorded; None while the tombstone awaits it.
+    first_deleted_at: MappedColumn[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
-    # Whether the first delete is done, so the tombstone awaits its second.
-    second_delete: MappedColumn[bool] = mapped_column(
-        Boolean, nullable=False, default=False
+    # When a claim may take the tombstone, once its delete is due: at once
+    # from the forget, once an open claim's lease and then the backoff have
+    # passed, or once the backoff after a failed claim has passed. None from
+    # the first delete's record until a claim of the second sets it.
+    claimable_at: MappedColumn[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     # Claims since the tombstone last made progress, the open one included.
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    # When a claim on the tombstone last failed.
-    last_failed_at: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # When the open claim's lease ends; None when no claim is open.
-    claimed_until: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # Incremented by each claim; a claim ends only itself.
+    # Incremented by each claim, and by each change made without one; a
+    # claim ends only itself.
     claim_generation: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
 
     __table_args__ = (
-        Index("segment_store_tb__ea", "enqueued_at"),
+        # Serves both claims: by schedule, and second deletes by their
+        # first delete.
+        Index("segment_store_tb__ca_fd", "claimable_at", "first_deleted_at"),
         # Serves the purge's batches of a dead incarnation's tombstones.
         Index("segment_store_tb__in_uu", "incarnation", "uuid"),
     )
@@ -512,6 +504,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         self,
         segments_by_event: Mapping[UUID, Iterable[Segment]],
         pending_writes: Iterable[PendingWrite],
+        *,
+        lease_seconds: int,
     ) -> None:
         segments_by_event = {
             event_uuid: list(segments)
@@ -549,7 +543,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     for derivative in pending.derivatives
                 ),
             )
-            await self._insert_pending_writes(session, pending_writes)
+            await self._insert_pending_writes(session, pending_writes, lease_seconds)
 
     @staticmethod
     def _validate_events(
@@ -655,8 +649,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         self,
         session: AsyncSession,
         pending_writes: Iterable[PendingWrite],
+        lease_seconds: int,
     ) -> None:
-        """Insert a pending write row, and a row per derivative, for each pending write."""
+        """Insert a pending write row, claimable once `lease_seconds` have passed, and a row per derivative, for each pending write."""
         pending_writes = list(pending_writes)
         if not pending_writes:
             return
@@ -668,7 +663,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                         "uuid": pending.uuid,
                         "incarnation": self._incarnation,
                         "event_uuid": pending.event_uuid,
-                        "created_at": func.now(),
+                        "claimable_at": _seconds_from_now(
+                            lease_seconds, is_sqlite=self._is_sqlite
+                        ),
                     }
                     for pending in pending_writes
                 ]
@@ -1155,17 +1152,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 ).scalars()
             )
 
-            # Before the tombstone's time is taken: a claim on these
-            # pending writes holds its row, so this delete waits for a
-            # claim in progress, and a claim either committed before the
-            # time below or finds its row gone.
-            await session.execute(
-                delete(PendingWriteRow).where(
-                    PendingWriteRow.incarnation == self._incarnation,
-                    PendingWriteRow.event_uuid.in_(held_event_uuids),
-                )
-            )
-
             tombstone = None
             if derivative_uuids:
                 tombstone = Tombstone(uuid=uuid4(), derivative_uuids=derivative_uuids)
@@ -1173,15 +1159,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     insert(TombstoneRow).values(
                         uuid=tombstone.uuid,
                         incarnation=self._incarnation,
-                        # The time of this statement, after the locks: the
-                        # transaction's start, which `now()` gives on
-                        # PostgreSQL, can precede a write the locks waited
-                        # for.
-                        enqueued_at=(
-                            func.now()
-                            if self._is_sqlite
-                            else func.statement_timestamp()
-                        ),
+                        claimable_at=func.now(),
                     )
                 )
                 await session.execute(
@@ -1192,7 +1170,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     ],
                 )
 
-            # The cascade follows to segments, and through them to links.
+            # The cascade follows to the events' segments, through them to
+            # links, and to the events' pending writes.
             await session.execute(
                 delete(EventRow).where(
                     EventRow.incarnation == self._incarnation,
@@ -1213,12 +1192,15 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 .where(
                     TombstoneRow.uuid == tombstone_uuid,
                     TombstoneRow.incarnation == self._incarnation,
-                    TombstoneRow.second_delete.is_(False),
+                    TombstoneRow.first_deleted_at.is_(None),
                 )
+                # Made without a claim, so it starts a new generation: an
+                # open claim's late failure then changes nothing.
                 .values(
-                    second_delete=True,
+                    first_deleted_at=func.now(),
+                    claimable_at=None,
                     attempts_without_progress=0,
-                    claimed_until=None,
+                    claim_generation=TombstoneRow.claim_generation + 1,
                 )
             )
 
@@ -1877,19 +1859,19 @@ class SQLAlchemySegmentStore(SegmentStore):
     async def claim_pending_write(
         self,
         *,
-        min_age_seconds: int,
         lease_seconds: int,
     ) -> PendingWriteClaim | None:
         oldest_due = (
             select(PendingWriteRow.uuid)
             .where(
-                self._has_elapsed(min_age_seconds, since=PendingWriteRow.created_at),
-                self._is_claimable(PendingWriteRow),
+                PendingWriteRow.claimable_at <= func.now(),
+                PendingWriteRow.attempts_without_progress
+                < _MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS,
                 select(PartitionRow.partition_key)
                 .where(PartitionRow.incarnation == PendingWriteRow.incarnation)
                 .exists(),
             )
-            .order_by(PendingWriteRow.created_at)
+            .order_by(PendingWriteRow.claimable_at)
             .limit(1)
             # SQLite drops this; there the write transaction serializes claims.
             .with_for_update(skip_locked=True)
@@ -1907,7 +1889,13 @@ class SQLAlchemySegmentStore(SegmentStore):
                         attempts_without_progress=(
                             PendingWriteRow.attempts_without_progress + 1
                         ),
-                        claimed_until=self._seconds_from_now(lease_seconds),
+                        claimable_at=_seconds_from_now(
+                            lease_seconds
+                            + self._claim_retry_backoff_seconds(
+                                PendingWriteRow.attempts_without_progress + 1
+                            ),
+                            is_sqlite=self._is_sqlite,
+                        ),
                         claim_generation=PendingWriteRow.claim_generation + 1,
                     )
                     .returning(
@@ -1978,7 +1966,15 @@ class SQLAlchemySegmentStore(SegmentStore):
                         .where(PartitionRow.incarnation == PendingWriteRow.incarnation)
                         .exists(),
                     )
-                    .values(claimed_until=self._seconds_from_now(lease_seconds))
+                    .values(
+                        claimable_at=_seconds_from_now(
+                            lease_seconds
+                            + self._claim_retry_backoff_seconds(
+                                PendingWriteRow.attempts_without_progress
+                            ),
+                            is_sqlite=self._is_sqlite,
+                        )
+                    )
                     .returning(PendingWriteRow.uuid)
                 )
             ).one_or_none()
@@ -2012,7 +2008,14 @@ class SQLAlchemySegmentStore(SegmentStore):
                     PendingWriteRow.uuid == claim.pending_write.uuid,
                     PendingWriteRow.claim_generation == claim.generation,
                 )
-                .values(claimed_until=None, last_failed_at=func.now())
+                .values(
+                    claimable_at=_seconds_from_now(
+                        self._claim_retry_backoff_seconds(
+                            PendingWriteRow.attempts_without_progress
+                        ),
+                        is_sqlite=self._is_sqlite,
+                    )
+                )
             )
         if (
             ended.rowcount == 1
@@ -2032,53 +2035,87 @@ class SQLAlchemySegmentStore(SegmentStore):
 
     @override
     async def claim_tombstone(self) -> TombstoneClaim | None:
-        oldest_due = (
+        # The retention is its own condition, so no schedule written to
+        # claimable_at brings a second delete forward.
+        retention_passed = or_(
+            TombstoneRow.first_deleted_at.is_(None),
+            self._has_elapsed(
+                self._tombstone_retention_seconds,
+                since=TombstoneRow.first_deleted_at,
+            ),
+        )
+        claimable = (
+            TombstoneRow.attempts_without_progress
+            < _MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS,
+            select(PartitionRow.partition_key)
+            .where(PartitionRow.incarnation == TombstoneRow.incarnation)
+            .exists(),
+        )
+        # Scheduled deletes first, earliest first: first deletes and
+        # retries. Then second deletes, oldest first delete first. Each is
+        # one range of the (claimable_at, first_deleted_at) index.
+        scheduled_due = (
             select(TombstoneRow.uuid)
             .where(
-                or_(
-                    TombstoneRow.second_delete.is_(False),
-                    self._has_elapsed(
-                        self._tombstone_retention_seconds,
-                        since=TombstoneRow.enqueued_at,
-                    ),
-                ),
-                self._is_claimable(TombstoneRow),
-                select(PartitionRow.partition_key)
-                .where(PartitionRow.incarnation == TombstoneRow.incarnation)
-                .exists(),
+                TombstoneRow.claimable_at <= func.now(),
+                retention_passed,
+                *claimable,
             )
-            .order_by(TombstoneRow.enqueued_at)
-            .limit(1)
-            # SQLite drops this; there the write transaction serializes claims.
-            .with_for_update(skip_locked=True)
-            .scalar_subquery()
+            .order_by(TombstoneRow.claimable_at)
+        )
+        second_deletes_due = (
+            select(TombstoneRow.uuid)
+            .where(
+                TombstoneRow.claimable_at.is_(None),
+                self._has_elapsed(
+                    self._tombstone_retention_seconds,
+                    since=TombstoneRow.first_deleted_at,
+                ),
+                *claimable,
+            )
+            .order_by(TombstoneRow.first_deleted_at)
         )
         async with (
             self._tracker("claim_tombstone"),
             write_session(self._create_session) as session,
         ):
-            claimed = (
-                await session.execute(
-                    update(TombstoneRow)
-                    .where(TombstoneRow.uuid == oldest_due)
-                    .values(
-                        attempts_without_progress=(
-                            TombstoneRow.attempts_without_progress + 1
-                        ),
-                        claimed_until=self._seconds_from_now(
-                            self._tombstone_lease_seconds
-                        ),
-                        claim_generation=TombstoneRow.claim_generation + 1,
+            claimed = None
+            for oldest_due in (scheduled_due, second_deletes_due):
+                claimed = (
+                    await session.execute(
+                        update(TombstoneRow)
+                        .where(
+                            TombstoneRow.uuid
+                            == oldest_due.limit(1)
+                            # SQLite drops this; there the write transaction
+                            # serializes claims.
+                            .with_for_update(skip_locked=True)
+                            .scalar_subquery()
+                        )
+                        .values(
+                            attempts_without_progress=(
+                                TombstoneRow.attempts_without_progress + 1
+                            ),
+                            claimable_at=_seconds_from_now(
+                                self._tombstone_lease_seconds
+                                + self._claim_retry_backoff_seconds(
+                                    TombstoneRow.attempts_without_progress + 1
+                                ),
+                                is_sqlite=self._is_sqlite,
+                            ),
+                            claim_generation=TombstoneRow.claim_generation + 1,
+                        )
+                        .returning(
+                            TombstoneRow.uuid,
+                            TombstoneRow.incarnation,
+                            TombstoneRow.first_deleted_at,
+                            TombstoneRow.claim_generation,
+                            TombstoneRow.attempts_without_progress,
+                        )
                     )
-                    .returning(
-                        TombstoneRow.uuid,
-                        TombstoneRow.incarnation,
-                        TombstoneRow.second_delete,
-                        TombstoneRow.claim_generation,
-                        TombstoneRow.attempts_without_progress,
-                    )
-                )
-            ).one_or_none()
+                ).one_or_none()
+                if claimed is not None:
+                    break
             if claimed is None:
                 return None
             partition_row = (
@@ -2102,7 +2139,7 @@ class SQLAlchemySegmentStore(SegmentStore):
         return TombstoneClaim(
             partition_key=partition_row.partition_key,
             tombstone=Tombstone(uuid=claimed.uuid, derivative_uuids=derivative_uuids),
-            second_delete=claimed.second_delete,
+            second_delete=claimed.first_deleted_at is not None,
             generation=claimed.claim_generation,
             attempt=claimed.attempts_without_progress,
         )
@@ -2125,12 +2162,15 @@ class SQLAlchemySegmentStore(SegmentStore):
                 update(TombstoneRow)
                 .where(
                     TombstoneRow.uuid == claim.tombstone.uuid,
-                    TombstoneRow.second_delete.is_(False),
+                    TombstoneRow.first_deleted_at.is_(None),
                 )
+                # Under any claim, so it starts a new generation: a later
+                # claim's late failure then changes nothing.
                 .values(
-                    second_delete=True,
+                    first_deleted_at=func.now(),
+                    claimable_at=None,
                     attempts_without_progress=0,
-                    claimed_until=None,
+                    claim_generation=TombstoneRow.claim_generation + 1,
                 )
             )
 
@@ -2148,7 +2188,14 @@ class SQLAlchemySegmentStore(SegmentStore):
                     TombstoneRow.uuid == claim.tombstone.uuid,
                     TombstoneRow.claim_generation == claim.generation,
                 )
-                .values(claimed_until=None, last_failed_at=func.now())
+                .values(
+                    claimable_at=_seconds_from_now(
+                        self._claim_retry_backoff_seconds(
+                            TombstoneRow.attempts_without_progress
+                        ),
+                        is_sqlite=self._is_sqlite,
+                    )
+                )
             )
         if (
             ended.rowcount == 1
@@ -2166,44 +2213,12 @@ class SQLAlchemySegmentStore(SegmentStore):
                 TombstoneRow.__tablename__,
             )
 
-    def _is_claimable(
-        self, table: type[PendingWriteRow | TombstoneRow]
-    ) -> ColumnElement[bool]:
-        """Whether a row of `table` may be claimed, aside from being due."""
-        backoff_seconds = self._claim_retry_backoff_seconds(table)
-        return and_(
-            table.attempts_without_progress < _MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS,
-            or_(
-                # No claim since the row last made progress.
-                table.attempts_without_progress == 0,
-                # No claim is open: the backoff runs from the last failure.
-                and_(
-                    table.claimed_until.is_(None),
-                    or_(
-                        table.last_failed_at.is_(None),
-                        self._has_elapsed(backoff_seconds, since=table.last_failed_at),
-                    ),
-                ),
-                # The open claim never ended: the backoff runs from the end
-                # of its lease.
-                and_(
-                    table.claimed_until.is_not(None),
-                    self._has_elapsed(backoff_seconds, since=table.claimed_until),
-                ),
-            ),
-        )
-
     def _claim_retry_backoff_seconds(
-        self, table: type[PendingWriteRow | TombstoneRow]
+        self, attempts: ColumnElement[int] | InstrumentedAttribute[int]
     ) -> ColumnElement[int]:
-        """Each row's claim retry backoff in seconds, computed by the database."""
-        # 1 << (a - 1) is 2 ** (a - 1) on both dialects. a is clamped at 0:
-        # claims evaluate this for rows with no attempts too, and PostgreSQL
-        # leaves a negative shift undefined.
-        attempts = table.attempts_without_progress
-        doublings = literal(1, Integer).op("<<")(
-            case((attempts > 0, attempts - 1), else_=0)
-        )
+        """The claim retry backoff in seconds after `attempts` claims, computed by the database."""
+        # 1 << (a - 1) is 2 ** (a - 1) on both dialects.
+        doublings = literal(1, Integer).op("<<")(attempts - 1)
         smaller = func.min if self._is_sqlite else func.least
         return smaller(
             self._base_claim_retry_backoff_seconds * doublings,
@@ -2229,16 +2244,6 @@ class SQLAlchemySegmentStore(SegmentStore):
         else:
             cutoff = func.now() - literal(timedelta(seconds=1), Interval) * seconds
         return since <= cutoff
-
-    def _seconds_from_now(self, seconds: int) -> ColumnElement[datetime]:
-        """The time `seconds` from now, on the database clock."""
-        if self._is_sqlite:
-            return func.datetime(
-                "now",
-                func.printf("+%d seconds", seconds),
-                type_=DateTime(timezone=True),
-            )
-        return func.now() + literal(timedelta(seconds=seconds), Interval)
 
     # Helpers
 
@@ -2318,6 +2323,19 @@ class SQLAlchemySegmentStore(SegmentStore):
                 existing_config,
                 config,
             )
+
+
+def _seconds_from_now(
+    seconds: int | ColumnElement[int], *, is_sqlite: bool
+) -> ColumnElement[datetime]:
+    """The time `seconds` from now, on the database clock."""
+    if is_sqlite:
+        return func.datetime(
+            "now",
+            func.printf("+%d seconds", seconds),
+            type_=DateTime(timezone=True),
+        )
+    return func.now() + literal(timedelta(seconds=1), Interval) * seconds
 
 
 def _derivative_from_pending_write_derivative_row(

@@ -34,30 +34,36 @@ holds a value the caller chose.
 1. Segment, derive and embed.
 2. Start the write budget, before anything is stored.
 3. In one transaction, store the events, their segments, the derivative
-   links, and the pending writes. A batch naming an event already
-   stored is rejected whole.
+   links, and the pending writes, which the ingest holds for its budget
+   plus a margin. A batch naming an event already stored is rejected
+   whole.
 4. Upsert the vectors, cancelled when the budget runs out.
 5. Delete the pending writes.
 
 A failure or a stop after step 3 leaves the events stored with their
 derivatives pending, and the background work writes them.
 
-**Forget.** One transaction locks the events, reads their links, deletes
-their pending writes, writes a tombstone naming the linked
-derivatives, and deletes the events, which cascades to segments and links.
-The vectors are then deleted once, and the tombstone awaits its second
-delete. A failure here leaves the first delete to the background work.
+**Forget.** One transaction locks the events, reads their links, writes a
+tombstone naming the linked derivatives, and deletes the events, which
+cascades to segments, links, and pending writes. The vectors are then
+deleted once and the first delete recorded, and the tombstone awaits its
+second delete, due R after that record. A failure here leaves the first
+delete to the background work.
 
 **Background work.** Any process claims, from the segment store:
 
-- pending writes older than the budget plus a margin: it embeds
-  them, starts a budget of its own, and renews its claim, then writes
-  them and deletes the record;
-- tombstones due for a delete, at once for the first and after R for the
-  second, and deletes their derivatives from the vector store.
+- pending writes whose ingest's hold has passed: it embeds them, starts a
+  budget of its own, and renews its claim, then writes them and deletes
+  the record;
+- tombstones due for a delete, at once for the first and R after the
+  first was recorded for the second, and deletes their derivatives from
+  the vector store.
 
-A claim holds its record for a lease, fails into a backoff that doubles,
-and is no longer taken after repeated failures, which is reported.
+Each record stores when a claim may next take it. A claim holds its record
+for a lease, and one that never ends is taken again once the lease and
+then the backoff have passed. A failed claim backs off, doubling, and a
+record is no longer taken after repeated failures, which is reported. The second delete's retention
+is a condition of its own, so no schedule brings it forward.
 
 The records name no vector store or embedder: a deployment has one
 EventMemory, built from its configuration and started with the server,
@@ -84,10 +90,11 @@ never those of an event added again under the same UUID.
 Every vector write is sent within the budget L of a moment its derivative
 was linked and its event not forgotten: an ingest starts its budget before
 its transaction, and a recovery starts its budget before renewing its
-claim, which a forget of the same derivatives must follow. The forget's tombstone is
-stamped after that moment, so the write lands before the tombstone's time
-plus L plus the in-flight time d, and the second delete, after R, removes
-it whenever
+claim, which a forget of the same derivatives must follow. The forget
+commits after that moment, and its first delete is recorded after the
+forget commits, so the write lands before that record plus L plus the
+in-flight time d, and the second delete, R after the record, removes it
+whenever
 
     R >= L + d
 
@@ -97,22 +104,14 @@ Cancelling the upsert at the deadline bounds when the last request is
 sent, whatever the vector store does inside one call. A request already
 sent may still land; d covers it.
 
-On PostgreSQL, transactions run at READ COMMITTED, where each statement
-reads its own snapshot, so the forget follows three rules:
-
-1. **It acts only on the events its lock returned.** A statement that
-   rereads the event list could delete an event committed after the links
-   were read, cascading to links nobody tombstoned.
-2. **The tombstone's time is that of its insert statement**, after the
-   locks. The transaction's start time could precede an ingest the locks
-   waited for.
-3. **It deletes the pending writes before stamping the tombstone.** A
-   claim's renewal holds its record, so the delete waits for a renewal in
-   progress: a renewal either committed before the stamp or finds its
-   record gone.
-
-SQLite serializes write transactions, so the same transactions are
-atomic there.
+A claim's renewal holds its record's row, so the forget's cascade waits for
+a renewal in progress: a renewal either commits before the forget or finds
+its record gone. On PostgreSQL, transactions run at READ COMMITTED, where
+each statement reads its own snapshot, so the forget acts only on the
+events its lock returned: a statement that rereads the event list could
+delete an event committed after the links were read, cascading to links
+nobody tombstoned. SQLite serializes write transactions, so the same
+transactions are atomic there.
 
 A recovery opens the vector store partition under the partition's key
 before renewing its claim, and the renewal checks that the partition it
@@ -121,11 +120,11 @@ partition first, the vector store partition it opened belongs to the same
 life. Embedding before the budget starts lets a recovery take as long to
 embed as an ingest does.
 
-The protocol was model-checked on a small instance (two encodes of one
-event, an evicting encode, two recovery workers, crashes and timeouts at
-every step, forgets at any moment) for deletion, findability of every
-stored vector, completion, durability and erasure. Removing any one piece
-above breaks one of them.
+The protocol was model-checked on small instances (an event encoded once
+or twice, one or two recovery workers, a crash and a timeout at any step,
+a forget at any moment) for deletion, findability of every stored vector,
+completion, durability and erasure. Removing any one piece above breaks
+one of them.
 
 ## Alternatives
 
@@ -139,6 +138,11 @@ above breaks one of them.
   between leaves vectors whose links the delete removed.
 - **One delete.** A write admitted before it can land after it, as
   measured.
+- **Time the second delete from the forget.** The forget's time must then
+  follow every renewal it waited for, which on PostgreSQL takes deleting
+  the pending writes before taking the time, and taking it at the insert
+  statement; timing the second delete from the first delete's record
+  needs neither.
 - **Store-side fences** (expiring credentials, insert-only markers). They
   are checked only at admission, so an admitted write still lands late.
 - **One owner per tenant.** A paused former owner is the same problem as a

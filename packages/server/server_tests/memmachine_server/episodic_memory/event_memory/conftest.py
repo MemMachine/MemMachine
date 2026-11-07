@@ -81,6 +81,8 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         self,
         segments_by_event: Mapping[UUID, Iterable[Segment]],
         pending_writes: Iterable[PendingWrite],
+        *,
+        lease_seconds: int,
     ) -> None:
         segments_by_event = {
             event_uuid: list(segments)
