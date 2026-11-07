@@ -2034,6 +2034,26 @@ class SQLAlchemySegmentStore(SegmentStore):
             )
 
     @override
+    async def cancel_pending_write_claim(self, claim: PendingWriteClaim) -> None:
+        async with (
+            self._tracker("cancel_pending_write_claim"),
+            write_session(self._create_session) as session,
+        ):
+            await session.execute(
+                update(PendingWriteRow)
+                .where(
+                    PendingWriteRow.uuid == claim.pending_write.uuid,
+                    PendingWriteRow.claim_generation == claim.generation,
+                )
+                .values(
+                    claimable_at=func.now(),
+                    attempts_without_progress=(
+                        PendingWriteRow.attempts_without_progress - 1
+                    ),
+                )
+            )
+
+    @override
     async def claim_tombstone(self) -> TombstoneClaim | None:
         # The retention is its own condition, so no schedule written to
         # claimable_at brings a second delete forward.
@@ -2211,6 +2231,26 @@ class SQLAlchemySegmentStore(SegmentStore):
                 claim.attempt,
                 error,
                 TombstoneRow.__tablename__,
+            )
+
+    @override
+    async def cancel_tombstone_claim(self, claim: TombstoneClaim) -> None:
+        async with (
+            self._tracker("cancel_tombstone_claim"),
+            write_session(self._create_session) as session,
+        ):
+            await session.execute(
+                update(TombstoneRow)
+                .where(
+                    TombstoneRow.uuid == claim.tombstone.uuid,
+                    TombstoneRow.claim_generation == claim.generation,
+                )
+                .values(
+                    claimable_at=func.now(),
+                    attempts_without_progress=(
+                        TombstoneRow.attempts_without_progress - 1
+                    ),
+                )
             )
 
     def _claim_retry_backoff_seconds(
