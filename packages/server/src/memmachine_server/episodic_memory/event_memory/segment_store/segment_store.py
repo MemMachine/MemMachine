@@ -16,7 +16,7 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     Segment,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
-    PendingDerivatives,
+    PendingWrite,
     SegmentStorePartitionConfig,
     Tombstone,
 )
@@ -46,13 +46,13 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def add_events(
+    async def add_event_segments(
         self,
         segments_by_event: Mapping[UUID, Iterable[Segment]],
-        pending_derivatives: Iterable[PendingDerivatives],
+        pending_writes: Iterable[PendingWrite],
     ) -> None:
         """
-        Add events with their segments, derivative links, and pending derivatives.
+        Add events with their segments, derivative links, and pending writes.
 
         All of it commits together or not at all. A batch naming an event
         the partition already holds is rejected whole, before anything is
@@ -61,35 +61,35 @@ class SegmentStorePartition(ABC):
         Args:
             segments_by_event (Mapping[UUID, Iterable[Segment]]):
                 A mapping from each event's UUID to its segments.
-            pending_derivatives (Iterable[PendingDerivatives]):
+            pending_writes (Iterable[PendingWrite]):
                 Each event's derivatives, each linked to the segment it
                 names, and held as pending until
-                `delete_pending_derivatives` removes them.
+                `delete_pending_writes` removes them.
 
         Raises:
-            SegmentStoreEventAlreadyStoredError:
+            SegmentStoreEventAlreadyExistsError:
                 If the partition already holds any of the events; it names
                 them all.
             ValueError:
                 If a segment names an event other than the one it is listed
-                under, or pending derivatives name an event or a segment
+                under, or a pending write names an event or a segment
                 that is not in the batch.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_pending_derivatives(
+    async def delete_pending_writes(
         self,
-        pending_derivatives_uuids: Iterable[UUID],
+        pending_write_uuids: Iterable[UUID],
     ) -> None:
         """
-        Delete pending derivatives given by their UUIDs. Idempotent.
+        Delete pending writes given by their UUIDs. Idempotent.
 
-        The derivatives stay linked; only their pending record goes.
+        The derivatives stay linked; only their pending write goes.
 
         Args:
-            pending_derivatives_uuids (Iterable[UUID]):
-                The UUIDs of the pending derivatives records to delete.
+            pending_write_uuids (Iterable[UUID]):
+                The UUIDs of the pending writes to delete.
         """
         raise NotImplementedError
 
@@ -153,12 +153,12 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def forget_events(
+    async def delete_event_segments(
         self,
         event_uuids: Iterable[UUID],
     ) -> Tombstone | None:
         """
-        Forget events, with their segments, derivative links, and pending derivatives.
+        Delete events, with their segments, derivative links, and pending writes.
 
         All of it commits together or not at all, with a tombstone naming
         every derivative the forget unlinked. The tombstone's time is taken
@@ -195,15 +195,15 @@ class SegmentStorePartition(ABC):
 
 
 @dataclass(frozen=True)
-class PendingDerivativesClaim:
+class PendingWriteClaim:
     """
-    A claim on pending derivatives whose writer did not delete them.
+    A claim on a pending write whose writer did not delete it.
 
     Attributes:
         partition_key (str):
             The key of the partition holding the derivatives.
-        pending_derivatives (PendingDerivatives):
-            The pending derivatives.
+        pending_write (PendingWrite):
+            The pending write.
         generation (int):
             The claim's generation; a later claim on the same record has a
             higher one.
@@ -213,7 +213,7 @@ class PendingDerivativesClaim:
     """
 
     partition_key: str
-    pending_derivatives: PendingDerivatives
+    pending_write: PendingWrite
     generation: int
     attempt: int
 
@@ -391,16 +391,16 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def claim_pending_derivatives(
+    async def claim_pending_write(
         self,
         *,
         min_age_seconds: int,
         lease_seconds: int,
-    ) -> PendingDerivativesClaim | None:
+    ) -> PendingWriteClaim | None:
         """
-        Claim the oldest pending derivatives that have waited long enough.
+        Claim the oldest pending write that has waited long enough.
 
-        Pending derivatives are due once `min_age_seconds` have passed
+        A pending write is due once `min_age_seconds` have passed
         since they were added, on the store's clock. A due record is
         claimable unless a claim on it holds its lease, or its last claim
         failed and its backoff has not passed, or its claims failed the
@@ -410,22 +410,22 @@ class SegmentStore(ABC):
 
         Args:
             min_age_seconds (int):
-                Seconds pending derivatives must have waited.
+                Seconds a pending write must have waited.
             lease_seconds (int):
                 Seconds the claim holds its record.
 
         Returns:
-            PendingDerivativesClaim | None:
+            PendingWriteClaim | None:
                 The claim, or None if no record is claimable.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def renew_pending_derivatives_claim(
-        self, claim: PendingDerivativesClaim, *, lease_seconds: int
+    async def renew_pending_write_claim(
+        self, claim: PendingWriteClaim, *, lease_seconds: int
     ) -> bool:
         """
-        Hold claimed pending derivatives for `lease_seconds` more, if the claim still holds.
+        Hold a claimed pending write for `lease_seconds` more, if the claim still holds.
 
         The claim holds while it is the latest on its record, the record
         exists, and the record's partition exists. A forget of the record's
@@ -433,7 +433,7 @@ class SegmentStore(ABC):
         makes the renewal return False.
 
         Args:
-            claim (PendingDerivativesClaim):
+            claim (PendingWriteClaim):
                 The claim.
             lease_seconds (int):
                 Seconds from now the claim holds its record.
@@ -445,24 +445,22 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def finish_pending_derivatives_claim(
-        self, claim: PendingDerivativesClaim
-    ) -> None:
+    async def finish_pending_write_claim(self, claim: PendingWriteClaim) -> None:
         """
-        Delete claimed pending derivatives, if the claim is the latest on them.
+        Delete a claimed pending write, if the claim is the latest on it.
 
         A claim that outlasted its lease leaves the record to the later
         claim.
 
         Args:
-            claim (PendingDerivativesClaim):
+            claim (PendingWriteClaim):
                 The claim.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def fail_pending_derivatives_claim(
-        self, claim: PendingDerivativesClaim, error: Exception
+    async def fail_pending_write_claim(
+        self, claim: PendingWriteClaim, error: Exception
     ) -> None:
         """
         End a claim whose work raised, if the claim is the latest on its record.
@@ -472,7 +470,7 @@ class SegmentStore(ABC):
         claimed, and the store reports it.
 
         Args:
-            claim (PendingDerivativesClaim):
+            claim (PendingWriteClaim):
                 The claim.
             error (Exception):
                 What the work raised.

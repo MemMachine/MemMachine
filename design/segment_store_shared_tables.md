@@ -50,7 +50,7 @@ One physical schema on every dialect; the ORM models are the tables.
   than a composite string key, and random UUIDs are unique across nodes
   without coordination, so a tenant's rows move between databases
   verbatim.
-- `segment_store_pd` and `segment_store_pd_dv`, pending derivatives, and
+- `segment_store_pw` and `segment_store_pw_dv`, pending writes, and
   `segment_store_tb` and `segment_store_tb_dv`, tombstones: the work a
   derived index of the derivatives leaves behind
   (`event_memory_ingest_and_deletion.md`).
@@ -59,7 +59,7 @@ One physical schema on every dialect; the ORM models are the tables.
   only what the purge reads.
 
 The link table keeps its foreign key to the segment table, and the segment
-and pending derivatives tables theirs to the event table (`ON DELETE
+and pending write tables theirs to the event table (`ON DELETE
 CASCADE`), all keyed by incarnation. The segment table has no
 foreign key to the registry: registry rows and data rows are decoupled so
 that registry deletion is O(1), and the rows left behind are exactly what
@@ -110,7 +110,7 @@ on random-UUID collision resistance.
   - One transaction per call, committing its progress or nothing, so
     committed progress survives interruption.
   - Rows are deleted in batches of up to
-    `SQLAlchemySegmentStoreParams.purge_max_segments` per call, shared by
+    `SQLAlchemySegmentStoreParams.purge_max_rows` per call, shared by
     the segment, event and tombstone tables in that order. A batch
     continues from its table's cursor: it reads the next keys after the
     cursor in primary-key order, deletes that key range, and records its
@@ -177,9 +177,9 @@ on random-UUID collision resistance.
     session drop; a deployment must run the sweeper somewhere, and the
     ABC says so.
   - The sweeper's pacing, not deletion speed, bounds how fast a backlog
-    drains: a call deletes at most `purge_max_segments` rows and
+    drains: a call deletes at most `purge_max_rows` rows and
     the resource manager pauses between busy calls, so one process
-    drains fewer than `purge_max_segments` rows per pause (under 10,000
+    drains fewer than `purge_max_rows` rows per pause (under 10,000
     rows per second at the defaults, so upwards of 17 minutes for a
     ten-million-row tenant). Deletion itself measured about 147k rows/s
     on the benchmark box.
@@ -258,7 +258,7 @@ requirement excludes.
   tuning is needed.
 - One architecture on every dialect. The remaining dialect splits are the
   LATERAL-vs-loop read strategy, the PostgreSQL-only ordered row locks in
-  `forget_events` (SQLAlchemy drops locking clauses on SQLite), and
+  `delete_event_segments` (SQLAlchemy drops locking clauses on SQLite), and
   SQLite's engine setup: the foreign-key pragma, and transactions begun
   explicitly, a write transaction with `BEGIN IMMEDIATE`. Both are
   per-connection state that the engine's owner registers at engine

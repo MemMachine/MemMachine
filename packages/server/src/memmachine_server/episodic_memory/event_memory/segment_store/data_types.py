@@ -98,7 +98,7 @@ class SegmentStorePartitionAlreadyExistsError(Exception):
         super().__init__(f"Partition {partition_key!r} already exists.")
 
 
-class PendingDerivatives(BaseModel):
+class PendingWrite(BaseModel):
     """
     One event's derivatives, held with the event until their derived index has them.
 
@@ -135,7 +135,7 @@ class Tombstone(BaseModel):
     )
 
 
-class SegmentStoreEventAlreadyStoredError(Exception):
+class SegmentStoreEventAlreadyExistsError(Exception):
     """A batch named an event the partition already holds; nothing was stored."""
 
     def __init__(self, event_uuids: Iterable[UUID]) -> None:
