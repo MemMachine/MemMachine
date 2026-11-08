@@ -35,6 +35,17 @@ go straight to a pull request.
    uv sync --all-extras
    ```
 
+   If uv reports that a package has no wheel for your platform, leave out the
+   extra that needs it, such as `gpu` for torch:
+
+   ```bash
+   uv sync --all-extras --no-extra gpu
+   ```
+
+   The unit tests still pass, but `ty check --project packages/server` then
+   reports that extra's imports as unresolved. CI type checks with every
+   extra.
+
 ## Checks
 
 CI runs these checks on every pull request that is not a draft. Run them from
