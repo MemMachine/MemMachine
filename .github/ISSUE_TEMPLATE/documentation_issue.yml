@@ -9,7 +9,7 @@ body:
     attributes:
       label: Documentation Page URL
       description: Please provide the URL of the specific documentation page where you found the issue.
-      placeholder: "e.g., https://docs.yourproject.com/getting-started.md"
+      placeholder: "e.g., https://docs.memmachine.ai/getting_started/quickstart"
     validations:
       required: true
 

@@ -15,7 +15,7 @@ vulnerability may put the community at risk.
 
 To report a vulnerability, please visit the
 [Security tab](https://github.com/MemMachine/MemMachine/security) of our
-repository and click on "Report a privately reported vulnerability". We will
+repository and click on "Report a vulnerability". We will
 acknowledge your report within 2 business days and work with you to understand
 the issue and coordinate a resolution.
 

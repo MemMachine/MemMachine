@@ -28,7 +28,7 @@ Examples of unacceptable behavior include:
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by contacting the project team via a private channel on GitHub. To do so, please file a report via the [Security tab](https://github.com/MemMachine/MemMachine/security) on our repository. All complaints will be reviewed and investigated promptly and fairly.
 
-We use GitHub's private vulnerability reporting feature for security concerns. If you believe you have found a security vulnerability in MemMachine, **please DO NOT create a public GitHub issue**. Instead, please report it via the [Security tab](https://github.com/MemMachine/MemMachine/security) on our repository and click on "Report a privately reported vulnerability."
+We use GitHub's private vulnerability reporting feature for security concerns. If you believe you have found a security vulnerability in MemMachine, **please DO NOT create a public GitHub issue**. Instead, please report it via the [Security tab](https://github.com/MemMachine/MemMachine/security) on our repository and click on "Report a vulnerability."
 
 All project leaders are obligated to respect the privacy and security of the reporter of any incident.
 

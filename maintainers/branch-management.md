@@ -9,7 +9,7 @@ For this project, we use a **Trunk-Based Development** branching strategy. This 
 
 Here's how it works:
 
-1. **The `main` branch is the "trunk".** All new code is committed to the `main` branch. This branch should always be stable and in a deployable state.
+1. **The `main` branch is the "trunk".** Changes merge into `main`, directly or, for a large effort, through a shared feature branch that merges into `main` later. `main` should always be stable and in a deployable state.
 
 2. **Use short-lived feature branches.** Instead of working directly on `main`, developers create short-lived branches for new features or bug fixes. These branches should be merged into `main` as soon as the work is complete, ideally within a few hours or a day. This ensures the changes are small, easy to review, and less likely to cause complex merge conflicts.
 
@@ -25,10 +25,10 @@ To prevent your local feature branch from "diverging" too far from the `main` br
     git checkout main
     ```
 
-2. **Pull the latest changes.** This will fetch all the new commits from the remote `main` branch.
+2. **Pull the latest changes.** This fetches the new commits from the upstream repository's `main` branch.
 
     ```bash
-    git pull
+    git pull upstream main
     ```
 
 3. **Switch back to your feature branch.**
