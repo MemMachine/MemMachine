@@ -24,7 +24,7 @@ and retried.
 
 `unregister` removes the partition's row and queues the incarnation's
 *tombstone* in one transaction (see [partition
-registry](vector_store_partition_registry.md)). The partition is unreachable
+registry](partition_registry.md)). The partition is unreachable
 when it commits. Its records stay in the backend until purge rounds reclaim
 them.
 
