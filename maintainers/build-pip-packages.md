@@ -17,7 +17,8 @@ Each package has its own directory under `packages/`:
 ## Building
 
 From the repository root, build each package with `uv build`. The distribution
-files go to `dist/` in the repository root.
+files go to `dist/` in the repository root, except the meta-package's, which go
+to `packages/meta/dist/` because `packages/meta` is not a uv workspace member.
 
 ```bash
 uv build --project packages/common
@@ -38,4 +39,4 @@ pip install dist/memmachine_common-*.whl dist/memmachine_client-*.whl
 Each package's version comes from the repository's git tags, through
 setuptools-scm. Publishing a GitHub release runs
 [pypi-publish.yml](../.github/workflows/pypi-publish.yml), which builds the
-packages and uploads them to PyPI.
+packages and uploads the ones in the root `dist/` to PyPI.
