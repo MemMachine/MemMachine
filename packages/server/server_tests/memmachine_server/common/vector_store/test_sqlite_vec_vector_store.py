@@ -22,8 +22,8 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.partition_registry import (
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
@@ -246,7 +246,7 @@ class TestPartitionLifecycle:
             raise sqlite_vec_vector_store._RegistryInsertRejectedError(str(incarnation))
 
         monkeypatch.setattr(store, "_insert_partition", always_rejected)
-        with pytest.raises(AttemptsExhaustedError):
+        with pytest.raises(PartitionCreateAttemptsExhaustedError):
             await store.create_partition("capped")
         assert len(attempts) == sqlite_vec_vector_store._MAX_MINT_ATTEMPTS
 

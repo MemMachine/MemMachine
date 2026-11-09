@@ -17,8 +17,8 @@ from uuid import UUID, uuid4
 import pytest
 
 from memmachine_server.common.partition_registry import (
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
     PartitionPendingError,
 )
@@ -291,7 +291,7 @@ class PartitionLifecycleContract:
             registry_backed_vector_store, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0
         )
 
-        with pytest.raises(AttemptsExhaustedError):
+        with pytest.raises(PartitionCreateAttemptsExhaustedError):
             await asyncio.wait_for(store.open_or_create_partition(LIFECYCLE_NAME), 30)
 
     @pytest.mark.asyncio
@@ -405,7 +405,7 @@ class PartitionLifecycleContract:
                     else:
                         await store.delete_partition(key)
                 except (
-                    AttemptsExhaustedError,
+                    PartitionCreateAttemptsExhaustedError,
                     PartitionAlreadyExistsError,
                     PartitionIncarnationEndedError,
                     PartitionPendingError,

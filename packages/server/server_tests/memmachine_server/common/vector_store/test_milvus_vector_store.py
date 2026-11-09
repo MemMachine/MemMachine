@@ -16,8 +16,8 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from memmachine_server.common.partition_registry import (
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
     PartitionPendingError,
 )
@@ -2023,7 +2023,7 @@ _CHURN_DECLARED: dict[str, PropertyType] = {
 _CHURN_TAGS = ("red", "green", "blue")
 # The outcomes the store documents for an operation that loses a race.
 _DOMAIN_ERRORS = (
-    AttemptsExhaustedError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionAlreadyExistsError,
     PartitionIncarnationEndedError,
     PartitionIncarnationEndedError,

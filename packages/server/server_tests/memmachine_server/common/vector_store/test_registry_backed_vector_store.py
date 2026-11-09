@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.partition_registry import (
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
     PartitionPendingError,
     Registration,
@@ -233,7 +233,9 @@ async def test_open_or_create_gives_up_from_the_race_it_last_lost(store, monkeyp
 
     monkeypatch.setattr(store._partition_registry, "reserve", taken)
 
-    with pytest.raises(AttemptsExhaustedError, match="no progress") as gave_up:
+    with pytest.raises(
+        PartitionCreateAttemptsExhaustedError, match="no progress"
+    ) as gave_up:
         await store.open_or_create_partition(NAME)
     assert gave_up.value.__cause__ is lost
 

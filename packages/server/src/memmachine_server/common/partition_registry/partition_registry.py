@@ -146,7 +146,7 @@ class PartitionRegistry(ABC):
         Raises:
             PartitionAlreadyExistsError:
                 The partition name is taken, by a live or a pending partition.
-            AttemptsExhaustedError:
+            PartitionCreateAttemptsExhaustedError:
                 The registry gave up after repeated attempts to reserve
                 the free partition name failed.
         """
