@@ -607,6 +607,7 @@ class DatabaseManager:
 
             # Import at use site (not at module level) to make qdrant-client
             # an optional dependency — only required if Qdrant is actually used.
+            import httpx
             from qdrant_client import AsyncQdrantClient
 
             client_kwargs: dict[str, Any] = {
@@ -616,6 +617,19 @@ class DatabaseManager:
                 "prefer_grpc": conf.prefer_grpc,
                 "https": conf.https,
             }
+            if conf.host not in ("localhost", "127.0.0.1"):
+                # Qdrant closes idle keep-alive connections after ~5 s, the
+                # same as httpx's default expiry, so a pooled connection can
+                # already be dead when reused (httpx.ReadError -> HTTP 500).
+                # Expire pooled connections earlier, keeping qdrant-client's
+                # default pool caps (a bare Limits(keepalive_expiry=...) would
+                # make them unlimited). qdrant-client already disables
+                # keep-alive for localhost.
+                client_kwargs["limits"] = httpx.Limits(
+                    max_connections=100,
+                    max_keepalive_connections=20,
+                    keepalive_expiry=4.0,
+                )
             if conf.api_key.get_secret_value():
                 client_kwargs["api_key"] = conf.api_key.get_secret_value()
 

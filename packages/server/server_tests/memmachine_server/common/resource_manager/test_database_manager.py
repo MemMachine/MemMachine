@@ -1012,3 +1012,43 @@ async def test_close_disposes_vector_store_engines_and_shuts_down_stores():
     assert builder.vector_store_sql_engines == {}
     mock_store_cls.return_value.shutdown.assert_awaited_once()
     mock_engine.dispose.assert_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("host", "expect_limits"),
+    [("qdrant.example.com", True), ("localhost", False)],
+)
+async def test_qdrant_client_keepalive_expiry_below_server_timeout(host, expect_limits):
+    """Remote hosts get a keep-alive expiry under Qdrant's ~5 s idle close."""
+    conf = _qdrant_only_conf()
+    conf.qdrant_confs["qdrant1"] = QdrantConf(host=host, port=6333)
+
+    mock_client = AsyncMock()
+    mock_client.get_collections = AsyncMock(return_value=[])
+    mock_client.close = AsyncMock()
+
+    with (
+        patch(
+            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStoreParams",
+        ),
+        patch(
+            "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
+        ) as mock_store_cls,
+        patch(
+            "qdrant_client.AsyncQdrantClient",
+            return_value=mock_client,
+        ) as mock_cls,
+    ):
+        mock_store_cls.return_value.startup = AsyncMock()
+        builder = DatabaseManager(conf)
+        await builder.async_get_qdrant_client("qdrant1")
+
+    call_kwargs = mock_cls.call_args.kwargs
+    if expect_limits:
+        limits = call_kwargs["limits"]
+        assert limits.keepalive_expiry < 5
+        assert limits.max_connections == 100
+        assert limits.max_keepalive_connections == 20
+    else:
+        assert "limits" not in call_kwargs
