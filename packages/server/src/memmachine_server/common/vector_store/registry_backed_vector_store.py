@@ -255,9 +255,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
     raises PartitionPendingError, `open_or_create_partition` waits
     a bounded time for it, and creating its name raises
     PartitionAlreadyExistsError. A partition a crash left pending
-    stays pending until `delete_partition` deletes it, or until the next
-    creation of its name replaces it once the registry's pending partition
-    timeout has passed.
+    stays pending until `delete_partition` deletes it.
 
     For subclasses: `_vector_store_name` and `_store_schema` are the
     store's parameters, `_partition_registry` is the registry, and

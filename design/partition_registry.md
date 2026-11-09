@@ -260,15 +260,8 @@ not waiting in the purge queue. After the insert, a concurrent deletion that
 moved a colliding row to the queue has already committed, because the insert
 waited on it. After the check no queue row for this incarnation can appear
 before commit, because the only row carrying it is this uncommitted one. A
-primary-key violation with a row under the name raises
-`PartitionAlreadyExistsError` when the row is live, or pending for less than
-`pending_partition_timeout_seconds` (a registry parameter; 300 by default)
-on the database clock. A row pending longer is a creation that stopped: one
-transaction unregisters it, conditional on its incarnation and on its still
-being pending, queues its tombstone, and inserts the new row with the same
-queue check, so a confirmation or another replacement that commits first
-leaves the name taken. The stopped creator's `confirm` then matches nothing.
-A rejected incarnation (unique
+primary-key violation with a row under the name, live or pending, raises
+`PartitionAlreadyExistsError`. A rejected incarnation (unique
 violation, or queued) is re-minted, up to 10 attempts, then
 `AttemptsExhaustedError`. The loop and its bound are the segment
 store's.
@@ -334,8 +327,7 @@ stores matters, since nothing opens the life before it is confirmed.
   was observed stands, since the cancel acts only on a pending partition. The
   reservation's cancellation is shielded, so a cancellation of the creation
   does not cut it short. Otherwise, and after a crash, the partition stays
-  pending until it is deleted like any other, or until the next creation of
-  its name replaces it once the pending partition timeout has passed.
+  pending until it is deleted like any other.
 - A life is confirmed only once every store has prepared its storage, so
   storage that cannot be prepared never goes live. Whatever a failed or
   interrupted preparation leaves is recoverable: the life's own storage is
@@ -353,14 +345,10 @@ stores matters, since nothing opens the life before it is confirmed.
 Only creation creates. Opening a name reads the registry: a live life is
 opened, and a pending one is waited for, a bounded number of times, and
 then reported as pending. A creation that stopped part way, with its
-process, leaves its life pending; the next creation of the name replaces
-it, once it is older than any creation takes. `reserve` does that in one
-transaction, conditional on the old life still being pending under its
-incarnation (see [Operations](#operations)). The old creator's `confirm`,
-conditional on its own incarnation, then fails, so a slow creator never
-confirms a life that was replaced, and nothing that went live is ever
-replaced. The age decides only when to stop waiting; which life holds the
-name is decided by the incarnation.
+process, leaves its life pending until the name is deleted. Whether and when
+to give up on a creation is its caller's decision: the caller deletes the
+name and creates it again, and the stopped creator's `confirm`, conditional
+on its own incarnation, then fails.
 
 **`open_or_create_partition`** is read-then-create, retried a second apart: a
 live row is opened; a pending row is another creator's, so the loop waits for
@@ -542,9 +530,9 @@ the backend is remote:
   caller's, which keeps it composable; a caller that needs to delete one
   particular life mints a fresh name for each life.
 - **Only creation creates.** Opening waits for a pending life and does no
-  work on it; a creation that stopped part way is replaced by the next
-  creation of the name, in one conditional transaction, after an age no
-  creation reaches.
+  work on it. A creation that stopped part way stays pending until its
+  caller deletes the name: the registry offers the deletion and holds no
+  policy on when to give up.
 - **Background work asks whether an incarnation is live.** Callers address
   the registry by name, but a recovery starts from a row that holds only
   its incarnation, and liveness is all it needs: `is_live` answers that one
