@@ -2,11 +2,22 @@
 
 import pytest
 
+from memmachine_server.common.configuration.episodic_config import (
+    SentenceTextDeriverConf,
+    TextDeriverConf,
+    WholeTextDeriverConf,
+)
+from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
+    SentenceTextDeriver,
+    TextDeriver,
+    WholeTextDeriver,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     PARTITION_KEY_MAX_BYTES,
     validate_partition_key,
 )
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    _build_deriver,
     _resolve_user_properties_schema,
     partition_key_for_session,
 )
@@ -96,3 +107,15 @@ def test_resolve_user_properties_schema_rejects_underscore_prefixed_keys():
 def test_resolve_user_properties_schema_rejects_unknown_type_name():
     with pytest.raises(ValueError, match="unknown type name"):
         _resolve_user_properties_schema({"customer_tier": "date"})
+
+
+@pytest.mark.parametrize(
+    ("conf", "deriver_type"),
+    [
+        (WholeTextDeriverConf(), WholeTextDeriver),
+        (TextDeriverConf(), TextDeriver),
+        (SentenceTextDeriverConf(), SentenceTextDeriver),
+    ],
+)
+def test_build_deriver_builds_the_configured_deriver(conf, deriver_type):
+    assert isinstance(_build_deriver(conf), deriver_type)

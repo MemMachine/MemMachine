@@ -36,8 +36,8 @@ episodic_memory:
     #   source_role: str
     # segmenter:                      # optional — defaults to passthrough
     #   type: passthrough             # or: text (with max_chunk_length)
-    # deriver:                        # optional — defaults to whole_text
-    #   type: whole_text              # or: sentence_text
+    # deriver:                        # optional — defaults to text
+    #   type: text                    # or: whole_text, sentence_text
   short_term_memory:
     llm_model: openai_model
     message_capacity: 500
