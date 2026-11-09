@@ -1,7 +1,7 @@
 # Milvus vector store
 
 How the Milvus store meets the shared contracts: [partition
-registry](vector_store_partition_registry.md),
+registry](partition_registry.md),
 [purge](vector_store_purge.md), [consistency](vector_store_consistency.md),
 [isolation](vector_store_isolation.md).
 
