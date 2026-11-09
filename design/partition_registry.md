@@ -135,17 +135,22 @@ stores hold no names:
 
 ```python
 async def prepare_partition_incarnation(self, incarnation: UUID) -> None: ...
-def open_partition_incarnation(self, incarnation: UUID) -> StorePartition: ...
+async def open_partition_incarnation(self, incarnation: UUID) -> StorePartition: ...
 async def purge_partition_incarnation(self, incarnation: UUID) -> bool: ...
 ```
 
 `prepare_partition_incarnation` prepares the storage a life needs of its own,
 raises when it cannot, and is safe to repeat. `open_partition_incarnation`
-answers a partition handle bound to the incarnation.
-`purge_partition_incarnation` deletes a bounded batch of the incarnation's
-records, is safe to repeat and to run on two processes at once, and returns
-whether it found any. Stores lose `delete_partition` and their own purge:
-deletion is the registry's.
+answers a partition handle bound to the incarnation, which checks its inputs
+and nothing about the life. `purge_partition_incarnation` deletes a bounded
+batch of what the incarnation holds: its records, then the storage
+`prepare_partition_incarnation` made for it. It is safe to repeat and to run
+on two processes at once, and returns whether it found anything, so a round
+that finds nothing proves the life gone from the store. Stores lose
+`delete_partition` and their own purge: deletion is the registry's, and a
+store deletes a life's storage only in its purge, after the retention, so a
+write still in flight cannot land after the deletion and outlive it, even on
+a backend that creates storage on first write.
 
 ### Reservations and registrations
 
