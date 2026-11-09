@@ -11,20 +11,16 @@ Each package has its own directory under `packages/`:
   share.
 - `packages/client`: `memmachine-client`, the REST client.
 - `packages/server`: `memmachine-server`, the server.
-- `packages/meta`: `memmachine`, a meta-package that depends on the client and
-  the server.
 
 ## Building
 
 From the repository root, build each package with `uv build`. The distribution
-files go to `dist/` in the repository root, except the meta-package's, which go
-to `packages/meta/dist/` because `packages/meta` is not a uv workspace member.
+files go to `dist/` in the repository root.
 
 ```bash
 uv build --project packages/common
 uv build --project packages/client
 uv build --project packages/server
-uv build --project packages/meta
 ```
 
 To install a locally built package, install its wheel together with the
@@ -39,4 +35,4 @@ pip install dist/memmachine_common-*.whl dist/memmachine_client-*.whl
 Each package's version comes from the repository's git tags, through
 setuptools-scm. Publishing a GitHub release runs
 [pypi-publish.yml](../.github/workflows/pypi-publish.yml), which builds the
-packages and uploads the ones in the root `dist/` to PyPI.
+packages and uploads them to PyPI.

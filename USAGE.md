@@ -40,10 +40,6 @@ The easiest way to get started is using Docker with the provided compose script:
 Users can install MemMachine via pip:
 
 ```bash
-# Install the full suite (client + server)
-pip install memmachine
-
-# Or install components separately:
 pip install memmachine-client    # Just the Python client library
 pip install memmachine-server   # Just the server
 
@@ -646,7 +642,7 @@ Users typically configure this file when setting up their server. The Docker com
 
 When helping users integrate MemMachine:
 
-1. **Installation**: Guide users to install via `pip install memmachine` or use Docker with `./memmachine-compose.sh`
+1. **Installation**: Guide users to install via `pip install memmachine-client memmachine-server` or use Docker with `./memmachine-compose.sh`
 2. **Server Setup**: Ensure the MemMachine server is running (default: `http://localhost:8080`)
 3. **Project Creation**: Help users create projects using `client.create_project(org_id, project_id)`
 4. **Memory Operations**: Show how to use `memory.add()` to store and `memory.search()` to retrieve context
