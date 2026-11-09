@@ -26,8 +26,7 @@ from sqlalchemy.pool import NullPool, StaticPool
 from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
     Registration,
     Reservation,
@@ -305,7 +304,7 @@ async def test_a_partition_is_pending_until_its_reservation_is_confirmed(
     live = await registry.resolve("c")
     assert live is not None
     assert live.incarnation == pending.incarnation
-    with pytest.raises(PartitionDeletedError):
+    with pytest.raises(PartitionIncarnationEndedError):
         await pending.confirm()
 
 
@@ -318,12 +317,12 @@ async def test_only_the_reserved_incarnation_is_confirmed(
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     deleted = await registry.reserve("c")
     await registry.unregister("c")
-    with pytest.raises(PartitionDeletedError):
+    with pytest.raises(PartitionIncarnationEndedError):
         await deleted.confirm()
 
     reserved_since = await registry.reserve("c")
 
-    with pytest.raises(PartitionDeletedError):
+    with pytest.raises(PartitionIncarnationEndedError):
         await deleted.confirm()
     with pytest.raises(PartitionPendingError):
         await registry.resolve("c")
@@ -377,11 +376,11 @@ async def test_a_registration_is_current_until_its_partition_is_deleted(
     await live.require_current()
 
     await registry.unregister("c")
-    with pytest.raises(PartitionHandleStaleError):
+    with pytest.raises(PartitionIncarnationEndedError):
         await live.require_current()
 
     await (await registry.reserve("c")).confirm()
-    with pytest.raises(PartitionHandleStaleError):
+    with pytest.raises(PartitionIncarnationEndedError):
         await live.require_current()
 
 
@@ -503,7 +502,7 @@ async def test_registries_of_two_namespaces_share_a_database_and_nothing_else(
     assert still_in_second is not None
     assert still_in_second.incarnation == two.incarnation
     await two.require_current()
-    with pytest.raises(PartitionHandleStaleError):
+    with pytest.raises(PartitionIncarnationEndedError):
         await one.require_current()
     with pytest.raises(PartitionAlreadyExistsError):
         await second.reserve("c")
@@ -1720,8 +1719,8 @@ class _OverlapWatch:
 _REFUSALS = (
     PartitionAlreadyExistsError,
     PartitionPendingError,
-    PartitionDeletedError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
+    PartitionIncarnationEndedError,
 )
 
 
@@ -1852,7 +1851,7 @@ class _ModelCheckedRegistry:
             reservation.incarnation,
             False,
         ):
-            with pytest.raises(PartitionDeletedError):
+            with pytest.raises(PartitionIncarnationEndedError):
                 await reservation.confirm()
             return
         self.registrations.append(await reservation.confirm())
@@ -1899,7 +1898,7 @@ class _ModelCheckedRegistry:
         ):
             await registration.require_current()
             return
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await registration.require_current()
 
     async def purge(self, name: str) -> None:

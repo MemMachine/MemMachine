@@ -23,7 +23,7 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
 )
 from memmachine_server.common.sql import (
     enable_sqlite_explicit_begin,
@@ -308,18 +308,18 @@ class TestPartitionLifecycle:
 
         await store.delete_partition("lifecycle")
 
-        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionIncarnationEndedError, match="lifecycle"):
             await partition.upsert(records=[record])
-        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionIncarnationEndedError, match="lifecycle"):
             await partition.query(query_vectors=[record.vector], limit=5)
-        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionIncarnationEndedError, match="lifecycle"):
             await partition.delete(record_uuids=[record.uuid])
         # So does an operation with nothing to do.
-        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionIncarnationEndedError, match="lifecycle"):
             await partition.upsert(records=[])
-        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionIncarnationEndedError, match="lifecycle"):
             await partition.query(query_vectors=[], limit=5)
-        with pytest.raises(PartitionHandleStaleError, match="lifecycle"):
+        with pytest.raises(PartitionIncarnationEndedError, match="lifecycle"):
             await partition.delete(record_uuids=[])
 
     @pytest.mark.asyncio
@@ -342,11 +342,11 @@ class TestPartitionLifecycle:
         await new.upsert(records=[new_record])
 
         # The old life's handle cannot reach the new life's records.
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await old.upsert(records=[old_record])
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await old.query(query_vectors=[new_record.vector], limit=5)
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await old.delete(record_uuids=[new_record.uuid])
         assert set(await _stored(new)) == {new_record.uuid}
 
@@ -365,7 +365,7 @@ class TestPartitionLifecycle:
         third = await store.open_or_create_partition("lifecycle")
         [empty] = await third.query(query_vectors=[record.vector], limit=5)
         assert empty.matches == []
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await second.query(query_vectors=[record.vector], limit=5)
 
         await store.delete_partition("lifecycle")
@@ -1297,7 +1297,7 @@ class TestConcurrentAsync:
             return results
 
         monkeypatch.setattr(engine, "search", search_overtaken_by_deletion)
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await partition.query(
                 query_vectors=[record.vector],
                 limit=1,

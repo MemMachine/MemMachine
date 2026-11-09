@@ -53,8 +53,7 @@ from .data_types import (
     _PARTITION_NAMESPACE_MAX_BYTES,
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
     validate_partition_namespace,
 )
@@ -668,7 +667,9 @@ class _SQLAlchemyReservation(Reservation):
                 .values(live=True)
             )
         if result.rowcount != 1:
-            raise PartitionDeletedError(self.partition_namespace, self.partition_name)
+            raise PartitionIncarnationEndedError(
+                self.partition_namespace, self.partition_name, self.incarnation
+            )
         return _SQLAlchemyRegistration(
             partition_name=self.partition_name,
             incarnation=self.incarnation,
@@ -707,8 +708,8 @@ class _SQLAlchemyRegistration(Registration):
                 )
             ).scalar_one_or_none()
         if current != self.incarnation:
-            raise PartitionHandleStaleError(
-                self.partition_namespace, self.partition_name
+            raise PartitionIncarnationEndedError(
+                self.partition_namespace, self.partition_name, self.incarnation
             )
 
 

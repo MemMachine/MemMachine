@@ -15,7 +15,7 @@ from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
     Registration,
     sqlalchemy_partition_registry,
@@ -502,7 +502,7 @@ async def test_a_partition_deleted_while_its_storage_is_prepared_is_not_marked_l
         await store.delete_partition(NAME)
 
     store.prepare = deleted_meanwhile
-    with pytest.raises(PartitionDeletedError):
+    with pytest.raises(PartitionIncarnationEndedError):
         await store.create_partition(NAME)
 
     assert await store.open_partition(NAME) is None

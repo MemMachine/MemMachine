@@ -5,6 +5,7 @@ Imports nothing from this package; the rest of it builds on these types.
 """
 
 from datetime import datetime
+from uuid import UUID
 
 # The longest partition namespace and partition name, in bytes, a registry
 # holds.
@@ -71,30 +72,21 @@ class PartitionPendingError(Exception):
         )
 
 
-class PartitionDeletedError(Exception):
-    """Raised when a partition is deleted before its creation completes."""
+class PartitionIncarnationEndedError(Exception):
+    """Raised when an incarnation of a partition is no longer the life registered under its name: the partition was deleted, before or after its creation completed."""
 
-    def __init__(self, partition_namespace: str, partition_name: str) -> None:
-        """Initialize with the namespace and the name of the deleted partition."""
+    def __init__(
+        self, partition_namespace: str, partition_name: str, incarnation: UUID
+    ) -> None:
+        """Initialize with the partition's namespace and name, and the incarnation that ended."""
         self.partition_namespace = partition_namespace
         self.partition_name = partition_name
+        self.incarnation = incarnation
         super().__init__(
-            f"Partition {partition_name!r} in namespace {partition_namespace!r} was "
-            "deleted before its creation completed"
-        )
-
-
-class PartitionHandleStaleError(Exception):
-    """Raised when a handle is used after its partition was deleted."""
-
-    def __init__(self, partition_namespace: str, partition_name: str) -> None:
-        """Record the namespace and the name the stale handle belonged to."""
-        self.partition_namespace = partition_namespace
-        self.partition_name = partition_name
-        super().__init__(
-            f"Stale handle for partition {partition_name!r} in namespace "
-            f"{partition_namespace!r}: the partition was deleted (or re-created) after this "
-            "handle was bound"
+            f"Incarnation {incarnation} of partition {partition_name!r} in "
+            f"namespace {partition_namespace!r} has ended: the partition was "
+            "deleted, or deleted and created again, after the incarnation was "
+            "reserved"
         )
 
 

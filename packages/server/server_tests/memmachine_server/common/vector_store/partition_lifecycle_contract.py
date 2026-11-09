@@ -19,8 +19,7 @@ import pytest
 from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
 )
 from memmachine_server.common.vector_store import (
@@ -118,18 +117,18 @@ class PartitionLifecycleContract:
         await store.delete_partition(LIFECYCLE_NAME)
 
         assert await store.open_partition(LIFECYCLE_NAME) is None
-        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
+        with pytest.raises(PartitionIncarnationEndedError, match=LIFECYCLE_NAME):
             await partition.upsert(records=[record])
-        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
+        with pytest.raises(PartitionIncarnationEndedError, match=LIFECYCLE_NAME):
             await partition.query(query_vectors=[record.vector], limit=5)
-        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
+        with pytest.raises(PartitionIncarnationEndedError, match=LIFECYCLE_NAME):
             await partition.delete(record_uuids=[record.uuid])
         # So does an operation with nothing to send to the backend.
-        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
+        with pytest.raises(PartitionIncarnationEndedError, match=LIFECYCLE_NAME):
             await partition.upsert(records=[])
-        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
+        with pytest.raises(PartitionIncarnationEndedError, match=LIFECYCLE_NAME):
             await partition.query(query_vectors=[], limit=5)
-        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
+        with pytest.raises(PartitionIncarnationEndedError, match=LIFECYCLE_NAME):
             await partition.delete(record_uuids=[])
 
     @pytest.mark.asyncio
@@ -153,9 +152,9 @@ class PartitionLifecycleContract:
         assert await self.stored_uuids(new) == {new_record.uuid}
 
         # The old life's handle cannot reach the new life's records.
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await old.query(query_vectors=[new_record.vector], limit=5)
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await old.delete(record_uuids=[new_record.uuid])
         assert await self.stored_uuids(new) == {new_record.uuid}
 
@@ -176,7 +175,7 @@ class PartitionLifecycleContract:
         await self.settle(third)
         [empty] = await third.query(query_vectors=[record.vector], limit=5)
         assert empty.matches == []
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await first.query(query_vectors=[record.vector], limit=5)
         await store.delete_partition(LIFECYCLE_NAME)
 
@@ -245,7 +244,7 @@ class PartitionLifecycleContract:
 
         monkeypatch.setattr(registration_type, "require_current", deleted_once_checked)
 
-        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
+        with pytest.raises(PartitionIncarnationEndedError, match=LIFECYCLE_NAME):
             await partition.upsert(records=records)
         await self.settle(partition)
 
@@ -265,7 +264,7 @@ class PartitionLifecycleContract:
 
         await store.delete_partition(LIFECYCLE_NAME)
 
-        with pytest.raises(PartitionHandleStaleError, match=LIFECYCLE_NAME):
+        with pytest.raises(PartitionIncarnationEndedError, match=LIFECYCLE_NAME):
             await partition.upsert(records=[refused])
         assert await self.stored_uuids(partition) == {kept.uuid}
 
@@ -408,7 +407,7 @@ class PartitionLifecycleContract:
                 except (
                     AttemptsExhaustedError,
                     PartitionAlreadyExistsError,
-                    PartitionDeletedError,
+                    PartitionIncarnationEndedError,
                     PartitionPendingError,
                 ):
                     pass

@@ -3,8 +3,7 @@
 from .data_types import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
     validate_partition_name,
 )
@@ -18,8 +17,7 @@ from .partition_registry import (
 __all__ = [
     "AttemptsExhaustedError",
     "PartitionAlreadyExistsError",
-    "PartitionDeletedError",
-    "PartitionHandleStaleError",
+    "PartitionIncarnationEndedError",
     "PartitionPendingError",
     "PartitionRegistry",
     "PurgeRound",

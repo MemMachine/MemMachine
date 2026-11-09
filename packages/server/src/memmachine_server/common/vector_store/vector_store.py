@@ -29,7 +29,7 @@ class VectorStorePartition(ABC):
 
     A partition created again under a deleted one's name starts empty. An
     operation through a handle begun after its partition was deleted raises
-    PartitionHandleStaleError, whether or not a partition was
+    PartitionIncarnationEndedError, whether or not a partition was
     created again under the name since.
 
     An `upsert` or `delete` is durable once it returns; queries may not
@@ -187,7 +187,7 @@ class VectorStore(ABC):
                 partition after repeated attempts that made no progress.
             PartitionAlreadyExistsError: If the partition already exists,
                 or is being created.
-            PartitionDeletedError: If the partition was deleted
+            PartitionIncarnationEndedError: If the partition was deleted
                 before its creation completed.
         """
         raise NotImplementedError
