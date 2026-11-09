@@ -35,10 +35,10 @@ composes its stores by name:
 - **Creating again can inherit the old life.** A name created while one
   store's partition of the old life survives opens that partition, records
   and all, beside the other stores' new ones.
-- **The stores' orders and checks carry the correctness.** Creation goes
-  one way and deletion the other, and background work that opens a store's
-  partition by name checks afterwards that the partition it started from
-  still exists.
+- **The order of the stores' steps carries the correctness.** Creation
+  makes the vector store's partition before the segment store's, so every
+  segment store partition has one, and a deletion that stops between its
+  steps leaves the stores out of step.
 - **Every derived index adds a catalog, a mint loop, and an ordering rule.**
 
 ## Design
@@ -117,7 +117,6 @@ class PartitionRegistry(ABC):
     async def startup(self) -> None: ...
     async def reserve(self, partition_name: str) -> Reservation: ...
     async def resolve(self, partition_name: str) -> Registration | None: ...
-    async def is_live(self, incarnation: UUID) -> bool: ...
     async def unregister(self, partition_name: str) -> None: ...
     async def run_purge_round(self, purge_round: PurgeRound) -> bool: ...
 
@@ -195,8 +194,8 @@ reservation, or a registration.
   or `None`, or raises when the partition is pending, and `require_current`
   raises once it is deleted. Each is one read or one write, so an open takes
   one round trip and the fence one.
-- **What each part gains.** The registry's operations, beside `startup` and
-  `is_live`, are all addressed by name. An owner's handle on a tenant is
+- **What each part gains.** The registry's operations, beside `startup`,
+  are all addressed by name. An owner's handle on a tenant is
   built from one registration, and its fence is one call. The owner's
   creation flow reads as the lifecycle it implements: reserve, prepare
   storage under the reservation's incarnation, then confirm the reservation,
@@ -288,9 +287,6 @@ the name is resolved to a live incarnation once, at open.
 registration's name and raises `PartitionIncarnationEndedError` unless it
 carries the registration's incarnation. It is how a handle is fenced (see
 [Fencing](#fencing)).
-
-**`is_live(incarnation)`** reads whether a partition name holds that life
-live, by the incarnation's unique index: one read, with no handle answered.
 
 **`unregister(partition_name)`** is one transaction: `DELETE ... RETURNING` the
 partition's row, pending or live, then insert its tombstone with
@@ -407,18 +403,6 @@ driver's statement timeout. A process paused, or an event loop stalled,
 between its check and its send or commit is outside this design, as a
 paused remote writer already is.
 
-Background work starts from durable rows that carry an incarnation, and a
-deleted life's rows stay until its purge. Event memory's recovery of
-pending derivatives is the work that writes: stores check nothing, so a
-write it sends for a dead life lands, and one sent while the purge runs can
-land after its last round and outlive it. A recovery therefore asks
-`is_live` right before it writes, after its budget starts, so its write
-lands within the budget and the in-flight time of a moment the life was
-alive, as a request's does. A life that is not live is deleted; the
-recovery then ends its claim by dropping the row, and the life's purge
-reclaims the rest. Work that only deletes, such as a tombstone's deletes,
-needs no check: deleting in a dead life is harmless.
-
 ### Deletion and purge
 
 `unregister(partition_name)` is one transaction: the name is free and the
@@ -470,10 +454,6 @@ against the request timeout of each of the owner's remote stores.
 - Event memory's deployment configuration (the episodic memory's long-term
   memory) names the registry's database and the retention, which the Qdrant
   and Milvus configurations no longer carry.
-- The record-level protocol ([ingest and
-  deletion](event_memory_ingest_and_deletion.md)) is unchanged: pending
-  derivatives and tombstones are keyed by incarnation, and a recovery asks
-  `is_live` where its renewal checks the segment store's partition.
 - A further derived index is a further store: one more
   `prepare_partition_incarnation` call and one more
   `purge_partition_incarnation` call, with no schema change.
@@ -541,11 +521,6 @@ the backend is remote:
   work on it. A creation that stopped part way stays pending until its
   caller deletes the name: the registry offers the deletion and holds no
   policy on when to give up.
-- **Background work asks whether an incarnation is live.** Callers address
-  the registry by name, but a recovery starts from a row that holds only
-  its incarnation, and liveness is all it needs: `is_live` answers that one
-  question, with no handle, so the registry keeps one way to answer
-  handles.
 - **A store's schema is fixed at construction.** The composition root builds
   the stores its services need, each with its dimensions, metric, and
   declared properties fixed at construction, and partitions each by tenant.
