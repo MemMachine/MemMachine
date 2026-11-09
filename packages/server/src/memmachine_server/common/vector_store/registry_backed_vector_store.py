@@ -26,7 +26,7 @@ from memmachine_server.common.metrics_factory import MetricsFactory, OperationTr
 from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
     PartitionRegistry,
     Registration,
@@ -316,7 +316,9 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
             # confirmation means a deleter removed this one while its storage
             # was prepared (create again).
             pending_error: PartitionPendingError | None = None
-            lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
+            lost_race: (
+                PartitionAlreadyExistsError | PartitionIncarnationEndedError | None
+            ) = None
             for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
                 if attempt:
                     await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
@@ -339,7 +341,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
                     registration = await self._prepare_and_confirm_or_cancel(
                         reservation
                     )
-                except PartitionDeletedError as err:
+                except PartitionIncarnationEndedError as err:
                     lost_race = err
                     continue
                 return self._partition_handle(registration)

@@ -180,7 +180,7 @@ reservation, or a registration.
   a deletion shows as the handle's methods raising. The words follow two
   known patterns: Try-Confirm/Cancel for the creator (reserve, then confirm
   or cancel), and the stale handle for everyone else (`require_current`,
-  `PartitionHandleStaleError`).
+  `PartitionIncarnationEndedError`).
 - **Why no state fields.** A handle's fields (partition name and
   incarnation) belong to its life and never change. Whether the partition is
   pending, live, or deleted changes under every holder: a `live` field would
@@ -268,7 +268,7 @@ store's.
 
 **`Reservation.confirm()`** marks the row live with an `UPDATE` conditional on
 the reservation's incarnation, which is unique, and on the row being pending,
-and answers the `Registration`; it raises `PartitionDeletedError`
+and answers the `Registration`; it raises `PartitionIncarnationEndedError`
 when it matches nothing. A creation whose partition was deleted while its
 storage was prepared matches nothing, so it cannot confirm a partition
 reserved under the name since.
@@ -280,7 +280,7 @@ none. It is how a handle is opened: callers address partitions by name, and
 the name is resolved to a live incarnation once, at open.
 
 **`Registration.require_current()`** reads the row under the
-registration's name and raises `PartitionHandleStaleError` unless it
+registration's name and raises `PartitionIncarnationEndedError` unless it
 carries the registration's incarnation. It is how a handle is fenced (see
 [Fencing](#fencing)).
 
@@ -340,7 +340,7 @@ stores matters, since nothing opens the life before it is confirmed.
   documents say how).
 - A partition deleted while its storage is prepared is not marked live, since
   the mark is conditional on its incarnation: the creation raises
-  `PartitionDeletedError`.
+  `PartitionIncarnationEndedError`.
 
 Only creation creates. Opening a name reads the registry: a live life is
 opened, and a pending one is waited for, a bounded number of times, and
@@ -367,7 +367,7 @@ exactly one reservation is lost.
 ### Fencing
 
 A handle is bound to the incarnation it was opened under. After that life is
-deleted, every operation on the handle raises `PartitionHandleStaleError`,
+deleted, every operation on the handle raises `PartitionIncarnationEndedError`,
 and a partition created again under the same name is a new life the old
 handle cannot reach.
 

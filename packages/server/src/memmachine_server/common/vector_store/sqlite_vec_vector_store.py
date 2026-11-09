@@ -49,7 +49,7 @@ from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
     validate_partition_name,
 )
 from memmachine_server.common.partition_registry.data_types import (
@@ -393,8 +393,8 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
             )
         ).scalar_one_or_none()
         if current is None:
-            raise PartitionHandleStaleError(
-                self._vector_store_name, self._partition_name
+            raise PartitionIncarnationEndedError(
+                self._vector_store_name, self._partition_name, self._incarnation
             )
 
 

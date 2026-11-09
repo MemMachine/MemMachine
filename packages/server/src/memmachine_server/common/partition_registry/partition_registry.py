@@ -58,7 +58,7 @@ class Reservation(_RegistryEntry, ABC):
             Registration: The same life of the partition, live.
 
         Raises:
-            PartitionDeletedError:
+            PartitionIncarnationEndedError:
                 If the partition is no longer pending: it was deleted.
         """
         raise NotImplementedError
@@ -94,7 +94,7 @@ class Registration(_RegistryEntry, ABC):
         it raise, and one committed after does not.
 
         Raises:
-            PartitionHandleStaleError:
+            PartitionIncarnationEndedError:
                 If the partition was deleted, whether or not another was
                 registered under the name since.
         """

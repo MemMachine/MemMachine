@@ -18,8 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
 )
 from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
@@ -2026,8 +2025,8 @@ _CHURN_TAGS = ("red", "green", "blue")
 _DOMAIN_ERRORS = (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
 )
 
@@ -2100,7 +2099,7 @@ async def _churn_on(
             ledger.sent.setdefault(incarnation, set()).update(record_uuids)
             try:
                 await handle.upsert(records=step.records)
-            except PartitionHandleStaleError:
+            except PartitionIncarnationEndedError:
                 ledger.raced_deletion.update(
                     (incarnation, record_uuid) for record_uuid in record_uuids
                 )
@@ -2141,7 +2140,7 @@ async def _churn_worker(
                     step.partition_name
                 )
             await _churn_on(handles[step.partition_name], step, owner, own, ledger)
-        except PartitionHandleStaleError:
+        except PartitionIncarnationEndedError:
             handles.pop(step.partition_name, None)
         except _DOMAIN_ERRORS:
             pass

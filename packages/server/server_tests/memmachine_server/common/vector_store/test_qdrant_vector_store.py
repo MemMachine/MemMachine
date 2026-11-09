@@ -37,8 +37,7 @@ from memmachine_server.common.metrics_factory import MetricsFactory, OperationTr
 from memmachine_server.common.partition_registry import (
     AttemptsExhaustedError,
     PartitionAlreadyExistsError,
-    PartitionDeletedError,
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
     PartitionPendingError,
     Registration,
 )
@@ -1665,7 +1664,7 @@ class _ModelRun:
     async def recreate(self, key: str) -> None:
         stale = self.handles[key]
         await self.store.delete_partition(key)
-        with pytest.raises(PartitionHandleStaleError):
+        with pytest.raises(PartitionIncarnationEndedError):
             await stale.query(query_vectors=[_MODEL_PROBE], limit=1)
         await self.create(key)
 
@@ -1751,10 +1750,10 @@ _CHURN_DEADLINE_SECONDS = 120
 # The outcomes the contract documents for an operation that races another
 # worker's: anything else fails the test.
 _CHURN_DOMAIN_ERRORS = (
-    PartitionHandleStaleError,
+    PartitionIncarnationEndedError,
     PartitionAlreadyExistsError,
     PartitionPendingError,
-    PartitionDeletedError,
+    PartitionIncarnationEndedError,
     AttemptsExhaustedError,
 )
 
@@ -1825,7 +1824,7 @@ class _ChurnWorker:
         handle = await self.handle(key)
         try:
             await handle.upsert(records=records)
-        except PartitionHandleStaleError:
+        except PartitionIncarnationEndedError:
             self.unconfirmed.update(
                 (handle._incarnation, record.uuid) for record in records
             )
