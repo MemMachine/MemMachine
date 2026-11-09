@@ -49,7 +49,10 @@ registry per memory system holds the catalog of the memory's tenants. It
 mints one incarnation for each life of a partition name, and every store of
 the memory holds that life's records under that incarnation. Stores keep no
 catalog of their own and mint nothing, and a backend keeps only records, each
-carrying the *incarnation* of the life that wrote it.
+carrying the *incarnation* of the life that wrote it. A partition's
+incarnations are isolated from one another: records written under one are
+never read under another, so a partition's next life starts empty in every
+store.
 
 ### Roles
 
@@ -128,17 +131,19 @@ class Registration:  # partition_name, incarnation
     async def require_current(self) -> None: ...
 ```
 
-A store's side of the lifecycle:
+A store's side of the lifecycle, addressed by a partition's incarnation, since
+stores hold no names:
 
 ```python
-async def create_partition(self, incarnation: UUID) -> None: ...
-def open_partition(self, incarnation: UUID) -> StorePartition: ...
-async def purge_partition(self, incarnation: UUID) -> bool: ...
+async def prepare_partition_incarnation(self, incarnation: UUID) -> None: ...
+def open_partition_incarnation(self, incarnation: UUID) -> StorePartition: ...
+async def purge_partition_incarnation(self, incarnation: UUID) -> bool: ...
 ```
 
-`create_partition` prepares the storage a life needs of its own, raises when
-it cannot, and is safe to repeat. `open_partition` answers a handle on a
-life's records. `purge_partition` deletes a bounded batch of the incarnation's
+`prepare_partition_incarnation` prepares the storage a life needs of its own,
+raises when it cannot, and is safe to repeat. `open_partition_incarnation`
+answers a partition handle bound to the incarnation.
+`purge_partition_incarnation` deletes a bounded batch of the incarnation's
 records, is safe to repeat and to run on two processes at once, and returns
 whether it found any. Stores lose `delete_partition` and their own purge:
 deletion is the registry's.
@@ -307,11 +312,12 @@ purge](#deletion-and-purge).
 
 Creation is *reserved, prepared, then confirmed*. The owner reserves the
 name, which mints the incarnation and leaves the life pending, calls every
-store's `create_partition` at once, and confirms the reservation, which makes
-the life live. Every call finishes before the outcome is decided: if any
-raised, the owner logs each error, cancels the reservation, and raises the
-first, so no store is still preparing storage when the reservation is
-cancelled, and the caller sees a store's own exception. No order between
+store's `prepare_partition_incarnation` at once, and confirms the
+reservation, which makes the life live. Every call finishes before the
+outcome is decided: if any raised, the owner logs each error, cancels the
+reservation, and raises the first, so no store is still preparing storage
+when the reservation is cancelled, and the caller sees a store's own
+exception. No order between
 stores matters, since nothing opens the life before it is confirmed.
 
 - The registry's primary key is the one arbiter: a racing creator on any
@@ -423,11 +429,12 @@ empty in every store.
 A tombstone comes due once the namespace's retention has passed since the
 deletion. A purge round claims it under a lease, with backoff and
 dead-lettering, and calls the owner's callback with the incarnation. The
-callback runs every store's `purge_partition` to completion at once, then
-raises if any raised, and otherwise answers whether any found records; the
-tombstone goes when a round finds nothing in any store. Letting every store
-finish its batch keeps the stores that answer purging while another is down;
-the round still counts as failed, so the registry's backoff applies. A store
+callback runs every store's `purge_partition_incarnation` to completion at
+once, then raises if any raised, and otherwise answers whether any found
+records; the tombstone goes when a round finds nothing in any store.
+Letting every store finish its batch keeps the stores that answer purging
+while another is down; the round still counts as failed, so the registry's
+backoff applies. A store
 keeps whatever progress its purge needs between rounds, such as the segment
 store's per-table cursors, under the incarnation, and drops it when its purge
 finds nothing. A namespace's rounds run through its owner's stores: a round
@@ -467,8 +474,9 @@ against the request timeout of each of the owner's remote stores.
   deletion](event_memory_ingest_and_deletion.md)) is unchanged: pending
   derivatives and tombstones are keyed by incarnation, and a recovery asks
   `is_live` where its renewal checks the segment store's partition.
-- A further derived index is a further store: one more `create_partition`
-  call and one more `purge_partition` call, with no schema change.
+- A further derived index is a further store: one more
+  `prepare_partition_incarnation` call and one more
+  `purge_partition_incarnation` call, with no schema change.
 
 Semantic memory's vector-store backend keeps the one partition it never
 deletes: it opens the name `semantic_memory` in the namespace
