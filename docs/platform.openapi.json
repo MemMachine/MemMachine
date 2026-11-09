@@ -7,9 +7,14 @@
             "schema": {
               "$ref": "#/components/schemas/Error"
             }
+          },
+          "text/plain": {
+            "schema": {
+              "type": "string"
+            }
           }
         },
-        "description": "Unexpected error."
+        "description": "The request was refused or failed, and the body says why: in plain text when the\nrequest does not match this schema or its credential is refused, otherwise as an\nError.\n"
       }
     },
     "schemas": {
@@ -49,9 +54,11 @@
               },
               "types": {
                 "description": "A list of memory types to add (e.g., episodic, semantic).\nIf empty, all available types are added.\n",
-                "example": [
-                  "episodic",
-                  "semantic"
+                "examples": [
+                  [
+                    "episodic",
+                    "semantic"
+                  ]
                 ],
                 "items": {
                   "$ref": "#/components/schemas/MemoryType"
@@ -70,7 +77,7 @@
         "title": "AddMemoriesSpec"
       },
       "AddMemoryResult": {
-        "description": "Response model for adding memories.",
+        "description": "The result for one added memory message.",
         "properties": {
           "uid": {
             "description": "The unique identifier of the memory message.",
@@ -103,7 +110,9 @@
               "description": {
                 "default": "",
                 "description": "A human-readable description of the project.\nUsed for display purposes in UIs and dashboards.\nOptional; defaults to an empty string.\n",
-                "example": "Test project for RAG pipeline",
+                "examples": [
+                  "Test project for RAG pipeline"
+                ],
                 "title": "Description",
                 "type": "string"
               }
@@ -111,7 +120,7 @@
             "type": "object"
           }
         ],
-        "description": "Specification model for creating a new project.\n\nThe project ID must be unique for the authenticated user.\n",
+        "description": "Specification model for creating a new project.\n\nA project ID names one project for the authenticated user. Creating an\nexisting one again succeeds only when the configuration matches, as\ncreate_project describes.\n",
         "title": "CreateProjectSpec"
       },
       "DeleteEpisodicMemorySpec": {
@@ -122,12 +131,15 @@
           {
             "properties": {
               "episodic_ids": {
-                "description": "A list of unique IDs of episodic memories to delete.\n",
-                "example": [
-                  "123",
-                  "345"
+                "description": "A list of unique IDs of episodic memories to delete.\nEpisodic memory IDs are UUIDs.\n",
+                "examples": [
+                  [
+                    "6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e",
+                    "0b8e7a52-91d4-4f3a-a6c2-5d9e1f7b3c08"
+                  ]
                 ],
                 "items": {
+                  "format": "uuid",
                   "type": "string"
                 },
                 "minItems": 1,
@@ -162,9 +174,11 @@
             "properties": {
               "semantic_ids": {
                 "description": "A list of unique IDs of semantic memories to delete.\n",
-                "example": [
-                  "123",
-                  "345"
+                "examples": [
+                  [
+                    "123",
+                    "345"
+                  ]
                 ],
                 "items": {
                   "type": "string"
@@ -206,22 +220,28 @@
           "filterable_metadata": {
             "additionalProperties": true,
             "description": "Metadata indexed for filtering.",
-            "nullable": true,
             "title": "Filterable Metadata",
-            "type": "object"
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "metadata": {
             "additionalProperties": true,
             "description": "Optional metadata associated with the episode.",
-            "nullable": true,
             "title": "Metadata",
-            "type": "object"
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "produced_for_id": {
             "description": "Identifier of the intended recipient of the episode.",
-            "nullable": true,
             "title": "Produced For Id",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "producer_id": {
             "description": "Identifier of the episode producer.",
@@ -232,6 +252,12 @@
             "description": "Role of the producer (e.g., user/assistant/system).",
             "title": "Producer Role",
             "type": "string"
+          },
+          "sequence_num": {
+            "default": 0,
+            "description": "Sequence number within the session.",
+            "title": "Sequence Num",
+            "type": "integer"
           },
           "session_key": {
             "description": "Session key associated with the episode.",
@@ -256,7 +282,7 @@
         "type": "object"
       },
       "EpisodeCountResponse": {
-        "description": "Response model representing the number of episodes associated with a project.\n\nThis model is typically returned by analytics or monitoring endpoints\nthat track usage activity (e.g., number of computation episodes, workflow\nruns, or operational cycles).\n\nThe count reflects the current recorded total at the time of the request.\n",
+        "description": "The number of episodes a project holds at the time of the request.\n",
         "properties": {
           "count": {
             "description": "The total number of episodic memories in the project.",
@@ -282,9 +308,11 @@
           "created_at": {
             "description": "Timestamp when the episode was created.",
             "format": "date-time",
-            "nullable": true,
             "title": "Created At",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "episode_type": {
             "$ref": "#/components/schemas/EpisodeType"
@@ -292,15 +320,19 @@
           "metadata": {
             "additionalProperties": true,
             "description": "Optional metadata associated with the episode.",
-            "nullable": true,
             "title": "Metadata",
-            "type": "object"
+            "type": [
+              "object",
+              "null"
+            ]
           },
           "produced_for_id": {
             "description": "Identifier of the intended recipient of the episode.",
-            "nullable": true,
             "title": "Produced For Id",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "producer_id": {
             "description": "Identifier of the episode producer.",
@@ -314,9 +346,11 @@
           },
           "score": {
             "description": "Optional relevance score for the episode.",
-            "nullable": true,
             "title": "Score",
-            "type": "number"
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "uid": {
             "description": "Unique identifier for the episode.",
@@ -440,31 +474,39 @@
             "properties": {
               "filter": {
                 "default": "",
-                "description": "An optional string filter applied to the memory metadata. This uses a\nsimple query language (e.g., 'metadata.user_id=123') for exact matches.\nMultiple conditions can be combined using AND operators.  The metadata\nfields are prefixed with 'metadata.' to distinguish them from other fields.\n",
-                "example": "metadata.user_id=123 AND metadata.session_id=abc",
+                "description": "An optional filter on the memories' metadata, which names a metadata key\nas 'metadata.{key}' (e.g., metadata.topic='finance'). A condition compares a\nkey with =, !=, <, <=, > or >=, tests membership with IN or NOT IN and a\nparenthesized list, or tests presence with IS NULL or IS NOT NULL.\nConditions combine with AND, OR, NOT and parentheses. Metadata values are\nstrings, so quote each value in single quotes. Unquoted, a number such as 123\nis compared as a number and true or false as a boolean, which need not match\na string: a search with metadata.user_id=123 does not find '123'.\nOnly a memory added before the rule for message metadata keys can hold a\nkey outside it, so a condition on one finds no later memory, except IS NULL,\nwhich finds them all.\n",
+                "examples": [
+                  "metadata.user_id='123' AND metadata.session_id='abc'"
+                ],
                 "title": "Filter",
                 "type": "string"
               },
               "page_num": {
                 "default": 0,
                 "description": "The zero-based page number to retrieve. Use this for pagination.\n",
-                "example": 0,
+                "examples": [
+                  0
+                ],
                 "title": "Page Num",
                 "type": "integer"
               },
               "page_size": {
                 "default": 100,
                 "description": "The maximum number of memories to return per page. Use this for pagination.\n",
-                "example": 50,
+                "examples": [
+                  50
+                ],
                 "title": "Page Size",
                 "type": "integer"
               },
               "set_metadata": {
                 "additionalProperties": true,
                 "description": "Optional metadata key-value pairs used to filter or identify\na specific semantic memory set. Applies only when listing\nsemantic memories.\n",
-                "nullable": true,
                 "title": "Set Metadata",
-                "type": "object"
+                "type": [
+                  "object",
+                  "null"
+                ]
               },
               "type": {
                 "$ref": "#/components/schemas/MemoryType"
@@ -484,8 +526,10 @@
           },
           "status": {
             "default": 0,
-            "description": "The status code of the search operation. 0 typically indicates success.\n",
-            "example": 0,
+            "description": "The status code of the list operation. 0 typically indicates success.\n",
+            "examples": [
+              0
+            ],
             "title": "Status",
             "type": "integer"
           }
@@ -505,18 +549,22 @@
             "items": {
               "$ref": "#/components/schemas/Episode"
             },
-            "nullable": true,
             "title": "Episodic Memory",
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "semantic_memory": {
             "description": "Listed semantic memory entries.",
             "items": {
               "$ref": "#/components/schemas/SemanticFeature"
             },
-            "nullable": true,
             "title": "Semantic Memory",
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "title": "ListResultContent",
@@ -531,13 +579,27 @@
             "type": "string"
           },
           "episode_type": {
-            "$ref": "#/components/schemas/EpisodeType"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EpisodeType"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The type of an episode (e.g., 'message'). Null is accepted and treated as\nabsent.\n"
           },
           "metadata": {
             "additionalProperties": {
               "type": "string"
             },
-            "description": "Additional metadata associated with the message, represented as key-value\npairs. Optional; defaults to an empty object.\nRetrieval operations may utilize this metadata for filtering.\nUse 'metadata.{key}' to filter based on specific metadata keys.\n",
+            "description": "Additional metadata associated with the message, represented as key-value\npairs. Optional; defaults to an empty object.\nA key holds only lowercase letters, digits and underscores, is at most\n32 bytes, and does not begin with 'memmachine_', which is reserved;\na request with any other key is refused with 422.\nRetrieval operations may utilize this metadata for filtering.\nUse 'metadata.{key}' to filter based on specific metadata keys.\n",
+            "propertyNames": {
+              "not": {
+                "pattern": "^memmachine_"
+              },
+              "pattern": "^[a-z0-9_]{1,32}$"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -560,7 +622,7 @@
             "type": "string"
           },
           "timestamp": {
-            "description": "The timestamp when the message was created, in ISO 8601 format.\nThe formats supported are:\n- ISO 8601 string (e.g., '2023-10-01T12:00:00Z' or '2023-10-01T08:00:00-04:00')\n- Unix epoch time in seconds (e.g., 1633072800)\n- Unix epoch time in milliseconds (e.g., 1633072800000)\nIf not provided, the server assigns the current time.\nIf the format is unrecognized, an error is returned.\n",
+            "description": "The timestamp when the message was created, as an RFC 3339 date-time with\na time zone offset (e.g., '2023-10-01T12:00:00Z' or '2023-10-01T08:00:00-04:00').\nIf not provided, the server assigns the current time. Any other format,\nincluding a Unix epoch number, is refused with 422.\n",
             "format": "date-time",
             "title": "Timestamp",
             "type": "string"
@@ -589,42 +651,65 @@
             "items": {
               "type": "string"
             },
-            "nullable": true,
             "title": "Citations",
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           },
           "id": {
             "description": "Identifier for the semantic feature.",
-            "nullable": true,
             "title": "Id",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "other": {
             "additionalProperties": true,
             "description": "Additional storage metadata for the semantic feature.",
-            "nullable": true,
             "title": "Other",
-            "type": "object"
+            "type": [
+              "object",
+              "null"
+            ]
           }
         },
         "title": "Metadata",
         "type": "object"
       },
       "ProjectConfig": {
-        "description": "Project configuration model.\n\nThis section defines which reranker and embedder models should be used for\nthe project.  If any field is left empty (\"\"), the system automatically falls\nback to the globally configured defaults in the server configuration file.\n",
+        "description": "Project configuration model.\n\nThis section defines which reranker model should be used for the project.\nIf any field is left empty (\"\"), the system automatically falls back to the\nglobally configured defaults in the server configuration file.\n",
         "properties": {
+          "backend": {
+            "description": "The long-term memory backend. A create takes only event, which is also the\ndefault, and refuses any other value; null is accepted and treated as absent.\nA project created under an earlier core can report another.\n",
+            "title": "Backend",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "embedder": {
             "default": "",
-            "description": "The name of the embedder model to use for this project.\n\n- Must refer to an embedder model defined in the system configuration.\n- If set to an empty string (default), the globally configured embedder will\n  be used.\n\nEmbedders generate vector embeddings for text to support semantic search and\nsimilarity operations.\n",
-            "example": "bge-base-en",
+            "deprecated": true,
+            "description": "Not used: every project embeds with the embedder the platform configures.\nA value sent here is accepted and ignored, and a response reports an empty\nstring.\n",
             "title": "Embedder",
             "type": "string"
           },
           "reranker": {
             "default": "",
             "description": "The name of the reranker model to use for this project.\n\n- Must refer to a reranker model defined in the system configuration.\n- If set to an empty string (default), the globally configured reranker will\n  be used.\n\nRerankers typically re-score retrieved documents to improve result quality.\n",
-            "example": "bge-reranker-large",
+            "examples": [
+              "bge-reranker-large"
+            ],
             "title": "Reranker",
+            "type": "string"
+          },
+          "vector_graph_store": {
+            "default": "",
+            "deprecated": true,
+            "description": "Not used: it applies only to a backend the platform does not offer. A value\nsent here is accepted and ignored.\n",
+            "title": "Vector Graph Store",
             "type": "string"
           }
         },
@@ -666,8 +751,7 @@
       "ProjectScope": {
         "properties": {
           "project_id": {
-            "default": "",
-            "description": "The identifier of the project. If empty, the user's default project is used.",
+            "description": "The identifier of the project, at most 255 characters. If empty or absent, the user's default project is used; null is refused.",
             "maxLength": 255,
             "pattern": "^[\\p{L}\\p{N}_:-]*$",
             "title": "Project Id",
@@ -687,56 +771,75 @@
               "agent_mode": {
                 "default": false,
                 "description": "Whether to enable top-level retrieval-agent orchestration for episodic search.\nWhen false, episodic search uses direct memory retrieval.\n",
-                "example": false,
+                "examples": [
+                  false
+                ],
                 "title": "Agent Mode",
                 "type": "boolean"
               },
               "expand_context": {
                 "default": 0,
                 "description": "The number of additional episodes to include around each matched\nepisode from long term memory for better context.\n",
-                "example": 0,
+                "examples": [
+                  0
+                ],
                 "title": "Expand Context",
                 "type": "integer"
               },
               "filter": {
                 "default": "",
-                "description": "An optional string filter applied to the memory metadata. This uses a\nsimple query language (e.g., 'metadata.user_id=123') for exact matches.\nMultiple conditions can be combined using AND operators.  The metadata\nfields are prefixed with 'metadata.' to distinguish them from other fields.\n",
-                "example": "metadata.user_id=123 AND metadata.session_id=abc",
+                "description": "An optional filter on the memories' metadata, which names a metadata key\nas 'metadata.{key}' (e.g., metadata.topic='finance'). A condition compares a\nkey with =, !=, <, <=, > or >=, tests membership with IN or NOT IN and a\nparenthesized list, or tests presence with IS NULL or IS NOT NULL.\nConditions combine with AND, OR, NOT and parentheses. Metadata values are\nstrings, so quote each value in single quotes. Unquoted, a number such as 123\nis compared as a number and true or false as a boolean, which need not match\na string: a search with metadata.user_id=123 does not find '123'.\nA search finds no key outside the rule for message metadata keys in any\nmemory, so a condition on one finds nothing, except IS NULL, which finds\nevery memory; one beginning with 'memmachine_' is refused with 422 when the\nsearch includes episodic memory.\n",
+                "examples": [
+                  "metadata.user_id='123' AND metadata.session_id='abc'"
+                ],
                 "title": "Filter",
                 "type": "string"
               },
               "query": {
                 "description": "The natural language query used for semantic memory search. This should be\na descriptive string of the information you are looking for.\n",
-                "example": "What was the user's last conversation about finance?",
+                "examples": [
+                  "What was the user's last conversation about finance?"
+                ],
                 "title": "Query",
                 "type": "string"
               },
               "score_threshold": {
-                "description": "The minimum score for a memory to be included in the search results.\nDefaults to -inf (no threshold) represented as None.\nMeaningful only for certain ranking methods.\n",
-                "example": 0,
-                "nullable": true,
+                "description": "The minimum score for a memory to be included in the search results.\nDefaults to null, which applies no threshold.\nMeaningful only for certain ranking methods.\n",
+                "examples": [
+                  0
+                ],
                 "title": "Score Threshold",
-                "type": "number"
+                "type": [
+                  "number",
+                  "null"
+                ]
               },
               "set_metadata": {
                 "additionalProperties": true,
                 "description": "Optional metadata key-value pairs used to filter or identify\na specific semantic memory set. Applies only when searching\nsemantic memories.\n",
-                "nullable": true,
                 "title": "Set Metadata",
-                "type": "object"
+                "type": [
+                  "object",
+                  "null"
+                ]
               },
               "top_k": {
                 "default": 10,
                 "description": "The maximum number of memories to return in the search results.\n",
-                "example": 5,
+                "examples": [
+                  5
+                ],
+                "minimum": 1,
                 "title": "Top K",
                 "type": "integer"
               },
               "types": {
                 "description": "A list of memory types to include in the search (e.g., episodic, semantic).\nIf empty, all available types are searched.\n",
-                "example": [
-                  "episodic",
-                  "semantic"
+                "examples": [
+                  [
+                    "episodic",
+                    "semantic"
+                  ]
                 ],
                 "items": {
                   "$ref": "#/components/schemas/MemoryType"
@@ -763,7 +866,9 @@
           "status": {
             "default": 0,
             "description": "The status code of the search operation. 0 typically indicates success.\n",
-            "example": 0,
+            "examples": [
+              0
+            ],
             "title": "Status",
             "type": "integer"
           }
@@ -786,9 +891,11 @@
             "items": {
               "$ref": "#/components/schemas/SemanticFeature"
             },
-            "nullable": true,
             "title": "Semantic Memory",
-            "type": "array"
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "title": "SearchResultContent",
@@ -812,9 +919,11 @@
           },
           "set_id": {
             "description": "Identifier of the semantic set.",
-            "nullable": true,
             "title": "Set Id",
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "tag": {
             "description": "Tag associated with the semantic feature.",
@@ -849,7 +958,7 @@
     "title": "MemMachine Public API",
     "version": "0.1.0"
   },
-  "openapi": "3.0.4",
+  "openapi": "3.1.0",
   "paths": {
     "/health": {
       "get": {
@@ -886,7 +995,7 @@
     },
     "/v2/memories": {
       "post": {
-        "description": "Add memory messages to a project.\n\nThe `types` field in the request specifies which memory types to add to:\n- If `types` is empty or not provided, memories are added to all types (episodic and semantic)\n- If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n- If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n- If `types` contains both, memories are added to both types\n\nEach memory message represents a discrete piece of information to be stored\nin the project's memory system. Messages can include content, metadata,\ntimestamps, and other contextual details.\n\nThe producer field indicates who created the message, while the\nproduced_for field specifies the intended recipient. These fields help\nprovide context for the memory and if provided should be user-friendly names.\n\nThe endpoint accepts a batch of messages to be added in a single request.\n",
+        "description": "Add memory messages to a project.\n\nThe `types` field in the request specifies which memory types to add to:\n- If `types` is empty or not provided, memories are added to all types (episodic and semantic)\n- If `types` only contains `\"episodic\"`, memories are added only to Episodic memory\n- If `types` only contains `\"semantic\"`, memories are added only to Semantic memory\n- If `types` contains both, memories are added to both types\n\nWhere semantic memory is disabled, a request whose `types` names only `\"semantic\"`\nis refused with a 400 saying so, and one that names episodic memory too is served\nfrom episodic memory alone.\n\nOnce a project is deleted, adds to it are refused with a 404 until it is created\nagain, which succeeds once its deletion has finished. An add to the default project\ncreates it again itself, once its deletion has finished; until then it fails with a\n503 whose message says the project is still being deleted.\n\nEach memory message represents a discrete piece of information to be stored\nin the project's memory system. Messages can include content, metadata,\ntimestamps, and other contextual details.\n\nThe producer field indicates who created the message, while the\nproduced_for field specifies the intended recipient. These fields help\nprovide context for the memory and if provided should be user-friendly names.\n\nThe endpoint accepts a batch of messages to be added in a single request.\n",
         "operationId": "AddMemories",
         "requestBody": {
           "content": {
@@ -924,7 +1033,7 @@
     },
     "/v2/memories/episodic/delete": {
       "post": {
-        "description": "Delete episodic memories from a project.\n\nThis operation permanently removes one or more episodic memories from the\nspecified project. Provide `episodic_ids` with the list of memory IDs to delete.\nThis action cannot be undone.\n\nIf any of the specified episodic memories do not exist, a not-found error\nis returned for those entries.\n",
+        "description": "Delete episodic memories from a project.\n\nThis operation permanently removes one or more episodic memories from the\nspecified project. Provide `episodic_ids` with the list of memory IDs to delete.\nThis action cannot be undone.\n\nIDs that name no episodic memory are ignored, so repeating a delete succeeds.\nIf any ID names an episodic memory outside the specified project, a not-found\nerror is returned and nothing is deleted. An ID that is not a UUID is refused,\nand nothing is deleted.\n",
         "operationId": "DeleteEpisodicMemory",
         "requestBody": {
           "content": {
@@ -955,7 +1064,7 @@
     },
     "/v2/memories/list": {
       "post": {
-        "description": "List memories within a project.\n\nSystem returns a paginated list of memories stored in the project.\nThe page_size and page_num fields control pagination.\n\nThe filter field allows for filtering based on metadata key-value pairs.\nThe type field allows specifying which memory type to list.\n",
+        "description": "List memories within a project.\n\nSystem returns a paginated list of memories stored in the project.\nThe page_size and page_num fields control pagination.\n\nThe filter field allows for filtering based on metadata key-value pairs.\nThe type field allows specifying which memory type to list.\nWhere semantic memory is disabled, listing type `\"semantic\"` is refused with a 400\nsaying so.\n",
         "operationId": "ListMemories",
         "requestBody": {
           "content": {
@@ -993,7 +1102,7 @@
     },
     "/v2/memories/search": {
       "post": {
-        "description": "Search memories within a project.\n\nSystem returns the top K relevant memories matching the natural language query.\nThe result is sorted by timestamp to help with context.\n\nThe filter field allows for filtering based on metadata key-value pairs.\nThe types field allows specifying which memory types to include in the search.\n",
+        "description": "Search memories within a project.\n\nSystem returns the top K relevant memories matching the natural language query.\nThe result is sorted by timestamp to help with context.\n\nThe filter field allows for filtering based on metadata key-value pairs.\nThe types field allows specifying which memory types to include in the search.\n\nWhere semantic memory is disabled, a request whose `types` names only `\"semantic\"`\nis refused with a 400 saying so, and one that names episodic memory too is served\nfrom episodic memory alone.\n",
         "operationId": "SearchMemories",
         "requestBody": {
           "content": {
@@ -1031,7 +1140,7 @@
     },
     "/v2/memories/semantic/delete": {
       "post": {
-        "description": "Delete semantic memories from a project.\n\nThis operation permanently removes one or more semantic memories from the\nspecified project. Provide `semantic_ids` with the list of memory IDs to delete.\nThis action cannot be undone.\n\nIf any of the specified semantic memories do not exist, a not-found error\nis returned for those entries.\n",
+        "description": "Delete semantic memories from a project.\n\nThis operation permanently removes one or more semantic memories from the\nspecified project. Provide `semantic_ids` with the list of memory IDs to delete.\nThis action cannot be undone.\n\nIDs that name no semantic memory are ignored, so repeating a delete succeeds.\nEach ID must be written as the list returns it: a decimal number with no sign,\nspaces or leading zeros. Any other ID gets a not-found error, and nothing is deleted.\nIf any ID names a semantic memory outside the specified project, a not-found\nerror is returned and nothing is deleted. Each ID is checked separately, so a\nvery large batch can time out with nothing deleted; splitting it into smaller\nrequests works.\n\nWhere semantic memory is disabled, every semantic delete is refused with a 400\nsaying so.\n",
         "operationId": "DeleteSemanticMemory",
         "requestBody": {
           "content": {
@@ -1060,36 +1169,9 @@
         }
       }
     },
-    "/v2/metrics": {
-      "get": {
-        "description": "Expose Prometheus metrics.",
-        "operationId": "Metrics",
-        "responses": {
-          "200": {
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Prometheus metrics"
-          },
-          "default": {
-            "$ref": "#/components/responses/UnexpectedError"
-          }
-        },
-        "security": [],
-        "summary": "Metrics",
-        "tags": [
-          "Metrics"
-        ],
-        "x-internal": true
-      }
-    },
     "/v2/projects": {
       "post": {
-        "description": "Create a new project.\n\nThis endpoint creates a new project with the given identifier and\nconfiguration. The `project_id` follows the rules: no slashes; only\nletters, numbers, underscores, hyphens, colon, and Unicode characters.\n\nEach project acts as an isolated memory namespace. All memories (episodes)\ninserted into a project belong exclusively to that project. Queries,\nlistings, and any background operations such as memory summarization or\nknowledge extraction only access data within the same project. No\ncross-project memory access is allowed.\n\nIf a project with the same ID already exists, the request will fail\nwith an error.\n\nReturns the fully resolved project record, including configuration defaults\napplied by the system.\n",
+        "description": "Create a new project.\n\nThis endpoint creates a new project with the given identifier and\nconfiguration. The `project_id` follows the rules: no slashes; only\nletters, numbers, underscores, hyphens, colon, and Unicode characters.\n\nEach project acts as an isolated memory namespace. All memories (episodes)\ninserted into a project belong exclusively to that project. Queries,\nlistings, and any background operations such as memory summarization or\nknowledge extraction only access data within the same project. No\ncross-project memory access is allowed.\n\nIf a project with the same ID already exists, the request succeeds when\nits configuration matches the existing project's. That project is left\nunchanged, its description included, although the response repeats the\ndescription the request sent. Otherwise the request fails with an error.\nCreating an ID again while that project's deletion is still pending fails\nwith a 503 whose message says the project is still being deleted; retry\nlater. The memory service itself answers such a create with a conflict or\na server error (MemMachine/MemMachine#1769), and a deletion can stay\npending until it restarts (MemMachine/MemMachine#1577).\n\nReturns the fully resolved project record, including configuration defaults\napplied by the system.\n",
         "operationId": "CreateProject",
         "requestBody": {
           "content": {
@@ -1127,7 +1209,7 @@
     },
     "/v2/projects/delete": {
       "post": {
-        "description": "Delete a project.\n\nDeletes the specified project identified by `project_id`.\n\nThis operation removes the project and all associated memories (episodes)\npermanently from the system. It cannot be undone.\n\nIf the project does not exist, a not-found error is returned.\n",
+        "description": "Delete a project.\n\nDeletes the specified project identified by `project_id`.\n\nThis operation removes the project and all associated memories (episodes)\npermanently from the system. It cannot be undone.\n\nDeleting a project that does not exist answers 404, so a delete can be\nrepeated: a 404 means the project is gone.\n",
         "operationId": "DeleteProject",
         "requestBody": {
           "content": {
@@ -1280,9 +1362,6 @@
     },
     {
       "name": "Memories"
-    },
-    {
-      "name": "Metrics"
     },
     {
       "name": "Health"
