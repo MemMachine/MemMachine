@@ -261,10 +261,10 @@ moved a colliding row to the queue has already committed, because the insert
 waited on it. After the check no queue row for this incarnation can appear
 before commit, because the only row carrying it is this uncommitted one. A
 primary-key violation with a row under the name, live or pending, raises
-`PartitionAlreadyExistsError`. A rejected incarnation (unique
-violation, or queued) is re-minted, up to 10 attempts, then
-`AttemptsExhaustedError`. The loop and its bound are the segment
-store's.
+`PartitionAlreadyExistsError`. A rejected incarnation (unique violation, or
+queued) is re-minted, up to 10 attempts, then
+`PartitionCreateAttemptsExhaustedError`. The loop and its bound are the
+segment store's.
 
 **`Reservation.confirm()`** marks the row live with an `UPDATE` conditional on
 the reservation's incarnation, which is unique, and on the row being pending,
@@ -355,8 +355,8 @@ live row is opened; a pending row is another creator's, so the loop waits for
 it rather than registering; no row means create; losing the create means a
 racing creator took the name; losing the mark means a racing deleter removed
 the partition while its storage was prepared, so the loop creates again.
-After 10 attempts it raises `PartitionPendingError` if the last
-lookup found the partition pending, and `AttemptsExhaustedError`
+After 10 attempts it raises `PartitionPendingError` if the last lookup
+found the partition pending, and `PartitionCreateAttemptsExhaustedError`
 otherwise. The event backend's service locator opens a session's partition
 with it.
 

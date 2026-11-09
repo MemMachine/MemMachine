@@ -35,8 +35,8 @@ from memmachine_server.common.filter.filter_parser import (
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import (
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
     PartitionPendingError,
     Registration,
@@ -1754,7 +1754,7 @@ _CHURN_DOMAIN_ERRORS = (
     PartitionAlreadyExistsError,
     PartitionPendingError,
     PartitionIncarnationEndedError,
-    AttemptsExhaustedError,
+    PartitionCreateAttemptsExhaustedError,
 )
 
 

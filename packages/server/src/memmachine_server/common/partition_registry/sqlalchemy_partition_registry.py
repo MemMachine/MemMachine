@@ -51,8 +51,8 @@ from memmachine_server.common.utils import ensure_tz_aware
 from .data_types import (
     _PARTITION_NAME_MAX_BYTES,
     _PARTITION_NAMESPACE_MAX_BYTES,
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
     PartitionPendingError,
     validate_partition_namespace,
@@ -298,7 +298,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                 )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise AttemptsExhaustedError(
+                    raise PartitionCreateAttemptsExhaustedError(
                         f"Creating partition {partition_name!r} made no progress "
                         f"after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err

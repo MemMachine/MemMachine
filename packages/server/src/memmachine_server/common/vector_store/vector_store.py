@@ -183,7 +183,7 @@ class VectorStore(ABC):
                 The name of the partition.
 
         Raises:
-            AttemptsExhaustedError: If the store gave up creating the
+            PartitionCreateAttemptsExhaustedError: If the store gave up creating the
                 partition after repeated attempts that made no progress.
             PartitionAlreadyExistsError: If the partition already exists,
                 or is being created.
@@ -208,7 +208,7 @@ class VectorStore(ABC):
                 A handle bound to the partition's current life.
 
         Raises:
-            AttemptsExhaustedError: If the store gave up opening or
+            PartitionCreateAttemptsExhaustedError: If the store gave up opening or
                 creating the partition after repeated attempts that made no
                 progress.
             PartitionPendingError: If the partition's creation, by

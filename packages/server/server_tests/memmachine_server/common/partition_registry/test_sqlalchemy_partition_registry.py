@@ -24,8 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool, StaticPool
 
 from memmachine_server.common.partition_registry import (
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
     PartitionPendingError,
     Registration,
@@ -1159,7 +1159,7 @@ async def test_creation_that_never_mints_a_free_incarnation_gives_up(
         lambda: dead,
     )
 
-    with pytest.raises(AttemptsExhaustedError):
+    with pytest.raises(PartitionCreateAttemptsExhaustedError):
         await registry.reserve("b")
     assert await registry.resolve("b") is None
 
@@ -1527,7 +1527,7 @@ async def test_a_persistent_database_error_surfaces_with_its_cause(
         lambda: None,
     )
 
-    with pytest.raises(AttemptsExhaustedError) as raised:
+    with pytest.raises(PartitionCreateAttemptsExhaustedError) as raised:
         await asyncio.wait_for(registry.reserve("a"), 30)
 
     cause: BaseException | None = raised.value

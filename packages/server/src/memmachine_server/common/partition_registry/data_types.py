@@ -90,5 +90,5 @@ class PartitionIncarnationEndedError(Exception):
         )
 
 
-class AttemptsExhaustedError(Exception):
-    """Raised when an operation gave up after repeated attempts that made no progress."""
+class PartitionCreateAttemptsExhaustedError(Exception):
+    """Raised when creating a partition, or opening it by creating it, gave up after repeated attempts that made no progress."""

@@ -47,8 +47,8 @@ from memmachine_server.common.data_types import (
 )
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.partition_registry import (
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
     validate_partition_name,
 )
@@ -504,7 +504,7 @@ class SQLiteVecVectorStore(VectorStore):
                 )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise AttemptsExhaustedError(
+                    raise PartitionCreateAttemptsExhaustedError(
                         f"Creating partition {partition_name!r} made no progress "
                         f"after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err
@@ -543,7 +543,7 @@ class SQLiteVecVectorStore(VectorStore):
                     )
                 attempts += 1
                 if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise AttemptsExhaustedError(
+                    raise PartitionCreateAttemptsExhaustedError(
                         f"Opening or creating partition {partition_name!r} made no "
                         f"progress after {_MAX_MINT_ATTEMPTS} attempts"
                     ) from err

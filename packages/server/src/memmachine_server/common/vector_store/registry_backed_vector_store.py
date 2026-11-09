@@ -24,8 +24,8 @@ from pydantic import Field, InstanceOf
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import (
-    AttemptsExhaustedError,
     PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
     PartitionPendingError,
     PartitionRegistry,
@@ -348,7 +348,7 @@ class RegistryBackedVectorStore[PartitionT: RegistryBackedVectorStorePartition](
             # The last lookup found the partition pending.
             if pending_error is not None:
                 raise pending_error
-            raise AttemptsExhaustedError(
+            raise PartitionCreateAttemptsExhaustedError(
                 f"Opening or creating partition {partition_name!r} of vector store "
                 f"{self._vector_store_name!r} made no progress after "
                 f"{_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
