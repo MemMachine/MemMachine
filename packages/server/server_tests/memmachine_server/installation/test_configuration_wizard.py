@@ -1,12 +1,25 @@
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
 import pytest
 
 from memmachine_server.common.configuration import Configuration, DatabasesConf
+from memmachine_server.common.configuration.episodic_config import (
+    EventLongTermMemoryConf,
+)
+from memmachine_server.common.episode_store import Episode
+from memmachine_server.episodic_memory.short_term_memory.service_locator import (
+    short_term_memory_params_from_config,
+)
+from memmachine_server.episodic_memory.short_term_memory.short_term_memory import (
+    ShortTermMemory,
+)
 from memmachine_server.installation.configuration_wizard import (
     ConfigurationWizard,
 )
+from memmachine_server.main.memmachine import MemMachine
 
 
 @pytest.fixture
@@ -16,6 +29,99 @@ def conf_args(tmp_path) -> ConfigurationWizard.Params:
         destination=str(tmp_path),
         prompt=False,
     )
+
+
+@pytest.fixture
+def generated_config(conf_args: ConfigurationWizard.Params) -> Configuration:
+    with patch("builtins.input", return_value="api_key_value"):
+        conf_file = ConfigurationWizard(conf_args).run_wizard()
+    return Configuration.load_yml_file(conf_file)
+
+
+@pytest.mark.parametrize(
+    ("qdrant_available", "milvus_available", "vector_store"),
+    [
+        (True, True, ConfigurationWizard.QDRANT_VECTOR_STORE_ID),
+        (False, True, ConfigurationWizard.MILVUS_VECTOR_STORE_ID),
+        (False, False, ConfigurationWizard.SQLITE_VECTOR_STORE_ID),
+    ],
+)
+def test_generated_config_resolves_default_stm_capacity(
+    conf_args: ConfigurationWizard.Params,
+    qdrant_available: bool,
+    milvus_available: bool,
+    vector_store: str,
+) -> None:
+    with (
+        patch("builtins.input", return_value="api_key_value"),
+        patch.object(
+            ConfigurationWizard, "_qdrant_available", return_value=qdrant_available
+        ),
+        patch.object(
+            ConfigurationWizard, "_milvus_available", return_value=milvus_available
+        ),
+    ):
+        conf_file = ConfigurationWizard(conf_args).run_wizard()
+
+    config = Configuration.load_yml_file(conf_file)
+    memmachine = MemMachine(config, resources=Mock())
+    resolved = memmachine._with_default_episodic_memory_conf(session_key="session1")
+
+    assert isinstance(resolved.long_term_memory, EventLongTermMemoryConf)
+    assert resolved.long_term_memory.vector_store == vector_store
+    assert resolved.short_term_memory_enabled is True
+    assert resolved.short_term_memory is not None
+    assert resolved.short_term_memory.message_capacity == 64000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_summary", ["", "saved summary"])
+async def test_generated_config_stm_summarizes_only_above_character_capacity(
+    generated_config: Configuration, mock_llm_model: Mock, saved_summary: str
+) -> None:
+    memmachine = MemMachine(generated_config, resources=Mock())
+    resolved = memmachine._with_default_episodic_memory_conf(session_key="session1")
+    assert resolved.short_term_memory is not None
+    assert resolved.short_term_memory.message_capacity == 64000
+
+    mock_llm_model.generate_response.return_value = ("new summary", "")
+    resources = Mock(
+        get_session_data_manager=AsyncMock(return_value=None),
+        get_language_model=AsyncMock(return_value=mock_llm_model),
+    )
+    params = await short_term_memory_params_from_config(
+        resolved.short_term_memory, resources
+    )
+    memory = ShortTermMemory(params, summary=saved_summary)
+
+    def episode(content: str) -> Episode:
+        return Episode(
+            uid=uuid4(),
+            session_key="session1",
+            content=content,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            producer_id="user1",
+            producer_role="user",
+        )
+
+    try:
+        # An ordinary turn exceeds the old 500-character installation budget.
+        assert not await memory.add_episodes([episode("é" * 501)])
+        assert await memory.get_summary() == saved_summary
+        mock_llm_model.generate_response.assert_not_awaited()
+
+        # Equality fits, including the summary. UTF-8 bytes would exceed it.
+        remaining = 64000 - len(saved_summary) - 501
+        assert not await memory.add_episodes([episode("x" * remaining)])
+        assert await memory.get_summary() == saved_summary
+        mock_llm_model.generate_response.assert_not_awaited()
+
+        # One more Unicode code point triggers the real background consolidator.
+        assert await memory.add_episodes([episode("🌍")])
+        assert await memory.get_summary() == "new summary"
+        mock_llm_model.generate_response.assert_awaited_once()
+    finally:
+        await memory.close()
 
 
 @patch("builtins.input")
@@ -32,6 +138,10 @@ def test_configuration_wizard_all_default(mock_input, conf_args):
     assert len(lm_confs) == 1
     for lm_conf in lm_confs.values():
         assert lm_conf.api_key.get_secret_value() == "api_key_value"
+    memmachine = MemMachine(config, resources=Mock())
+    resolved = memmachine._with_default_episodic_memory_conf(session_key="session1")
+    assert resolved.short_term_memory is not None
+    assert resolved.short_term_memory.message_capacity == 64000
 
 
 @patch.object(ConfigurationWizard, "_qdrant_available", return_value=False)

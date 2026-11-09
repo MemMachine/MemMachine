@@ -92,7 +92,10 @@ class ShortTermMemoryConf(BaseModel):
     message_capacity: int = Field(
         default=64000,
         gt=0,
-        description="The maximum length of short-term memory",
+        description=(
+            "Character budget for recent episode content and the saved summary, "
+            "measured with Python len()"
+        ),
     )
 
 
@@ -121,7 +124,10 @@ class ShortTermMemoryConfPartial(BaseModel):
     message_capacity: int | None = Field(
         default=None,
         gt=0,
-        description="The maximum length of short-term memory",
+        description=(
+            "Character budget for recent episode content and the saved summary, "
+            "measured with Python len()"
+        ),
     )
 
     def merge(self, other: Self) -> ShortTermMemoryConf:

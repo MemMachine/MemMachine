@@ -42,7 +42,7 @@ data:
 {{- end }}
       short_term_memory:
         llm_model: default_model
-        message_capacity: 500
+        message_capacity: 64000 # Characters, including the saved summary
 
     semantic_memory:
       llm_model: default_model

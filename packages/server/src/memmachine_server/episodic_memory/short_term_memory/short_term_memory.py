@@ -57,7 +57,8 @@ class ShortTermMemoryParams(BaseModel):
         data_manager (SessionDataManager): The session data manager.
         summary_prompt_system (str): The system prompt for the summarization.
         summary_prompt_user (str): The user prompt for the summarization.
-        message_capacity (int): The maximum number of messages to summarize.
+        message_capacity (int): Character budget for recent episode content and
+            the saved summary, measured with Python len().
 
     """
 
@@ -83,7 +84,10 @@ class ShortTermMemoryParams(BaseModel):
     message_capacity: int = Field(
         default=64000,
         gt=0,
-        description="The maximum length of short-term memory",
+        description=(
+            "Character budget for recent episode content and the saved summary, "
+            "measured with Python len()"
+        ),
     )
 
     @field_validator("summary_prompt_user")

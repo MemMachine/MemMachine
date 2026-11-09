@@ -329,7 +329,6 @@ class ConfigurationWizard:
         """Generate short-term memory configuration."""
         return ShortTermMemoryConfPartial(
             llm_model=self.LANGUAGE_MODEL_NAME,
-            message_capacity=500,
         )
 
     @cached_property
