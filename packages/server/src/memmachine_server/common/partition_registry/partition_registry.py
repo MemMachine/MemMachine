@@ -117,6 +117,12 @@ class PartitionRegistry(ABC):
     minted again before then.
     """
 
+    @property
+    @abstractmethod
+    def partition_namespace(self) -> str:
+        """The partition namespace the registry serves."""
+        raise NotImplementedError
+
     @abstractmethod
     async def startup(self) -> None:
         """

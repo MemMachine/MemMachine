@@ -1,11 +1,13 @@
 """Tests for segment store data types."""
 
+from uuid import UUID
+
 from memmachine_server.common.payload_codec.payload_codec_config import (
     PlaintextPayloadCodecConfig,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
+    SegmentStorePartitionConfigMismatchError,
 )
 
 
@@ -25,8 +27,11 @@ def test_segment_store_partition_config_round_trip() -> None:
     assert clone == config
 
 
-def test_segment_store_partition_already_exists_error_message() -> None:
-    err = SegmentStorePartitionAlreadyExistsError("partition_key")
+def test_segment_store_partition_config_mismatch_error_names_the_incarnation() -> None:
+    incarnation = UUID("00000000-0000-4000-8000-000000000001")
+    config = SegmentStorePartitionConfig()
 
-    assert err.partition_key == "partition_key"
-    assert str(err) == "Partition 'partition_key' already exists."
+    err = SegmentStorePartitionConfigMismatchError(incarnation, config, config)
+
+    assert err.incarnation == incarnation
+    assert str(incarnation) in str(err)

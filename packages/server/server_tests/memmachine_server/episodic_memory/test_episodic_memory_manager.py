@@ -23,6 +23,7 @@ from memmachine_server.common.errors import (
 )
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.partition_registry import PartitionRegistry
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.session_manager.session_data_manager_sql_impl import (
     SessionDataManagerSQL,
@@ -627,12 +628,16 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
     mock_session_storage,
     mock_resource_manager,
 ):
-    """A session with no open instance has its partitions deleted by key, never opened."""
+    """A session with no open instance has its partitions deleted by name, never opened."""
     session_key = "event_session"
     mock_resource_manager.config = create_autospec(Configuration, instance=True)
     mock_resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(
         long_term_memory=LongTermMemoryConfPartial(
-            backend="event", vector_store="vs", segment_store="ss", embedder="e"
+            backend="event",
+            vector_store="vs",
+            segment_store="ss",
+            partition_registry="pr",
+            embedder="e",
         )
     )
     vector_store = create_autospec(VectorStore, instance=True)
@@ -647,6 +652,8 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
     embedder.similarity_metric = SimilarityMetric.COSINE
     mock_resource_manager.get_vector_store.return_value = vector_store
     mock_resource_manager.get_segment_store.return_value = segment_store
+    partition_registry = create_autospec(PartitionRegistry, instance=True)
+    mock_resource_manager.get_partition_registry.return_value = partition_registry
     mock_resource_manager.get_embedder.return_value = embedder
     await mock_session_storage.create_or_validate_session(
         session_key,
@@ -661,10 +668,12 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
 
     await manager.delete_episodic_session(session_key)
 
+    partition_registry.unregister.assert_awaited_once_with(session_key)
     vector_store.delete_partition.assert_awaited_once_with(session_key)
-    segment_store.delete_partition.assert_awaited_once_with(session_key)
+    partition_registry.reserve.assert_not_awaited()
     vector_store.open_or_create_partition.assert_not_awaited()
-    segment_store.open_or_create_partition.assert_not_awaited()
+    segment_store.prepare_partition_incarnation.assert_not_awaited()
+    segment_store.open_partition_incarnation.assert_not_awaited()
 
 
 @pytest.mark.asyncio

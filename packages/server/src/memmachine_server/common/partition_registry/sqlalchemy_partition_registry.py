@@ -273,6 +273,11 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         self._max_purge_retry_backoff_seconds = params.max_purge_retry_backoff_seconds
         self._tombstone_claim_endings: set[asyncio.Task[None]] = set()
 
+    @property
+    @override
+    def partition_namespace(self) -> str:
+        return self._partition_namespace
+
     @override
     async def startup(self) -> None:
         async with self._engine.begin() as connection:

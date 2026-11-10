@@ -36,6 +36,7 @@ data:
         backend: event
         vector_store: event_vector_store
         segment_store: db_postgres
+        partition_registry: db_postgres
 {{- else if eq $backend "declarative" }}
         backend: declarative
         vector_graph_store: db_neo4j

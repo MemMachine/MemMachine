@@ -481,13 +481,14 @@ names are never reused and deleting a name always deletes the life it
 meant; that namespace's purge round would then be the session's durable
 deletion job. This design builds no owner above event memory.
 
-### Differences from the segment store
+### Differences from a catalog beside the data
 
-The registry reuses the segment store's incarnation logic wherever it can: the
-bounded mint loop, the in-transaction locking re-check of the queue, the
-idempotent deletion that queues a tombstone, the claim under `FOR UPDATE SKIP
-LOCKED`, and the retried read-then-create of open-or-create. It differs where
-the backend is remote:
+A catalog kept in the same SQL database as its data, as the segment store's
+was, can fence a write in the write's own transaction. The registry keeps
+that design's bounded mint loop, its in-transaction locking re-check of the
+queue, its idempotent deletion that queues a tombstone, its claim under
+`FOR UPDATE SKIP LOCKED`, and its retried read-then-create of open-or-create.
+It differs where a store is remote:
 
 - deletion is `DELETE ... RETURNING` then the queue insert, since there is no
   write fence to pin the row with;

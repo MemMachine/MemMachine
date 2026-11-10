@@ -19,6 +19,11 @@ from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
 )
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.partition_registry import PartitionRegistry, PurgeRound
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.resource_manager.embedder_manager import EmbedderManager
@@ -57,40 +62,40 @@ from memmachine_server.semantic_memory.storage.storage_base import SemanticStora
 
 logger = logging.getLogger(__name__)
 
-_SEGMENT_STORE_PURGE_INTERVAL_SECONDS = 60.0
-_SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
+_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS = 60.0
+_PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS = 1.0
 _VECTOR_STORE_PURGE_INTERVAL_SECONDS = 60.0
 _VECTOR_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
 
 
-async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
-    """Drive the store's bounded purge, paced by its backlog signal.
+async def _run_purge_rounds_forever(
+    partition_registry: PartitionRegistry, purge_round: PurgeRound
+) -> None:
+    """Run a partition namespace's purge rounds for as long as the task runs.
 
-    The store never schedules reclamation itself; this loop is the
-    deployment's scheduler. Each call is bounded, and a True return
-    means more work remains, so a backlog drains at one bounded call
-    per short pause -- the pause yields the database (and SQLite's
-    single write lock) to request serving between calls -- while an
-    idle store costs one call per tick. A failed call is logged and
-    retried a tick later, and concurrent purgers are safe by the
-    store's contract.
+    A call that ran a round is followed after a short pause, one that found
+    nothing due after the idle interval, and one that raised is logged and
+    retried a tick later. Sweepers in other processes may run the same
+    namespace's purge rounds at the same time.
 
-    A module-level coroutine on purpose: the event loop keeps a pending
-    task alive while it sleeps, so the task pins whatever its frame
-    references. Referencing only the store lets a manager dropped
-    without close() be collected instead of pinned, with its loop
-    querying the engine, for the process lifetime.
+    A module-level coroutine on purpose: the event loop keeps a pending task
+    alive while it sleeps, so the task pins whatever its frame references.
+    Referencing only the registry and its purge round lets a manager dropped
+    without close() be collected instead of pinned.
     """
     while True:
         try:
-            more = await store.purge_deleted_partitions()
+            more = await partition_registry.run_purge_round(purge_round)
         except Exception:
-            logger.exception("Segment store purge failed; retrying next tick")
+            logger.exception(
+                "Purge round of partition namespace %r failed; retrying next tick",
+                partition_registry.partition_namespace,
+            )
             more = False
         await asyncio.sleep(
-            _SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS
+            _PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS
             if more
-            else _SEGMENT_STORE_PURGE_INTERVAL_SECONDS
+            else _PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS
         )
 
 
@@ -145,7 +150,9 @@ class ResourceManagerImpl:
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
-        self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
+        # One registry per partition namespace in a database.
+        self._partition_registries: dict[tuple[str, str], PartitionRegistry] = {}
+        self._partition_registry_purge_tasks: list[asyncio.Task[None]] = []
         # One sweeper per store, keyed by its vector store id and its name.
         self._vector_store_purge_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
 
@@ -155,6 +162,7 @@ class ResourceManagerImpl:
         self._episode_storage_lock = Lock()
         self._semantic_manager_lock = Lock()
         self._segment_store_lock = Lock()
+        self._partition_registry_lock = Lock()
 
     async def build(self) -> None:
         """Build all configured resources in parallel."""
@@ -171,8 +179,9 @@ class ResourceManagerImpl:
 
     async def close(self) -> None:
         """Close resources and clean up state."""
-        purge_tasks = list(self._segment_store_purge_tasks)
-        self._segment_store_purge_tasks.clear()
+        purge_tasks = list(self._partition_registry_purge_tasks)
+        self._partition_registry_purge_tasks.clear()
+        self._partition_registries.clear()
         purge_tasks.extend(self._vector_store_purge_tasks.values())
         self._vector_store_purge_tasks.clear()
         segment_stores = list(self._segment_stores.values())
@@ -251,10 +260,41 @@ class ResourceManagerImpl:
                     )
                     await store.startup()
                     self._segment_stores[name] = store
-                    self._segment_store_purge_tasks.append(
-                        asyncio.create_task(_purge_deleted_partitions_forever(store))
-                    )
         return self._segment_stores[name]
+
+    async def get_partition_registry(
+        self,
+        database: str,
+        *,
+        partition_namespace: str,
+        tombstone_retention_seconds: int,
+        purge_round: PurgeRound | None = None,
+    ) -> PartitionRegistry:
+        """Return the started registry of a partition namespace in a database, building it on first access.
+
+        A registry first built with a purge round runs that purge round in
+        the background until close().
+        """
+        key = (database, partition_namespace)
+        if key not in self._partition_registries:
+            async with self._partition_registry_lock:
+                if key not in self._partition_registries:
+                    registry = SQLAlchemyPartitionRegistry(
+                        SQLAlchemyPartitionRegistryParams(
+                            engine=await self.get_sql_engine(database),
+                            partition_namespace=partition_namespace,
+                            tombstone_retention_seconds=tombstone_retention_seconds,
+                        )
+                    )
+                    await registry.startup()
+                    self._partition_registries[key] = registry
+                    if purge_round is not None:
+                        self._partition_registry_purge_tasks.append(
+                            asyncio.create_task(
+                                _run_purge_rounds_forever(registry, purge_round)
+                            )
+                        )
+        return self._partition_registries[key]
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""

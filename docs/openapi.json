@@ -4361,6 +4361,18 @@
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
           },
+          "partition_registry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partition Registry",
+            "description": "SQL engine resource id holding the registry of event memory's partitions (event backend only)"
+          },
           "enabled": {
             "type": "boolean",
             "title": "Enabled",
@@ -5482,6 +5494,18 @@
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
           },
+          "partition_registry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partition Registry",
+            "description": "SQL engine resource id holding the registry of event memory's partitions (event backend only)"
+          },
           "enabled": {
             "anyOf": [
               {
@@ -5575,6 +5599,18 @@
             ],
             "title": "Segment Store",
             "description": "SQL engine resource id backing the segment store (event backend only)"
+          },
+          "partition_registry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Partition Registry",
+            "description": "SQL engine resource id holding the registry of event memory's partitions (event backend only)"
           }
         },
         "type": "object",
