@@ -1,6 +1,5 @@
 import importlib.util
 import sqlite3
-from pathlib import Path
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -25,9 +24,6 @@ from memmachine_server.common.errors import (
     MilvusConfigurationError,
     QdrantConfigurationError,
     VectorStoreConfigurationError,
-)
-from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyPartitionRegistryParams,
 )
 from memmachine_server.common.resource_manager.database_manager import DatabaseManager
 from memmachine_server.common.sql import write_connection, write_session
@@ -310,24 +306,14 @@ async def test_sqlalchemy_pool_lifecycle_kwargs_none_omitted(tmp_path):
 # --- Qdrant ---
 
 
-def _qdrant_only_conf(registry_dir: Path) -> MagicMock:
-    """Build a DatabasesConf mock with only a Qdrant entry.
-
-    Its partition registry is a SQLite file in `registry_dir`.
-    """
+def _qdrant_only_conf() -> MagicMock:
+    """Build a DatabasesConf mock with only a Qdrant entry."""
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {
-        "registry": SqlAlchemyConf(
-            dialect="sqlite",
-            driver="aiosqlite",
-            path=str(registry_dir / "registry.db"),
-        )
-    }
+    conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {
         "qdrant1": QdrantConf(
-            partition_registry="registry",
             host="localhost",
             port=6333,
         ),
@@ -341,9 +327,8 @@ def _qdrant_only_conf(registry_dir: Path) -> MagicMock:
 @pytest.mark.asyncio
 async def test_qdrant_client_kwargs_forwarded(tmp_path):
     """host, port, grpc_port, prefer_grpc, https, api_key, and request_timeout_seconds are forwarded to AsyncQdrantClient."""
-    conf = _qdrant_only_conf(tmp_path)
+    conf = _qdrant_only_conf()
     conf.qdrant_confs["qdrant1"] = QdrantConf(
-        partition_registry="registry",
         host="qdrant.example.com",
         port=7333,
         grpc_port=7334,
@@ -386,7 +371,7 @@ async def test_qdrant_client_kwargs_forwarded(tmp_path):
 @pytest.mark.asyncio
 async def test_qdrant_api_key_omitted_when_empty(tmp_path):
     """api_key is not forwarded when it is the empty default."""
-    conf = _qdrant_only_conf(tmp_path)
+    conf = _qdrant_only_conf()
 
     mock_client = AsyncMock()
     mock_client.get_collections = AsyncMock(return_value=[])
@@ -414,11 +399,8 @@ async def test_qdrant_api_key_omitted_when_empty(tmp_path):
 @pytest.mark.asyncio
 async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
     """get_vector_store builds a QdrantVectorStore of the name and starts it up."""
-    conf = _qdrant_only_conf(tmp_path)
-    conf.qdrant_confs["qdrant1"] = QdrantConf(
-        partition_registry="registry",
-        tombstone_retention_seconds=3600,
-    )
+    conf = _qdrant_only_conf()
+    conf.qdrant_confs["qdrant1"] = QdrantConf()
 
     mock_client = AsyncMock()
     mock_client.get_collections = AsyncMock(return_value=[])
@@ -432,30 +414,17 @@ async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
             "memmachine_server.common.vector_store.qdrant_vector_store.QdrantVectorStore",
         ) as mock_store_cls,
         patch(
-            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyPartitionRegistry",
-        ) as mock_registry_cls,
-        patch(
             "qdrant_client.AsyncQdrantClient",
             return_value=mock_client,
         ),
     ):
-        mock_registry_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.get_vector_store("qdrant1", **_STORE)
 
-    mock_registry_cls.assert_called_once_with(
-        SQLAlchemyPartitionRegistryParams(
-            engine=builder.sql_engines["registry"],
-            partition_namespace="c",
-            tombstone_retention_seconds=3600,
-        )
-    )
-    mock_registry_cls.return_value.startup.assert_awaited_once()
     mock_params_cls.assert_called_once()
     kwargs = mock_params_cls.call_args.kwargs
     assert kwargs["client"] is mock_client
-    assert kwargs["partition_registry"] is mock_registry_cls.return_value
     assert kwargs["vector_store_name"] == "c"
     assert kwargs["store_schema"] is _SCHEMA
     # Asserted as "not None" rather than pinned to a value: OperationTracker
@@ -468,27 +437,9 @@ async def test_get_vector_store_builds_a_qdrant_store(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_qdrant_client_is_not_opened_when_the_partition_registry_is_unknown(
-    tmp_path,
-):
-    """The registry database is resolved before the client is opened, so a
-    bad partition_registry leaves no client behind."""
-    conf = _qdrant_only_conf(tmp_path)
-    conf.qdrant_confs["qdrant1"] = QdrantConf(partition_registry="missing")
-
-    with patch("qdrant_client.AsyncQdrantClient") as mock_cls:
-        builder = DatabaseManager(conf)
-        with pytest.raises(VectorStoreConfigurationError, match="missing"):
-            await builder.get_vector_store("qdrant1", **_STORE)
-
-    mock_cls.assert_not_called()
-    assert "qdrant1" not in builder.qdrant_clients
-
-
-@pytest.mark.asyncio
 async def test_get_vector_store_qdrant(tmp_path):
     """get_vector_store returns the VectorStore for a Qdrant config."""
-    conf = _qdrant_only_conf(tmp_path)
+    conf = _qdrant_only_conf()
 
     mock_client = AsyncMock()
     mock_client.get_collections = AsyncMock(return_value=[])
@@ -516,7 +467,7 @@ async def test_get_vector_store_qdrant(tmp_path):
 @pytest.mark.asyncio
 async def test_qdrant_config_not_found(tmp_path):
     """async_get_qdrant_client raises ValueError for unknown names."""
-    conf = _qdrant_only_conf(tmp_path)
+    conf = _qdrant_only_conf()
     conf.qdrant_confs = {}
     builder = DatabaseManager(conf)
     with pytest.raises(ValueError, match="Qdrant config 'missing' not found"):
@@ -539,7 +490,7 @@ async def test_qdrant_validation_failure():
 @pytest.mark.asyncio
 async def test_qdrant_close(tmp_path):
     """close() cleans up Qdrant clients and vector stores."""
-    conf = _qdrant_only_conf(tmp_path)
+    conf = _qdrant_only_conf()
 
     mock_client = AsyncMock()
     mock_client.get_collections = AsyncMock(return_value=[])
@@ -575,24 +526,15 @@ async def test_qdrant_close(tmp_path):
 # --- Milvus ---
 
 
-def _milvus_only_conf(registry_dir: Path) -> MagicMock:
-    """Build a DatabasesConf mock with only a Milvus entry.
-
-    Its partition registry is a SQLite file in `registry_dir`.
-    """
+def _milvus_only_conf() -> MagicMock:
+    """Build a DatabasesConf mock with only a Milvus entry."""
     conf = MagicMock(spec=DatabasesConf)
     conf.neo4j_confs = {}
-    conf.relational_db_confs = {
-        "registry": SqlAlchemyConf(
-            dialect="sqlite",
-            driver="aiosqlite",
-            path=str(registry_dir / "registry.db"),
-        )
-    }
+    conf.relational_db_confs = {}
     conf.nebula_graph_confs = {}
     conf.qdrant_confs = {}
     conf.milvus_confs = {
-        "milvus1": MilvusConf(partition_registry="registry", uri="http://milvus:19530"),
+        "milvus1": MilvusConf(uri="http://milvus:19530"),
     }
     conf.sqlite_vector_store_confs = {}
     conf.sqlite_vec_vector_store_confs = {}
@@ -603,9 +545,8 @@ def _milvus_only_conf(registry_dir: Path) -> MagicMock:
 @requires_pymilvus
 async def test_milvus_client_kwargs_forwarded(tmp_path):
     """uri, token, db_name and the request timeout are forwarded to AsyncMilvusClient."""
-    conf = _milvus_only_conf(tmp_path)
+    conf = _milvus_only_conf()
     conf.milvus_confs["milvus1"] = MilvusConf(
-        partition_registry="registry",
         uri="https://example.zillizcloud.com",
         token=SecretStr("secret-token"),
         db_name="memory",
@@ -640,7 +581,7 @@ async def test_milvus_client_kwargs_forwarded(tmp_path):
 @requires_pymilvus
 async def test_milvus_token_and_db_name_omitted_when_empty(tmp_path):
     """Empty auth and database values are not forwarded."""
-    conf = _milvus_only_conf(tmp_path)
+    conf = _milvus_only_conf()
 
     mock_client = AsyncMock()
     mock_client.close = AsyncMock()
@@ -663,31 +604,10 @@ async def test_milvus_token_and_db_name_omitted_when_empty(tmp_path):
 
 @pytest.mark.asyncio
 @requires_pymilvus
-async def test_milvus_client_is_not_opened_when_the_partition_registry_is_unknown(
-    tmp_path,
-):
-    """The registry database is resolved before the client is opened, so a
-    bad partition_registry leaves no client behind."""
-    conf = _milvus_only_conf(tmp_path)
-    conf.milvus_confs["milvus1"] = MilvusConf(partition_registry="missing")
-
-    with patch("pymilvus.AsyncMilvusClient") as mock_cls:
-        builder = DatabaseManager(conf)
-        with pytest.raises(VectorStoreConfigurationError, match="missing"):
-            await builder.get_vector_store("milvus1", **_STORE)
-
-    mock_cls.assert_not_called()
-    assert "milvus1" not in builder.milvus_clients
-
-
-@pytest.mark.asyncio
-@requires_pymilvus
 async def test_get_vector_store_builds_a_milvus_store(tmp_path):
     """get_vector_store builds a MilvusVectorStore of the name and starts it up."""
-    conf = _milvus_only_conf(tmp_path)
+    conf = _milvus_only_conf()
     conf.milvus_confs["milvus1"] = MilvusConf(
-        partition_registry="registry",
-        tombstone_retention_seconds=3600,
         request_timeout_seconds=7,
         max_varchar_length=2048,
         purge_batch_size=500,
@@ -704,27 +624,14 @@ async def test_get_vector_store_builds_a_milvus_store(tmp_path):
         patch(
             "memmachine_server.common.vector_store.milvus_vector_store.MilvusVectorStore",
         ) as mock_store_cls,
-        patch(
-            "memmachine_server.common.resource_manager.database_manager.SQLAlchemyPartitionRegistry",
-        ) as mock_registry_cls,
         patch("pymilvus.AsyncMilvusClient", return_value=mock_client),
     ):
-        mock_registry_cls.return_value.startup = AsyncMock()
         mock_store_cls.return_value.startup = AsyncMock()
         builder = DatabaseManager(conf)
         await builder.get_vector_store("milvus1", **_STORE)
 
-    mock_registry_cls.assert_called_once_with(
-        SQLAlchemyPartitionRegistryParams(
-            engine=builder.sql_engines["registry"],
-            partition_namespace="c",
-            tombstone_retention_seconds=3600,
-        )
-    )
-    mock_registry_cls.return_value.startup.assert_awaited_once()
     mock_params_cls.assert_called_once_with(
         client=mock_client,
-        partition_registry=mock_registry_cls.return_value,
         vector_store_name="c",
         store_schema=_SCHEMA,
         request_timeout_seconds=7,
@@ -741,7 +648,7 @@ async def test_get_vector_store_builds_a_milvus_store(tmp_path):
 @requires_pymilvus
 async def test_get_vector_store_milvus(tmp_path):
     """get_vector_store returns the VectorStore for a Milvus config."""
-    conf = _milvus_only_conf(tmp_path)
+    conf = _milvus_only_conf()
 
     mock_client = AsyncMock()
     mock_client.list_collections = AsyncMock(return_value=[])
@@ -766,7 +673,7 @@ async def test_get_vector_store_milvus(tmp_path):
 @pytest.mark.asyncio
 async def test_milvus_config_not_found(tmp_path):
     """async_get_milvus_client raises ValueError for unknown names."""
-    conf = _milvus_only_conf(tmp_path)
+    conf = _milvus_only_conf()
     conf.milvus_confs = {}
     builder = DatabaseManager(conf)
     with pytest.raises(ValueError, match="Milvus config 'missing' not found"):
@@ -793,9 +700,8 @@ async def test_milvus_validation_failure():
 async def test_milvus_validation_is_bounded_by_the_request_timeout(tmp_path):
     """The connectivity check carries the configured request timeout, which
     the client's own timeout bounds only for connecting."""
-    conf = _milvus_only_conf(tmp_path)
+    conf = _milvus_only_conf()
     conf.milvus_confs["milvus1"] = MilvusConf(
-        partition_registry="registry",
         uri="http://milvus.example.com:19530",
         request_timeout_seconds=7,
     )
@@ -828,7 +734,7 @@ async def test_milvus_validation_is_bounded_by_the_request_timeout(tmp_path):
 @requires_pymilvus
 async def test_milvus_close(tmp_path):
     """close() cleans up Milvus clients and vector stores."""
-    conf = _milvus_only_conf(tmp_path)
+    conf = _milvus_only_conf()
 
     mock_client = AsyncMock()
     mock_client.list_collections = AsyncMock(return_value=[])

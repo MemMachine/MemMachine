@@ -49,6 +49,13 @@ YamlValue = dict[str, "YamlValue"] | list["YamlValue"] | str | int | float | boo
 
 logger = logging.getLogger(__name__)
 
+# The floor of event memory's tombstone retention on a remote vector store: a
+# write in flight when its partition is deleted lands within its client's
+# request timeout plus the server's own delay, seconds to minutes, so the
+# floor is the request timeout times this factor, plus these extra seconds.
+_RETENTION_FLOOR_TIMEOUT_FACTOR = 10
+_RETENTION_FLOOR_EXTRA_SECONDS = 300
+
 
 def _is_openai_incomplete(conf: ApiKeyMixin) -> bool:
     """Check if an OpenAI-based config has empty credentials and no base_url."""
@@ -454,6 +461,32 @@ class Configuration(BaseModel):
         if was_enabled and not self.semantic_memory.enabled:
             return "an OpenAI resource has empty credentials and no base_url"
         return None
+
+    @model_validator(mode="after")
+    def _validate_event_memory_retention(self) -> Configuration:
+        """Refuse an event memory retention below the floor its remote vector store's request timeout sets."""
+        long_term_memory = self.episodic_memory.long_term_memory
+        if long_term_memory is None or long_term_memory.vector_store is None:
+            return self
+        databases = self.resources.databases
+        vector_store_conf = databases.qdrant_confs.get(
+            long_term_memory.vector_store
+        ) or databases.milvus_confs.get(long_term_memory.vector_store)
+        if vector_store_conf is None:
+            return self
+        floor = (
+            _RETENTION_FLOOR_TIMEOUT_FACTOR * vector_store_conf.request_timeout_seconds
+            + _RETENTION_FLOOR_EXTRA_SECONDS
+        )
+        if long_term_memory.tombstone_retention_seconds < floor:
+            raise ValueError(
+                "episodic_memory.long_term_memory.tombstone_retention_seconds "
+                f"({long_term_memory.tombstone_retention_seconds}) must be at "
+                f"least {_RETENTION_FLOOR_TIMEOUT_FACTOR} x the request_timeout_seconds "
+                f"of vector store {long_term_memory.vector_store!r} "
+                f"+ {_RETENTION_FLOOR_EXTRA_SECONDS}, {floor}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _auto_disable_when_openai_incomplete(self) -> Configuration:

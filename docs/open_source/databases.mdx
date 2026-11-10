@@ -32,18 +32,15 @@ keeps event segments in a relational database. Configure the VectorStore under
 Supported VectorStore providers include Qdrant, Milvus, SQLiteVectorStore, and
 SQLiteVecVectorStore. The event backend keeps one store, with the vector
 store name `event_memory`, and each session's data is a partition of it; a
-Milvus collection is named `sys_` followed by the vector store name. Qdrant and
-Milvus keep the registry of their partitions in a relational database named by
-`partition_registry`, so any number of server processes can share one backend;
-the SQLite stores are bound to one node. The registries of every store share
-two tables there, keyed by vector store name, which identifies one store among
-all the stores whose registries share the database. Event memory's store is
-always named `event_memory`, and semantic memory's `semantic_memory`, so
-deployments that share a backend share those stores, and deployments on
-different backends need different registry databases, which one database
-server can hold. Every process must configure a given Qdrant server or
-Milvus database with the same `partition_registry`; the processes then share
-its stores and their registries.
+Milvus collection is named `sys_` followed by the vector store name. Event
+memory keeps the registry of its partitions in the relational database that
+`episodic_memory.long_term_memory.partition_registry` names, so any number of
+server processes can share one Qdrant or Milvus backend; the SQLite stores are
+bound to one node. The registry mints each partition's incarnation, a random
+UUID under which the vector store and the segment store keep the partition's
+data, so every process that shares event memory's stores names the same
+registry database, and deployments with separate registries can share a
+backend without sharing data.
 
 Milvus supports two deployment shapes through the same configuration fields:
 
@@ -66,7 +63,6 @@ resources:
         uri: http://localhost:19530
         # token: $MILVUS_TOKEN
         # db_name: default
-        partition_registry: profile_storage
         request_timeout_seconds: 30
 
 episodic_memory:
@@ -74,6 +70,7 @@ episodic_memory:
     backend: event
     vector_store: milvus_vector_store
     segment_store: profile_storage
+    partition_registry: profile_storage
 ```
 
 Upgrading does not carry existing vector store data over. The stores name

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -23,11 +24,16 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
 async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_engine):
     vector_store = MagicMock()
     partition = MagicMock()
-    vector_store.open_or_create_partition = AsyncMock(return_value=partition)
+    vector_store.open_partition_incarnation = AsyncMock(return_value=partition)
+    registration = MagicMock()
+    registration.incarnation = uuid4()
+    partition_registry = MagicMock()
+    partition_registry.resolve = AsyncMock(return_value=registration)
 
     resource_manager = MagicMock()
     resource_manager.get_sql_engine = AsyncMock(return_value=sqlalchemy_sqlite_engine)
     resource_manager.get_vector_store = AsyncMock(return_value=vector_store)
+    resource_manager.get_partition_registry = AsyncMock(return_value=partition_registry)
 
     manager = SemanticResourceManager(
         semantic_conf=SemanticMemoryConf(
@@ -52,7 +58,7 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
     )
     # The store is semantic memory's one store, whatever its embedder,
     # built with the keys the storage writes; the partition is the manager's
-    # own.
+    # own, registered in a namespace of its own in the storage's database.
     resource_manager.get_vector_store.assert_awaited_once_with(
         "semantic_vectors",
         vector_store_name="semantic_memory",
@@ -62,6 +68,15 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
             indexed_properties={},
         ),
     )
-    vector_store.open_or_create_partition.assert_awaited_once_with("semantic_memory")
+    resource_manager.get_partition_registry.assert_awaited_once_with(
+        "semantic_db",
+        partition_namespace="semantic_memory",
+        tombstone_retention_seconds=86400,
+        purge_round=vector_store.purge_partition_incarnation,
+    )
+    partition_registry.resolve.assert_awaited_once_with("semantic_memory")
+    vector_store.open_partition_incarnation.assert_awaited_once_with(
+        registration.incarnation
+    )
 
     await storage.cleanup()

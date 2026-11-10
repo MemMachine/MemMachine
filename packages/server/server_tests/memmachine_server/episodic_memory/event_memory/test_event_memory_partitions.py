@@ -96,9 +96,10 @@ def event_memory(
     )
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
-    vector_store.open_or_create_partition.side_effect = lambda partition_name: (
+    vector_store.open_partition_incarnation.side_effect = lambda incarnation: (
         InMemoryVectorStorePartition(store_schema=store_schema)
     )
+    vector_store.purge_partition_incarnation.return_value = False
     return EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,
@@ -111,15 +112,15 @@ def event_memory(
     )
 
 
-async def _purge(
-    partition_registry: SQLAlchemyPartitionRegistry,
-    segment_store: SQLAlchemySegmentStore,
-) -> None:
+async def _purge(event_memory: EventMemory) -> None:
     """Run the namespace's purge rounds until none is due."""
+    params = event_memory._params
     purge_round = functools.partial(
-        EventMemory.purge_partition_incarnation, segment_store
+        EventMemory.purge_partition_incarnation,
+        params.segment_store,
+        params.vector_store,
     )
-    while await partition_registry.run_purge_round(purge_round):
+    while await params.partition_registry.run_purge_round(purge_round):
         pass
 
 
@@ -204,7 +205,6 @@ async def test_a_partition_created_again_is_a_new_life_that_starts_empty(
 @pytest.mark.asyncio
 async def test_the_purge_round_reclaims_a_deleted_life(
     event_memory: EventMemory,
-    partition_registry: SQLAlchemyPartitionRegistry,
     segment_store: SQLAlchemySegmentStore,
 ) -> None:
     deleted = await event_memory.open_or_create_partition(NAME)
@@ -214,7 +214,7 @@ async def test_the_purge_round_reclaims_a_deleted_life(
     kept_event = _event("buy bread")
     await kept.encode_events([kept_event])
 
-    await _purge(partition_registry, segment_store)
+    await _purge(event_memory)
 
     assert await segment_store.open_partition_incarnation(_incarnation(deleted)) is None
     segments = await segment_store.open_partition_incarnation(_incarnation(kept))

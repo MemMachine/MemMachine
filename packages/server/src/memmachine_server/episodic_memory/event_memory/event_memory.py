@@ -5,7 +5,7 @@ import datetime
 import json
 import logging
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Iterable, Sequence
 from typing import Final, cast
 from uuid import UUID
 
@@ -149,9 +149,9 @@ class EventMemory:
     Event memory over a segment store and a vector store.
 
     Event memory owns its partition namespace: its registry names each
-    partition and mints an incarnation for each of its lives, and the
-    segment store holds a life's segments under the incarnation. Handles on
-    a partition read and write that life only.
+    partition and mints an incarnation for each of its lives, and each store
+    holds a life's records under the incarnation. Handles on a partition
+    read and write that life only.
     """
 
     PARTITION_NAMESPACE: Final[str] = "event_memory"
@@ -202,9 +202,8 @@ class EventMemory:
         """
         Open the partition if it exists, or create it if it does not.
 
-        Creating reserves the name in the registry, prepares the segment
-        store's storage under the minted incarnation, and confirms the
-        reservation.
+        Creating reserves the name in the registry, prepares every store's
+        storage under the minted incarnation, and confirms the reservation.
 
         Args:
             partition_name (str):
@@ -243,7 +242,9 @@ class EventMemory:
                 registration.incarnation,
             )
         vector_store_partition = (
-            await self._params.vector_store.open_or_create_partition(partition_name)
+            await self._params.vector_store.open_partition_incarnation(
+                registration.incarnation
+            )
         )
         return EventMemoryPartition(
             self._params,
@@ -256,8 +257,15 @@ class EventMemory:
 
     async def _prepare_partition_incarnation(self, incarnation: UUID) -> None:
         """Prepare every store's storage for a reserved partition incarnation."""
-        await self._params.segment_store.prepare_partition_incarnation(
-            incarnation, SegmentStorePartitionConfig()
+        await _on_every_store(
+            "prepare",
+            incarnation,
+            [
+                self._params.segment_store.prepare_partition_incarnation(
+                    incarnation, SegmentStorePartitionConfig()
+                ),
+                self._params.vector_store.prepare_partition_incarnation(incarnation),
+            ],
         )
 
     async def delete_partition(self, partition_name: str) -> None:
@@ -272,30 +280,43 @@ class EventMemory:
                 The name of the partition to delete.
         """
         await self._params.partition_registry.unregister(partition_name)
-        await self._params.vector_store.delete_partition(partition_name)
 
     @staticmethod
     async def purge_partition_incarnation(
-        segment_store: SegmentStore, incarnation: UUID
+        segment_store: SegmentStore,
+        vector_store: VectorStore,
+        incarnation: UUID,
     ) -> bool:
         """
-        Purge a bounded batch of a deleted partition incarnation's records.
+        Purge a bounded batch of a deleted partition incarnation's records from every store.
 
         The purge round of event memory's partition namespace: the registry
         calls it once the incarnation's retention has passed, until it
-        returns False.
+        returns False. Every store finishes its batch before the round's
+        outcome is decided, so the stores that answer keep purging while
+        another is down; the round then raises the first store's error.
 
         Args:
             segment_store (SegmentStore):
                 The segment store holding the incarnation's segments.
+            vector_store (VectorStore):
+                The vector store holding the incarnation's derivatives.
             incarnation (UUID):
                 The incarnation of a deleted partition.
 
         Returns:
             bool:
-                Whether the purge found any of the incarnation's records.
+                Whether any store found anything of the incarnation's.
         """
-        return await segment_store.purge_partition_incarnation(incarnation)
+        found = await _on_every_store(
+            "purge",
+            incarnation,
+            [
+                segment_store.purge_partition_incarnation(incarnation),
+                vector_store.purge_partition_incarnation(incarnation),
+            ],
+        )
+        return any(found)
 
     @staticmethod
     def string_from_segment_context(
@@ -1048,6 +1069,24 @@ class EventMemoryPartition:
         await self._segment_store_partition.delete_segments(
             segment_uuids=segment_uuids,
         )
+
+
+async def _on_every_store[T](
+    step: str, incarnation: UUID, calls: Sequence[Awaitable[T]]
+) -> list[T]:
+    """Run one step of a partition incarnation's lifecycle on every store at once, and raise the first error once every store has finished."""
+    results = await asyncio.gather(*calls, return_exceptions=True)
+    errors = [result for result in results if isinstance(result, BaseException)]
+    for error in errors:
+        logger.error(
+            "A store failed to %s partition incarnation %s",
+            step,
+            incarnation,
+            exc_info=error,
+        )
+    if errors:
+        raise errors[0]
+    return [result for result in results if not isinstance(result, BaseException)]
 
 
 def _extract_text(block: Block) -> str | None:
