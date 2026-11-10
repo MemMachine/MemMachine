@@ -380,12 +380,14 @@ class TestConfig:
             embedder="new-embedder",
             vector_store="qdrant_vs",
             segment_store="sqlite_db",
+            partition_registry="sqlite_db",
         )
         assert isinstance(result, UpdateMemoryConfigResponse)
         body = mock_client.request.call_args[1]["json"]
         assert body["backend"] == "event"
         assert body["vector_store"] == "qdrant_vs"
         assert body["segment_store"] == "sqlite_db"
+        assert body["partition_registry"] == "sqlite_db"
         assert body["embedder"] == "new-embedder"
         # Untouched declarative-only field must NOT leak into the payload.
         assert "vector_graph_store" not in body

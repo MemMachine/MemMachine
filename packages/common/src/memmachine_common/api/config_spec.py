@@ -101,6 +101,16 @@ class LongTermMemoryConfigResponse(BaseModel):
             ),
         ),
     ]
+    partition_registry: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "SQL engine resource id holding the registry of event memory's "
+                "partitions (event backend only)"
+            ),
+        ),
+    ]
     enabled: Annotated[
         bool,
         Field(default=True, description=SpecDoc.LTM_CONFIG_ENABLED),
@@ -445,6 +455,16 @@ class UpdateLongTermMemorySpec(BaseModel):
             default=None,
             description=(
                 "SQL engine resource id backing the segment store (event backend only)"
+            ),
+        ),
+    ]
+    partition_registry: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "SQL engine resource id holding the registry of event memory's "
+                "partitions (event backend only)"
             ),
         ),
     ]

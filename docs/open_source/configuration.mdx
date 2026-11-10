@@ -80,6 +80,7 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           session_id: user-session-id
           vector_store: my-vector-store
           segment_store: profile_storage
+          partition_registry: profile_storage
           embedder: my-openai-embedder
           reranker: my-rrf-reranker
         short_term_memory:
@@ -103,6 +104,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
           session_id: user-session-id # Reuses parent session_key
           vector_store: my-vector-store # ID of the VectorStore from 'resources.databases'
           segment_store: profile_storage # ID of the SQL database used by SegmentStore
+          partition_registry: profile_storage # ID of the SQL database holding event memory's partition registry
+          tombstone_retention_seconds: 86400 # Seconds a deleted partition's records wait before their purge
           embedder: my-openai-embedder # ID of the Embedder from 'resources.embedders'
           reranker: my-rrf-reranker # ID of the Reranker from 'resources.rerankers'
         short_term_memory: # Configuration for short-term memory
@@ -129,6 +132,8 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `long_term_memory.backend`      | Long-term memory backend. Use `event` for VectorStore + SegmentStore, or `declarative` for VectorGraphStore. | `declarative` when omitted |
     | `long_term_memory.vector_store` | Event backend only: ID of a VectorStore defined in `resources.databases`. | *Required for event backend* |
     | `long_term_memory.segment_store` | Event backend only: ID of a SQL database defined in `resources.databases`. | *Required for event backend* |
+    | `long_term_memory.partition_registry` | Event backend only: ID of a SQL database defined in `resources.databases` that holds the registry of event memory's partitions, shared by every server process. | *Required for event backend* |
+    | `long_term_memory.tombstone_retention_seconds` | Event backend only: seconds a deleted partition's records are kept before their purge starts, so every write in flight at the deletion has landed and is reclaimed. | `86400` |
     | `long_term_memory.vector_graph_store` | Declarative backend only: ID of a VectorGraphStore defined in `resources.databases`. | *Required for declarative backend* |
     | `long_term_memory.embedder`     | The ID of an embedder defined in `resources.embedders` for creating embeddings. | *Required* |
     | `long_term_memory.reranker`     | The ID of a reranker defined in `resources.rerankers` for search result re-ranking. Event backend can omit it to use embedding scores directly. | Depends on backend |

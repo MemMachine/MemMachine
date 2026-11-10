@@ -1,5 +1,6 @@
 """Helpers for building long-term memory from configuration."""
 
+import functools
 import hashlib
 import logging
 
@@ -19,6 +20,10 @@ from memmachine_server.common.configuration.episodic_config import (
 )
 from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.errors import ConfigurationError
+from memmachine_server.common.partition_registry import (
+    PartitionRegistry,
+    validate_partition_name,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
@@ -35,9 +40,8 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
-    PARTITION_KEY_MAX_BYTES,
-    validate_partition_key,
+from memmachine_server.episodic_memory.event_memory.segment_store import (
+    SegmentStore,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
@@ -152,9 +156,13 @@ async def _event_memory(
         resource_manager.config
     )
     embedder = await resource_manager.get_embedder(embedder_id, validate=True)
+    segment_store = await resource_manager.get_segment_store(segment_store_id)
     return EventMemory(
         EventMemoryParams(
-            segment_store=await resource_manager.get_segment_store(segment_store_id),
+            partition_registry=await _event_memory_partition_registry(
+                resource_manager, segment_store
+            ),
+            segment_store=segment_store,
             vector_store=await event_backend_vector_store(resource_manager),
             segmenter=_build_segmenter(config.segmenter),
             deriver=_build_deriver(config.deriver),
@@ -162,6 +170,33 @@ async def _event_memory(
             reranker=reranker,
             metrics_factory=await resource_manager.get_metrics_factory("prometheus"),
         )
+    )
+
+
+async def _event_memory_partition_registry(
+    resource_manager: InstanceOf[CommonResourceManager],
+    segment_store: SegmentStore,
+) -> PartitionRegistry:
+    """
+    The registry of event memory's partition namespace, whose purge rounds run in the background.
+
+    Raises:
+        ConfigurationError: If the deployment names no registry database
+            for event memory.
+
+    """
+    deployment = resource_manager.config.episodic_memory.long_term_memory
+    if deployment is None or deployment.partition_registry is None:
+        raise ConfigurationError(
+            "The deployment's event memory names no partition_registry database"
+        )
+    return await resource_manager.get_partition_registry(
+        deployment.partition_registry,
+        partition_namespace=EventMemory.PARTITION_NAMESPACE,
+        tombstone_retention_seconds=deployment.tombstone_retention_seconds,
+        purge_round=functools.partial(
+            EventMemory.purge_partition_incarnation, segment_store
+        ),
     )
 
 
@@ -215,29 +250,26 @@ def event_backend_indexed_properties() -> dict[str, PropertyType]:
 
 def partition_key_for_session(session_id: str) -> str:
     """
-    Derive a partition key satisfying the segment store's contract.
+    Derive the name of a session's event memory partition.
 
-    If the session_id already satisfies it (checked by the store's own
-    validator, so the two can never disagree), use it directly to keep
-    debug paths legible. Otherwise hash to a stable 32-char hex digest and
-    emit a DEBUG log of the original→hashed mapping so operators can
-    correlate partition keys back to sessions during incident response.
+    A session id the partition registry's name rule accepts is the name as it
+    is, which keeps debug paths legible. Any other is hashed to a stable hex
+    digest, with a DEBUG log of the original-to-hashed mapping so operators
+    can correlate partition names back to sessions during incident response.
     """
     try:
-        validate_partition_key(session_id)
+        validate_partition_name(session_id)
     except ValueError:
         pass
     else:
         return session_id
-    partition_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[
-        :PARTITION_KEY_MAX_BYTES
-    ]
+    partition_name = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
     logger.debug(
-        "partition_key_for_session: hashed session_id %r -> partition_key %r",
+        "partition_key_for_session: hashed session_id %r -> partition name %r",
         session_id,
-        partition_key,
+        partition_name,
     )
-    return partition_key
+    return partition_name
 
 
 def _build_segmenter(conf: SegmenterConf) -> Segmenter:

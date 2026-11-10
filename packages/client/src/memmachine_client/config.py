@@ -317,6 +317,7 @@ class Config:
         backend: Literal["declarative", "event"] | None = None,
         vector_store: str | None = None,
         segment_store: str | None = None,
+        partition_registry: str | None = None,
         enabled: bool | None = None,
         timeout: int | None = None,
     ) -> UpdateMemoryConfigResponse:
@@ -337,6 +338,8 @@ class Config:
             vector_store: VectorStore resource id (event backend only)
             segment_store: SQL engine resource id backing the segment store
                 (event backend only)
+            partition_registry: SQL engine resource id holding the registry
+                of event memory's partitions (event backend only)
             enabled: Whether long-term memory is enabled
             timeout: Request timeout in seconds (uses client default if not provided)
 
@@ -356,6 +359,7 @@ class Config:
             vector_graph_store=vector_graph_store,
             vector_store=vector_store,
             segment_store=segment_store,
+            partition_registry=partition_registry,
         )
         payload = spec.model_dump(exclude_none=True)
         if enabled is not None:

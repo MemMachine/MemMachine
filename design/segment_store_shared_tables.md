@@ -38,37 +38,26 @@ tenant may hold tens of thousands to tens of millions of rows.
 
 One physical schema on every dialect; the ORM models are the tables.
 
-- `segment_store_pt`, the tenant registry: one row per live tenant, holding
-  the logical partition key (primary key), an `incarnation` (a random UUID
-  minted at creation, unique-constrained), and the payload codec config.
+The store holds no tenant names. Its owner's [partition
+registry](partition_registry.md) names each tenant, mints an `incarnation`
+(a random UUID) for each of its lives, and never mints one again while any
+trace of it remains; the store addresses everything by incarnation.
+
+- `segment_store_pt_in`: one row per prepared incarnation, holding its
+  payload codec config and, while the incarnation is purged, the purge's
+  cursor, the last segment key purged.
 - `segment_store_sg` and `segment_store_dv_ln`, the segment and
   derivative-link tables, shared by all tenants and not partitioned. Rows
-  carry no logical key; they are keyed by the incarnation alone, so a data
-  query cannot be built without resolving the registry first, and
+  carry no tenant name; they are keyed by the incarnation alone, so
   addressing the wrong tenant is structurally impossible rather than
   guarded against. A 16-byte UUID also keeps index entries narrower than a
   composite string key, and random UUIDs are unique across nodes without
   coordination, so a tenant's rows move between databases verbatim.
-- `segment_store_gc`, the purge queue: one row per dead incarnation, with
-  the purge's cursor, the last segment key purged. An entry holds only what
-  the purge reads.
 
 The link table keeps its foreign key to the segment table (`ON DELETE
 CASCADE`), both sides keyed by incarnation. The segment table has no
-foreign key to the registry: registry rows and data rows are decoupled so
-that registry deletion is O(1), and the rows left behind are exactly what
-the purge queue tracks.
-
-An incarnation value cannot be reused while any trace of it remains. A
-collision with a live incarnation violates the registry's unique
-constraint. A collision with one whose garbage is still awaiting purge is
-caught by re-checking the purge queue inside the mint transaction, after
-the registry insert: a concurrent deletion moving the colliding row to the
-queue is visible by the time the insert's unique-index wait resolves, and
-no new queue entry for the minted value can appear before commit, because
-the only registry row carrying it is the uncommitted one. The queue's
-primary key rejects double enqueueing. Across databases, uniqueness rests
-on random-UUID collision resistance.
+foreign key to the incarnation's row: the purge deletes an incarnation's
+segments in batches, and its row last.
 
 "Incarnation" is the established term for a per-lifetime random identifier
 (cf. Kafka's broker incarnation ID). It is deliberately not "generation" or
@@ -76,36 +65,31 @@ on random-UUID collision resistance.
 
 ### Tenant lifecycle
 
-- **Create**: validate the logical key, mint an incarnation, insert the
-  registry row and re-check the purge queue in one transaction. No DDL, no
-  management lock, microseconds. A committed row under the key raises the
-  partition-exists error. Any other integrity rejection, or a minted
-  incarnation found in the purge queue, is retried with a fresh incarnation
-  up to `_MAX_MINT_ATTEMPTS`; a persistent failure raises
-  `SegmentStoreAttemptsExhaustedError` with the database error chained.
-- **Open**: read the registry row. The handle captures the logical key, the
-  incarnation, and the codec.
-- **Delete**: one transaction: lock the registry row (`SELECT ... FOR
-  UPDATE`, which waits out in-flight writers holding `FOR SHARE` pins),
-  insert the incarnation into the purge queue, delete the registry row.
-  O(1) regardless of tenant size, and the tenant is unreachable at once
-  because every operation resolves the registry first.
-- **Re-create**: a new registry row with a fresh incarnation, safe at any
+- **Prepare**: insert the incarnation's row with its codec config. No DDL,
+  no lock beyond the row, microseconds. Preparing again with the same
+  config changes nothing; a different config raises the config-mismatch
+  error.
+- **Open**: read the incarnation's row. The handle captures the
+  incarnation and the codec.
+- **Delete** is the owner's: unregistering the tenant's name in its
+  registry is O(1) regardless of tenant size, and the tenant is unreachable
+  at once. The store is not called.
+- **Re-create**: the owner registers a fresh incarnation, safe at any
   time; the old incarnation's rows are invisible to the successor even
-  while the purger is still sweeping them.
-- **Purge**: `purge_deleted_partitions() -> bool` on the `SegmentStore`
-  ABC, the sweeper: it claims the oldest entry across all keys, returns
-  True while more work may remain, and the caller's whole protocol is
-  "call until False"; how much one call does is implementation policy. The caller is promised only that a call
-  does not noticeably degrade concurrent request serving, and every bound
-  below exists to keep that promise. The deletion contract is "unreachable
-  immediately, erased asynchronously".
+  while its purge is still sweeping them.
+- **Purge**: `purge_partition_incarnation(incarnation) -> bool` on the
+  `SegmentStore` ABC. The owner's purge rounds call it for a deleted
+  incarnation once the registry's retention has passed, until it returns
+  False; how much one call does is implementation policy. The caller is
+  promised only that a call does not noticeably degrade concurrent request
+  serving, and every bound below exists to keep that promise. The deletion
+  contract is "unreachable immediately, erased asynchronously".
 
   - One transaction per call, committing its progress or nothing, so
     committed progress survives interruption.
   - Segment rows are deleted in batches of up to
     `SQLAlchemySegmentStoreParams.purge_max_segments` per call. A batch
-    continues from the entry's cursor: it reads the next keys after
+    continues from the incarnation's cursor: it reads the next keys after
     `purged_through` in primary-key order, deletes that key range, and
     records its last key in the same transaction. No batch reads a row an
     earlier batch deleted; PostgreSQL keeps deleted rows in the table and
@@ -113,103 +97,61 @@ on random-UUID collision resistance.
     incarnation's first key would step over all of them, making each
     batch, and the call that finds the incarnation empty, cost in
     proportion to what was already purged. The cursor relies on no row
-    being written into an incarnation once it is enqueued, which the write
-    fence guarantees (below). The link table follows by cascade, measured
-    faster than deleting link rows manually at one and at four links per
-    segment. Cascade deletion
-    saturates around 3M link rows/s as density grows (380k segments/s at
-    one link per segment, 46k at 64), so heavily linked partitions still
-    purge in sub-second calls. Link fan-out is set by the deriver, not
-    something the store can reject after derivation.
-  - Queue entries carry their own bound,
-    `SQLAlchemySegmentStoreParams.purge_max_partitions`, because their cost
-    is round trips rather than rows: empty partitions are cheap to create
-    and delete, and a backlog of them must not turn one call into an
-    unbounded transaction. Both bounds are set once at construction; the
-    server currently uses the defaults, and wiring them into server
-    configuration is future work.
-  - Entries are claimed oldest-first (enqueue time stamped by the database
-    clock, so every server's entries order on one clock, at its
-    resolution) with `FOR UPDATE
-    SKIP LOCKED`, one at a time, so a call neither materializes nor locks
-    the rest of the backlog. Concurrent purgers, from any process, share
-    the queue instead of contending, and only the claiming call touches a
-    dead incarnation's rows (writers cannot, since the fence pins live
-    incarnations only), so reclamation is deadlock-free by construction.
-  - The delete path does not purge. An inline drain was tried twice,
-    first of the global queue and then scoped to the deleted key, and
-    removed: prompt physical erasure is not a promise the store can keep
-    on every dialect (on SQLite any writer past the busy timeout fails),
-    and a global drain made one deletion pay for other tenants' backlog.
-    A deleted partition is unreachable at once and its rows are reclaimed
-    in the background, at the sweeper's pace (below). Waking the sweeper
-    from the delete path is future work with the tenant lifecycle layer.
-  - An entry is retired only when the retiring call's own deletes found
-    fewer rows than its remaining budget. Link rows go with their segments
-    by the foreign key's cascade and nothing else: the store requires
-    foreign-key enforcement of its engine (on SQLite, per connection) and
-    does not verify it, so an engine without enforcement leaves link rows
-    behind.
-  - On SQLite, which drops locking clauses, the call holds the database's
-    write lock from BEGIN, so purgers serialize and each reads the cursor
-    its predecessor committed. With a claim read before the write lock is
-    taken, a second purger could plan its batch from a cursor the first has
-    since advanced, delete nothing, and retire the entry with rows left.
-  - The store never schedules purging; when and how often is the caller's
-    policy, and implementations whose deletes reclaim physically return
-    False. In the server, the resource manager runs one background task
-    per store: bounded calls a short pause apart while the store reports
-    more work (the pause yields the database to request serving), a full
-    tick apart otherwise; failures are logged and retried next tick, and
-    the task is cancelled on close. `LongTermMemory` does not purge on
-    session drop; a deployment must run the sweeper somewhere, and the
-    ABC says so.
-  - The sweeper's pacing, not deletion speed, bounds how fast a backlog
-    drains: a call deletes at most `purge_max_segments` segment rows and
-    the resource manager pauses between busy calls, so one process
-    drains fewer than `purge_max_segments` rows per pause (under 10,000
-    rows per second at the defaults, so upwards of 17 minutes for a
-    ten-million-row tenant). Deletion itself measured about 147k rows/s
-    on the benchmark box.
+    being written into an incarnation once its purge starts, which the
+    retention guarantees: every write finishes within a bound well under
+    it. A row that lands anyway is found once the incarnation's row is
+    gone, since a call without a cursor starts from the incarnation's
+    first key. The link table follows by cascade, measured faster than
+    deleting link rows manually at one and at four links per segment.
+    Cascade deletion saturates around 3M link rows/s as density grows
+    (380k segments/s at one link per segment, 46k at 64), so heavily
+    linked partitions still purge in sub-second calls. Link fan-out is set
+    by the deriver, not something the store can reject after derivation.
+  - The incarnation's row goes only in a call whose own deletes found fewer
+    rows than its bound, and a call returns whether it found anything, so a
+    call that returns False proves the incarnation gone from the store.
+    Link rows go with their segments by the foreign key's cascade and
+    nothing else: the store requires foreign-key enforcement of its engine
+    (on SQLite, per connection) and does not verify it, so an engine
+    without enforcement leaves link rows behind.
+  - Purgers of one incarnation, from any process, serialize on its row's
+    lock (`FOR UPDATE`), so each reads the cursor its predecessor
+    committed. On SQLite, which drops locking clauses, the call holds the
+    database's write lock from BEGIN instead. With a cursor read before the
+    lock is taken, a second purger could plan its batch from a cursor the
+    first has since advanced and skip rows.
+  - The store never schedules purging; the owner's registry does, through
+    its purge rounds, and the server's resource manager runs them: bounded
+    rounds a short pause apart while one ran, a full tick apart otherwise;
+    failures are logged and retried next tick, and the task is cancelled
+    on close.
+  - Pacing, not deletion speed, bounds how fast a backlog drains: a call
+    deletes at most `purge_max_segments` segment rows and the resource
+    manager pauses between busy rounds, so one process drains fewer than
+    `purge_max_segments` rows per pause (under 10,000 rows per second at
+    the defaults, so upwards of 17 minutes for a ten-million-row tenant).
+    Deletion itself measured about 147k rows/s on the benchmark box.
 
-### Fencing (resolves #1549)
+### Fencing
 
-Every write pins the registry row with `SELECT ... WHERE incarnation =
-:incarnation FOR SHARE` and raises a stale-handle error when no row
-matches. Reads add the same predicate to their data statement as an
-`EXISTS`, so one statement (one snapshot) checks liveness and reads: a
-stale handle reads nothing, at no extra round trip, and a read that returns
-no rows issues the registry check on its own to tell an empty partition
-from a stale handle. Windowed reads span several statements, each with its
-own snapshot, so they end with one registry read; a deletion committing
-between their statements raises instead of returning seeds with empty
-context. On SQLite a read's statements share one transaction, and so one
-snapshot, which a deletion cannot change.
-
-On SQLite, which drops locking clauses, every write transaction of the
-store takes the database's write lock at BEGIN (`BEGIN IMMEDIATE`, through
-the `enable_sqlite_explicit_begin` setup the store requires of its engine).
-The fence is the same read, inside a transaction that a deletion waits on
-until it commits. Deletion takes the lock the same way, so racing deletions
-serialize.
-
-A handle held across delete, or across delete and re-create, fails loudly
-instead of operating on the successor tenant, on every dialect. SQLite
-previously had no mechanism for this at all.
+The store checks nothing about whether an incarnation is still live. Its
+owner fences each operation by the incarnation's registration (see
+[fencing](partition_registry.md#fencing)): an operation begun after the
+tenant's deletion raises, and a write that lands under a dead incarnation
+is reclaimed by the purge, which starts only after the retention.
 
 ### Locking model
 
-Row locks only. Writers hold `FOR SHARE` on their registry row for the
-write transaction; deletion takes `FOR UPDATE` on the same row; the purger
-claims queue rows with `FOR UPDATE SKIP LOCKED` and never waits; the mint's
-queue re-check takes `FOR SHARE` on a queue row only in the collision case.
-No table-level lock, no DDL, and no lock upgrade anywhere in the store,
-which removes the measured deadlock classes at the root: writers and
-lifecycle operations share no lockable object except one tenant's registry
-row, where blocking is the intended semantics, and reclamation touches only
-rows no other operation can reach. On SQLite, which drops locking clauses,
-the database's write lock, which every write transaction takes at BEGIN,
-stands in for all of them.
+Row locks only. Writers lock nothing beyond the rows they write;
+`delete_segments` locks its segment rows in key order on PostgreSQL; the
+purge takes `FOR UPDATE` on its incarnation's row, which only purgers of
+the same incarnation contend for. No table-level lock, no DDL, and no lock
+upgrade anywhere in the store, which removes the measured deadlock classes
+at the root: reclamation touches only rows of an incarnation no request can
+reach. On SQLite, which drops locking clauses, every write transaction of
+the store takes the database's write lock at BEGIN (`BEGIN IMMEDIATE`,
+through the `enable_sqlite_explicit_begin` setup the store requires of its
+engine), which stands in for all of them.
 
 ## Alternatives considered
 
@@ -256,14 +198,14 @@ requirement excludes.
   would miss connections already in the pool. An engine without the pragma
   leaves link rows that outlive their segments, and nothing reclaims them:
   the purge relies on the same cascade.
-- Replication and sharding: four ordinary tables. Logical replication
+- Replication and sharding: three ordinary tables. Logical replication
   covers new tenants automatically (they are rows, not relations), and
-  moving a tenant between nodes is an indexed row copy plus a registry
-  insert whose fresh incarnation fences all stale handles.
+  moving a tenant between nodes is an indexed row copy plus the owner
+  registering a fresh incarnation, which fences all stale handles.
 - Tenant deletion is O(rows) physically, in the background: a deleted
   partition is unreachable at once, and its rows are reclaimed by the
-  sweeper in the background, at the pace its bounds and pause set. A
-  deployment must run the sweeper.
+  owner's purge rounds, at the pace their bounds and pause set. A
+  deployment must run the purge rounds.
 - No migration from the partitioned layout is provided (the event backend
   is opt-in and pre-GA); existing databases recreate their schema.
 - Datetime convention: filter nodes normalize datetime values to UTC-aware

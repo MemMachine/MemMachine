@@ -5,11 +5,13 @@ import gc
 import weakref
 from datetime import timedelta
 from typing import Any
-from unittest.mock import AsyncMock, create_autospec, patch
+from unittest.mock import AsyncMock, NonCallableMagicMock, create_autospec, patch
+from uuid import UUID
 
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import inspect
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.configuration import (
     Configuration,
@@ -39,6 +41,7 @@ from memmachine_server.common.errors import (
     InvalidLanguageModelError,
     InvalidRerankerError,
 )
+from memmachine_server.common.partition_registry import PartitionRegistry
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.resource_manager import (
     resource_manager as resource_manager_module,
@@ -49,9 +52,9 @@ from memmachine_server.common.resource_manager.resource_manager import (
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
+from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
-from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 
 RERANKER_ID = "my_reranker"
 EMBEDDER_ID = "my_embedder"
@@ -262,19 +265,27 @@ async def test_session_cache_size_configures_episodic_manager(invalid_configure)
     await manager.close()
 
 
+def _registry() -> NonCallableMagicMock:
+    registry = create_autospec(PartitionRegistry, instance=True)
+    registry.partition_namespace = "ns"
+    return registry
+
+
+async def _found_nothing(incarnation: UUID) -> bool:
+    return False
+
+
 @pytest.mark.asyncio
-async def test_segment_store_purge_loop_ticks_and_survives_failures(
-    invalid_resource_manager, monkeypatch
-):
-    """The background purge keeps driving the store past a failing call."""
+async def test_purge_rounds_tick_and_survive_failures(monkeypatch):
+    """The background purge keeps running rounds past a failing one."""
     monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_INTERVAL_SECONDS", 0
+        resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 0
     )
-    store = create_autospec(SegmentStore, instance=True)
+    registry = _registry()
     calls = 0
     third_call = asyncio.Event()
 
-    async def counting_purge() -> bool:
+    async def counting_round(purge_round) -> bool:
         nonlocal calls
         calls += 1
         if calls == 2:
@@ -283,34 +294,36 @@ async def test_segment_store_purge_loop_ticks_and_survives_failures(
             third_call.set()
         return False
 
-    store.purge_deleted_partitions.side_effect = counting_purge
+    registry.run_purge_round.side_effect = counting_round
 
     task = asyncio.create_task(
-        resource_manager_module._purge_deleted_partitions_forever(store)
+        resource_manager_module._run_purge_rounds_forever(registry, _found_nothing)
     )
     await asyncio.wait_for(third_call.wait(), 5)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+    assert all(
+        call.args == (_found_nothing,)
+        for call in registry.run_purge_round.await_args_list
+    )
 
 
 @pytest.mark.asyncio
-async def test_segment_store_purge_drains_backlog_without_waiting(
-    invalid_resource_manager, monkeypatch
-):
-    """True from a purge call means more work: the next call comes after
-    the short busy pause, never the idle tick."""
+async def test_purge_rounds_drain_a_backlog_without_waiting(monkeypatch):
+    """A round that ran means more may be due: the next comes after the
+    short busy pause, never the idle tick."""
     monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_INTERVAL_SECONDS", 3600
+        resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 3600
     )
     monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS", 0
+        resource_manager_module, "_PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS", 0
     )
-    store = create_autospec(SegmentStore, instance=True)
+    registry = _registry()
     calls = 0
     drained = asyncio.Event()
 
-    async def backlogged_purge() -> bool:
+    async def backlogged_round(purge_round) -> bool:
         nonlocal calls
         calls += 1
         if calls >= 3:
@@ -318,10 +331,10 @@ async def test_segment_store_purge_drains_backlog_without_waiting(
             return False
         return True
 
-    store.purge_deleted_partitions.side_effect = backlogged_purge
+    registry.run_purge_round.side_effect = backlogged_round
 
     task = asyncio.create_task(
-        resource_manager_module._purge_deleted_partitions_forever(store)
+        resource_manager_module._run_purge_rounds_forever(registry, _found_nothing)
     )
     await asyncio.wait_for(drained.wait(), 5)
     task.cancel()
@@ -330,47 +343,67 @@ async def test_segment_store_purge_drains_backlog_without_waiting(
 
 
 @pytest.mark.asyncio
-async def test_close_cancels_segment_store_purge_tasks(
-    invalid_resource_manager, monkeypatch
+async def test_get_partition_registry_builds_one_registry_per_namespace_and_starts_its_purge_once(
+    invalid_resource_manager, monkeypatch, tmp_path
 ):
-    """close() ends the background purge before shutting stores down."""
+    """A namespace's first get builds and starts its registry and its purge
+    rounds; later gets reuse them, and close() cancels the purge."""
     monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_INTERVAL_SECONDS", 0
+        resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 3600
     )
-    store = create_autospec(SegmentStore, instance=True)
-    started = asyncio.Event()
-
-    async def signalling_purge() -> bool:
-        started.set()
-        return False
-
-    store.purge_deleted_partitions.side_effect = signalling_purge
-
-    task = asyncio.create_task(
-        resource_manager_module._purge_deleted_partitions_forever(store)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
+    enable_sqlite_explicit_begin(engine)
+    monkeypatch.setattr(
+        invalid_resource_manager, "get_sql_engine", AsyncMock(return_value=engine)
     )
-    invalid_resource_manager._segment_store_purge_tasks.append(task)
-    await asyncio.wait_for(started.wait(), 5)
+    monkeypatch.setattr(
+        invalid_resource_manager._database_manager, "close", AsyncMock()
+    )
+    purge_round = AsyncMock(return_value=False)
 
-    await invalid_resource_manager.close()
+    first = await invalid_resource_manager.get_partition_registry(
+        "db",
+        partition_namespace="a",
+        tombstone_retention_seconds=1,
+        purge_round=purge_round,
+    )
+    second = await invalid_resource_manager.get_partition_registry(
+        "db",
+        partition_namespace="a",
+        tombstone_retention_seconds=1,
+        purge_round=purge_round,
+    )
+    other = await invalid_resource_manager.get_partition_registry(
+        "db", partition_namespace="b", tombstone_retention_seconds=1
+    )
+    await asyncio.sleep(0)
+
+    assert first is second
+    assert first.partition_namespace == "a"
+    assert other.partition_namespace == "b"
+    [task] = invalid_resource_manager._partition_registry_purge_tasks
+
+    # Bounded: close() waits for the purges it cancels.
+    await asyncio.wait_for(invalid_resource_manager.close(), 30)
 
     assert task.cancelled()
+    await engine.dispose()
 
 
 @pytest.mark.asyncio
 async def test_purge_task_does_not_pin_the_manager(invalid_configure, monkeypatch):
-    """A pending purge task keeps its store alive, not the manager that
+    """A pending purge task keeps its registry alive, not the manager that
     started it: a manager dropped without close() is collectable."""
     monkeypatch.setattr(
-        resource_manager_module, "_SEGMENT_STORE_PURGE_INTERVAL_SECONDS", 3600
+        resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 3600
     )
     manager = ResourceManagerImpl(invalid_configure)
-    store = create_autospec(SegmentStore, instance=True)
-    store.purge_deleted_partitions.return_value = False
+    registry = _registry()
+    registry.run_purge_round.return_value = False
     task = asyncio.create_task(
-        resource_manager_module._purge_deleted_partitions_forever(store)
+        resource_manager_module._run_purge_rounds_forever(registry, _found_nothing)
     )
-    manager._segment_store_purge_tasks.append(task)
+    manager._partition_registry_purge_tasks.append(task)
     manager_ref = weakref.ref(manager)
     await asyncio.sleep(0)  # the loop makes its first call and parks in sleep
 
