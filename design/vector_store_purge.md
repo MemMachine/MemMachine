@@ -28,9 +28,10 @@ registry](partition_registry.md)). The partition is unreachable
 when it commits. Its records stay in the backend until purge rounds reclaim
 them.
 
-A tombstone becomes *due* once `tombstone_retention_seconds` (per backend, in
-`QdrantConf` or `MilvusConf`, for every store on it; 86,400, one day, unless
-configured) has passed since its deletion.
+A tombstone becomes *due* once `tombstone_retention_seconds` (the partition
+namespace's, in its owner's configuration: for event memory,
+`episodic_memory.long_term_memory`; 86,400, one day, unless configured) has
+passed since its deletion.
 
 - **Why wait.** A write that passed its liveness check before the deletion
   committed can land after it, and the backend cannot refuse it. Every such
@@ -47,8 +48,9 @@ configured) has passed since its deletion.
   by the handle's check after it; the retention only has to outlast any write
   in flight. A write that lands after its tombstone is gone stays under a dead
   incarnation no partition reads: leaked storage, never a wrong result.
-- **The configuration enforces a floor of 10 × `request_timeout_seconds` +
-  300 s.** The request timeout is the only part of a write's time in flight
+- **The configuration enforces a floor of 10 × the vector store's
+  `request_timeout_seconds` + 300 s** on event memory's retention when its
+  vector store is Qdrant or Milvus. The request timeout is the only part of a write's time in flight
   the store knows. Neither Qdrant nor Milvus bounds how long a received write
   can wait before it is applied (their queues are bounded by count), both can
   apply a write after its client has given up, and Milvus's read delay
@@ -68,13 +70,15 @@ configured) has passed since its deletion.
 
 ### The purge round
 
-`VectorStore.purge_deleted_partitions()` is part of the contract: each call
-does a bounded amount of work and returns whether it ran a round, `False` once
-nothing is due, so a caller drains the queue by calling it until `False`. On
-Qdrant and Milvus a call is one round on the tombstone that came due first;
-both SQLite stores, whose deletion reclaims physically, return `False`.
+`VectorStore.purge_partition_incarnation(incarnation)` is part of the
+contract: each call deletes a bounded batch of what the incarnation holds and
+returns whether it found anything. Qdrant and Milvus delete records (per
+backend, below); both SQLite stores drop the incarnation's tables at once.
 
-`run_purge_round()` runs one round:
+`PartitionRegistry.run_purge_round(purge_round)` does a bounded amount of work
+and returns whether it ran a round, `False` once nothing is due, so a caller
+drains the queue by calling it until `False`. A call is one round on the
+tombstone that came due first, and runs it in three steps:
 
 1. **Claim.** One `UPDATE ... RETURNING`, committed at once, takes the oldest
    due tombstone that is neither backing off, dead-lettered, nor held by another
@@ -86,10 +90,11 @@ both SQLite stores, whose deletion reclaims physically, return `False`.
    claim is taking and purgers on every process split a backlog without
    coordinating. SQLite drops the locking clause; there the claim's write
    serializes claims, for one statement.
-2. **Round.** The registry calls the store's round with the tombstone's
-   incarnation, with no transaction open. The round looks for records under
-   the incarnation in the store's native collection, deletes what it finds (per
-   backend, below), and returns whether it found any.
+2. **Round.** The registry calls the owner's purge round with the
+   tombstone's incarnation, with no transaction open. The owner's round runs
+   every store's `purge_partition_incarnation` on the incarnation and returns
+   whether any found something (see [partition
+   registry](partition_registry.md#deletion-and-purge)).
 3. **Record.** In a short transaction: a round that found nothing removes the
    tombstone, which frees the incarnation; a round that found records ends its
    claim, keeping the tombstone due, and resets its attempts without
@@ -186,15 +191,15 @@ Each backend deletes the way it measured best: Qdrant with one filter-delete
 of the whole incarnation per round, Milvus in bounded batches listed by the
 incarnation. The measurements are in the [Qdrant](qdrant_vector_store.md) and
 [Milvus](milvus_vector_store.md) documents. A native collection that is gone
-holds nothing: the round finds nothing, and the tombstone goes.
+holds nothing: the store's purge finds nothing there.
 
 ### The sweeper
 
 The store never schedules its own purge. The resource manager starts one
-sweeper task per vector store the first time it hands the store out, and
-`close()` cancels them. A sweeper calls `purge_deleted_partitions()` again
-after 1 s when it ran a round and after 60 s when nothing was due; a round that
-raises is logged and retried a tick later. Sweepers on other
+sweeper task per partition registry, with its owner's purge round, the first
+time it builds the registry, and `close()` cancels them. A sweeper calls
+`run_purge_round()` again after 1 s when it ran a round and after 60 s when
+nothing was due; a round that raises is logged and retried a tick later. Sweepers on other
 processes need no coordination: the claim arbitrates.
 
 ### Measured cost of the claim

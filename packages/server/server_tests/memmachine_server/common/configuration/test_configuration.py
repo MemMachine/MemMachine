@@ -467,3 +467,34 @@ def test_empty_openai_key_disables_semantic_memory_but_keeps_its_storage():
 
     assert conf.semantic_memory.enabled is False
     assert conf.semantic_memory.storage_configured() is True
+
+
+@pytest.mark.parametrize(
+    ("tombstone_retention_seconds", "accepted"), [(600, True), (599, False)]
+)
+def test_event_memory_retention_has_a_floor_set_by_its_remote_vector_stores_timeout(
+    tombstone_retention_seconds: int, accepted: bool
+):
+    """With a 30 s request timeout, the floor is 10 x 30 + 300 seconds."""
+    config_path = find_config_file("episodic_memory_config.cpu.sample")
+    data = yaml.safe_load(config_path.read_text())
+    data["episodic_memory"]["long_term_memory"] = {
+        "backend": "event",
+        "embedder": "openai_embedder",
+        "vector_store": "event_vector_store",
+        "segment_store": "profile_storage",
+        "partition_registry": "profile_storage",
+        "tombstone_retention_seconds": tombstone_retention_seconds,
+    }
+    assert (
+        data["resources"]["databases"]["event_vector_store"]["config"][
+            "request_timeout_seconds"
+        ]
+        == 30
+    )
+
+    if accepted:
+        Configuration(**data)
+    else:
+        with pytest.raises(ValueError, match="tombstone_retention_seconds"):
+            Configuration(**data)

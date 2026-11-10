@@ -68,15 +68,10 @@ store.
 - **The owner** is the memory system, the concept the registry binds to. It
   holds its stores, prepares each store's partition for a new life, opens
   each store's partition for a live one, fences its operations, and
-  supplies the purge callback. It takes the place the registry-backed
-  vector store (`common/vector_store/registry_backed_vector_store.py`) holds
-  today: that base class of the Qdrant and Milvus stores reserves, prepares,
-  confirms or cancels, opens, fences, deletes, and purges, and its
-  subclasses supply the backend steps: preparing the storage the store's
-  partitions share, at startup; preparing the storage a new partition needs
-  of its own; the handle's backend calls (`_upsert`, `_query`, `_delete`);
-  and one purge round over an incarnation's records. Here the memory system
-  does the first, and its stores supply the steps.
+  supplies the purge callback. `open_or_create_partition`
+  (`common/partition_registry/partition_owner.py`) is the owner's creation
+  flow, given the registry and the callback that prepares every store's
+  storage.
 - **A store** holds records under incarnations. It prepares a life's
   storage, opens a handle on a live life, and purges a dead life's records,
   each when its owner calls it. Nothing in the owner assumes how a backend
@@ -90,8 +85,9 @@ store.
   partition (see [Reservations and
   registrations](#reservations-and-registrations)).
 - **Whoever builds the owner owns the registry's lifecycle.** It builds and
-  starts the registry and hands it over started, as the database manager
-  does for each Qdrant and Milvus store. The owner never starts or stops it:
+  starts the registry and hands it over started, as the resource manager
+  does for event memory and semantic memory, and runs the registry's purge
+  rounds with the owner's callback. The owner never starts or stops it:
   an owner that started a registry it was given would own a lifecycle it
   does not control.
 
@@ -146,11 +142,10 @@ and nothing about the life. `purge_partition_incarnation` deletes a bounded
 batch of what the incarnation holds: its records, then the storage
 `prepare_partition_incarnation` made for it. It is safe to repeat and to run
 on two processes at once, and returns whether it found anything, so a round
-that finds nothing proves the life gone from the store. Stores lose
-`delete_partition` and their own purge: deletion is the registry's, and a
-store deletes a life's storage only in its purge, after the retention, so a
-write still in flight cannot land after the deletion and outlive it, even on
-a backend that creates storage on first write.
+that finds nothing proves the life gone from the store. Deletion is the
+registry's, and a store deletes a life's storage only in its purge, after
+the retention, so a write still in flight cannot land after the deletion and
+outlive it, even on a backend that creates storage on first write.
 
 ### Reservations and registrations
 
@@ -323,11 +318,11 @@ stores matters, since nothing opens the life before it is confirmed.
 
 - The registry's primary key is the one arbiter: a racing creator on any
   process loses at the reservation, never in a backend.
-- A pending partition holds its name but is not opened: `open_partition`
-  raises `PartitionPendingError`, which says since when it has been pending,
-  a `create_partition` of the name raises `PartitionAlreadyExistsError`, and
-  open-or-create waits for it. `None` from `open_partition` means only that
-  no partition holds the name.
+- A pending partition holds its name but is not opened: `resolve` raises
+  `PartitionPendingError`, which says since when it has been pending, a
+  `reserve` of the name raises `PartitionAlreadyExistsError`, and
+  open-or-create waits for it. `None` from `resolve` means only that no
+  partition holds the name.
 - A preparation or confirmation that raises, or is cancelled, cancels the
   reservation when the registry can, which frees the name and queues the
   incarnation's tombstone; a confirmation that committed before its failure
@@ -364,12 +359,8 @@ racing creator took the name; losing the mark means a racing deleter removed
 the partition while its storage was prepared, so the loop creates again.
 After 10 attempts it raises `PartitionPendingError` if the last lookup
 found the partition pending, and `PartitionCreateAttemptsExhaustedError`
-otherwise. The event backend's service locator opens a session's partition
-with it.
-
-The contract tests (`partition_lifecycle_contract.py`) pin the outcome of a
-lost race on Qdrant and Milvus: the loser opens the winner's partition, and
-exactly one reservation is lost.
+otherwise. Event memory opens a session's partition with it, and semantic
+memory its one partition.
 
 ### Fencing
 
@@ -378,10 +369,9 @@ deleted, every operation on the handle raises `PartitionIncarnationEndedError`,
 and a partition created again under the same name is a new life the old
 handle cannot reach.
 
-The owner fences each of its operations with the life's registration, as
-the registry-backed vector store fences each call: an operation that writes
-checks `require_current` before and after it, one that reads checks before
-it, and one that deletes checks after it. For event memory, an ingest is the
+The owner fences each of its operations with the life's registration: an
+operation that writes checks `require_current` before and after it, one that
+reads checks before it, and one that deletes checks after it. For event memory, an ingest is the
 first, a query the second, and a forget the third.
 
 - The check before an operation runs once its inputs are checked; one with
@@ -443,9 +433,9 @@ holds no claim would have to increment the generation, so that an
 outstanding claim's late failure matches nothing.
 
 The retention is the namespace's. An owner's configuration names its
-registry's database and its retention, as a Qdrant or Milvus store's
-configuration names them today, and the retention's floor is checked
-against the request timeout of each of the owner's remote stores.
+registry's database and its retention, and the configuration checks the
+retention's floor against the request timeout of each of the owner's remote
+stores.
 
 ### Event memory on the registry
 
@@ -456,9 +446,10 @@ against the request timeout of each of the owner's remote stores.
   name.
 - `delete_partition` is `unregister`. The purge callback purges the segment
   store's and the vector store's records of the incarnation.
-- Event memory's deployment configuration (the episodic memory's long-term
-  memory) names the registry's database and the retention, which the Qdrant
-  and Milvus configurations no longer carry.
+- Event memory's deployment configuration (`episodic_memory.long_term_memory`)
+  names the registry's database (`partition_registry`, required for the
+  event backend) and the retention (`tombstone_retention_seconds`), one of
+  each for every session's partition.
 - A further derived index is a further store: one more
   `prepare_partition_incarnation` call and one more
   `purge_partition_incarnation` call, with no schema change.
@@ -468,8 +459,8 @@ deletes: it opens the name `semantic_memory` in the namespace
 `semantic_memory` through the registry, as event memory opens a name, and
 opens its vector store's partition by the incarnation. The registry is in
 the SQL database semantic memory's vector backend already uses, and the
-partition is never deleted, so semantic memory takes no new setting.
-Nothing else about semantic memory changes.
+partition is never deleted, so semantic memory takes no new setting: its
+retention is fixed at a day.
 
 ### Other owners
 
@@ -598,5 +589,5 @@ It differs where a store is remote:
   primary-key lookup on the registry's database.
 - A deleted tenant's records stay physically until its purge, after the
   retention; they are unreachable from the deletion.
-- A store is used through a registry.
+- A store is used through its owner, which holds the registry.
 - Stores address partitions by incarnation, not by name.

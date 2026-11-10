@@ -101,7 +101,7 @@ def _deployment_resource_manager(
         similarity_metric=SimilarityMetric.COSINE,
         indexed_properties=event_backend_indexed_properties(),
     )
-    vector_store.open_or_create_partition.return_value = create_autospec(
+    vector_store.open_partition_incarnation.return_value = create_autospec(
         VectorStorePartition, instance=True
     )
     embedder = create_autospec(Embedder, instance=True)
@@ -159,9 +159,10 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     partition = long_term_memory._memory
     assert isinstance(partition, EventMemoryPartition)
     assert partition.similarity_metric is SimilarityMetric.COSINE
-    vector_store.open_or_create_partition.assert_awaited_once_with("raced")
-    resource_manager.get_partition_registry.return_value.resolve.assert_awaited_once_with(
-        "raced"
+    partition_registry = resource_manager.get_partition_registry.return_value
+    partition_registry.resolve.assert_awaited_once_with("raced")
+    vector_store.open_partition_incarnation.assert_awaited_once_with(
+        partition_registry.resolve.return_value.incarnation
     )
     registry_call = resource_manager.get_partition_registry.await_args
     assert registry_call.args == ("pr",)
@@ -236,11 +237,11 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without
     vector_store = resource_manager.get_vector_store.return_value
     segment_store = resource_manager.get_segment_store.return_value
     partition_registry.unregister.assert_awaited_once_with("s")
-    vector_store.delete_partition.assert_awaited_once_with("s")
     partition_registry.reserve.assert_not_awaited()
-    vector_store.open_or_create_partition.assert_not_awaited()
+    vector_store.prepare_partition_incarnation.assert_not_awaited()
     segment_store.prepare_partition_incarnation.assert_not_awaited()
     # Reclamation is the purge rounds'; the delete path never purges.
+    vector_store.purge_partition_incarnation.assert_not_awaited()
     segment_store.purge_partition_incarnation.assert_not_awaited()
 
 

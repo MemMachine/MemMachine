@@ -7,20 +7,13 @@ import math
 import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any, override
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from memmachine_server.common.partition_registry import (
-    PartitionAlreadyExistsError,
-    PartitionCreateAttemptsExhaustedError,
-    PartitionIncarnationEndedError,
-    PartitionPendingError,
-)
 from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_partition import (
     evaluate_filter,
 )
@@ -51,15 +44,6 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import OperationTracker
-from memmachine_server.common.partition_registry import (
-    PartitionRegistry,
-    Registration,
-)
-from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyPartitionRegistry,
-    SQLAlchemyPartitionRegistryParams,
-)
-from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     Record,
     VectorStoreSchema,
@@ -74,7 +58,6 @@ from server_tests.memmachine_server.common.vector_store.declared_schema_contract
 )
 
 VECTOR_STORE_NAME = "test_vector_store"
-NAME = "test_name"
 VECTOR_DIM = 3
 INDEXED_PROPERTIES: dict[str, PropertyType] = {
     "name": str,
@@ -87,6 +70,10 @@ INDEXED_PROPERTIES: dict[str, PropertyType] = {
 REQUEST_TIMEOUT_SECONDS = 17
 MAX_VARCHAR_LENGTH = 1024
 PURGE_BATCH_SIZE = 5000
+# Purge calls `_purge` makes before it fails the test: far more than the
+# records a test writes need, so only a purge that keeps finding records
+# reaches it.
+_MAX_PURGE_CALLS = 1000
 
 
 def _normalize(vector: list[float]) -> list[float]:
@@ -117,8 +104,8 @@ def _schema(**overrides) -> VectorStoreSchema:
     return VectorStoreSchema(**fields)
 
 
-async def _params(client, registry_engine, **overrides) -> MilvusVectorStoreParams:
-    """Parameters for one store: its own started registry over the shared registry database."""
+def _params(client, **overrides) -> MilvusVectorStoreParams:
+    """Parameters for one store."""
     params: dict[str, Any] = {
         "client": client,
         "vector_store_name": VECTOR_STORE_NAME,
@@ -128,16 +115,6 @@ async def _params(client, registry_engine, **overrides) -> MilvusVectorStorePara
         "purge_batch_size": PURGE_BATCH_SIZE,
     }
     params.update(overrides)
-    params["partition_registry"] = SQLAlchemyPartitionRegistry(
-        SQLAlchemyPartitionRegistryParams(
-            engine=registry_engine,
-            partition_namespace=params["vector_store_name"],
-            # Tombstones come due at once, so a test can purge right after
-            # deleting.
-            tombstone_retention_seconds=0,
-        )
-    )
-    await params["partition_registry"].startup()
     return MilvusVectorStoreParams(**params)
 
 
@@ -148,13 +125,8 @@ async def _settle(partition: MilvusVectorStorePartition) -> None:
     returns only once the server has applied every earlier write, and with
     one replica the store's later reads start from that point.
     """
-    await _settle_native(partition._client, partition._collection_name)
-
-
-async def _settle_native(client: AsyncMilvusClient, collection_name: str) -> None:
-    """Return once the store's reads of a native collection reflect every write made so far."""
-    await client.query(
-        collection_name=collection_name,
+    await partition._client.query(
+        collection_name=partition._collection_name,
         filter='id != ""',
         output_fields=["id"],
         limit=1,
@@ -194,30 +166,21 @@ async def _incarnation_uuids(
     return [UUID(row["record_uuid"]) for row in rows]
 
 
-async def _drain(store: MilvusVectorStore) -> None:
-    """Run purge rounds until none is due, failing on a purge that never ends."""
-
-    async def drain() -> None:
-        while await store.purge_deleted_partitions():
-            pass
-
-    await asyncio.wait_for(drain(), 60)
+async def _open(store: MilvusVectorStore) -> MilvusVectorStorePartition:
+    """A handle on a freshly prepared partition incarnation."""
+    incarnation = uuid4()
+    await store.prepare_partition_incarnation(incarnation)
+    return await store.open_partition_incarnation(incarnation)
 
 
-def _with_purge_batch_size(
-    store: MilvusVectorStore, purge_batch_size: int
-) -> MilvusVectorStore:
-    """A store over the same client, registry and native collection, purging in batches of this size."""
-    return MilvusVectorStore(
-        MilvusVectorStoreParams(
-            client=store._client,
-            partition_registry=store._partition_registry,
-            vector_store_name=store._vector_store_name,
-            store_schema=store._store_schema,
-            request_timeout_seconds=REQUEST_TIMEOUT_SECONDS,
-            max_varchar_length=MAX_VARCHAR_LENGTH,
-            purge_batch_size=purge_batch_size,
-        )
+async def _purge(store: MilvusVectorStore, incarnation: UUID) -> None:
+    """Purge an incarnation until the store finds nothing of it, failing on a purge that never ends."""
+    for _ in range(_MAX_PURGE_CALLS):
+        if not await store.purge_partition_incarnation(incarnation):
+            return
+    pytest.fail(
+        f"incarnation {incarnation} still held records after "
+        f"{_MAX_PURGE_CALLS} purge calls"
     )
 
 
@@ -341,45 +304,28 @@ def milvus_client(request):
     return request.getfixturevalue(request.param)
 
 
-async def _started_store(
-    client: AsyncMilvusClient, registry_engine: AsyncEngine, **overrides
-) -> MilvusVectorStore:
-    """A started store with its own registry object over the registry database."""
-    vector_store = MilvusVectorStore(
-        await _params(client, registry_engine, **overrides)
-    )
+async def _started_store(client: AsyncMilvusClient, **overrides) -> MilvusVectorStore:
+    """A started store."""
+    vector_store = MilvusVectorStore(_params(client, **overrides))
     await vector_store.startup()
     return vector_store
 
 
-@pytest.fixture
-def registry_url(tmp_path) -> str:
-    """The registry database every store of a test shares."""
-    return f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
-
-
 @pytest_asyncio.fixture
-async def store(milvus_client, registry_url):
-    registry_engine = create_async_engine(registry_url)
-    enable_sqlite_explicit_begin(registry_engine)
-    vector_store = await _started_store(milvus_client, registry_engine)
+async def store(milvus_client):
+    vector_store = await _started_store(milvus_client)
     yield vector_store
     await vector_store.shutdown()
-    await registry_engine.dispose()
 
 
 @pytest_asyncio.fixture
-async def other_store(milvus_container, registry_url):
+async def other_store(milvus_container):
     """A store as another process runs it beside `store`: its own Milvus
-    client and registry connections, over the same Milvus and registry
-    database."""
+    client, over the same Milvus."""
     client = AsyncMilvusClient(uri=milvus_container.get_connection_url())
-    registry_engine = create_async_engine(registry_url)
-    enable_sqlite_explicit_begin(registry_engine)
-    vector_store = await _started_store(client, registry_engine)
+    vector_store = await _started_store(client)
     yield vector_store
     await vector_store.shutdown()
-    await registry_engine.dispose()
     await client.close()
 
 
@@ -405,15 +351,9 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
         monkeypatch.setattr(store._client, name, spies[name])
 
     # A collection of its own, so startup creates it through the spies.
-    timed = MilvusVectorStore(
-        await _params(
-            store._client, store._partition_registry._engine, vector_store_name="timed"
-        )
-    )
+    timed = MilvusVectorStore(_params(store._client, vector_store_name="timed"))
     await timed.startup()
-    await timed.create_partition("timed")
-    partition = await timed.open_partition("timed")
-    assert partition is not None
+    partition = await _open(timed)
     vector = _normalize([1.0, 0.0, 0.0])
     record, kept = (
         _make_record(vector=vector),
@@ -423,9 +363,8 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
     await _settle(partition)
     await partition.query(query_vectors=[vector], limit=1)
     await partition.delete(record_uuids=[record.uuid])
-    await timed.delete_partition("timed")
-    # The purge finds the record the deletion left and reclaims it.
-    await _drain(timed)
+    # The purge finds the record the delete left and reclaims it.
+    await _purge(timed, partition._incarnation)
 
     assert {name for name, spy in spies.items() if spy.call_count} >= set(
         _CLIENT_REQUESTS
@@ -442,7 +381,6 @@ def test_a_setting_that_is_not_positive_is_refused(setting):
     with pytest.raises(ValueError, match=setting):
         MilvusVectorStoreParams(
             client=MagicMock(spec=AsyncMilvusClient),
-            partition_registry=MagicMock(spec=PartitionRegistry),
             vector_store_name=VECTOR_STORE_NAME,
             store_schema=VectorStoreSchema(
                 vector_dimensions=VECTOR_DIM, indexed_properties=INDEXED_PROPERTIES
@@ -453,11 +391,9 @@ def test_a_setting_that_is_not_positive_is_refused(setting):
 
 @pytest_asyncio.fixture
 async def partition(store):
-    await store.create_partition(NAME)
-    partition = await store.open_partition(NAME)
-    assert partition is not None
+    partition = await _open(store)
     yield partition
-    await store.delete_partition(NAME)
+    await _purge(store, partition._incarnation)
 
 
 class TestPartitionLifecycle:
@@ -468,9 +404,8 @@ class TestPartitionLifecycle:
     ):
         """The next startup completes the native collection a failed one left behind."""
         partial = MilvusVectorStore(
-            await _params(
+            _params(
                 store._client,
-                store._partition_registry._engine,
                 vector_store_name=f"partial_{failing_step}",
                 store_schema=_schema(indexed_properties={"name": str}),
             )
@@ -485,9 +420,7 @@ class TestPartitionLifecycle:
                 await partial.startup()
 
         await partial.startup()
-        await partial.create_partition("partial")
-        partition = await partial.open_partition("partial")
-        assert partition is not None
+        partition = await _open(partial)
         vector = _normalize([1.0, 0.0, 0.0])
         record = _make_record(vector=vector, properties={"name": "alice"})
         await partition.upsert(records=[record])
@@ -502,52 +435,28 @@ class TestPartitionLifecycle:
             "vector",
             "_p_name",
         }
-        await partial.delete_partition("partial")
-
-    @pytest.mark.asyncio
-    async def test_create_open_delete(self, store):
-        await store.create_partition("lifecycle")
-        partition = await store.open_partition("lifecycle")
-        assert isinstance(partition, MilvusVectorStorePartition)
-        await store.delete_partition("lifecycle")
-
-    @pytest.mark.asyncio
-    async def test_duplicate_name_raises(self, store, partition):
-        with pytest.raises(PartitionAlreadyExistsError):
-            await store.create_partition(NAME)
-
-    @pytest.mark.asyncio
-    async def test_delete_nonexistent_is_idempotent(self, store):
-        await store.delete_partition("nonexistent")
+        await _purge(partial, partition._incarnation)
 
     @pytest.mark.asyncio
     async def test_a_vector_store_name_may_begin_with_a_digit(self, store):
         """Milvus refuses a collection name beginning with a digit; the store's
         collection name begins with its prefix instead."""
         digit_first = MilvusVectorStore(
-            await _params(
-                store._client,
-                store._partition_registry._engine,
-                vector_store_name="0_digit_first",
-            )
+            _params(store._client, vector_store_name="0_digit_first")
         )
         await digit_first.startup()
-        await digit_first.create_partition("digit_first")
-        assert await digit_first.open_partition("digit_first") is not None
-        await digit_first.delete_partition("digit_first")
+        partition = await _open(digit_first)
+        await _purge(digit_first, partition._incarnation)
 
     @pytest.mark.asyncio
     async def test_partitions_share_the_store_collection(self, store):
         """Every partition's records are entities in the store's one native collection."""
-        records = {
-            partition_name: _make_record(vector=[1.0, 0.0, 0.0])
-            for partition_name in ("part_a", "part_b")
-        }
-        for partition_name, record in records.items():
-            await store.create_partition(partition_name)
-            partition = await store.open_partition(partition_name)
-            assert partition is not None
+        records = {}
+        for _ in range(2):
+            partition = await _open(store)
+            record = _make_record(vector=[1.0, 0.0, 0.0])
             await partition.upsert(records=[record])
+            records[partition._incarnation] = record
 
         rows = await store._client.query(
             collection_name=store._collection_name,
@@ -562,16 +471,14 @@ class TestPartitionLifecycle:
             record.uuid for record in records.values()
         }
 
-        await store.delete_partition("part_a")
-        await store.delete_partition("part_b")
+        for incarnation in records:
+            await _purge(store, incarnation)
 
     @pytest.mark.asyncio
     async def test_native_collection_schema(self, store):
         """Each declared property is a typed, nullable, indexed field, a
         datetime with a field for its offset; the collection isolates tenants."""
-        await store.create_partition("schema")
-        partition = await store.open_partition("schema")
-        assert partition is not None
+        partition = await _open(store)
         native = partition._collection_name
 
         schema = await store._client.describe_collection(partition._collection_name)
@@ -614,7 +521,7 @@ class TestPartitionLifecycle:
             "_p_created_at",
         }
 
-        await store.delete_partition("schema")
+        await _purge(store, partition._incarnation)
 
     @pytest.mark.asyncio
     async def test_the_longest_declared_key_names_a_field_milvus_accepts(self, store):
@@ -624,13 +531,10 @@ class TestPartitionLifecycle:
         # A name of its own, so its native collection declares the key.
         longest = await _started_store(
             store._client,
-            store._partition_registry._engine,
             vector_store_name="longest_key",
             store_schema=_schema(indexed_properties={key: datetime}),
         )
-        await longest.create_partition("longest_key")
-        partition = await longest.open_partition("longest_key")
-        assert partition is not None
+        partition = await _open(longest)
         written = datetime(2024, 6, 15, 12, 0, tzinfo=timezone(timedelta(hours=9)))
         record = _make_record(
             vector=_normalize([1.0, 0.0, 0.0]), properties={key: written}
@@ -647,15 +551,14 @@ class TestPartitionLifecycle:
         )
         assert [match.record_uuid for match in result.matches] == [record.uuid]
 
-        await longest.delete_partition("longest_key")
+        await _purge(longest, partition._incarnation)
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):
         with pytest.raises(ValueError, match="Milvus only supports"):
             MilvusVectorStore(
-                await _params(
+                _params(
                     store._client,
-                    store._partition_registry._engine,
                     vector_store_name="bad_metric",
                     store_schema=_schema(similarity_metric=SimilarityMetric.MANHATTAN),
                 )
@@ -689,17 +592,15 @@ class TestConcurrentPreparation:
         usable with every index."""
         # A name of its own, so the first startup creates the native collection.
         first = MilvusVectorStore(
-            await _params(
+            _params(
                 store._client,
-                store._partition_registry._engine,
                 vector_store_name="raced_preparation",
                 store_schema=_schema(indexed_properties={"name": str}),
             )
         )
         second = MilvusVectorStore(
-            await _params(
+            _params(
                 other_store._client,
-                other_store._partition_registry._engine,
                 vector_store_name="raced_preparation",
                 store_schema=_schema(indexed_properties={"name": str}),
             )
@@ -719,19 +620,13 @@ class TestConcurrentPreparation:
             try:
                 await asyncio.wait_for(first_created.wait(), 60)
                 await second.startup()
-                await second.create_partition("second")
-                partition = await second.open_partition("second")
-                assert partition is not None
-                await _require_usable(partition)
+                await _require_usable(await _open(second))
             finally:
                 second_done.set()
 
         await asyncio.gather(first.startup(), start_second())
 
-        await first.create_partition("first")
-        partition = await first.open_partition("first")
-        assert partition is not None
-        await _require_usable(partition)
+        await _require_usable(await _open(first))
         assert set(await store._client.list_indexes(first._collection_name)) == {
             "vector",
             "_p_name",
@@ -751,15 +646,12 @@ class TestUpsertAndQuery:
         # this store gives its requests longer than the module's timeout.
         oversized = await _started_store(
             store._client,
-            store._partition_registry._engine,
             vector_store_name="oversized",
             store_schema=_schema(indexed_properties={"text": str}),
             max_varchar_length=65535,
             request_timeout_seconds=120,
         )
-        await oversized.create_partition(NAME)
-        partition = await oversized.open_partition(NAME)
-        assert partition is not None
+        partition = await _open(oversized)
         text = "x" * 60_000
         records = [
             _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"text": text})
@@ -1263,13 +1155,10 @@ class TestFilterModel:
         # A store of its own, declaring the model's properties.
         modeled = await _started_store(
             store._client,
-            store._partition_registry._engine,
             vector_store_name="filter_model",
             store_schema=_schema(indexed_properties=_MODEL_DECLARED),
         )
-        await modeled.create_partition("model")
-        partition = await modeled.open_partition("model")
-        assert partition is not None
+        partition = await _open(modeled)
         records = [
             Record(
                 uuid=record_uuid,
@@ -1289,7 +1178,7 @@ class TestFilterModel:
                 if evaluate_filter(property_filter, record.properties)
             }, property_filter
 
-        await modeled.delete_partition("model")
+        await _purge(modeled, partition._incarnation)
 
 
 @dataclass
@@ -1315,18 +1204,15 @@ class _ModelPartitions:
             self.records[partition_name].pop(record_uuid, None)
 
     async def recreate(self, partition_name: str) -> None:
+        """Move the partition to a fresh incarnation, leaving its current one dead."""
         self.dead_incarnations.append(self.handles[partition_name]._incarnation)
-        await self.store.delete_partition(partition_name)
-        await self.store.create_partition(partition_name)
-        handle = await self.store.open_partition(partition_name)
-        assert handle is not None
-        self.handles[partition_name] = handle
+        self.handles[partition_name] = await _open(self.store)
         self.records[partition_name] = {}
 
     async def purge(self) -> None:
-        """Drain the purge, and check that no deleted partition's record remains."""
-        await _drain(self.store)
+        """Purge every dead incarnation, and check that none keeps a record."""
         for incarnation in self.dead_incarnations:
+            await _purge(self.store, incarnation)
             assert (
                 await _incarnation_uuids(
                     self.store._client, self.store._collection_name, incarnation
@@ -1368,30 +1254,27 @@ class TestOperationModel:
     @pytest.mark.asyncio
     async def test_a_random_sequence_of_operations_agrees_with_a_model(self, store):
         """Seeded upserts, new and replacing, deletes of present and absent
-        records, deletion and recreation of a partition, and purge drains, on
-        two partitions of one store: after each step, each partition holds
-        the model's records, its settled queries select what the model
-        selects, and a replaced record's old values select nothing."""
+        records, moves of a partition to a fresh incarnation, and purges of
+        the dead incarnations, on two partitions of one store: after each
+        step, each partition holds the model's records, its settled queries
+        select what the model selects, and a replaced record's old values
+        select nothing."""
         rng = random.Random(1736)
         # A store of its own, declaring the model's properties.
         modeled = await _started_store(
             store._client,
-            store._partition_registry._engine,
             vector_store_name="operation_model",
             store_schema=_schema(indexed_properties=_MODEL_DECLARED),
         )
         partition_names = ("alpha", "beta")
         # Few UUIDs, so each recurs in both partitions and across their lives.
         pool = sorted(uuid4() for _ in range(12))
-        handles = {}
-        for partition_name in partition_names:
-            await modeled.create_partition(partition_name)
-            handle = await modeled.open_partition(partition_name)
-            assert handle is not None
-            handles[partition_name] = handle
         model = _ModelPartitions(
             store=modeled,
-            handles=handles,
+            handles={
+                partition_name: await _open(modeled)
+                for partition_name in partition_names
+            },
             records={partition_name: {} for partition_name in partition_names},
         )
 
@@ -1430,8 +1313,8 @@ class TestOperationModel:
                     f"after step {step}, {action} {partition_name}"
                 ) from error
 
-        for partition_name in partition_names:
-            await modeled.delete_partition(partition_name)
+        for handle in model.handles.values():
+            await _purge(modeled, handle._incarnation)
 
 
 class TestScores:
@@ -1449,25 +1332,21 @@ class TestScores:
         Euclidean distance (Milvus returns it squared)."""
         # A store's metric is its collection's, so each metric is its own store.
         scored = MilvusVectorStore(
-            await _params(
+            _params(
                 store._client,
-                store._partition_registry._engine,
                 vector_store_name=f"scores_{metric.value}",
                 store_schema=_schema(similarity_metric=metric),
             )
         )
         await scored.startup()
-        await scored.delete_partition("scores")
-        await scored.create_partition("scores")
-        partition = await scored.open_partition("scores")
-        assert partition is not None
+        partition = await _open(scored)
         record = _make_record(vector=[1.2, 1.6, 0.0])
         await partition.upsert(records=[record])
         await _settle(partition)
 
         [result] = await partition.query(query_vectors=[[1.0, 0.0, 0.0]], limit=1)
         assert result.matches[0].score == pytest.approx(expected, abs=1e-3)
-        await scored.delete_partition("scores")
+        await _purge(scored, partition._incarnation)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1503,13 +1382,10 @@ class TestScores:
         # A store's metric is its collection's, so each metric is its own store.
         scored = await _started_store(
             store._client,
-            store._partition_registry._engine,
             vector_store_name=f"threshold_{metric.value}",
             store_schema=_schema(similarity_metric=metric),
         )
-        await scored.create_partition("threshold")
-        partition = await scored.open_partition("threshold")
-        assert partition is not None
+        partition = await _open(scored)
         nearest, middle, farthest = (_make_record(vector=vector) for vector in vectors)
         await partition.upsert(records=[farthest, nearest, middle])
         await _settle(partition)
@@ -1525,7 +1401,7 @@ class TestScores:
         assert [match.score for match in result.matches] == pytest.approx(
             expected_scores, abs=1e-3
         )
-        await scored.delete_partition("threshold")
+        await _purge(scored, partition._incarnation)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1537,13 +1413,10 @@ class TestScores:
         match; one a step better than that score drops it."""
         scored = await _started_store(
             store._client,
-            store._partition_registry._engine,
             vector_store_name=f"edge_{metric.value}",
             store_schema=_schema(similarity_metric=metric),
         )
-        await scored.create_partition("edge")
-        partition = await scored.open_partition("edge")
-        assert partition is not None
+        partition = await _open(scored)
         # Vectors that each metric ranks in its own order, none tied.
         records = [
             _make_record(vector=vector)
@@ -1577,7 +1450,7 @@ class TestScores:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await scored.delete_partition("edge")
+        await _purge(scored, partition._incarnation)
 
 
 # The client's reads; each takes an optional consistency level.
@@ -1606,21 +1479,14 @@ class TestConsistency:
         create = MagicMock(wraps=store._client.create_collection)
         monkeypatch.setattr(store._client, "create_collection", create)
         # A name of its own, so the store creates the native collection.
-        bounded = await _started_store(
-            store._client,
-            store._partition_registry._engine,
-            vector_store_name="bounded",
-        )
+        bounded = await _started_store(store._client, vector_store_name="bounded")
 
-        await bounded.create_partition("bounded")
-        partition = await bounded.open_partition("bounded")
-        assert partition is not None
+        partition = await _open(bounded)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await partition.upsert(records=[record])
         await _settle(partition)
         await partition.query(query_vectors=[record.vector], limit=1)
-        await bounded.delete_partition("bounded")
-        await _drain(bounded)
+        await _purge(bounded, partition._incarnation)
 
         description = await store._client.describe_collection(bounded._collection_name)
         assert description["consistency_level"] == ConsistencyLevel.Bounded
@@ -1660,25 +1526,12 @@ class TestDelete:
         assert await _stored(partition, [record.uuid]) == {}
 
 
-@dataclass(frozen=True)
-class _CurrentRegistration(Registration):
-    """A live registration whose partition is never deleted."""
-
-    @override
-    async def require_current(self) -> None:
-        return None
-
-
 def _partition_on(client: AsyncMilvusClient) -> MilvusVectorStorePartition:
-    """A handle on a given client, bound to a live incarnation."""
+    """A handle on a given client, bound to a fresh incarnation."""
     return MilvusVectorStorePartition(
         client=client,
         collection_name=f"sys_{VECTOR_STORE_NAME}",
-        vector_store_name=VECTOR_STORE_NAME,
-        registration=_CurrentRegistration(
-            partition_name=NAME,
-            incarnation=uuid4(),
-        ),
+        incarnation=uuid4(),
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
@@ -1780,43 +1633,30 @@ async def test_an_upsert_that_fails_otherwise_is_not_sent_again(error: Exception
 
 
 @pytest.mark.asyncio
-async def test_a_purge_round_milvus_does_not_accept_in_full_raises(registry_url):
+async def test_a_purge_round_milvus_does_not_accept_in_full_raises():
     """A purge round raises when Milvus accepts the delete of fewer primary
     keys than the round listed."""
     client = MagicMock(spec=AsyncMilvusClient)
     client.prepare_index_params = AsyncMilvusClient.prepare_index_params
     # The native collection exists with its index, and holds two entities of
-    # the deleted partition.
+    # the purged incarnation.
     client.has_collection = AsyncMock(return_value=True)
     client.list_indexes = AsyncMock(return_value=["vector"])
     client.load_collection = AsyncMock(return_value=None)
     client.query = AsyncMock(return_value=[{"id": "listed_a"}, {"id": "listed_b"}])
     client.delete = AsyncMock(return_value={"delete_count": 1})
-    registry_engine = create_async_engine(registry_url)
-    enable_sqlite_explicit_begin(registry_engine)
-    try:
-        store = await _started_store(
-            client, registry_engine, store_schema=_schema(indexed_properties={})
-        )
-        await store.create_partition(NAME)
-        await store.delete_partition(NAME)
+    store = await _started_store(client, store_schema=_schema(indexed_properties={}))
 
-        with pytest.raises(pymilvus.MilvusException):
-            await store.purge_deleted_partitions()
-    finally:
-        await registry_engine.dispose()
+    with pytest.raises(pymilvus.MilvusException):
+        await store.purge_partition_incarnation(uuid4())
 
 
 class TestPartitionIsolation:
     @pytest.mark.asyncio
     async def test_same_uuid_can_exist_in_different_partitions(self, store):
         """The same UUID in two partitions is two records, written and deleted apart."""
-        await store.create_partition("tenant_a")
-        await store.create_partition("tenant_b")
-        partition_a = await store.open_partition("tenant_a")
-        partition_b = await store.open_partition("tenant_b")
-        assert partition_a is not None
-        assert partition_b is not None
+        partition_a = await _open(store)
+        partition_b = await _open(store)
 
         record_uuid = uuid4()
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -1844,8 +1684,8 @@ class TestPartitionIsolation:
         [kept] = await partition_b.query(query_vectors=[v1], limit=10)
         assert [match.record_uuid for match in kept.matches] == [record_uuid]
 
-        await store.delete_partition("tenant_a")
-        await store.delete_partition("tenant_b")
+        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_b._incarnation)
 
     @pytest.mark.asyncio
     async def test_a_query_returns_only_its_own_partitions_records(self, store):
@@ -1854,18 +1694,15 @@ class TestPartitionIsolation:
         # A store of its own, declaring `color` beside the shared keys.
         isolated = await _started_store(
             store._client,
-            store._partition_registry._engine,
             vector_store_name="query_isolation",
             store_schema=_schema(
                 indexed_properties={**INDEXED_PROPERTIES, "color": str}
             ),
         )
         vector = _normalize([1.0, 0.0, 0.0])
-        own_records = {}
-        for partition_name in ("query_a", "query_b"):
-            await isolated.create_partition(partition_name)
-            partition = await isolated.open_partition(partition_name)
-            assert partition is not None
+        own_records = []
+        for _ in range(2):
+            partition = await _open(isolated)
             records = [
                 _make_record(
                     vector=vector, properties={"name": "shared", "color": "red"}
@@ -1873,12 +1710,9 @@ class TestPartitionIsolation:
                 for _ in range(2)
             ]
             await partition.upsert(records=records)
-            own_records[partition_name] = (
-                partition,
-                {record.uuid for record in records},
-            )
+            own_records.append((partition, {record.uuid for record in records}))
 
-        for partition, own in own_records.values():
+        for partition, own in own_records:
             await _settle(partition)
             for property_filter in (
                 None,
@@ -1893,21 +1727,15 @@ class TestPartitionIsolation:
                     property_filter
                 )
 
-        for partition_name in own_records:
-            await isolated.delete_partition(partition_name)
+        for partition, _ in own_records:
+            await _purge(isolated, partition._incarnation)
 
 
 class TestPurgeBatches:
     @pytest.mark.asyncio
     async def test_a_purge_round_reclaims_at_most_one_batch(self, store):
-        store = MilvusVectorStore(
-            await _params(
-                store._client, store._partition_registry._engine, purge_batch_size=2
-            )
-        )
-        await store.create_partition("batched")
-        partition = await store.open_partition("batched")
-        assert partition is not None
+        store = MilvusVectorStore(_params(store._client, purge_batch_size=2))
+        partition = await _open(store)
         await partition.upsert(
             records=[
                 _make_record(vector=_normalize([1.0, float(i), 0.0])) for i in range(5)
@@ -1915,7 +1743,6 @@ class TestPurgeBatches:
         )
         await _settle(partition)
         incarnation = partition._incarnation
-        await store.delete_partition("batched")
 
         async def left_of_the_incarnation() -> int:
             return len(
@@ -1929,71 +1756,68 @@ class TestPurgeBatches:
             )
 
         left_after_each_round = []
-        while await store.purge_deleted_partitions():
+        while await store.purge_partition_incarnation(incarnation):
             await _settle(partition)
             left_after_each_round.append(await left_of_the_incarnation())
-        # Batches of 2, then a round that finds nothing and removes the tombstone.
-        assert left_after_each_round == [3, 1, 0, 0]
+        # Batches of 2, until a round finds nothing.
+        assert left_after_each_round == [3, 1, 0]
 
 
 class TestPurge:
     @pytest.mark.asyncio
-    async def test_a_purge_round_on_a_dropped_native_collection_retires_the_tombstone(
-        self, store
-    ):
-        """A deleted partition whose native collection is gone holds nothing:
-        its purge round raises nothing and removes the tombstone."""
+    async def test_a_purge_on_a_dropped_native_collection_finds_nothing(self, store):
+        """An incarnation whose native collection is gone holds nothing: its
+        purge raises nothing and finds nothing."""
         # A name of its own, so dropping its native collection spares the others.
         dropped = await _started_store(
-            store._client,
-            store._partition_registry._engine,
-            vector_store_name="dropped_native",
+            store._client, vector_store_name="dropped_native"
         )
-        await dropped.create_partition("dropped")
-        partition = await dropped.open_partition("dropped")
-        assert partition is not None
+        partition = await _open(dropped)
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
-        await dropped.delete_partition("dropped")
         await store._client.drop_collection(dropped._collection_name)
 
-        await _drain(dropped)
-        assert await dropped.purge_deleted_partitions() is False
+        assert (
+            await dropped.purge_partition_incarnation(partition._incarnation) is False
+        )
 
     @pytest.mark.asyncio
     async def test_purgers_on_two_stores_reclaim_the_deleted_partitions_alone(
         self, store, other_store
     ):
-        """Purgers on two stores sharing a registry, draining at once in small
-        batches, reclaim every deleted partition's records and leave the live
-        partition's."""
-        handles = {}
-        for partition_name in ("live", "dead_0", "dead_1", "dead_2", "dead_3"):
-            await store.create_partition(partition_name)
-            handle = await store.open_partition(partition_name)
-            assert handle is not None
+        """Purgers on two stores, purging the deleted partitions' incarnations
+        at once in small batches, reclaim every one's records and leave the
+        live partition's."""
+        handles = []
+        for _ in range(5):
+            handle = await _open(store)
             await handle.upsert(
                 records=[
                     _make_record(vector=_normalize([1.0, 0.1 * index, 0.0]))
                     for index in range(7)
                 ]
             )
-            handles[partition_name] = handle
-        live = handles.pop("live")
+            handles.append(handle)
+        live = handles.pop(0)
         live_uuids = await _incarnation_uuids(
             store._client, live._collection_name, live._incarnation
         )
         await _settle(live)
-        for partition_name in handles:
-            await store.delete_partition(partition_name)
         purgers = [
-            _with_purge_batch_size(purging, 3) for purging in (store, other_store)
+            MilvusVectorStore(_params(purging._client, purge_batch_size=3))
+            for purging in (store, other_store)
         ]
 
-        await asyncio.gather(*(_drain(purger) for purger in purgers))
+        await asyncio.gather(
+            *(
+                _purge(purger, handle._incarnation)
+                for purger in purgers
+                for handle in handles
+            )
+        )
 
-        for handle in handles.values():
+        for handle in handles:
             assert (
                 await _incarnation_uuids(
                     store._client, handle._collection_name, handle._incarnation
@@ -2006,283 +1830,12 @@ class TestPurge:
             )
         ) == sorted(live_uuids)
         assert len(live_uuids) == 7
-        assert [await purger.purge_deleted_partitions() for purger in purgers] == [
-            False,
-            False,
-        ]
-        await store.delete_partition("live")
-
-
-_CHURN_VECTOR_STORE_NAME = "churn"
-_CHURN_PARTITION_NAMES = ("churn_0", "churn_1", "churn_2")
-_CHURN_DECLARED: dict[str, PropertyType] = {
-    "owner": str,
-    "tag": str,
-    "version": int,
-}
-_CHURN_TAGS = ("red", "green", "blue")
-# The outcomes the store documents for an operation that loses a race.
-_DOMAIN_ERRORS = (
-    PartitionCreateAttemptsExhaustedError,
-    PartitionAlreadyExistsError,
-    PartitionIncarnationEndedError,
-    PartitionIncarnationEndedError,
-    PartitionPendingError,
-)
-
-
-@dataclass(frozen=True)
-class _ChurnStep:
-    """A worker's step: the partition, the action, and the records it writes or deletes."""
-
-    partition_name: str
-    action: str
-    records: list[Record]
-
-
-@dataclass
-class _ChurnLedger:
-    """What the churn's operations did, by the incarnation each reached."""
-
-    # The records each incarnation holds once every write has returned: those
-    # an upsert that returned wrote, less those a delete that returned removed.
-    held: dict[UUID, dict[UUID, Record]] = field(default_factory=dict)
-    # The record UUIDs any upsert sent to each incarnation.
-    sent: dict[UUID, set[UUID]] = field(default_factory=dict)
-    # The records of upserts to an incarnation deleted before they returned.
-    # Such a write can land after the incarnation's purge, which only the
-    # tombstone retention prevents.
-    raced_deletion: set[tuple[UUID, UUID]] = field(default_factory=set)
-
-
-def _churn_script(worker: int) -> tuple[str, set[UUID], list[_ChurnStep]]:
-    """A worker's owner name, its own record UUIDs, and its seeded steps."""
-    rng = random.Random(worker)
-    owner = f"worker_{worker}"
-    own = sorted(uuid4() for _ in range(6))
-    steps = []
-    for _ in range(40):
-        partition_name = rng.choice(_CHURN_PARTITION_NAMES)
-        action = rng.choices(
-            ("upsert", "delete", "query", "recreate"), weights=(4, 2, 3, 1)
-        )[0]
-        records = [
-            Record(
-                uuid=record_uuid,
-                vector=_normalize([1.0, rng.random(), rng.random()]),
-                properties={
-                    "owner": owner,
-                    "tag": rng.choice(_CHURN_TAGS),
-                    "version": rng.randrange(1 << 30),
-                },
-            )
-            for record_uuid in rng.sample(own, k=rng.randint(1, 3))
-        ]
-        steps.append(
-            _ChurnStep(partition_name=partition_name, action=action, records=records)
-        )
-    return owner, set(own), steps
-
-
-async def _churn_on(
-    handle: MilvusVectorStorePartition,
-    step: _ChurnStep,
-    owner: str,
-    own: set[UUID],
-    ledger: _ChurnLedger,
-) -> None:
-    """Run an upsert, delete or query step through a handle, and record its outcome."""
-    incarnation = handle._incarnation
-    record_uuids = [record.uuid for record in step.records]
-    match step.action:
-        case "upsert":
-            ledger.sent.setdefault(incarnation, set()).update(record_uuids)
-            try:
-                await handle.upsert(records=step.records)
-            except PartitionIncarnationEndedError:
-                ledger.raced_deletion.update(
-                    (incarnation, record_uuid) for record_uuid in record_uuids
-                )
-                raise
-            ledger.held.setdefault(incarnation, {}).update(
-                {record.uuid: record for record in step.records}
-            )
-        case "delete":
-            await handle.delete(record_uuids=record_uuids)
-            for record_uuid in record_uuids:
-                ledger.held.get(incarnation, {}).pop(record_uuid, None)
-        case _:
-            matched = await _model_matches(
-                handle, Comparison(field="owner", op="=", value=owner)
-            )
-            # Only records this owner sent to this incarnation.
-            assert matched <= ledger.sent.get(incarnation, set()) & own
-
-
-async def _churn_worker(
-    store: MilvusVectorStore,
-    worker: int,
-    ledger: _ChurnLedger,
-    deleted: asyncio.Event,
-) -> None:
-    owner, own, steps = _churn_script(worker)
-    handles: dict[str, MilvusVectorStorePartition] = {}
-    for step in steps:
-        try:
-            if step.action == "recreate":
-                handles.pop(step.partition_name, None)
-                await store.delete_partition(step.partition_name)
-                deleted.set()
-                await store.create_partition(step.partition_name)
-                continue
-            if step.partition_name not in handles:
-                handles[step.partition_name] = await store.open_or_create_partition(
-                    step.partition_name
-                )
-            await _churn_on(handles[step.partition_name], step, owner, own, ledger)
-        except PartitionIncarnationEndedError:
-            handles.pop(step.partition_name, None)
-        except _DOMAIN_ERRORS:
-            pass
-
-
-async def _churn(stores: tuple[MilvusVectorStore, ...], ledger: _ChurnLedger) -> None:
-    """Run six workers across the stores, each store's purger draining after
-    every partition deletion, until the workers finish."""
-    wakes = [asyncio.Event() for _ in stores]
-    deleted = asyncio.Event()
-    stopping = asyncio.Event()
-
-    async def purge(purging: MilvusVectorStore, wake: asyncio.Event) -> None:
-        while not stopping.is_set():
-            await wake.wait()
-            wake.clear()
-            await _drain(purging)
-
-    async def wake_purgers() -> None:
-        while not stopping.is_set():
-            await deleted.wait()
-            deleted.clear()
-            for wake in wakes:
-                wake.set()
-
-    background = [
-        asyncio.create_task(purge(purging, wake))
-        for purging, wake in zip(stores, wakes, strict=True)
-    ]
-    background.append(asyncio.create_task(wake_purgers()))
-    try:
-        await asyncio.gather(
-            *(
-                _churn_worker(stores[worker % len(stores)], worker, ledger, deleted)
-                for worker in range(6)
-            )
-        )
-    finally:
-        stopping.set()
-        deleted.set()
-        for wake in wakes:
-            wake.set()
-        await asyncio.gather(*background)
-
-
-async def _check_live_partition(
-    handle: MilvusVectorStorePartition, held: dict[UUID, Record]
-) -> None:
-    """Check that a partition holds exactly these records, with their values."""
-    stored = await _incarnation_uuids(
-        handle._client, handle._collection_name, handle._incarnation
-    )
-    assert sorted(stored) == sorted(held)
-    rows = await _stored(handle, list(held)) if held else {}
-    assert {record_uuid: row["_p_version"] for record_uuid, row in rows.items()} == {
-        record_uuid: record.properties["version"]
-        for record_uuid, record in held.items()
-    }
-    await _settle(handle)
-    owners = {record.properties["owner"] for record in held.values()}
-    for key, value in [("owner", owner) for owner in owners] + [
-        ("tag", tag) for tag in _CHURN_TAGS
-    ]:
-        assert await _model_matches(
-            handle, Comparison(field=key, op="=", value=value)
-        ) == {
-            record_uuid
-            for record_uuid, record in held.items()
-            if record.properties[key] == value
-        }, (key, value)
-
-
-def _settle_each_purge_round(store: MilvusVectorStore, monkeypatch) -> None:
-    """Begin each of the store's purge rounds once its reads reflect every
-    write that returned before the round.
-
-    A tombstone retention longer than the store's read delay gives a round
-    this; the tests' tombstones come due at once.
-    """
-    purge_round = store._purge_round
-
-    async def settled_purge_round(incarnation: UUID) -> bool:
-        await _settle_native(store._client, store._collection_name)
-        return await purge_round(incarnation)
-
-    monkeypatch.setattr(store, "_purge_round", settled_purge_round)
-
-
-class TestChurn:
-    @pytest.mark.asyncio
-    async def test_churn_across_two_stores_with_purgers_keeps_every_partition_exact(
-        self, store, other_store, monkeypatch
-    ):
-        """Workers on two stores sharing a registry upsert, delete and query
-        records they alone own, and delete and recreate partitions they
-        share, while each store's purger drains. Only the documented outcomes
-        of a lost race are raised, and nothing hangs. Once quiet, each live
-        partition holds exactly its records, with their latest values, and
-        no deleted partition keeps a record but one an upsert racing its
-        deletion sent."""
-        # A name of its own, declaring the churn's properties, and small
-        # batches, so a deleted partition takes several rounds.
-        stores = tuple(
-            [
-                await _started_store(
-                    beside._client,
-                    beside._partition_registry._engine,
-                    vector_store_name=_CHURN_VECTOR_STORE_NAME,
-                    store_schema=_schema(indexed_properties=_CHURN_DECLARED),
-                    purge_batch_size=2,
-                )
-                for beside in (store, other_store)
-            ]
-        )
-        for purging in stores:
-            _settle_each_purge_round(purging, monkeypatch)
-        ledger = _ChurnLedger()
-
-        await asyncio.wait_for(_churn(stores, ledger), 300)
-        for purging in stores:
-            await _drain(purging)
-
-        live = set()
-        for partition_name in _CHURN_PARTITION_NAMES:
-            handle = await stores[0].open_partition(partition_name)
-            if handle is not None:
-                live.add(handle._incarnation)
-                await _check_live_partition(
-                    handle, ledger.held.get(handle._incarnation, {})
-                )
-        left = await stores[0]._client.query(
-            collection_name=stores[0]._collection_name,
-            filter='id != ""',
-            output_fields=["partition_key", "record_uuid"],
-            limit=16384,
-            consistency_level="Strong",
-        )
-        assert {
-            (UUID(row["partition_key"]), UUID(row["record_uuid"]))
-            for row in left
-            if UUID(row["partition_key"]) not in live
-        } <= ledger.raced_deletion
+        assert [
+            await purger.purge_partition_incarnation(handle._incarnation)
+            for purger in purgers
+            for handle in handles
+        ] == [False] * (len(purgers) * len(handles))
+        await _purge(store, live._incarnation)
 
 
 class TestLifecycleContract(PartitionLifecycleContract):

@@ -236,7 +236,7 @@ async def open_event_memory_partition(
     segment_store.open_partition_incarnation.return_value = segment_store_partition
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
-    vector_store.open_or_create_partition.return_value = vector_store_partition
+    vector_store.open_partition_incarnation.return_value = vector_store_partition
     event_memory = EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,

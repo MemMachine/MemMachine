@@ -1,7 +1,7 @@
 """Qdrant-based vector store implementation."""
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, ClassVar, override
 from uuid import UUID, uuid5
@@ -40,8 +40,7 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine_server.common.metrics_factory import OperationTracker
-from memmachine_server.common.partition_registry import Registration
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.utils import ensure_tz_aware
 
 from .data_types import (
@@ -50,11 +49,15 @@ from .data_types import (
     Record,
     VectorStoreSchema,
 )
-from .registry_backed_vector_store import (
-    RegistryBackedVectorStore,
-    RegistryBackedVectorStoreParams,
-    RegistryBackedVectorStorePartition,
+from .utils import (
+    validate_declared_properties,
+    validate_dimensions,
+    validate_limit,
+    validate_query_vector,
+    validate_score_threshold,
+    validate_supported_filter,
 )
+from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 
 # Point payload keys (stored on every Qdrant point).
 # System keys start with _SYSTEM_KEY_PREFIX, whose hyphen no property key may
@@ -86,8 +89,8 @@ def _incarnation_filter(incarnation: UUID) -> models.Filter:
     )
 
 
-class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
-    """A partition backed by Qdrant."""
+class QdrantVectorStorePartition(VectorStorePartition):
+    """A partition incarnation's points in the store's Qdrant collection."""
 
     _RANGE_OPERATORS: ClassVar[dict[str, str]] = {
         ">": "gt",
@@ -265,18 +268,73 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
         *,
         client: AsyncQdrantClient,
         vector_store_name: str,
-        registration: Registration,
+        incarnation: UUID,
         store_schema: VectorStoreSchema,
         tracker: OperationTracker,
     ) -> None:
-        """Initialize with a Qdrant client and the registration the handle is bound to."""
-        super().__init__(
-            vector_store_name=vector_store_name,
-            registration=registration,
-            store_schema=store_schema,
-            tracker=tracker,
-        )
+        """Initialize with a Qdrant client and the incarnation the handle is bound to."""
         self._client = client
+        self._vector_store_name = vector_store_name
+        self._incarnation = incarnation
+        self._store_schema = store_schema
+        self._tracker = tracker
+
+    @override
+    async def upsert(self, *, records: Iterable[Record]) -> None:
+        async with self._tracker("upsert"):
+            records = list(records)
+            for record in records:
+                validate_declared_properties(
+                    record.properties, self._store_schema.indexed_properties
+                )
+                validate_dimensions(record.vector, self._store_schema.vector_dimensions)
+            if not records:
+                return
+            await self._upsert_points([self._build_point(record) for record in records])
+
+    @override
+    async def query(
+        self,
+        *,
+        query_vectors: Iterable[Sequence[float]],
+        limit: int,
+        score_threshold: float | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> list[QueryResult]:
+        async with self._tracker("query"):
+            query_vectors = [list(query_vector) for query_vector in query_vectors]
+            for query_vector in query_vectors:
+                validate_query_vector(
+                    query_vector, self._store_schema.vector_dimensions
+                )
+            validate_score_threshold(score_threshold)
+            validate_limit(limit)
+            if property_filter is not None:
+                validate_supported_filter(
+                    property_filter, self._store_schema.indexed_properties
+                )
+            if not query_vectors:
+                return []
+            return await self._query(
+                query_vectors,
+                limit=limit,
+                score_threshold=score_threshold,
+                property_filter=property_filter,
+            )
+
+    @override
+    async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
+        async with self._tracker("delete"):
+            record_uuids = list(record_uuids)
+            if not record_uuids:
+                return
+            await self._client.delete(
+                collection_name=self._vector_store_name,
+                points_selector=models.PointIdsList(
+                    points=[str(self._point_id(uuid)) for uuid in record_uuids]
+                ),
+                wait=True,
+            )
 
     def _point_id(self, record_uuid: UUID) -> UUID:
         """The point id of a record: a UUIDv5 of the record UUID under the incarnation.
@@ -300,10 +358,6 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
         return models.PointStruct(
             id=str(self._point_id(record.uuid)), vector=record.vector, payload=payload
         )
-
-    @override
-    async def _upsert(self, records: list[Record]) -> None:
-        await self._upsert_points([self._build_point(record) for record in records])
 
     async def _upsert_points(self, points: list[models.PointStruct]) -> None:
         """Upsert points, halving a batch refused as sent.
@@ -330,7 +384,6 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
             await self._upsert_points(points[:mid])
             await self._upsert_points(points[mid:])
 
-    @override
     async def _query(
         self,
         query_vectors: list[list[float]],
@@ -398,18 +451,8 @@ class QdrantVectorStorePartition(RegistryBackedVectorStorePartition):
             for batch in batch_results
         ]
 
-    @override
-    async def _delete(self, record_uuids: list[UUID]) -> None:
-        await self._client.delete(
-            collection_name=self._vector_store_name,
-            points_selector=models.PointIdsList(
-                points=[str(self._point_id(uuid)) for uuid in record_uuids]
-            ),
-            wait=True,
-        )
 
-
-class QdrantVectorStoreParams(RegistryBackedVectorStoreParams):
+class QdrantVectorStoreParams(VectorStoreParams):
     """
     Parameters for QdrantVectorStore.
 
@@ -417,19 +460,26 @@ class QdrantVectorStoreParams(RegistryBackedVectorStoreParams):
         client (AsyncQdrantClient):
             Async Qdrant client instance, which stores of different names
             may share.
+        metrics_factory (MetricsFactory | None):
+            An instance of MetricsFactory for collecting usage metrics
+            (default: None).
     """
 
     client: InstanceOf[AsyncQdrantClient] = Field(
         ...,
         description="Async Qdrant client instance, which stores of different names may share",
     )
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        None,
+        description="An instance of MetricsFactory for collecting usage metrics",
+    )
 
 
-class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
+class QdrantVectorStore(VectorStore):
     """Asynchronous Qdrant-based implementation of VectorStore.
 
     The store is one native Qdrant collection, named at construction, in
-    which a partition is the points carrying its incarnation in their
+    which a partition incarnation is the points carrying it in their
     payload.
     """
 
@@ -482,13 +532,32 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
 
     def __init__(self, params: QdrantVectorStoreParams) -> None:
         """Initialize the vector store with the provided parameters."""
-        super().__init__(params, metrics_prefix="vector_store_qdrant")
+        self._vector_store_name = params.vector_store_name
+        self._store_schema = params.store_schema
+        self._tracker = OperationTracker(
+            params.metrics_factory, prefix="vector_store_qdrant"
+        )
         self._client: AsyncQdrantClient = params.client
 
         self._hnsw_m = 16
 
+    @property
     @override
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
+
+    @override
+    async def startup(self) -> None:
+        async with self._tracker("startup"):
+            await self._prepare_storage()
+
+    @override
+    async def shutdown(self) -> None:
+        # The caller owns the client's lifecycle.
+        pass
+
     async def _prepare_storage(self) -> None:
+        """Prepare the collection every partition incarnation lives in, and its payload indexes, each step idempotent."""
         distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
             self._store_schema.similarity_metric
         ]
@@ -540,26 +609,29 @@ class QdrantVectorStore(RegistryBackedVectorStore[QdrantVectorStorePartition]):
                     raise
 
     @override
-    async def _prepare_partition_storage(
-        self, partition_name: str, incarnation: UUID
-    ) -> None:
-        # Every partition lives in the native collection startup prepared.
-        pass
+    async def prepare_partition_incarnation(self, incarnation: UUID) -> None:
+        # Every partition incarnation lives in the collection startup
+        # prepared.
+        return
 
     @override
-    def _partition_handle(
-        self, registration: Registration
+    async def open_partition_incarnation(
+        self, incarnation: UUID
     ) -> QdrantVectorStorePartition:
         return QdrantVectorStorePartition(
             client=self._client,
             vector_store_name=self._vector_store_name,
-            registration=registration,
+            incarnation=incarnation,
             store_schema=self._store_schema,
             tracker=self._tracker,
         )
 
     @override
-    async def _purge_round(self, incarnation: UUID) -> bool:
+    async def purge_partition_incarnation(self, incarnation: UUID) -> bool:
+        async with self._tracker("purge_partition_incarnation"):
+            return await self._purge_partition_incarnation(incarnation)
+
+    async def _purge_partition_incarnation(self, incarnation: UUID) -> bool:
         # If a point remains under the incarnation, one filter-delete removes
         # them all.
         try:

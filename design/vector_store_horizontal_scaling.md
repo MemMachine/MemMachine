@@ -34,8 +34,9 @@ similarity metric, and declared properties. Every record it holds has a vector
 of that dimensionality, and any declared property it carries has its declared
 type. The composition root builds the stores its services
 need, and the name keeps two stores over one backend apart. Within a store, a
-partition holds one tenant's records, addressed by a string name, and every
-search runs within one partition. Every partition of a store shares its
+partition holds one life of one tenant's records, addressed by the
+incarnation its owner's [partition registry](partition_registry.md) mints for
+that life, and every search runs within one partition. Every partition of a store shares its
 dimensions, metric, and schema.
 
 ## Documents
@@ -59,42 +60,45 @@ behind its choices.
 
 ## Lifecycle of a partition
 
-1. **Create.** The store reserves the name, inserting a pending registry row
-   under a freshly minted incarnation, prepares the storage the partition
-   needs of its own (on Qdrant and Milvus, none: its records go into the
-   store's one native collection, which startup prepared), and confirms the
-   reservation, which marks the row live. A racing creator loses at the
-   registry's primary key, and a pending partition is not opened.
-2. **Open.** The registry resolves the partition name to the live incarnation;
-   the handle is bound to that incarnation.
+1. **Create.** The owner, such as event memory, reserves the partition name
+   in its registry, inserting a pending row under a freshly minted
+   incarnation, has the store prepare the storage the incarnation needs of
+   its own (on Qdrant and Milvus, none: its records go into the store's one
+   native collection, which startup prepared), and confirms the reservation,
+   which marks the row live. A racing creator loses at the registry's primary
+   key, and a pending partition is not opened.
+2. **Open.** The registry resolves the partition name to the live
+   incarnation; the owner opens the store's handle on that incarnation.
 3. **Use.** Every record a handle writes carries its incarnation, and every
-   read and delete is scoped to it. Before each upsert and query, and after
-   each upsert and delete, the handle checks that its incarnation is still
-   live.
+   read and delete is scoped to it. Before each of its writes and reads, and
+   after each of its writes and deletes, the owner checks that the
+   incarnation is still live.
 4. **Delete.** One registry transaction removes the partition's row and
-   queues a tombstone. Every handle of that life is stale from then on, in
-   every process.
+   queues a tombstone. Every operation of the owner on that life raises from
+   then on, in every process.
 5. **Purge.** Once the retention (a day by default) has passed, sweepers in
-   every process claim tombstones oldest first and reclaim their records in
-   bounded rounds, until a round finds none and the tombstone goes.
+   every process claim tombstones oldest first and reclaim their records from
+   every store of the owner in bounded rounds, until a round finds none and
+   the tombstone goes.
 
 ## Guarantees by store
 
 | Store | Processes that may serve a partition | Queries reflect a write | Deletion reclaims |
 |---|---|---|---|
-| SQLite (engine-backed) | one | as soon as it returns | at once |
-| sqlite-vec | any on one node | as soon as it returns | at once |
-| Qdrant | any, sharing the store's registry | not stated; on one node as soon as it returns, since the store waits for each write; replicated, after an unbounded delay | by purge, after the retention |
-| Milvus | any, sharing the store's registry | within the server's `common.gracefulTime` (5 s by default) at Bounded | by purge, after the retention |
+| SQLite (engine-backed) | one | as soon as it returns | by purge, after the retention |
+| sqlite-vec | any on one node | as soon as it returns | by purge, after the retention |
+| Qdrant | any, sharing the owner's registry | not stated; on one node as soon as it returns, since the store waits for each write; replicated, after an unbounded delay | by purge, after the retention |
+| Milvus | any, sharing the owner's registry | within the server's `common.gracefulTime` (5 s by default) at Bounded | by purge, after the retention |
 
 ## Configuration
 
-`QdrantConf` and `MilvusConf` name the relational database that holds their
-stores' registries (`partition_registry`), the retention before a deleted
-partition's purge starts (`tombstone_retention_seconds`, a day by default),
-and the bound on every request to the backend (`request_timeout_seconds`,
-30 s by default). The retention must be at least 10 times the request timeout
-plus 300 seconds (see [purge](vector_store_purge.md)).
+Event memory's long-term memory configuration names the relational database
+that holds its partition registry (`partition_registry`) and the retention
+before a deleted partition's purge starts (`tombstone_retention_seconds`, a
+day by default). `QdrantConf` and `MilvusConf` bound every request to the
+backend (`request_timeout_seconds`, 30 s by default). On a Qdrant or Milvus
+vector store, event memory's retention must be at least 10 times the
+request timeout plus 300 seconds (see [purge](vector_store_purge.md)).
 
 ## Related work
 
@@ -109,4 +113,4 @@ plus 300 seconds (see [purge](vector_store_purge.md)).
   an existing collection stays as it is, never read or purged, until it is
   dropped, before or after upgrading. No migration; pre-GA.
 - Milvus Lite is not supported; the Milvus store needs a Milvus server.
-- Every Qdrant or Milvus store needs a relational database for its registry.
+- Event memory needs a relational database for its partition registry.

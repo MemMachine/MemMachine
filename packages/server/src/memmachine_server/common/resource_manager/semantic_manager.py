@@ -14,6 +14,7 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ResourceNotReadyError
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.partition_registry import open_or_create_partition
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
@@ -52,7 +53,12 @@ _VECTOR_STORE_NAME = "semantic_memory"
 
 Fixed, because the name locates the store's data.
 """
-_VECTOR_STORE_PARTITION_KEY = "semantic_memory"
+_PARTITION_NAMESPACE = "semantic_memory"
+"""The partition namespace semantic memory owns, the same in every deployment."""
+_PARTITION_NAME = "semantic_memory"
+"""Semantic memory's one partition, which it never deletes."""
+_TOMBSTONE_RETENTION_SECONDS = 86400
+"""The retention of semantic memory's namespace, whose tombstones are only those of creations that failed."""
 
 
 class SemanticResourceManager:
@@ -174,9 +180,20 @@ class SemanticResourceManager:
         )
 
         # The manager owns this partition and provisions it when the storage is
-        # built.
-        vector_partition = await vector_store.open_or_create_partition(
-            _VECTOR_STORE_PARTITION_KEY
+        # built, through a registry in the database the storage already uses.
+        partition_registry = await self._resource_manager.get_partition_registry(
+            feature_store_name,
+            partition_namespace=_PARTITION_NAMESPACE,
+            tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
+            purge_round=vector_store.purge_partition_incarnation,
+        )
+        registration = await open_or_create_partition(
+            partition_registry,
+            _PARTITION_NAME,
+            vector_store.prepare_partition_incarnation,
+        )
+        vector_partition = await vector_store.open_partition_incarnation(
+            registration.incarnation
         )
         storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()

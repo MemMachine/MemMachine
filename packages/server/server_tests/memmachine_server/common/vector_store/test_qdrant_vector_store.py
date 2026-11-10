@@ -4,10 +4,8 @@ import asyncio
 import math
 import operator
 import random
-from collections import defaultdict
-from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any, override
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -16,8 +14,6 @@ import pytest
 import pytest_asyncio
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
-from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from memmachine_server.common.data_types import (
     PropertyType,
@@ -34,18 +30,6 @@ from memmachine_server.common.filter.filter_parser import (
     Or,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
-from memmachine_server.common.partition_registry import (
-    PartitionAlreadyExistsError,
-    PartitionCreateAttemptsExhaustedError,
-    PartitionIncarnationEndedError,
-    PartitionPendingError,
-    Registration,
-)
-from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyPartitionRegistry,
-    SQLAlchemyPartitionRegistryParams,
-)
-from memmachine_server.common.sql import enable_sqlite_explicit_begin
 from memmachine_server.common.vector_store.data_types import (
     QueryResult,
     Record,
@@ -66,7 +50,6 @@ from server_tests.memmachine_server.common.vector_store.partition_lifecycle_cont
 )
 
 VECTOR_STORE_NAME = "test_vector_store"
-NAME = "test_name"
 VECTOR_DIM = 3
 INDEXED_PROPERTIES: dict[str, PropertyType] = {
     "name": str,
@@ -97,26 +80,34 @@ async def _stored_uuids(partition) -> set[UUID]:
 
 
 async def _count_stored(store: QdrantVectorStore) -> int:
-    """Points Qdrant holds in the store's native collection, deleted partitions' included."""
+    """Points Qdrant holds in the store's native collection, every incarnation's included."""
     result = await store._client.count(
         collection_name=store._vector_store_name, exact=True
     )
     return result.count
 
 
-# Purge rounds a drain runs before it fails the test: far more than the
-# deleted partitions a test leaves need, so only a round that keeps finding
-# records reaches it.
-_MAX_DRAIN_ROUNDS = 1000
+# Purge calls `_purge` makes before it fails the test: far more than the
+# records a test writes need, so only a purge that keeps finding records
+# reaches it.
+_MAX_PURGE_CALLS = 1000
 
 
-async def _drain(store: QdrantVectorStore) -> None:
-    """Run purge rounds until none is due."""
-    for _ in range(_MAX_DRAIN_ROUNDS):
-        if not await store.purge_deleted_partitions():
+async def _open(store: QdrantVectorStore) -> QdrantVectorStorePartition:
+    """A handle on a freshly prepared partition incarnation."""
+    incarnation = uuid4()
+    await store.prepare_partition_incarnation(incarnation)
+    return await store.open_partition_incarnation(incarnation)
+
+
+async def _purge(store: QdrantVectorStore, incarnation: UUID) -> None:
+    """Purge an incarnation until the store finds nothing of it."""
+    for _ in range(_MAX_PURGE_CALLS):
+        if not await store.purge_partition_incarnation(incarnation):
             return
     pytest.fail(
-        f"a deleted partition was still due for purge after {_MAX_DRAIN_ROUNDS} rounds"
+        f"incarnation {incarnation} still held records after "
+        f"{_MAX_PURGE_CALLS} purge calls"
     )
 
 
@@ -130,15 +121,6 @@ def any_qdrant_client(request):
     return request.getfixturevalue(request.param)
 
 
-@pytest_asyncio.fixture
-async def registry_engine(tmp_path):
-    """The relational database holding the partition registry, one per test."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
-    enable_sqlite_explicit_begin(engine)
-    yield engine
-    await engine.dispose()
-
-
 def _schema(**overrides) -> VectorStoreSchema:
     fields: dict[str, Any] = {
         "vector_dimensions": VECTOR_DIM,
@@ -149,41 +131,28 @@ def _schema(**overrides) -> VectorStoreSchema:
     return VectorStoreSchema(**fields)
 
 
-async def _params(client, registry_engine, **overrides) -> QdrantVectorStoreParams:
-    """Parameters for one store: its own started registry over the shared registry database."""
+def _params(client, **overrides) -> QdrantVectorStoreParams:
     params: dict[str, Any] = {
         "client": client,
         "vector_store_name": VECTOR_STORE_NAME,
         "store_schema": _schema(),
     }
     params.update(overrides)
-    params["partition_registry"] = SQLAlchemyPartitionRegistry(
-        SQLAlchemyPartitionRegistryParams(
-            engine=registry_engine,
-            partition_namespace=params["vector_store_name"],
-            # Tombstones come due at once, so a test can purge right after
-            # deleting.
-            tombstone_retention_seconds=0,
-        )
-    )
-    await params["partition_registry"].startup()
     return QdrantVectorStoreParams(**params)
 
 
 @pytest_asyncio.fixture
-async def store(any_qdrant_client, registry_engine):
-    s = QdrantVectorStore(await _params(any_qdrant_client, registry_engine))
+async def store(any_qdrant_client):
+    s = QdrantVectorStore(_params(any_qdrant_client))
     await s.startup()
     yield s
 
 
 @pytest_asyncio.fixture
 async def partition(store):
-    await store.create_partition(NAME)
-    partition = await store.open_partition(NAME)
-    assert partition is not None
+    partition = await _open(store)
     yield partition
-    await store.delete_partition(NAME)
+    await _purge(store, partition._incarnation)
 
 
 def _normalize(v: list[float]) -> list[float]:
@@ -202,61 +171,6 @@ def _make_record(
         vector=vector,
         properties=properties or {},
     )
-
-
-# ── Partition lifecycle ──
-
-
-class TestPartitionLifecycle:
-    @pytest.mark.asyncio
-    async def test_create_get_delete(self, store):
-        await store.create_partition("lifecycle")
-        partition = await store.open_partition("lifecycle")
-        assert isinstance(partition, QdrantVectorStorePartition)
-        await store.delete_partition("lifecycle")
-
-    @pytest.mark.asyncio
-    async def test_open_partition_returns_a_qdrant_partition(self, store, partition):
-        assert isinstance(await store.open_partition(NAME), QdrantVectorStorePartition)
-
-    @pytest.mark.asyncio
-    async def test_duplicate_name_raises(self, store, partition):
-        with pytest.raises(PartitionAlreadyExistsError):
-            await store.create_partition(NAME)
-
-    @pytest.mark.asyncio
-    async def test_delete_nonexistent_is_idempotent(self, store):
-        await store.delete_partition("nonexistent")
-
-    @pytest.mark.asyncio
-    async def test_open_or_create_creates_when_missing(self, store):
-        partition = await store.open_or_create_partition("new")
-        assert isinstance(partition, QdrantVectorStorePartition)
-        await store.delete_partition("new")
-
-    @pytest.mark.asyncio
-    async def test_open_or_create_opens_when_exists(self, store):
-        await store.create_partition("existing")
-        partition = await store.open_or_create_partition("existing")
-        assert isinstance(partition, QdrantVectorStorePartition)
-        await store.delete_partition("existing")
-
-    @pytest.mark.asyncio
-    async def test_partitions_share_the_store_collection(self, store):
-        """Every partition's records are points in the store's one native collection."""
-        stored_before = await _count_stored(store)
-        for partition_name in ("part_a", "part_b"):
-            await store.create_partition(partition_name)
-            partition = await store.open_partition(partition_name)
-            assert partition is not None
-            await partition.upsert(
-                records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
-            )
-
-        assert await _count_stored(store) == stored_before + 2
-
-        await store.delete_partition("part_a")
-        await store.delete_partition("part_b")
 
 
 # ── Upsert + Query ──
@@ -362,23 +276,20 @@ class TestSimilarityMetrics:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("metric", list(SimilarityMetric))
     async def test_matches_are_ranked_scored_and_thresholded_by_the_metric(
-        self, any_qdrant_client, registry_engine, metric
+        self, any_qdrant_client, metric
     ):
         """Matches come best first, each scored as QueryMatch defines for the
         store's metric, and a score threshold keeps the matches on its
         better side: above it for a similarity, below it for a distance."""
         store = QdrantVectorStore(
-            await _params(
+            _params(
                 any_qdrant_client,
-                registry_engine,
                 vector_store_name=f"metric_{metric.value}",
                 store_schema=_schema(similarity_metric=metric),
             )
         )
         await store.startup()
-        await store.create_partition(NAME)
-        partition = await store.open_partition(NAME)
-        assert partition is not None
+        partition = await _open(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
         await partition.upsert(records=records)
 
@@ -410,27 +321,24 @@ class TestSimilarityMetrics:
             record_uuid for _, record_uuid in expected[:2]
         ]
 
-        await store.delete_partition(NAME)
+        await _purge(store, partition._incarnation)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("metric", list(SimilarityMetric))
     async def test_a_threshold_keeps_a_match_scoring_exactly_it(
-        self, any_qdrant_client, registry_engine, metric
+        self, any_qdrant_client, metric
     ):
         """A score threshold equal to a match's reported score keeps the
         match; one a step better than that score drops it."""
         store = QdrantVectorStore(
-            await _params(
+            _params(
                 any_qdrant_client,
-                registry_engine,
                 vector_store_name=f"metric_{metric.value}",
                 store_schema=_schema(similarity_metric=metric),
             )
         )
         await store.startup()
-        await store.create_partition(NAME)
-        partition = await store.open_partition(NAME)
-        assert partition is not None
+        partition = await _open(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
         await partition.upsert(records=records)
         [ranked] = await partition.query(
@@ -456,27 +364,15 @@ class TestSimilarityMetrics:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await store.delete_partition(NAME)
-
-
-@dataclass(frozen=True)
-class _CurrentRegistration(Registration):
-    """A live registration whose partition is never deleted."""
-
-    @override
-    async def require_current(self) -> None:
-        return None
+        await _purge(store, partition._incarnation)
 
 
 def _partition_on(client: AsyncQdrantClient) -> QdrantVectorStorePartition:
-    """A handle on a given client, bound to a live incarnation."""
+    """A handle on a given client, bound to a fresh incarnation."""
     return QdrantVectorStorePartition(
         client=client,
         vector_store_name=VECTOR_STORE_NAME,
-        registration=_CurrentRegistration(
-            partition_name=NAME,
-            incarnation=uuid4(),
-        ),
+        incarnation=uuid4(),
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
@@ -1221,13 +1117,24 @@ class TestDelete:
 
 class TestPartitionIsolation:
     @pytest.mark.asyncio
+    async def test_partitions_share_the_store_collection(self, store):
+        """Every partition incarnation's records are points in the store's one native collection."""
+        stored_before = await _count_stored(store)
+        partitions = [await _open(store) for _ in range(2)]
+        for partition in partitions:
+            await partition.upsert(
+                records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
+            )
+
+        assert await _count_stored(store) == stored_before + 2
+
+        for partition in partitions:
+            await _purge(store, partition._incarnation)
+
+    @pytest.mark.asyncio
     async def test_query_only_returns_own_partition(self, store):
-        await store.create_partition("tenant_a")
-        await store.create_partition("tenant_b")
-        partition_a = await store.open_partition("tenant_a")
-        partition_b = await store.open_partition("tenant_b")
-        assert partition_a is not None
-        assert partition_b is not None
+        partition_a = await _open(store)
+        partition_b = await _open(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1, properties={})
@@ -1244,17 +1151,13 @@ class TestPartitionIsolation:
         assert uuids_a == {r1.uuid}
         assert uuids_b == {r2.uuid}
 
-        await store.delete_partition("tenant_a")
-        await store.delete_partition("tenant_b")
+        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_b._incarnation)
 
     @pytest.mark.asyncio
     async def test_a_query_returns_only_its_own_partitions_records(self, store):
-        await store.create_partition("tenant_a")
-        await store.create_partition("tenant_b")
-        partition_a = await store.open_partition("tenant_a")
-        partition_b = await store.open_partition("tenant_b")
-        assert partition_a is not None
-        assert partition_b is not None
+        partition_a = await _open(store)
+        partition_b = await _open(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -1266,21 +1169,20 @@ class TestPartitionIsolation:
         [result] = await partition_a.query(query_vectors=[v1], limit=10)
         assert [match.record_uuid for match in result.matches] == [r1.uuid]
 
-        await store.delete_partition("tenant_a")
-        await store.delete_partition("tenant_b")
+        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_b._incarnation)
 
     @pytest.mark.asyncio
     async def test_a_filtered_query_returns_only_its_own_partitions_records(
-        self, any_qdrant_client, registry_engine
+        self, any_qdrant_client
     ):
         """Two partitions share the store's native collection and hold
         records that match the same filters; a filtered query returns its
         own records."""
         # A name of its own, declaring `note` beside the shared keys.
         store = QdrantVectorStore(
-            await _params(
+            _params(
                 any_qdrant_client,
-                registry_engine,
                 vector_store_name="filtered_isolation",
                 store_schema=_schema(
                     indexed_properties={**INDEXED_PROPERTIES, "note": str}
@@ -1288,12 +1190,8 @@ class TestPartitionIsolation:
             )
         )
         await store.startup()
-        await store.create_partition("tenant_a")
-        await store.create_partition("tenant_b")
-        partition_a = await store.open_partition("tenant_a")
-        partition_b = await store.open_partition("tenant_b")
-        assert partition_a is not None
-        assert partition_b is not None
+        partition_a = await _open(store)
+        partition_b = await _open(store)
 
         vector = _normalize([1.0, 0.0, 0.0])
         properties: dict[str, PropertyValue] = {
@@ -1329,27 +1227,23 @@ class TestPartitionIsolation:
                     record.uuid for record in own
                 ], property_filter
 
-        await store.delete_partition("tenant_a")
-        await store.delete_partition("tenant_b")
+        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_b._incarnation)
 
     @pytest.mark.asyncio
     async def test_stores_of_two_names_keep_their_records_in_separate_storage(
-        self, store, registry_engine
+        self, store
     ):
         """Stores of two names share no storage, even on one client and
-        under one partition name and schema."""
+        under one partition incarnation and schema."""
         other = QdrantVectorStore(
-            await _params(
-                store._client,
-                registry_engine,
-                vector_store_name=f"{VECTOR_STORE_NAME}_other",
-            )
+            _params(store._client, vector_store_name=f"{VECTOR_STORE_NAME}_other")
         )
         await other.startup()
-        await store.create_partition(NAME)
-        await other.create_partition(NAME)
-        writer = await store.open_partition(NAME)
-        assert writer is not None
+        incarnation = uuid4()
+        await store.prepare_partition_incarnation(incarnation)
+        await other.prepare_partition_incarnation(incarnation)
+        writer = await store.open_partition_incarnation(incarnation)
         writer_before = await _count_stored(store)
         other_before = await _count_stored(other)
 
@@ -1363,17 +1257,13 @@ class TestPartitionIsolation:
         assert await _count_stored(store) == writer_before + 3
         assert await _count_stored(other) == other_before
 
-        await store.delete_partition(NAME)
-        await other.delete_partition(NAME)
+        await _purge(store, incarnation)
+        await _purge(other, incarnation)
 
     @pytest.mark.asyncio
     async def test_the_same_uuid_in_two_partitions_is_two_records(self, store):
-        await store.create_partition("tenant_a")
-        await store.create_partition("tenant_b")
-        partition_a = await store.open_partition("tenant_a")
-        partition_b = await store.open_partition("tenant_b")
-        assert partition_a is not None
-        assert partition_b is not None
+        partition_a = await _open(store)
+        partition_b = await _open(store)
 
         record_uuid = uuid4()
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -1397,17 +1287,13 @@ class TestPartitionIsolation:
         assert await _stored_uuids(partition_a) == set()
         assert await _stored_uuids(partition_b) == {record_uuid}
 
-        await store.delete_partition("tenant_a")
-        await store.delete_partition("tenant_b")
+        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_b._incarnation)
 
     @pytest.mark.asyncio
     async def test_delete_only_affects_own_partition(self, store):
-        await store.create_partition("tenant_a")
-        await store.create_partition("tenant_b")
-        partition_a = await store.open_partition("tenant_a")
-        partition_b = await store.open_partition("tenant_b")
-        assert partition_a is not None
-        assert partition_b is not None
+        partition_a = await _open(store)
+        partition_b = await _open(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -1421,8 +1307,8 @@ class TestPartitionIsolation:
 
         assert await _stored_uuids(partition_b) == {r2.uuid}
 
-        await store.delete_partition("tenant_a")
-        await store.delete_partition("tenant_b")
+        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_b._incarnation)
 
 
 # ── Purge ──
@@ -1430,84 +1316,25 @@ class TestPartitionIsolation:
 
 class TestPurge:
     @pytest.mark.asyncio
-    async def test_a_failed_creations_tombstone_is_retired_by_one_round(
-        self, store, monkeypatch
+    async def test_a_purge_on_a_dropped_native_collection_finds_nothing(
+        self, any_qdrant_client
     ):
-        """A creation whose partition storage preparation fails leaves a
-        tombstone under which Qdrant holds no point: its purge round finds
-        nothing there and retires it, raising nothing."""
-
-        async def refused(partition_name, incarnation) -> None:
-            raise RuntimeError("the backend refused")
-
-        monkeypatch.setattr(store, "_prepare_partition_storage", refused)
-        with pytest.raises(RuntimeError, match="refused"):
-            await store.create_partition(NAME)
-        monkeypatch.undo()
-
-        # The cancelled creation's tombstone is due, and one round retires it.
-        assert await store.purge_deleted_partitions() is True
-        assert await store.purge_deleted_partitions() is False
-
-    @pytest.mark.asyncio
-    async def test_a_purge_round_on_a_dropped_native_collection_retires_the_tombstone(
-        self, any_qdrant_client, registry_engine
-    ):
-        """A deleted partition whose native collection is gone holds nothing:
-        its purge round raises nothing and removes the tombstone."""
+        """An incarnation whose native collection is gone holds nothing: its
+        purge raises nothing and finds nothing."""
         # A name of its own, so dropping its native collection spares the others.
         dropped = QdrantVectorStore(
-            await _params(
-                any_qdrant_client, registry_engine, vector_store_name="dropped_native"
-            )
+            _params(any_qdrant_client, vector_store_name="dropped_native")
         )
         await dropped.startup()
-        await dropped.create_partition("dropped")
-        partition = await dropped.open_partition("dropped")
-        assert partition is not None
+        partition = await _open(dropped)
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
-        await dropped.delete_partition("dropped")
         await any_qdrant_client.delete_collection(dropped._vector_store_name)
 
-        await _drain(dropped)
-        assert await dropped.purge_deleted_partitions() is False
-
-    @pytest.mark.asyncio
-    async def test_a_write_landing_after_a_purge_round_is_reclaimed_by_the_next(
-        self, store
-    ):
-        """A write whose liveness check passed before its partition was
-        deleted can land after a purge round deleted the incarnation's
-        records; the tombstone stays until a round finds nothing, so the next
-        round reclaims the late write."""
-        key = "purged"
-        await store.create_partition(key)
-        partition = await store.open_partition(key)
-        assert partition is not None
-        await partition.upsert(
-            records=[
-                _make_record(vector=_normalize([1.0, 0.1 * index, 0.0]))
-                for index in range(3)
-            ]
+        assert (
+            await dropped.purge_partition_incarnation(partition._incarnation) is False
         )
-        await store.delete_partition(key)
-
-        assert await store.purge_deleted_partitions() is True
-        assert await _stored_uuids(partition) == set()
-
-        # The handle's backend write, past its liveness checks, as a write in
-        # flight across the deletion lands.
-        late = [
-            _make_record(vector=_normalize([0.1 * index, 1.0, 0.0]))
-            for index in range(2)
-        ]
-        await partition._upsert(late)
-        assert await _stored_uuids(partition) == {record.uuid for record in late}
-
-        await _drain(store)
-        assert await _stored_uuids(partition) == set()
 
 
 # ── A seeded operation sequence against a model ──
@@ -1611,7 +1438,11 @@ def _assert_matches_model(
 
 
 class _ModelRun:
-    """Operations on the model test's partitions, each applied to the store and to the model."""
+    """Operations on the model test's partitions, each applied to the store and to the model.
+
+    Each key's partition is one incarnation at a time; an incarnation
+    replaced under its key waits in `retired` until a drain purges it.
+    """
 
     def __init__(
         self, store: QdrantVectorStore, rng: random.Random, pool: list[UUID]
@@ -1621,13 +1452,11 @@ class _ModelRun:
         self.pool = pool
         self.handles: dict[str, QdrantVectorStorePartition] = {}
         self.model: dict[str, dict[UUID, Record]] = {}
+        self.retired: list[UUID] = []
         self.baseline = 0
 
     async def create(self, key: str) -> None:
-        await self.store.create_partition(key)
-        handle = await self.store.open_partition(key)
-        assert handle is not None
-        self.handles[key] = handle
+        self.handles[key] = await _open(self.store)
         self.model[key] = {}
 
     async def upsert(self, key: str) -> None:
@@ -1662,14 +1491,13 @@ class _ModelRun:
         _assert_matches_model(result, expected, query)
 
     async def recreate(self, key: str) -> None:
-        stale = self.handles[key]
-        await self.store.delete_partition(key)
-        with pytest.raises(PartitionIncarnationEndedError):
-            await stale.query(query_vectors=[_MODEL_PROBE], limit=1)
+        self.retired.append(self.handles[key]._incarnation)
         await self.create(key)
 
     async def drain(self, key: str) -> None:
-        await _drain(self.store)
+        for incarnation in self.retired:
+            await _purge(self.store, incarnation)
+        self.retired.clear()
         assert await _count_stored(self.store) == self.baseline + sum(
             len(records) for records in self.model.values()
         )
@@ -1687,18 +1515,18 @@ class _ModelRun:
 class TestAgainstAModel:
     @pytest.mark.asyncio
     async def test_a_seeded_operation_sequence_agrees_with_a_model(
-        self, any_qdrant_client, registry_engine
+        self, any_qdrant_client
     ):
         """Two partitions of one store take a seeded sequence of upserts
         (re-upserts change or drop properties), deletes (of their own, the
-        other partition's and absent UUIDs), filtered queries, deletion and
-        re-creation under the same key, and purge drains. After each step the
-        records stored, a query's matches and a drain's count agree with a
-        model that holds each partition's records."""
+        other partition's and absent UUIDs), filtered queries, replacement by
+        a fresh incarnation under the same key, and drains that purge the
+        replaced incarnations. After each step the records stored, a query's
+        matches and a drain's count agree with a model that holds each
+        partition's records."""
         store = QdrantVectorStore(
-            await _params(
+            _params(
                 any_qdrant_client,
-                registry_engine,
                 vector_store_name=_MODEL_STORE_NAME,
                 store_schema=_schema(indexed_properties=_MODEL_INDEXED_PROPERTIES),
             )
@@ -1730,297 +1558,12 @@ class TestAgainstAModel:
                     f"step {step}: {operation.__name__} on {key}"
                 ) from error
 
-        for key in _MODEL_NAMES:
-            await store.delete_partition(key)
-        await _drain(store)
+        for incarnation in [
+            *run.retired,
+            *(handle._incarnation for handle in run.handles.values()),
+        ]:
+            await _purge(store, incarnation)
         assert await _count_stored(store) == run.baseline
-
-
-# ── Concurrent churn across stores sharing one registry ──
-
-
-_CHURN_SEED = 1735
-_CHURN_WORKERS = 8
-_CHURN_STEPS = 50
-_CHURN_OWNED = 4
-_CHURN_NAMES = ("churn_a", "churn_b", "churn_c")
-_CHURN_INDEXED_PROPERTIES: dict[str, PropertyType] = {"owner": int}
-# Bounds the whole churn, so a deadlock fails the test instead of hanging it.
-_CHURN_DEADLINE_SECONDS = 120
-# The outcomes the contract documents for an operation that races another
-# worker's: anything else fails the test.
-_CHURN_DOMAIN_ERRORS = (
-    PartitionIncarnationEndedError,
-    PartitionAlreadyExistsError,
-    PartitionPendingError,
-    PartitionIncarnationEndedError,
-    PartitionCreateAttemptsExhaustedError,
-)
-
-
-async def _stored_points(store: QdrantVectorStore) -> set[tuple[UUID, UUID]]:
-    """The (incarnation, record UUID) of every point Qdrant holds in the store's native collection."""
-    points, _ = await store._client.scroll(
-        collection_name=store._vector_store_name,
-        limit=10000,
-        with_payload=[_PAYLOAD_INCARNATION, _PAYLOAD_RECORD_UUID],
-        with_vectors=False,
-    )
-    return {
-        (
-            UUID(str((point.payload or {})[_PAYLOAD_INCARNATION])),
-            UUID(str((point.payload or {})[_PAYLOAD_RECORD_UUID])),
-        )
-        for point in points
-    }
-
-
-@dataclass
-class _ChurnWorker:
-    """A worker writing only the record UUIDs it owns, so its records in each partition life follow from its own operations.
-
-    `lives` holds, per incarnation, the records it wrote there and has not
-    deleted; `unconfirmed` the records whose upsert raised because the
-    partition was deleted meanwhile, which may have landed.
-    """
-
-    index: int
-    store: QdrantVectorStore
-    owned: list[UUID]
-    rng: random.Random
-    deleted: asyncio.Event
-    handles: dict[str, QdrantVectorStorePartition] = field(default_factory=dict)
-    lives: defaultdict[UUID, dict[UUID, Record]] = field(
-        default_factory=lambda: defaultdict(dict)
-    )
-    unconfirmed: set[tuple[UUID, UUID]] = field(default_factory=set)
-
-    async def run(self) -> None:
-        operations = {self.upsert: 4, self.delete: 2, self.query: 3, self.drop: 1}
-        for _ in range(_CHURN_STEPS):
-            key = self.rng.choice(_CHURN_NAMES)
-            [operation] = self.rng.choices(
-                list(operations), weights=list(operations.values())
-            )
-            try:
-                await operation(key)
-            except _CHURN_DOMAIN_ERRORS:
-                self.handles.pop(key, None)
-
-    async def handle(self, key: str) -> QdrantVectorStorePartition:
-        if key not in self.handles:
-            self.handles[key] = await self.store.open_or_create_partition(key)
-        return self.handles[key]
-
-    async def upsert(self, key: str) -> None:
-        records = [
-            Record(
-                uuid=record_uuid,
-                vector=_random_vector(self.rng),
-                properties={"owner": self.index},
-            )
-            for record_uuid in self.rng.sample(self.owned, self.rng.randint(1, 3))
-        ]
-        handle = await self.handle(key)
-        try:
-            await handle.upsert(records=records)
-        except PartitionIncarnationEndedError:
-            self.unconfirmed.update(
-                (handle._incarnation, record.uuid) for record in records
-            )
-            raise
-        self.lives[handle._incarnation].update(
-            {record.uuid: record for record in records}
-        )
-
-    async def delete(self, key: str) -> None:
-        record_uuids = self.rng.sample(self.owned, self.rng.randint(1, 3))
-        handle = await self.handle(key)
-        await handle.delete(record_uuids=record_uuids)
-        for record_uuid in record_uuids:
-            self.lives[handle._incarnation].pop(record_uuid, None)
-
-    async def query(self, key: str) -> None:
-        query = _random_vector(self.rng)
-        handle = await self.handle(key)
-        [result] = await handle.query(
-            query_vectors=[query],
-            limit=len(self.owned),
-            property_filter=Comparison(field="owner", op="=", value=self.index),
-        )
-        found = {match.record_uuid for match in result.matches}
-        own = set(self.lives[handle._incarnation])
-        # Only this worker removes its records from a live partition; the
-        # purge may remove them once the partition is deleted.
-        assert found <= own
-        # A delete of nothing raises once the partition is deleted, so past
-        # it the partition was live throughout the query.
-        await handle.delete(record_uuids=[])
-        assert found == own
-
-    async def drop(self, key: str) -> None:
-        create_again = self.rng.random() < 0.5
-        self.handles.pop(key, None)
-        await self.store.delete_partition(key)
-        self.deleted.set()
-        if create_again:
-            await self.store.create_partition(key)
-
-
-@pytest_asyncio.fixture
-async def sqlite_registry_engines(tmp_path):
-    """Two engines on one SQLite registry file, as two processes open it."""
-    url = f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}"
-    engines = [create_async_engine(url) for _ in range(2)]
-    for engine in engines:
-        enable_sqlite_explicit_begin(engine)
-    yield engines
-    for engine in engines:
-        await engine.dispose()
-
-
-@pytest_asyncio.fixture
-async def postgresql_registry_engines(pg_server):
-    """Two engines on one PostgreSQL registry database, as two processes connect to it."""
-    url = URL.create(
-        "postgresql+asyncpg",
-        username=pg_server["user"],
-        password=pg_server["password"],
-        host=pg_server["host"],
-        port=pg_server["port"],
-        database=pg_server["database"],
-    )
-    engines = [create_async_engine(url) for _ in range(2)]
-    yield engines
-    for engine in engines:
-        await engine.dispose()
-
-
-@pytest.fixture(params=["sqlite", "postgresql"])
-def registry_engines(request):
-    """Two engines on one registry database."""
-    return request.getfixturevalue(f"{request.param}_registry_engines")
-
-
-async def _stores_sharing_a_registry(
-    clients: list[AsyncQdrantClient], engines: list[AsyncEngine]
-) -> list[QdrantVectorStore]:
-    """One store per client, each with its own registry object and engine on one registry."""
-    # One registry and one native collection: one vector store name, its
-    # registry on one database. The name is fresh, since the registry
-    # database may outlive the test.
-    vector_store_name = f"churn_{uuid4().hex[:24]}"
-    stores = []
-    for client, engine in zip(clients, engines, strict=True):
-        store = QdrantVectorStore(
-            await _params(
-                client,
-                engine,
-                vector_store_name=vector_store_name,
-                store_schema=_schema(indexed_properties=_CHURN_INDEXED_PROPERTIES),
-            )
-        )
-        await store.startup()
-        stores.append(store)
-    return stores
-
-
-async def _churn(stores: list[QdrantVectorStore], workers: list[_ChurnWorker]) -> None:
-    """Run the workers to completion beside a purger per store, then drain."""
-    [deleted] = {worker.deleted for worker in workers}
-    quiesced = False
-
-    async def purge(store: QdrantVectorStore) -> None:
-        while True:
-            await deleted.wait()
-            if quiesced:
-                return
-            deleted.clear()
-            await _drain(store)
-
-    async with asyncio.timeout(_CHURN_DEADLINE_SECONDS):
-        async with asyncio.TaskGroup() as purgers:
-            for store in stores:
-                purgers.create_task(purge(store))
-            async with asyncio.TaskGroup() as working:
-                for worker in workers:
-                    working.create_task(worker.run())
-            quiesced = True
-            deleted.set()
-        for store in stores:
-            await _drain(store)
-
-
-async def _assert_churned_state(
-    store: QdrantVectorStore, workers: list[_ChurnWorker]
-) -> None:
-    """Each live partition holds what its workers wrote and kept; a deleted one holds nothing written successfully."""
-    live: set[UUID] = set()
-    for key in _CHURN_NAMES:
-        handle = await store.open_partition(key)
-        if handle is None:
-            continue
-        live.add(handle._incarnation)
-        expected = {
-            record_uuid
-            for worker in workers
-            for record_uuid in worker.lives[handle._incarnation]
-        }
-        assert await _stored_uuids(handle) == expected, key
-        [result] = await handle.query(
-            query_vectors=[_MODEL_PROBE], limit=_CHURN_WORKERS * _CHURN_OWNED
-        )
-        assert {match.record_uuid for match in result.matches} == expected, key
-
-    unconfirmed = set().union(*(worker.unconfirmed for worker in workers))
-    dead = {point for point in await _stored_points(store) if point[0] not in live}
-    assert dead <= unconfirmed
-
-
-@pytest.mark.integration
-class TestConcurrentChurn:
-    @pytest.mark.asyncio
-    async def test_two_stores_churning_one_registry_keep_every_partition_exact(
-        self, qdrant_client, qdrant_grpc_client, registry_engines
-    ):
-        """Two stores of one name, on a REST and a gRPC client and their own
-        engines on one registry database, serve workers that upsert, delete
-        and query their own records and delete and create partitions of three
-        keys, while each store's purger drains whenever a partition is
-        deleted.
-
-        Every operation succeeds or raises a documented domain error, and
-        nothing deadlocks. A query's matches agree with its worker's records
-        whenever the partition was live throughout it. Once the workers stop
-        and the purge is drained, each live partition holds exactly what its
-        workers wrote and did not delete, and no deleted partition's record
-        remains but one whose upsert raised because the partition was
-        deleted while it was in flight: such a write can land after a purge
-        round found the incarnation empty, the race the tombstone retention
-        closes, and the test's retention is zero.
-        """
-        stores = await _stores_sharing_a_registry(
-            [qdrant_client, qdrant_grpc_client], registry_engines
-        )
-        pool = sorted(uuid4() for _ in range(_CHURN_WORKERS * _CHURN_OWNED))
-        deleted = asyncio.Event()
-        workers = [
-            _ChurnWorker(
-                index=index,
-                store=stores[index % len(stores)],
-                owned=pool[index * _CHURN_OWNED : (index + 1) * _CHURN_OWNED],
-                rng=random.Random(_CHURN_SEED + index),
-                deleted=deleted,
-            )
-            for index in range(_CHURN_WORKERS)
-        ]
-
-        await _churn(stores, workers)
-        await _assert_churned_state(stores[0], workers)
-
-        for key in _CHURN_NAMES:
-            await stores[0].delete_partition(key)
-        await _drain(stores[0])
 
 
 # ── Metrics ──
@@ -2029,27 +1572,19 @@ class TestConcurrentChurn:
 @pytest.mark.integration
 class TestMetrics:
     @pytest.mark.asyncio
-    async def test_metrics_collection(self, qdrant_client, registry_engine):
+    async def test_metrics_collection(self, qdrant_client):
         mock_factory = MagicMock(spec=MetricsFactory)
         mock_histogram = MagicMock(spec=MetricsFactory.Histogram)
         mock_factory.get_histogram.return_value = mock_histogram
 
-        store = QdrantVectorStore(
-            await _params(qdrant_client, registry_engine, metrics_factory=mock_factory)
-        )
+        store = QdrantVectorStore(_params(qdrant_client, metrics_factory=mock_factory))
         await store.startup()
 
-        await store.create_partition("metrics_test")
-
-        assert mock_histogram.observe.called
-        call_labels = mock_histogram.observe.call_args
-        assert call_labels[1]["labels"]["operation"] == "create_partition"
-        assert call_labels[1]["labels"]["status"] == "ok"
-
+        incarnation = uuid4()
+        await store.prepare_partition_incarnation(incarnation)
+        partition = await store.open_partition_incarnation(incarnation)
         mock_histogram.reset_mock()
 
-        partition = await store.open_partition("metrics_test")
-        assert partition is not None
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
         await partition.upsert(records=[r1])
@@ -2059,22 +1594,28 @@ class TestMetrics:
         assert call_labels[1]["labels"]["operation"] == "upsert"
         assert call_labels[1]["labels"]["status"] == "ok"
 
-        await store.delete_partition("metrics_test")
+        mock_histogram.reset_mock()
+
+        await _purge(store, incarnation)
+
+        assert mock_histogram.observe.called
+        call_labels = mock_histogram.observe.call_args
+        assert call_labels[1]["labels"]["operation"] == "purge_partition_incarnation"
+        assert call_labels[1]["labels"]["status"] == "ok"
 
 
 @pytest.mark.integration
 class TestCollectionProvisioningAcrossWorkers:
-    """Startup and partition creation have to survive more than one worker.
+    """Startup has to survive more than one worker.
 
-    Stores on separate clients can share one registry database and one
-    native collection, so two can start up and prepare the native collection
-    at the same moment, one can find it already there without its indexes,
-    and two can decide to create the same partition at once.
+    Stores of one name on separate clients share one native collection, so
+    two can start up and prepare it at the same moment, and one can find it
+    already there without its indexes.
     """
 
     @pytest.mark.asyncio
     async def test_indexes_are_created_when_the_collection_already_exists(
-        self, qdrant_client, registry_engine
+        self, qdrant_client
     ):
         """A collection that exists without its indexes still gets them.
 
@@ -2082,7 +1623,7 @@ class TestCollectionProvisioningAcrossWorkers:
         between the two calls, finds the collection there and creates the
         indexes it lacks.
         """
-        native, name = "raced", "raced_name"
+        native = "raced"
 
         # Stand in for a startup that got as far as the collection and no further.
         await qdrant_client.create_collection(
@@ -2092,12 +1633,9 @@ class TestCollectionProvisioningAcrossWorkers:
             ),
         )
 
-        store = QdrantVectorStore(
-            await _params(qdrant_client, registry_engine, vector_store_name=native)
-        )
+        store = QdrantVectorStore(_params(qdrant_client, vector_store_name=native))
         await store.startup()
         try:
-            await store.open_or_create_partition(name)
             info = await qdrant_client.get_collection(native)
             indexed = set(info.payload_schema or {})
             assert _PAYLOAD_INCARNATION in indexed, (
@@ -2109,7 +1647,6 @@ class TestCollectionProvisioningAcrossWorkers:
                 f"declared property index absent. present: {sorted(indexed)}"
             )
         finally:
-            await store.delete_partition(name)
             await qdrant_client.delete_collection(native)
 
     @staticmethod
@@ -2126,96 +1663,27 @@ class TestCollectionProvisioningAcrossWorkers:
             monkeypatch.setattr(target, attribute, together)
 
     @pytest.mark.asyncio
-    async def test_two_workers_creating_at_once_agree_on_one_partition(
-        self, new_qdrant_client, registry_engine, monkeypatch
-    ):
-        """Two clients, one registry - the multi-worker shape, in one process.
-
-        Both workers find the key free and reserve it at once. Both
-        open-or-creates return a handle on the one partition, so a record
-        written through either is read through the other, and of a strict
-        create both issue at once exactly one succeeds.
-        """
-        client_a = new_qdrant_client()
-        client_b = new_qdrant_client()
-        native, name = "race_two", "race_two_name"
-
-        store_a = QdrantVectorStore(
-            await _params(client_a, registry_engine, vector_store_name=native)
-        )
-        store_b = QdrantVectorStore(
-            await _params(client_b, registry_engine, vector_store_name=native)
-        )
-        await store_a.startup()
-        await store_b.startup()
-        self._together(
-            monkeypatch,
-            [store_a._partition_registry, store_b._partition_registry],
-            "reserve",
-        )
-
-        try:
-            async with asyncio.timeout(60):
-                results = await asyncio.gather(
-                    store_a.open_or_create_partition(name),
-                    store_b.open_or_create_partition(name),
-                    return_exceptions=True,
-                )
-            handles = [r for r in results if isinstance(r, QdrantVectorStorePartition)]
-            assert len(handles) == 2, f"a concurrent creator raised: {results!r}"
-            record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
-            await handles[0].upsert(records=[record])
-            [result] = await handles[1].query(query_vectors=[record.vector], limit=10)
-            assert [match.record_uuid for match in result.matches] == [record.uuid]
-
-            # The registry's primary key arbitrates a strict create: one
-            # creator wins, the other gets AlreadyExists.
-            await store_a.delete_partition(name)
-            async with asyncio.timeout(60):
-                results = await asyncio.gather(
-                    store_a.create_partition(name),
-                    store_b.create_partition(name),
-                    return_exceptions=True,
-                )
-            assert sorted(type(r).__name__ for r in results) == [
-                "NoneType",
-                "PartitionAlreadyExistsError",
-            ], results
-        finally:
-            await store_a.delete_partition(name)
-            await client_a.delete_collection(native)
-            await client_a.close()
-            await client_b.close()
-
-    @pytest.mark.asyncio
     @pytest.mark.parametrize("prefer_grpc", [False, True], ids=["rest", "grpc"])
     async def test_two_stores_preparing_their_storage_at_once_both_succeed(
-        self, new_qdrant_client, registry_engine, monkeypatch, prefer_grpc
+        self, new_qdrant_client, monkeypatch, prefer_grpc
     ):
         """Two workers start stores of one name at once, so both prepare the
         native collection they share at the same moment. Both startups
-        succeed, and a partition each worker creates holds its own records."""
+        succeed, and a partition incarnation each worker opens holds its own
+        records."""
         client_a = new_qdrant_client(prefer_grpc=prefer_grpc)
         client_b = new_qdrant_client(prefer_grpc=prefer_grpc)
         native = f"race_storage_{'grpc' if prefer_grpc else 'rest'}"
 
-        store_a = QdrantVectorStore(
-            await _params(client_a, registry_engine, vector_store_name=native)
-        )
-        store_b = QdrantVectorStore(
-            await _params(client_b, registry_engine, vector_store_name=native)
-        )
+        store_a = QdrantVectorStore(_params(client_a, vector_store_name=native))
+        store_b = QdrantVectorStore(_params(client_b, vector_store_name=native))
         self._together(monkeypatch, [store_a, store_b], "_prepare_storage")
 
         try:
             async with asyncio.timeout(60):
                 await asyncio.gather(store_a.startup(), store_b.startup())
-            await store_a.create_partition("first")
-            await store_b.create_partition("second")
-            first = await store_b.open_partition("first")
-            second = await store_a.open_partition("second")
-            assert first is not None
-            assert second is not None
+            first = await _open(store_a)
+            second = await _open(store_b)
             records = {
                 partition: _make_record(vector=_normalize([1.0, 0.0, 0.0]))
                 for partition in (first, second)
@@ -2238,8 +1706,8 @@ class TestStrictMode:
     """The collection is created in strict mode: a filter on an unindexed key is refused."""
 
     @pytest.mark.asyncio
-    async def test_the_collection_is_strict(self, qdrant_client, registry_engine):
-        store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
+    async def test_the_collection_is_strict(self, qdrant_client):
+        store = QdrantVectorStore(_params(qdrant_client))
         await store.startup()
         info = await qdrant_client.get_collection(VECTOR_STORE_NAME)
         assert info.config.strict_mode_config is not None
@@ -2261,16 +1729,11 @@ class TestStrictMode:
             )
 
     @pytest.mark.asyncio
-    async def test_a_predicate_of_another_type_matches_nothing(
-        self, qdrant_client, registry_engine
-    ):
+    async def test_a_predicate_of_another_type_matches_nothing(self, qdrant_client):
         """The store answers a mistyped leaf itself; the server would refuse it."""
-        store = QdrantVectorStore(await _params(qdrant_client, registry_engine))
+        store = QdrantVectorStore(_params(qdrant_client))
         await store.startup()
-        await store.delete_partition("mistyped")
-        await store.create_partition("mistyped")
-        partition = await store.open_partition("mistyped")
-        assert partition is not None
+        partition = await _open(store)
         held = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"age": 5})
         await partition.upsert(records=[held])
 
@@ -2290,16 +1753,14 @@ class TestStrictMode:
             property_filter=Comparison(field="age", op="=", value=5),
         )
         assert [match.record_uuid for match in result.matches] == [held.uuid]
-        await store.delete_partition("mistyped")
+        await _purge(store, partition._incarnation)
 
 
 class TestStrictModeIsRequested:
     """Local mode does not record strict mode, so the request itself is checked."""
 
     @pytest.mark.asyncio
-    async def test_startup_creates_the_collection_strict(
-        self, monkeypatch, registry_engine
-    ):
+    async def test_startup_creates_the_collection_strict(self, monkeypatch):
         client = AsyncQdrantClient(location=":memory:")
         requested: dict[str, models.StrictModeConfig | None] = {}
         original = client.create_collection
@@ -2309,7 +1770,7 @@ class TestStrictModeIsRequested:
             return await original(*args, **kwargs)
 
         monkeypatch.setattr(client, "create_collection", recording_create_collection)
-        store = QdrantVectorStore(await _params(client, registry_engine))
+        store = QdrantVectorStore(_params(client))
         await store.startup()
 
         assert set(requested) == {VECTOR_STORE_NAME}

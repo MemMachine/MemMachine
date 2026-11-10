@@ -157,13 +157,14 @@ async def _event_memory(
     )
     embedder = await resource_manager.get_embedder(embedder_id, validate=True)
     segment_store = await resource_manager.get_segment_store(segment_store_id)
+    vector_store = await event_backend_vector_store(resource_manager)
     return EventMemory(
         EventMemoryParams(
             partition_registry=await _event_memory_partition_registry(
-                resource_manager, segment_store
+                resource_manager, segment_store, vector_store
             ),
             segment_store=segment_store,
-            vector_store=await event_backend_vector_store(resource_manager),
+            vector_store=vector_store,
             segmenter=_build_segmenter(config.segmenter),
             deriver=_build_deriver(config.deriver),
             embedder=embedder,
@@ -176,6 +177,7 @@ async def _event_memory(
 async def _event_memory_partition_registry(
     resource_manager: InstanceOf[CommonResourceManager],
     segment_store: SegmentStore,
+    vector_store: VectorStore,
 ) -> PartitionRegistry:
     """
     The registry of event memory's partition namespace, whose purge rounds run in the background.
@@ -195,7 +197,7 @@ async def _event_memory_partition_registry(
         partition_namespace=EventMemory.PARTITION_NAMESPACE,
         tombstone_retention_seconds=deployment.tombstone_retention_seconds,
         purge_round=functools.partial(
-            EventMemory.purge_partition_incarnation, segment_store
+            EventMemory.purge_partition_incarnation, segment_store, vector_store
         ),
     )
 
