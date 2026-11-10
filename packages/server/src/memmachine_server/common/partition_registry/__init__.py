@@ -7,6 +7,7 @@ from .data_types import (
     PartitionPendingError,
     validate_partition_name,
 )
+from .partition_owner import open_or_create_partition
 from .partition_registry import (
     PartitionRegistry,
     PurgeRound,
@@ -23,5 +24,6 @@ __all__ = [
     "PurgeRound",
     "Registration",
     "Reservation",
+    "open_or_create_partition",
     "validate_partition_name",
 ]
