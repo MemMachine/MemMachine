@@ -1,7 +1,6 @@
 """Segment store data models and interfaces."""
 
 from .data_types import (
-    PendingWrite,
     SegmentStoreAttemptsExhaustedError,
     SegmentStoreEventAlreadyExistsError,
     SegmentStorePartitionAlreadyExistsError,
@@ -18,7 +17,6 @@ from .segment_store import (
 )
 
 __all__ = [
-    "PendingWrite",
     "PendingWriteClaim",
     "SegmentStore",
     "SegmentStoreAttemptsExhaustedError",

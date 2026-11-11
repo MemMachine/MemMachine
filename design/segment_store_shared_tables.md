@@ -41,8 +41,8 @@ One physical schema on every dialect; the ORM models are the tables.
 - `segment_store_pt`, the tenant registry: one row per live tenant, holding
   the logical partition key (primary key), an `incarnation` (a random UUID
   minted at creation, unique-constrained), and the payload codec config.
-- `segment_store_ev`, `segment_store_sg` and `segment_store_dv_ln`, the
-  event, segment and derivative-link tables, shared by all tenants and not
+- `segment_store_ev`, `segment_store_sg` and `segment_store_dv`, the
+  event, segment and derivative tables, shared by all tenants and not
   partitioned. Rows carry no logical key; they are keyed by the incarnation
   alone, so a data query cannot be built without resolving the registry
   first, and addressing the wrong tenant is structurally impossible rather
@@ -50,16 +50,16 @@ One physical schema on every dialect; the ORM models are the tables.
   than a composite string key, and random UUIDs are unique across nodes
   without coordination, so a tenant's rows move between databases
   verbatim.
-- `segment_store_pw` and `segment_store_pw_dv`, pending writes, and
-  `segment_store_tb` and `segment_store_tb_dv`, tombstones: the work a
-  derived index of the derivatives leaves behind
+- `segment_store_pw`, pending writes, and `segment_store_tb` and
+  `segment_store_tb_dv`, tombstones, each a segment's: the work a derived
+  index of the derivatives leaves behind
   (`event_memory_ingest_and_deletion.md`).
 - `segment_store_gc`, the purge queue: one row per dead incarnation, with a
   cursor per table the purge reclaims, the last key purged. An entry holds
   only what the purge reads.
 
-The link table keeps its foreign key to the segment table, and the segment
-and pending write tables theirs to the event table (`ON DELETE
+The derivative and pending write tables keep their foreign keys to the
+segment table, and the segment table its to the event table (`ON DELETE
 CASCADE`), all keyed by incarnation. The segment table has no
 foreign key to the registry: registry rows and data rows are decoupled so
 that registry deletion is O(1), and the rows left behind are exactly what
