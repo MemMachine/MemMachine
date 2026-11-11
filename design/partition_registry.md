@@ -68,10 +68,7 @@ store.
 - **The owner** is the memory system, the concept the registry binds to. It
   holds its stores, prepares each store's partition for a new life, opens
   each store's partition for a live one, fences its operations, and
-  supplies the purge callback. `open_or_create_partition`
-  (`common/partition_registry/partition_owner.py`) is the owner's creation
-  flow, given the registry and the callback that prepares every store's
-  storage.
+  supplies the purge callback.
 - **A store** holds records under incarnations. It prepares a life's
   storage, opens a handle on a live life, and purges a dead life's records,
   each when its owner calls it. Nothing in the owner assumes how a backend
@@ -352,15 +349,16 @@ to give up on a creation is its caller's decision: the caller deletes the
 name and creates it again, and the stopped creator's `confirm`, conditional
 on its own incarnation, then fails.
 
-**`open_or_create_partition`** is read-then-create, retried a second apart: a
-live row is opened; a pending row is another creator's, so the loop waits for
-it rather than registering; no row means create; losing the create means a
-racing creator took the name; losing the mark means a racing deleter removed
-the partition while its storage was prepared, so the loop creates again.
-After 10 attempts it raises `PartitionPendingError` if the last lookup
-found the partition pending, and `PartitionCreateAttemptsExhaustedError`
-otherwise. Event memory opens a session's partition with it, and semantic
-memory its one partition.
+An owner that opens a name and creates the partition when none holds it
+composes the two itself, as read-then-create retried a bounded number of
+times: a live partition is opened; a pending one is another creator's, so
+the owner waits for it rather than reserving; no partition means create;
+losing the reservation means a racing creator took the name; losing the
+confirmation means a racing deleter removed the partition while its storage
+was prepared, so the owner creates again. Once the attempts run out it
+raises `PartitionPendingError` if the last lookup found the partition
+pending, and `PartitionCreateAttemptsExhaustedError` otherwise. Event memory
+opens a session's partition this way, and semantic memory its one partition.
 
 ### Fencing
 
@@ -477,9 +475,8 @@ deletion job. This design builds no owner above event memory.
 A catalog kept in the same SQL database as its data, as the segment store's
 was, can fence a write in the write's own transaction. The registry keeps
 that design's bounded mint loop, its in-transaction locking re-check of the
-queue, its idempotent deletion that queues a tombstone, its claim under
-`FOR UPDATE SKIP LOCKED`, and its retried read-then-create of open-or-create.
-It differs where a store is remote:
+queue, its idempotent deletion that queues a tombstone, and its claim under
+`FOR UPDATE SKIP LOCKED`. It differs where a store is remote:
 
 - deletion is `DELETE ... RETURNING` then the queue insert, since there is no
   write fence to pin the row with;
