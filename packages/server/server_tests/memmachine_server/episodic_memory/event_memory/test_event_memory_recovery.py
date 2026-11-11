@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import logging
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, timedelta
 from unittest.mock import call, create_autospec
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from memmachine_server.common.vector_store import (
     Record,
     VectorStore,
+    VectorStorePartitionHandleStaleError,
     VectorStoreSchema,
 )
 from memmachine_server.episodic_memory.event_memory.data_types import (
@@ -140,12 +142,21 @@ async def test_a_failed_upsert_leaves_the_events_stored_and_their_derivatives_pe
     partition: EventMemoryPartition,
     fake_segment_store_partition: InMemorySegmentStorePartition,
     vector_store_partition: _FailingVectorStorePartition,
+    caplog: pytest.LogCaptureFixture,
 ):
+    """The encode succeeds: its events are stored, and it logs the failed write."""
     vector_store_partition.fail_upserts = True
     event = _event("hello")
 
-    with pytest.raises(ConnectionError):
+    with caplog.at_level(logging.WARNING):
         await partition.encode_events([event])
+
+    assert [
+        record
+        for record in caplog.records
+        if record.levelno == logging.WARNING
+        and isinstance(record.exc_info and record.exc_info[1], ConnectionError)
+    ]
 
     assert event.uuid in fake_segment_store_partition.event_to_segments
     (pending,) = fake_segment_store_partition.pending_writes.values()
@@ -180,11 +191,26 @@ async def test_an_upsert_outlasting_the_write_budget_is_cancelled(
     partition = await event_memory.open_or_create_partition("partition")
     vector_store_partition.upsert_delay_seconds = 30
 
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(partition.encode_events([_event("hello")]), timeout=10)
+    await asyncio.wait_for(partition.encode_events([_event("hello")]), timeout=10)
 
     assert vector_store_partition.records == {}
     assert len(fake_segment_store_partition.pending_writes) == 1
+
+
+async def test_an_encode_whose_partition_is_deleted_while_it_writes_raises(
+    partition: EventMemoryPartition,
+    vector_store_partition: _FailingVectorStorePartition,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A deletion of the partition during the write is reported: the events did not land in a live partition."""
+
+    async def deleted(*, records) -> None:
+        raise VectorStorePartitionHandleStaleError("event_memory", "partition")
+
+    monkeypatch.setattr(vector_store_partition, "upsert", deleted)
+
+    with pytest.raises(VectorStorePartitionHandleStaleError):
+        await partition.encode_events([_event("hello")])
 
 
 async def test_encoding_a_held_event_again_is_rejected_whole(
@@ -446,8 +472,7 @@ async def test_background_work_writes_the_derivatives_an_encode_left_pending(
 ):
     partition = await event_memory.open_or_create_partition("partition")
     vector_store_partition.fail_upserts = True
-    with pytest.raises(ConnectionError):
-        await partition.encode_events([_event("hello")])
+    await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
 
     assert not await event_memory._finish_pending_write()
@@ -467,8 +492,7 @@ async def test_background_work_retries_pending_writes_after_a_failed_write(
 ):
     partition = await event_memory.open_or_create_partition("partition")
     vector_store_partition.fail_upserts = True
-    with pytest.raises(ConnectionError):
-        await partition.encode_events([_event("hello")])
+    await partition.encode_events([_event("hello")])
     await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
     assert await event_memory._finish_pending_write()
@@ -486,8 +510,7 @@ async def test_a_cancelled_recovery_takes_back_its_attempt(
     record claimable at once rather than after its lease and backoff."""
     partition = await event_memory.open_or_create_partition("partition")
     vector_store_partition.fail_upserts = True
-    with pytest.raises(ConnectionError):
-        await partition.encode_events([_event("hello")])
+    await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
     await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
     vector_store_partition.upserting.clear()
@@ -535,8 +558,7 @@ async def test_a_forget_ends_the_derivatives_pending_with_it(
     partition = await event_memory.open_or_create_partition("partition")
     vector_store_partition.fail_upserts = True
     event = _event("hello")
-    with pytest.raises(ConnectionError):
-        await partition.encode_events([event])
+    await partition.encode_events([event])
     vector_store_partition.fail_upserts = False
 
     await partition.forget_events([event.uuid])
@@ -600,8 +622,7 @@ async def test_background_work_embeds_before_its_write_budget_starts(
     )
     partition = await event_memory.open_or_create_partition("partition")
     vector_store_partition.fail_upserts = True
-    with pytest.raises(ConnectionError):
-        await partition.encode_events([_event("hello")])
+    await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
     await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
@@ -628,8 +649,7 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
     partition = await event_memory.open_or_create_partition("partition")
     vector_store_partition.fail_upserts = True
     event = _event("hello")
-    with pytest.raises(ConnectionError):
-        await partition.encode_events([event])
+    await partition.encode_events([event])
     vector_store_partition.fail_upserts = False
     await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
 

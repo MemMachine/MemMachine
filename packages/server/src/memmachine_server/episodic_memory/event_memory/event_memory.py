@@ -39,6 +39,7 @@ from memmachine_server.common.vector_store import (
     Record,
     VectorStore,
     VectorStorePartition,
+    VectorStorePartitionHandleStaleError,
 )
 from memmachine_server.common.vector_store.data_types import is_valid_identifier
 
@@ -62,6 +63,7 @@ from .segment_store import (
     SegmentStore,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
+    SegmentStorePartitionHandleStaleError,
 )
 from .segmenter import Segmenter
 
@@ -748,10 +750,13 @@ class EventMemoryPartition:
         """
         Encode events.
 
-        The events are stored, with their segments and derivatives, before
-        any derivative is written to the vector store. An error after that
-        leaves them stored, and their derivatives are written in the
-        background.
+        Returns once the events are stored with their segments and
+        derivatives, from which the background work finishes writing the
+        derivatives to the vector store. They are written before then when
+        the vector store takes them within the write budget; a write that
+        fails or runs out of budget is logged and left to the background
+        work. When a written derivative is searchable is the vector store's
+        to say.
 
         Args:
             events (Iterable[Event]): The events to encode.
@@ -766,9 +771,12 @@ class EventMemoryPartition:
             SegmentStoreEventAlreadyExistsError:
                 If the partition already holds any of the events; nothing
                 is stored.
-            TimeoutError:
-                If the write budget ran out before the vector store had the
-                derivatives; the events stay stored.
+            SegmentStorePartitionHandleStaleError:
+                If the partition was deleted before the events were stored,
+                or while their derivatives were written.
+            VectorStorePartitionHandleStaleError:
+                If the partition was deleted while the derivatives were
+                written.
         """
         async with self._tracker("encode_events"):
             await self._encode_events(events, format_options=format_options)
@@ -853,15 +861,31 @@ class EventMemoryPartition:
             )
         ]
 
-        if derivative_records:
-            await _upsert_within_budget(
-                self._vector_store_partition, derivative_records, budget
-            )
-        t_vector_store = time.monotonic()
+        # The events are accepted once stored: what follows only spares the
+        # background work, except a deletion of the partition meanwhile.
+        try:
+            if derivative_records:
+                await _upsert_within_budget(
+                    self._vector_store_partition, derivative_records, budget
+                )
+            t_vector_store = time.monotonic()
 
-        await self._segment_store_partition.delete_pending_writes(
-            pending.uuid for pending in pending_writes
-        )
+            await self._segment_store_partition.delete_pending_writes(
+                pending.uuid for pending in pending_writes
+            )
+        except (
+            SegmentStorePartitionHandleStaleError,
+            VectorStorePartitionHandleStaleError,
+        ):
+            raise
+        except Exception:
+            logger.warning(
+                "Writing the derivatives of %d stored events failed; the "
+                "background work writes them",
+                len(events),
+                exc_info=True,
+            )
+            return
         t_pending_writes = time.monotonic()
 
         phase_durations = {
