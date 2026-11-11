@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 
 from memmachine_server.common.configuration import (
     PromptConf,
@@ -11,6 +13,11 @@ from memmachine_server.common.configuration import (
     SemanticMemoryStorageBackend,
 )
 from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyPartitionRegistry,
+    SQLAlchemyPartitionRegistryParams,
+)
+from memmachine_server.common.resource_manager import semantic_manager
 from memmachine_server.common.resource_manager.semantic_manager import (
     SemanticResourceManager,
 )
@@ -80,3 +87,93 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
     )
 
     await storage.cleanup()
+
+
+@pytest_asyncio.fixture
+async def partition_registry(sqlalchemy_sqlite_engine) -> SQLAlchemyPartitionRegistry:
+    registry = SQLAlchemyPartitionRegistry(
+        SQLAlchemyPartitionRegistryParams(
+            engine=sqlalchemy_sqlite_engine,
+            partition_namespace="semantic_memory",
+            tombstone_retention_seconds=0,
+        )
+    )
+    await registry.startup()
+    return registry
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch):
+    monkeypatch.setattr(semantic_manager, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0)
+
+
+@pytest.mark.asyncio
+async def test_semantic_memory_creates_its_partition_once_and_reopens_it(
+    partition_registry,
+):
+    vector_store = MagicMock()
+    vector_store.prepare_partition_incarnation = AsyncMock()
+
+    created = await SemanticResourceManager._open_or_create_partition(
+        partition_registry, vector_store
+    )
+    reopened = await SemanticResourceManager._open_or_create_partition(
+        partition_registry, vector_store
+    )
+
+    assert reopened.incarnation == created.incarnation
+    vector_store.prepare_partition_incarnation.assert_awaited_once_with(
+        created.incarnation
+    )
+
+
+@pytest.mark.asyncio
+async def test_semantic_memory_waits_for_another_process_creating_its_partition(
+    partition_registry, monkeypatch
+):
+    monkeypatch.setattr(semantic_manager, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0.05)
+    vector_store = MagicMock()
+    vector_store.prepare_partition_incarnation = AsyncMock()
+    pending = await partition_registry.reserve("semantic_memory")
+
+    opening = asyncio.create_task(
+        SemanticResourceManager._open_or_create_partition(
+            partition_registry, vector_store
+        )
+    )
+    await asyncio.sleep(0.1)
+    assert not opening.done()
+
+    await pending.confirm()
+    assert (await opening).incarnation == pending.incarnation
+    vector_store.prepare_partition_incarnation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_preparation_of_semantic_memorys_partition_frees_its_name(
+    partition_registry,
+):
+    incarnations: list[UUID] = []
+
+    async def refused(incarnation: UUID) -> None:
+        incarnations.append(incarnation)
+        raise RuntimeError("the backend refused")
+
+    vector_store = MagicMock()
+    vector_store.prepare_partition_incarnation = AsyncMock(side_effect=refused)
+
+    with pytest.raises(RuntimeError, match="refused"):
+        await SemanticResourceManager._open_or_create_partition(
+            partition_registry, vector_store
+        )
+
+    assert await partition_registry.resolve("semantic_memory") is None
+    purged: list[UUID] = []
+
+    async def purge(incarnation: UUID) -> bool:
+        purged.append(incarnation)
+        return False
+
+    while await partition_registry.run_purge_round(purge):
+        pass
+    assert purged == incarnations

@@ -1,6 +1,7 @@
 """Event memory system for storing and retrieving events."""
 
 import asyncio
+import contextlib
 import datetime
 import json
 import logging
@@ -29,10 +30,14 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
 )
 from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
     PartitionIncarnationEndedError,
+    PartitionPendingError,
     PartitionRegistry,
     Registration,
-    open_or_create_partition,
+    Reservation,
+    validate_partition_name,
 )
 from memmachine_server.common.property_keys import (
     is_reserved_property_key,
@@ -77,6 +82,16 @@ EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
 )
 
 _BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY})
+
+# Attempts open-or-create makes, _OPEN_OR_CREATE_RETRY_DELAY_SECONDS apart,
+# before it gives up on a partition that stays pending or a name it keeps
+# losing.
+_MAX_OPEN_OR_CREATE_ATTEMPTS = 10
+_OPEN_OR_CREATE_RETRY_DELAY_SECONDS = 1
+
+# Reservations cancelled after a failed creation, held until done so the
+# garbage collector cannot drop one whose creation was cancelled.
+_reservation_cancellations: set[asyncio.Task[None]] = set()
 
 
 class EventMemoryParams(BaseModel):
@@ -225,11 +240,8 @@ class EventMemory:
             PartitionIncarnationEndedError:
                 If the partition was deleted before its handle was built.
         """
-        registration = await open_or_create_partition(
-            self._params.partition_registry,
-            partition_name,
-            self._prepare_partition_incarnation,
-        )
+        validate_partition_name(partition_name)
+        registration = await self._open_or_create_registration(partition_name)
         segment_store_partition = (
             await self._params.segment_store.open_partition_incarnation(
                 registration.incarnation
@@ -254,6 +266,87 @@ class EventMemory:
             schema_fields=self._schema_fields,
             similarity_metric=self._similarity_metric,
         )
+
+    async def _open_or_create_registration(self, partition_name: str) -> Registration:
+        """
+        Answer the registration of the live partition under a name, creating the partition if no partition holds the name.
+
+        Read-then-create, retried a bounded number of times: a live partition
+        is answered; a pending one is another creator's, so the call waits for
+        it; no partition means create; losing the reservation means another
+        creator took the name meanwhile; and losing the confirmation means a
+        deleter removed the partition while its storage was prepared, so the
+        call creates again.
+        """
+        partition_registry = self._params.partition_registry
+        pending_error: PartitionPendingError | None = None
+        lost_race: (
+            PartitionAlreadyExistsError | PartitionIncarnationEndedError | None
+        ) = None
+        for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
+            try:
+                registration = await partition_registry.resolve(partition_name)
+            except PartitionPendingError as err:
+                pending_error = err
+                continue
+            pending_error = None
+            if registration is not None:
+                return registration
+            try:
+                reservation = await partition_registry.reserve(partition_name)
+            except PartitionAlreadyExistsError as err:
+                lost_race = err
+                continue
+            try:
+                return await self._prepare_and_confirm_or_cancel(reservation)
+            except PartitionIncarnationEndedError as err:
+                lost_race = err
+                continue
+        # The last lookup found the partition pending.
+        if pending_error is not None:
+            raise pending_error
+        raise PartitionCreateAttemptsExhaustedError(
+            f"Opening or creating partition {partition_name!r} made no progress "
+            f"after {_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
+        ) from lost_race
+
+    async def _prepare_and_confirm_or_cancel(
+        self, reservation: Reservation
+    ) -> Registration:
+        """Prepare a reserved partition's storage and confirm the reservation, cancelling it if either raises or the creation is cancelled.
+
+        The cancel acts only on a pending partition, so a confirmation that
+        committed before its failure or cancellation was observed stands. A
+        partition whose reservation the registry cannot cancel stays pending
+        until it is deleted.
+        """
+        try:
+            await self._prepare_partition_incarnation(reservation.incarnation)
+            return await reservation.confirm()
+        except BaseException:
+            # Shielded, so a cancelled creation still frees the name. The task
+            # reports its own failure, since a creation cancelled again stops
+            # awaiting it before it ends.
+            cancellation = asyncio.create_task(reservation.cancel())
+            _reservation_cancellations.add(cancellation)
+
+            def finish(task: asyncio.Task[None]) -> None:
+                _reservation_cancellations.discard(task)
+                if not task.cancelled() and task.exception() is not None:
+                    logger.exception(
+                        "Could not cancel the reservation of partition %r after "
+                        "its creation failed or was cancelled; it stays pending "
+                        "until deleted",
+                        reservation.partition_name,
+                        exc_info=task.exception(),
+                    )
+
+            cancellation.add_done_callback(finish)
+            with contextlib.suppress(Exception):
+                await asyncio.shield(cancellation)
+            raise
 
     async def _prepare_partition_incarnation(self, incarnation: UUID) -> None:
         """Prepare every store's storage for a reserved partition incarnation."""
