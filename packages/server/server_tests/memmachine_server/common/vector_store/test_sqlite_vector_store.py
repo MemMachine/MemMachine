@@ -1,6 +1,7 @@
 """Tests for SQLiteVectorStore."""
 
 import math
+import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -1483,3 +1484,92 @@ class TestIndexFileDurability:
 
         await store2.shutdown()
         await engine2.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["upsert", "startup", "get", "delete", "query"])
+async def test_sqlite_variable_limit(tmp_path, operation):
+    """Large ID lists must work on SQLite builds with a 999-variable limit."""
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'limited.db'}",
+        insertmanyvalues_page_size=100,
+    )
+    params = SQLiteVectorStoreParams(
+        sqlalchemy_engine=engine,
+        vector_search_engine_factory=lambda ndim, metric: USearchVectorSearchEngine(
+            num_dimensions=ndim, similarity_metric=metric
+        ),
+    )
+    vector_store = SQLiteVectorStore(params)
+    try:
+        await vector_store.startup()
+        coll = await vector_store.open_or_create_collection(
+            namespace=NAMESPACE,
+            name=NAME,
+            config=VectorStoreCollectionConfig(vector_dimensions=VECTOR_DIM),
+        )
+        records = [_make_record(vector=[1.0, 0.0, 0.0]) for _ in range(1005)]
+        if operation != "upsert":
+            await coll.upsert(records=records)
+        async with engine.connect() as connection:
+            raw = await connection.get_raw_connection()
+            driver = raw.driver_connection
+            assert driver is not None
+            await driver._execute(
+                driver._conn.setlimit, sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999
+            )
+        if operation == "upsert":
+            await coll.upsert(records=records)
+        elif operation == "startup":
+            await vector_store.shutdown()
+            vector_store = SQLiteVectorStore(params)
+            await vector_store.startup()
+            coll = await vector_store.open_collection(namespace=NAMESPACE, name=NAME)
+        elif operation == "query":
+            # Test SQL hydration independently of approximate nearest-neighbor recall.
+            async with engine.connect() as connection:
+                row_ids = (
+                    await connection.scalars(
+                        select(coll._records_table.c.row_id)  # ty: ignore[unresolved-attribute]
+                    )
+                ).all()
+            matches = await coll._build_matches(  # ty: ignore[unresolved-attribute]
+                row_id_to_score=dict.fromkeys(row_ids, 1.0),
+                score_threshold=None,
+                return_vector=True,
+                return_properties=True,
+            )
+            assert {match.record.uuid for match in matches} == {
+                record.uuid for record in records
+            }
+        elif operation == "delete":
+            # Duplicates spanning batches must still delete each record once.
+            await coll.delete(record_uuids=(record.uuid for record in records * 2))
+            assert await coll.get(record_uuids=[records[0].uuid]) == []
+            async with engine.connect() as connection:
+                unapplied = await connection.scalar(
+                    select(func.count())
+                    .select_from(_PendingOperationRow)
+                    .where(_PendingOperationRow.applied.is_(False))
+                )
+                assert unapplied == 0
+            return
+        assert coll is not None
+        fetched = await coll.get(
+            record_uuids=(record.uuid for record in records), return_vector=True
+        )
+        assert [record.uuid for record in fetched] == [
+            record.uuid for record in records
+        ]
+        assert all(record.vector == [1.0, 0.0, 0.0] for record in fetched)
+        async with engine.connect() as connection:
+            unapplied = await connection.scalar(
+                select(func.count())
+                .select_from(_PendingOperationRow)
+                .where(_PendingOperationRow.applied.is_(False))
+            )
+            assert unapplied == 0
+    finally:
+        if vector_store._started:
+            await vector_store.shutdown()
+        await engine.dispose()
