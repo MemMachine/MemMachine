@@ -9,7 +9,7 @@ import time
 from collections.abc import Coroutine, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final, Self, cast
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf
 
@@ -58,7 +58,6 @@ from .data_types import (
 from .deriver import Deriver
 from .formatting import format_timestamp
 from .segment_store import (
-    PendingWrite,
     PendingWriteClaim,
     SegmentStore,
     SegmentStorePartition,
@@ -317,8 +316,9 @@ class EventMemory:
             written = await self._write_pending_derivatives(claim)
         except Exception as error:
             logger.warning(
-                "Writing pending write %s of partition %r failed on attempt %d",
-                claim.pending_write.uuid,
+                "Writing the derivatives of segment %s of partition %r failed "
+                "on attempt %d",
+                claim.segment_uuid,
                 claim.partition_key,
                 claim.attempt,
                 exc_info=True,
@@ -328,7 +328,7 @@ class EventMemory:
         except BaseException:
             await self._end_claim_after_cancellation(
                 self._params.segment_store.cancel_pending_write_claim(claim),
-                f"pending write {claim.pending_write.uuid}",
+                f"the pending write of segment {claim.segment_uuid}",
             )
             raise
         if written:
@@ -340,7 +340,7 @@ class EventMemory:
         vector_store_partition = await self._params.vector_store.open_partition(
             claim.partition_key
         )
-        derivatives = claim.pending_write.derivatives
+        derivatives = claim.derivatives
         embeddings = await self._params.embedder.ingest_embed(
             _derivative_texts(derivatives)
         )
@@ -386,9 +386,9 @@ class EventMemory:
                 )
         except Exception as error:
             logger.warning(
-                "Deleting tombstoned derivatives %s of partition %r failed on "
-                "attempt %d",
-                claim.tombstone.uuid,
+                "Deleting the tombstoned derivatives of segment %s of partition "
+                "%r failed on attempt %d",
+                claim.tombstone.segment_uuid,
                 claim.partition_key,
                 claim.attempt,
                 exc_info=True,
@@ -398,7 +398,7 @@ class EventMemory:
         except BaseException:
             await self._end_claim_after_cancellation(
                 self._params.segment_store.cancel_tombstone_claim(claim),
-                f"tombstone {claim.tombstone.uuid}",
+                f"the tombstone of segment {claim.tombstone.segment_uuid}",
             )
             raise
         await self._params.segment_store.finish_tombstone_claim(claim)
@@ -828,24 +828,12 @@ class EventMemoryPartition:
         # Started before the events are stored, so a forget of them either
         # finds nothing or stamps its tombstone after the start.
         budget = _WriteBudget.start(self._write_budget_seconds)
-        derivatives_by_event: dict[UUID, list[Derivative]] = {
-            event.uuid: [] for event in events
-        }
-        for segment, segment_derivatives in segments_to_derivatives.items():
-            derivatives_by_event[segment.event_uuid].extend(segment_derivatives)
-        pending_writes = [
-            PendingWrite(
-                uuid=uuid4(), event_uuid=event_uuid, derivatives=event_derivatives
-            )
-            for event_uuid, event_derivatives in derivatives_by_event.items()
-            if event_derivatives
-        ]
         await self._segment_store_partition.add_event_segments(
             {
                 event.uuid: segment_list
                 for event, segment_list in zip(events, segment_lists, strict=True)
             },
-            pending_writes,
+            derivatives,
             lease_seconds=self._write_budget_seconds + _CLAIM_MARGIN_SECONDS,
         )
         t_segment_store = time.monotonic()
@@ -871,7 +859,7 @@ class EventMemoryPartition:
             t_vector_store = time.monotonic()
 
             await self._segment_store_partition.delete_pending_writes(
-                pending.uuid for pending in pending_writes
+                segment.uuid for segment in segments
             )
         except (
             SegmentStorePartitionHandleStaleError,
@@ -1182,19 +1170,23 @@ class EventMemoryPartition:
             await self._forget_events(event_uuids)
 
     async def _forget_events(self, event_uuids: set[UUID]) -> None:
-        tombstone = await self._segment_store_partition.delete_event_segments(
+        tombstones = await self._segment_store_partition.delete_event_segments(
             event_uuids
         )
-        if tombstone is None:
+        if not tombstones:
             return
-        # The forget is complete once its tombstone commits: the background
+        # The forget is complete once its tombstones commit: the background
         # work deletes the vectors whether or not this first delete does.
         try:
             await self._vector_store_partition.delete(
-                record_uuids=tombstone.derivative_uuids
+                record_uuids=[
+                    derivative_uuid
+                    for tombstone in tombstones
+                    for derivative_uuid in tombstone.derivative_uuids
+                ]
             )
             await self._segment_store_partition.record_tombstone_first_delete(
-                tombstone.uuid
+                tombstone.segment_uuid for tombstone in tombstones
             )
         except Exception:
             logger.warning(

@@ -12,7 +12,6 @@ from memmachine_server.common.payload_codec.payload_codec_config import (
     decode_payload_codec_config,
     encode_payload_codec_config,
 )
-from memmachine_server.episodic_memory.event_memory.data_types import Derivative
 
 _JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, JsonValue])
 
@@ -98,38 +97,18 @@ class SegmentStorePartitionAlreadyExistsError(Exception):
         super().__init__(f"Partition {partition_key!r} already exists.")
 
 
-class PendingWrite(BaseModel):
-    """
-    One event's derivatives, held with the event until their derived index has them.
-
-    Attributes:
-        uuid (UUID):
-            UUID of this record, chosen by its writer.
-        event_uuid (UUID):
-            UUID of the event the derivatives come from.
-        derivatives (list[Derivative]):
-            The derivatives.
-    """
-
-    uuid: UUID = Field(..., description="UUID of this record, chosen by its writer")
-    event_uuid: UUID = Field(
-        ..., description="UUID of the event the derivatives come from"
-    )
-    derivatives: list[Derivative] = Field(..., description="The derivatives")
-
-
 class Tombstone(BaseModel):
     """
-    The derivatives a forget removed, whose derived index entries remain to delete.
+    A forgotten segment's derivatives, whose derived index entries remain to delete.
 
     Attributes:
-        uuid (UUID):
-            UUID of the tombstone.
+        segment_uuid (UUID):
+            UUID of the forgotten segment.
         derivative_uuids (list[UUID]):
-            UUIDs of the removed derivatives.
+            UUIDs of the segment's derivatives.
     """
 
-    uuid: UUID = Field(..., description="UUID of the tombstone")
+    segment_uuid: UUID = Field(..., description="UUID of the forgotten segment")
     derivative_uuids: list[UUID] = Field(
         ..., description="UUIDs of the removed derivatives"
     )

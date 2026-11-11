@@ -159,12 +159,12 @@ async def test_a_failed_upsert_leaves_the_events_stored_and_their_derivatives_pe
     ]
 
     assert event.uuid in fake_segment_store_partition.event_to_segments
-    (pending,) = fake_segment_store_partition.pending_writes.values()
-    assert pending.event_uuid == event.uuid
+    ((segment_uuid, derivatives),) = fake_segment_store_partition.pending_writes.items()
+    assert segment_uuid in fake_segment_store_partition.event_to_segments[event.uuid]
     linked = await fake_segment_store_partition.get_segment_uuids_by_derivative_uuids(
-        derivative.uuid for derivative in pending.derivatives
+        derivative.uuid for derivative in derivatives
     )
-    assert set(linked) == {derivative.uuid for derivative in pending.derivatives}
+    assert set(linked) == {derivative.uuid for derivative in derivatives}
 
 
 async def test_an_upsert_outlasting_the_write_budget_is_cancelled(
@@ -245,9 +245,9 @@ async def test_forget_deletes_the_vectors_and_records_the_first_delete(
 
     assert vector_store_partition.records == {}
     assert fake_segment_store_partition.event_to_segments == {}
-    (tombstone_uuid,) = fake_segment_store_partition.tombstones
+    (segment_uuid,) = fake_segment_store_partition.tombstones
     assert fake_segment_store_partition.tombstones_awaiting_second_delete == {
-        tombstone_uuid
+        segment_uuid
     }
 
 

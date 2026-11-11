@@ -13,10 +13,10 @@ from uuid import UUID
 
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.episodic_memory.event_memory.data_types import (
+    Derivative,
     Segment,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
-    PendingWrite,
     SegmentStorePartitionConfig,
     Tombstone,
 )
@@ -34,9 +34,9 @@ class SegmentStorePartition(ABC):
 
     The partition holds an event at most once, and its events and their
     segments are immutable: a changed event is forgotten and added again.
-    A derivative stays linked to its segment until its event is
-    forgotten, and a forget records the derivatives it removed in a
-    tombstone, so their derived index entries can still be deleted.
+    A derivative is stored with its segment until its event is forgotten,
+    and a forget leaves a tombstone for each segment with derivatives,
+    naming them, so their derived index entries can still be deleted.
     """
 
     @property
@@ -49,25 +49,25 @@ class SegmentStorePartition(ABC):
     async def add_event_segments(
         self,
         segments_by_event: Mapping[UUID, Iterable[Segment]],
-        pending_writes: Iterable[PendingWrite],
+        derivatives: Iterable[Derivative],
         *,
         lease_seconds: int,
     ) -> None:
         """
-        Add events with their segments, derivative links, and pending writes.
+        Add events with their segments and derivatives, and a pending write for each segment with derivatives.
 
         All of it commits together or not at all. A batch naming an event
         the partition already holds is rejected whole, before anything is
-        stored. The caller holds the pending writes for `lease_seconds`,
-        on the store's clock, before a claim may take them.
+        stored. A pending write stands until `delete_pending_writes`
+        removes it; the caller holds the pending writes for
+        `lease_seconds`, on the store's clock, before a claim may take
+        them.
 
         Args:
             segments_by_event (Mapping[UUID, Iterable[Segment]]):
                 A mapping from each event's UUID to its segments.
-            pending_writes (Iterable[PendingWrite]):
-                Each event's derivatives, each linked to the segment it
-                names, and held as pending until
-                `delete_pending_writes` removes them.
+            derivatives (Iterable[Derivative]):
+                The derivatives, each stored with the segment it names.
             lease_seconds (int):
                 Seconds the caller holds the pending writes.
 
@@ -77,24 +77,24 @@ class SegmentStorePartition(ABC):
                 them all.
             ValueError:
                 If a segment names an event other than the one it is listed
-                under, or a pending write names an event or a segment
-                that is not in the batch.
+                under, or a derivative names a segment that is not in the
+                batch.
         """
         raise NotImplementedError
 
     @abstractmethod
     async def delete_pending_writes(
         self,
-        pending_write_uuids: Iterable[UUID],
+        segment_uuids: Iterable[UUID],
     ) -> None:
         """
-        Delete pending writes given by their UUIDs. Idempotent.
+        Delete the pending writes of the given segments. Idempotent.
 
-        The derivatives stay linked; only their pending write goes.
+        The derivatives stay; only the segments' pending writes go.
 
         Args:
-            pending_write_uuids (Iterable[UUID]):
-                The UUIDs of the pending writes to delete.
+            segment_uuids (Iterable[UUID]):
+                The UUIDs of the segments whose pending writes to delete.
         """
         raise NotImplementedError
 
@@ -161,39 +161,42 @@ class SegmentStorePartition(ABC):
     async def delete_event_segments(
         self,
         event_uuids: Iterable[UUID],
-    ) -> Tombstone | None:
+    ) -> list[Tombstone]:
         """
-        Delete events, with their segments, derivative links, and pending writes.
+        Delete events, with their segments, derivatives, and pending writes.
 
-        All of it commits together or not at all, with a tombstone naming
-        every derivative the forget unlinked. A renewal of a claim on these
-        events' pending writes either commits first or finds them gone. An
-        event the partition does not hold is skipped. Idempotent.
+        All of it commits together or not at all, with a tombstone for each
+        deleted segment that had derivatives, naming them. A renewal of a
+        claim on these events' pending writes either commits first or finds
+        them gone. An event the partition does not hold is skipped.
+        Idempotent.
 
         Args:
             event_uuids (Iterable[UUID]):
                 The UUIDs of the events to forget.
 
         Returns:
-            Tombstone | None:
-                The tombstone, awaiting its first delete, or None if the
-                forget unlinked no derivative.
+            list[Tombstone]:
+                The tombstones, each awaiting its first delete; none if the
+                forget deleted no derivative.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def record_tombstone_first_delete(self, tombstone_uuid: UUID) -> None:
+    async def record_tombstone_first_delete(
+        self, segment_uuids: Iterable[UUID]
+    ) -> None:
         """
-        Record that a tombstone's derivatives were deleted from their index once.
+        Record that the given segments' tombstoned derivatives were deleted from their index once.
 
-        The tombstone then awaits only its second delete, which falls due
+        Each tombstone then awaits only its second delete, which falls due
         once the store's retention has passed since this record, on the
-        store's clock. An open claim on the tombstone ends. Idempotent, and
-        a no-op for a tombstone no longer awaiting its first delete.
+        store's clock. An open claim on one ends. Idempotent, and a no-op
+        for a tombstone no longer awaiting its first delete.
 
         Args:
-            tombstone_uuid (UUID):
-                The UUID of the tombstone.
+            segment_uuids (Iterable[UUID]):
+                The UUIDs of the forgotten segments whose tombstones to record.
         """
         raise NotImplementedError
 
@@ -201,13 +204,17 @@ class SegmentStorePartition(ABC):
 @dataclass(frozen=True)
 class PendingWriteClaim:
     """
-    A claim on a pending write whose writer did not delete it.
+    A claim on a segment's pending write, which its writer did not delete.
 
     Attributes:
         partition_key (str):
-            The key of the partition holding the derivatives.
-        pending_write (PendingWrite):
-            The pending write.
+            The key of the partition holding the segment.
+        incarnation (UUID):
+            The partition incarnation holding the segment.
+        segment_uuid (UUID):
+            The UUID of the segment.
+        derivatives (list[Derivative]):
+            The segment's derivatives, to write to their index.
         generation (int):
             The claim's generation; a later claim on the same record has a
             higher one.
@@ -217,7 +224,9 @@ class PendingWriteClaim:
     """
 
     partition_key: str
-    pending_write: PendingWrite
+    incarnation: UUID
+    segment_uuid: UUID
+    derivatives: list[Derivative]
     generation: int
     attempt: int
 
@@ -230,6 +239,8 @@ class TombstoneClaim:
     Attributes:
         partition_key (str):
             The key of the partition the tombstone belongs to.
+        incarnation (UUID):
+            The partition incarnation the tombstone belongs to.
         tombstone (Tombstone):
             The tombstone.
         second_delete (bool):
@@ -244,6 +255,7 @@ class TombstoneClaim:
     """
 
     partition_key: str
+    incarnation: UUID
     tombstone: Tombstone
     second_delete: bool
     generation: int

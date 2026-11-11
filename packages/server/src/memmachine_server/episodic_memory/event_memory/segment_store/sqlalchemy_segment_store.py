@@ -100,7 +100,6 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     encode_context,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
-    PendingWrite,
     SegmentStoreAttemptsExhaustedError,
     SegmentStoreEventAlreadyExistsError,
     SegmentStorePartitionAlreadyExistsError,
@@ -179,8 +178,8 @@ class EventRow(BaseSegmentStore):
 
     The primary key is what makes an event addable once: a second
     `add_event_segments` naming it conflicts here, before any segment is written.
-    Deleting the row cascades to the event's segments, their derivative
-    links, and its pending writes.
+    Deleting the row cascades to the event's segments, and through them to
+    their derivatives and pending writes.
     """
 
     __tablename__ = "segment_store_ev"
@@ -241,15 +240,26 @@ class SegmentRow(BaseSegmentStore):
     )
 
 
-class DerivativeLinkRow(BaseSegmentStore):
-    """Maps a derivative UUID to its owning segment."""
+class DerivativeRow(BaseSegmentStore):
+    """A derivative of a segment: what its derived index is written from, and the segment a hit on it names."""
 
-    __tablename__ = "segment_store_dv_ln"
+    __tablename__ = "segment_store_dv"
 
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
+    timestamp: MappedColumn[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    timestamp_timezone_offset: MappedColumn[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    context: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
+    block: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
+    properties: MappedColumn[dict[str, JsonValue]] = mapped_column(
+        _JSON_AUTO, nullable=False, default=dict
+    )
 
     __table_args__ = (
         ForeignKeyConstraint(
@@ -261,7 +271,7 @@ class DerivativeLinkRow(BaseSegmentStore):
             ondelete="CASCADE",
         ),
         Index(
-            "segment_store_dv_ln__in_su",
+            "segment_store_dv__in_su",
             "incarnation",
             "segment_uuid",
         ),
@@ -269,18 +279,17 @@ class DerivativeLinkRow(BaseSegmentStore):
 
 
 class PendingWriteRow(BaseSegmentStore):
-    """One event's derivatives awaiting their derived index.
+    """A segment whose derivatives await their derived index.
 
-    Written with the event; its writer deletes it once the index has the
-    derivatives, and a claim takes it when the writer does not. Deleted
-    with its event, so a forgotten event leaves none behind.
+    Written with the segment; its writer deletes it once the index has the
+    segment's derivatives, and a claim takes it when the writer does not.
+    Deleted with its segment, so a forgotten event leaves none behind.
     """
 
     __tablename__ = "segment_store_pw"
 
-    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
-    event_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
+    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     # When a claim may take the record: once its writer's lease has passed,
     # once an open claim's lease and then the backoff have passed, or once
     # the backoff after a failed claim has passed.
@@ -299,50 +308,19 @@ class PendingWriteRow(BaseSegmentStore):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["incarnation", "event_uuid"],
+            ["incarnation", "segment_uuid"],
             [
-                "segment_store_ev.incarnation",
-                "segment_store_ev.uuid",
+                "segment_store_sg.incarnation",
+                "segment_store_sg.uuid",
             ],
             ondelete="CASCADE",
         ),
-        # Serves the cascade from the event row.
-        Index("segment_store_pw__in_ev", "incarnation", "event_uuid"),
         Index("segment_store_pw__ca", "claimable_at"),
     )
 
 
-class PendingWriteDerivativeRow(BaseSegmentStore):
-    """One derivative of a pending write."""
-
-    __tablename__ = "segment_store_pw_dv"
-
-    pending_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
-    timestamp: MappedColumn[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    timestamp_timezone_offset: MappedColumn[int] = mapped_column(
-        Integer, nullable=False, default=0
-    )
-    context: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
-    block: MappedColumn[bytes] = mapped_column(LargeBinary, nullable=False)
-    properties: MappedColumn[dict[str, JsonValue]] = mapped_column(
-        _JSON_AUTO, nullable=False, default=dict
-    )
-
-    __table_args__ = (
-        ForeignKeyConstraint(
-            ["pending_uuid"],
-            ["segment_store_pw.uuid"],
-            ondelete="CASCADE",
-        ),
-    )
-
-
 class TombstoneRow(BaseSegmentStore):
-    """A forget's tombstone: the derivatives it unlinked.
+    """A forgotten segment's tombstone, for the derivatives the forget deleted with it.
 
     Their derived index entries are deleted once at once, and once more
     after the store's retention has passed since the first delete. It holds
@@ -351,8 +329,8 @@ class TombstoneRow(BaseSegmentStore):
 
     __tablename__ = "segment_store_tb"
 
-    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
+    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     # When the first delete was recorded; None while the tombstone awaits it.
     first_deleted_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -378,23 +356,25 @@ class TombstoneRow(BaseSegmentStore):
         # Serves both claims: by schedule, and second deletes by their
         # first delete.
         Index("segment_store_tb__ca_fd", "claimable_at", "first_deleted_at"),
-        # Serves the purge's batches of a dead incarnation's tombstones.
-        Index("segment_store_tb__in_uu", "incarnation", "uuid"),
     )
 
 
 class TombstoneDerivativeRow(BaseSegmentStore):
-    """One derivative a tombstone names."""
+    """One derivative a tombstone names: the key its index deletes, kept after the forget deleted the derivative."""
 
     __tablename__ = "segment_store_tb_dv"
 
-    tombstone_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["tombstone_uuid"],
-            ["segment_store_tb.uuid"],
+            ["incarnation", "segment_uuid"],
+            [
+                "segment_store_tb.incarnation",
+                "segment_store_tb.segment_uuid",
+            ],
             ondelete="CASCADE",
         ),
     )
@@ -503,7 +483,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     async def add_event_segments(
         self,
         segments_by_event: Mapping[UUID, Iterable[Segment]],
-        pending_writes: Iterable[PendingWrite],
+        derivatives: Iterable[Derivative],
         *,
         lease_seconds: int,
     ) -> None:
@@ -511,10 +491,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             event_uuid: list(segments)
             for event_uuid, segments in segments_by_event.items()
         }
-        pending_writes = list(pending_writes)
-        SQLAlchemySegmentStorePartition._validate_events(
-            segments_by_event, pending_writes
-        )
+        derivatives = list(derivatives)
+        SQLAlchemySegmentStorePartition._validate_events(segments_by_event, derivatives)
         if not segments_by_event:
             return
 
@@ -535,23 +513,20 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     for segment in segments
                 ),
             )
-            await self._insert_derivative_links(
+            await self._insert_derivatives(session, derivatives)
+            await self._insert_pending_writes(
                 session,
-                (
-                    derivative
-                    for pending in pending_writes
-                    for derivative in pending.derivatives
-                ),
+                {derivative.segment_uuid for derivative in derivatives},
+                lease_seconds,
             )
-            await self._insert_pending_writes(session, pending_writes, lease_seconds)
 
     @staticmethod
     def _validate_events(
         segments_by_event: Mapping[UUID, list[Segment]],
-        pending_writes: list[PendingWrite],
+        derivatives: list[Derivative],
     ) -> None:
-        """Raise ValueError unless each segment and derivative is under its own event."""
-        segment_uuids_by_event: dict[UUID, set[UUID]] = {}
+        """Raise ValueError unless each segment is under its own event, and each derivative names a segment in the batch."""
+        segment_uuids: set[UUID] = set()
         for event_uuid, segments in segments_by_event.items():
             for segment in segments:
                 if segment.event_uuid != event_uuid:
@@ -559,21 +534,13 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                         f"Segment {segment.uuid} names event {segment.event_uuid}, "
                         f"listed under {event_uuid}"
                     )
-            segment_uuids_by_event[event_uuid] = {segment.uuid for segment in segments}
-        for pending in pending_writes:
-            segment_uuids = segment_uuids_by_event.get(pending.event_uuid)
-            if segment_uuids is None:
+                segment_uuids.add(segment.uuid)
+        for derivative in derivatives:
+            if derivative.segment_uuid not in segment_uuids:
                 raise ValueError(
-                    f"Pending write {pending.uuid} names event "
-                    f"{pending.event_uuid}, which the batch does not add"
+                    f"Derivative {derivative.uuid} names segment "
+                    f"{derivative.segment_uuid}, which the batch does not add"
                 )
-            for derivative in pending.derivatives:
-                if derivative.segment_uuid not in segment_uuids:
-                    raise ValueError(
-                        f"Derivative {derivative.uuid} names segment "
-                        f"{derivative.segment_uuid}, which event "
-                        f"{pending.event_uuid} does not have in the batch"
-                    )
 
     async def _insert_event_rows(
         self, session: AsyncSession, event_uuids: Iterable[UUID]
@@ -628,53 +595,16 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         if segment_row_values:
             await session.execute(insert(SegmentRow), segment_row_values)
 
-    async def _insert_derivative_links(
+    async def _insert_derivatives(
         self,
         session: AsyncSession,
         derivatives: Iterable[Derivative],
     ) -> None:
-        """Insert a link row per derivative, to the segment it names."""
+        """Insert a row per derivative, under the segment it names."""
         derivative_row_values = [
             {
                 "uuid": derivative.uuid,
                 "incarnation": self._incarnation,
-                "segment_uuid": derivative.segment_uuid,
-            }
-            for derivative in derivatives
-        ]
-        if derivative_row_values:
-            await session.execute(insert(DerivativeLinkRow), derivative_row_values)
-
-    async def _insert_pending_writes(
-        self,
-        session: AsyncSession,
-        pending_writes: Iterable[PendingWrite],
-        lease_seconds: int,
-    ) -> None:
-        """Insert a pending write row, claimable once `lease_seconds` have passed, and a row per derivative, for each pending write."""
-        pending_writes = list(pending_writes)
-        if not pending_writes:
-            return
-        # One multi-row statement, so every row carries the database clock.
-        await session.execute(
-            insert(PendingWriteRow).values(
-                [
-                    {
-                        "uuid": pending.uuid,
-                        "incarnation": self._incarnation,
-                        "event_uuid": pending.event_uuid,
-                        "claimable_at": _seconds_from_now(
-                            lease_seconds, is_sqlite=self._is_sqlite
-                        ),
-                    }
-                    for pending in pending_writes
-                ]
-            )
-        )
-        derivative_row_values = [
-            {
-                "pending_uuid": pending.uuid,
-                "uuid": derivative.uuid,
                 "segment_uuid": derivative.segment_uuid,
                 "timestamp": ensure_tz_aware(derivative.timestamp).astimezone(UTC),
                 "timestamp_timezone_offset": utc_offset_seconds(derivative.timestamp),
@@ -686,21 +616,44 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 ),
                 "properties": encode_properties(derivative.properties),
             }
-            for pending in pending_writes
-            for derivative in pending.derivatives
+            for derivative in derivatives
         ]
         if derivative_row_values:
-            await session.execute(
-                insert(PendingWriteDerivativeRow), derivative_row_values
+            await session.execute(insert(DerivativeRow), derivative_row_values)
+
+    async def _insert_pending_writes(
+        self,
+        session: AsyncSession,
+        segment_uuids: Iterable[UUID],
+        lease_seconds: int,
+    ) -> None:
+        """Insert a pending write per segment, claimable once `lease_seconds` have passed."""
+        segment_uuids = list(segment_uuids)
+        if not segment_uuids:
+            return
+        # One multi-row statement, so every row carries the database clock.
+        await session.execute(
+            insert(PendingWriteRow).values(
+                [
+                    {
+                        "incarnation": self._incarnation,
+                        "segment_uuid": segment_uuid,
+                        "claimable_at": _seconds_from_now(
+                            lease_seconds, is_sqlite=self._is_sqlite
+                        ),
+                    }
+                    for segment_uuid in segment_uuids
+                ]
             )
+        )
 
     @override
     async def delete_pending_writes(
         self,
-        pending_write_uuids: Iterable[UUID],
+        segment_uuids: Iterable[UUID],
     ) -> None:
-        pending_write_uuids = set(pending_write_uuids)
-        if not pending_write_uuids:
+        segment_uuids = set(segment_uuids)
+        if not segment_uuids:
             return
 
         async with (
@@ -708,11 +661,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             write_session(self._create_session) as session,
         ):
             await self._ensure_partition_live(session, pin=True)
-            # The cascade follows to the records' derivatives.
             await session.execute(
                 delete(PendingWriteRow).where(
                     PendingWriteRow.incarnation == self._incarnation,
-                    PendingWriteRow.uuid.in_(pending_write_uuids),
+                    PendingWriteRow.segment_uuid.in_(segment_uuids),
                 )
             )
 
@@ -1072,11 +1024,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         ):
             # Served by the primary key, which leads on the same two columns
             # this filters: the mapping is the derivative row itself.
-            query = select(
-                DerivativeLinkRow.uuid, DerivativeLinkRow.segment_uuid
-            ).where(
-                DerivativeLinkRow.incarnation == self._incarnation,
-                DerivativeLinkRow.uuid.in_(derivative_uuids),
+            query = select(DerivativeRow.uuid, DerivativeRow.segment_uuid).where(
+                DerivativeRow.incarnation == self._incarnation,
+                DerivativeRow.uuid.in_(derivative_uuids),
                 self._registry_row_query().exists(),
             )
             rows = (await session.execute(query)).all()
@@ -1091,10 +1041,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     async def delete_event_segments(
         self,
         event_uuids: Iterable[UUID],
-    ) -> Tombstone | None:
+    ) -> list[Tombstone]:
         event_uuids = set(event_uuids)
         if not event_uuids:
-            return None
+            return []
 
         async with (
             self._tracker("delete_event_segments"),
@@ -1121,7 +1071,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 ).scalars()
             )
             if not held_event_uuids:
-                return None
+                return []
             if not self._is_sqlite:
                 # The segments' locks too, in order: the cascade alone would
                 # take them in table order.
@@ -1135,53 +1085,72 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     .with_for_update()
                 )
 
-            derivative_uuids = list(
-                (
-                    await session.execute(
-                        select(DerivativeLinkRow.uuid)
-                        .join(
-                            SegmentRow,
-                            (SegmentRow.incarnation == DerivativeLinkRow.incarnation)
-                            & (SegmentRow.uuid == DerivativeLinkRow.segment_uuid),
-                        )
-                        .where(
-                            SegmentRow.incarnation == self._incarnation,
-                            SegmentRow.event_uuid.in_(held_event_uuids),
-                        )
+            derivative_uuids_by_segment: dict[UUID, list[UUID]] = {}
+            for derivative_uuid, segment_uuid in (
+                await session.execute(
+                    select(DerivativeRow.uuid, DerivativeRow.segment_uuid)
+                    .join(
+                        SegmentRow,
+                        (SegmentRow.incarnation == DerivativeRow.incarnation)
+                        & (SegmentRow.uuid == DerivativeRow.segment_uuid),
                     )
-                ).scalars()
-            )
+                    .where(
+                        SegmentRow.incarnation == self._incarnation,
+                        SegmentRow.event_uuid.in_(held_event_uuids),
+                    )
+                )
+            ).all():
+                derivative_uuids_by_segment.setdefault(segment_uuid, []).append(
+                    derivative_uuid
+                )
 
-            tombstone = None
-            if derivative_uuids:
-                tombstone = Tombstone(uuid=uuid4(), derivative_uuids=derivative_uuids)
+            tombstones = [
+                Tombstone(segment_uuid=segment_uuid, derivative_uuids=derivative_uuids)
+                for segment_uuid, derivative_uuids in derivative_uuids_by_segment.items()
+            ]
+            if tombstones:
                 await session.execute(
                     insert(TombstoneRow).values(
-                        uuid=tombstone.uuid,
-                        incarnation=self._incarnation,
-                        claimable_at=func.now(),
+                        [
+                            {
+                                "incarnation": self._incarnation,
+                                "segment_uuid": tombstone.segment_uuid,
+                                "claimable_at": func.now(),
+                            }
+                            for tombstone in tombstones
+                        ]
                     )
                 )
                 await session.execute(
                     insert(TombstoneDerivativeRow),
                     [
-                        {"tombstone_uuid": tombstone.uuid, "uuid": derivative_uuid}
-                        for derivative_uuid in derivative_uuids
+                        {
+                            "incarnation": self._incarnation,
+                            "segment_uuid": tombstone.segment_uuid,
+                            "uuid": derivative_uuid,
+                        }
+                        for tombstone in tombstones
+                        for derivative_uuid in tombstone.derivative_uuids
                     ],
                 )
 
-            # The cascade follows to the events' segments, through them to
-            # links, and to the events' pending writes.
+            # The cascade follows to the events' segments, and through them
+            # to their derivatives and pending writes.
             await session.execute(
                 delete(EventRow).where(
                     EventRow.incarnation == self._incarnation,
                     EventRow.uuid.in_(held_event_uuids),
                 )
             )
-        return tombstone
+        return tombstones
 
     @override
-    async def record_tombstone_first_delete(self, tombstone_uuid: UUID) -> None:
+    async def record_tombstone_first_delete(
+        self, segment_uuids: Iterable[UUID]
+    ) -> None:
+        segment_uuids = set(segment_uuids)
+        if not segment_uuids:
+            return
         async with (
             self._tracker("record_tombstone_first_delete"),
             write_session(self._create_session) as session,
@@ -1190,8 +1159,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             await session.execute(
                 update(TombstoneRow)
                 .where(
-                    TombstoneRow.uuid == tombstone_uuid,
                     TombstoneRow.incarnation == self._incarnation,
+                    TombstoneRow.segment_uuid.in_(segment_uuids),
                     TombstoneRow.first_deleted_at.is_(None),
                 )
                 # Made without a claim, so it starts a new generation: an
@@ -1264,11 +1233,10 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             (default: None).
         purge_max_rows (int):
             Maximum number of rows purged per call: segments, events, and
-            the derivatives tombstones name. Derivative links follow
-            segments, and pending writes follow events, by cascade,
-            so a call's transaction also scales with the deployment's
-            derivatives per segment; size the bound with that fan-out in
-            mind. A tombstone naming more derivatives than the bound is
+            the derivatives tombstones name. Derivatives and pending writes
+            follow segments by cascade, so a call's transaction also scales
+            with the deployment's derivatives per segment; size the bound
+            with that fan-out in mind. A tombstone naming more derivatives than the bound is
             purged alone (default: 10000).
         purge_max_partitions (int):
             Maximum number of queue entries a purge call processes.
@@ -1315,8 +1283,8 @@ class SQLAlchemySegmentStoreParams(BaseModel):
         gt=0,
         description=(
             "Maximum number of rows purged per call: segments, events, and "
-            "the derivatives tombstones name. Derivative links follow "
-            "segments, and pending writes follow events, by cascade, "
+            "the derivatives tombstones name. Derivatives and pending writes "
+            "follow segments by cascade, "
             "so a call's transaction also scales with the deployment's "
             "derivatives per segment; size the bound with that fan-out in "
             "mind. A tombstone naming more derivatives than the bound is "
@@ -1703,9 +1671,9 @@ class SQLAlchemySegmentStore(SegmentStore):
                     "tombstones_purged_through": entry.tombstones_purged_through,
                 }
 
-                # Segments go first, so the cascade from an event row never
-                # runs on the budgeted path, and events take their pending
-                # derivatives with them. Each table draws on the same
+                # Segments go first, taking their derivatives and pending
+                # writes with them, so the cascade from an event row never
+                # runs on the budgeted path. Each table draws on the same
                 # budget, and a full batch records how far it got and
                 # leaves the entry for the next call.
                 for table, cursor in (
@@ -1807,48 +1775,49 @@ class SQLAlchemySegmentStore(SegmentStore):
         """Delete a dead incarnation's tombstones in key order after `after`, naming up to `limit` derivatives.
 
         A tombstone counts as the derivatives it names, which follow it by
-        cascade and number as many as its forget chose. Returns how many
+        cascade and number as many as its segment's deriver chose. Returns how many
         derivatives the deleted tombstones named, or `limit` if a
         tombstone that did not fit remains, and the last key deleted. A
         first tombstone naming more than `limit` derivatives is deleted
         alone, in a transaction no larger than its forget's. Every
         tombstone names at least one derivative.
         """
-        after_cursor = [] if after is None else [TombstoneRow.uuid > after]
+        after_cursor = [] if after is None else [TombstoneRow.segment_uuid > after]
         # One more than the budget shows whether the batch ends inside the
         # last tombstone it reaches.
         window = (
-            select(TombstoneRow.uuid)
+            select(TombstoneRow.segment_uuid)
             .join(
                 TombstoneDerivativeRow,
-                TombstoneDerivativeRow.tombstone_uuid == TombstoneRow.uuid,
+                (TombstoneDerivativeRow.incarnation == TombstoneRow.incarnation)
+                & (TombstoneDerivativeRow.segment_uuid == TombstoneRow.segment_uuid),
             )
             .where(TombstoneRow.incarnation == incarnation, *after_cursor)
-            .order_by(TombstoneRow.uuid)
+            .order_by(TombstoneRow.segment_uuid)
             .limit(limit + 1)
             .subquery()
         )
         named_counts = (
             await connection.execute(
-                select(window.c.uuid, func.count())
-                .group_by(window.c.uuid)
-                .order_by(window.c.uuid)
+                select(window.c.segment_uuid, func.count())
+                .group_by(window.c.segment_uuid)
+                .order_by(window.c.segment_uuid)
             )
         ).all()
         if not named_counts:
             return 0, None
         named = sum(count for _, count in named_counts)
         if named <= limit:
-            last = named_counts[-1].uuid
+            last = named_counts[-1].segment_uuid
         else:
             # The last tombstone reached does not fit.
             named = limit
-            last = named_counts[-2 if len(named_counts) > 1 else 0].uuid
+            last = named_counts[-2 if len(named_counts) > 1 else 0].segment_uuid
         await connection.execute(
             delete(TombstoneRow).where(
                 TombstoneRow.incarnation == incarnation,
                 *after_cursor,
-                TombstoneRow.uuid <= last,
+                TombstoneRow.segment_uuid <= last,
             )
         )
         return named, last
@@ -1862,7 +1831,7 @@ class SQLAlchemySegmentStore(SegmentStore):
         lease_seconds: int,
     ) -> PendingWriteClaim | None:
         oldest_due = (
-            select(PendingWriteRow.uuid)
+            select(PendingWriteRow.incarnation, PendingWriteRow.segment_uuid)
             .where(
                 PendingWriteRow.claimable_at <= func.now(),
                 PendingWriteRow.attempts_without_progress
@@ -1875,7 +1844,6 @@ class SQLAlchemySegmentStore(SegmentStore):
             .limit(1)
             # SQLite drops this; there the write transaction serializes claims.
             .with_for_update(skip_locked=True)
-            .scalar_subquery()
         )
         async with (
             self._tracker("claim_pending_write"),
@@ -1884,7 +1852,11 @@ class SQLAlchemySegmentStore(SegmentStore):
             claimed = (
                 await session.execute(
                     update(PendingWriteRow)
-                    .where(PendingWriteRow.uuid == oldest_due)
+                    .where(
+                        tuple_(
+                            PendingWriteRow.incarnation, PendingWriteRow.segment_uuid
+                        ).in_(oldest_due)
+                    )
                     .values(
                         attempts_without_progress=(
                             PendingWriteRow.attempts_without_progress + 1
@@ -1899,9 +1871,8 @@ class SQLAlchemySegmentStore(SegmentStore):
                         claim_generation=PendingWriteRow.claim_generation + 1,
                     )
                     .returning(
-                        PendingWriteRow.uuid,
                         PendingWriteRow.incarnation,
-                        PendingWriteRow.event_uuid,
+                        PendingWriteRow.segment_uuid,
                         PendingWriteRow.claim_generation,
                         PendingWriteRow.attempts_without_progress,
                     )
@@ -1917,8 +1888,9 @@ class SQLAlchemySegmentStore(SegmentStore):
             derivative_rows = (
                 (
                     await session.execute(
-                        select(PendingWriteDerivativeRow).where(
-                            PendingWriteDerivativeRow.pending_uuid == claimed.uuid
+                        select(DerivativeRow).where(
+                            DerivativeRow.incarnation == claimed.incarnation,
+                            DerivativeRow.segment_uuid == claimed.segment_uuid,
                         )
                     )
                 )
@@ -1933,14 +1905,12 @@ class SQLAlchemySegmentStore(SegmentStore):
         payload_codec = await self._load_payload_codec(partition.config)
         return PendingWriteClaim(
             partition_key=partition_row.partition_key,
-            pending_write=PendingWrite(
-                uuid=claimed.uuid,
-                event_uuid=claimed.event_uuid,
-                derivatives=[
-                    _derivative_from_pending_write_derivative_row(row, payload_codec)
-                    for row in derivative_rows
-                ],
-            ),
+            incarnation=claimed.incarnation,
+            segment_uuid=claimed.segment_uuid,
+            derivatives=[
+                _derivative_from_derivative_row(row, payload_codec)
+                for row in derivative_rows
+            ],
             generation=claimed.claim_generation,
             attempt=claimed.attempts_without_progress,
         )
@@ -1960,7 +1930,8 @@ class SQLAlchemySegmentStore(SegmentStore):
                 await session.execute(
                     update(PendingWriteRow)
                     .where(
-                        PendingWriteRow.uuid == claim.pending_write.uuid,
+                        PendingWriteRow.incarnation == claim.incarnation,
+                        PendingWriteRow.segment_uuid == claim.segment_uuid,
                         PendingWriteRow.claim_generation == claim.generation,
                         select(PartitionRow.partition_key)
                         .where(PartitionRow.incarnation == PendingWriteRow.incarnation)
@@ -1975,7 +1946,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                             is_sqlite=self._is_sqlite,
                         )
                     )
-                    .returning(PendingWriteRow.uuid)
+                    .returning(PendingWriteRow.segment_uuid)
                 )
             ).one_or_none()
         return renewed is not None
@@ -1989,7 +1960,8 @@ class SQLAlchemySegmentStore(SegmentStore):
             # The cascade follows to the record's derivatives.
             await session.execute(
                 delete(PendingWriteRow).where(
-                    PendingWriteRow.uuid == claim.pending_write.uuid,
+                    PendingWriteRow.incarnation == claim.incarnation,
+                    PendingWriteRow.segment_uuid == claim.segment_uuid,
                     PendingWriteRow.claim_generation == claim.generation,
                 )
             )
@@ -2005,7 +1977,8 @@ class SQLAlchemySegmentStore(SegmentStore):
             ended = await (await session.connection()).execute(
                 update(PendingWriteRow)
                 .where(
-                    PendingWriteRow.uuid == claim.pending_write.uuid,
+                    PendingWriteRow.incarnation == claim.incarnation,
+                    PendingWriteRow.segment_uuid == claim.segment_uuid,
                     PendingWriteRow.claim_generation == claim.generation,
                 )
                 .values(
@@ -2022,11 +1995,10 @@ class SQLAlchemySegmentStore(SegmentStore):
             and claim.attempt >= _MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS
         ):
             logger.error(
-                "Pending write %s of event %s in partition %r is no longer "
+                "Pending write of segment %s in partition %r is no longer "
                 "claimed after %d failed claims in a row; last error: %r. Set "
                 "its attempts_without_progress to 0 in %s to claim it again.",
-                claim.pending_write.uuid,
-                claim.pending_write.event_uuid,
+                claim.segment_uuid,
                 claim.partition_key,
                 claim.attempt,
                 error,
@@ -2042,7 +2014,8 @@ class SQLAlchemySegmentStore(SegmentStore):
             await session.execute(
                 update(PendingWriteRow)
                 .where(
-                    PendingWriteRow.uuid == claim.pending_write.uuid,
+                    PendingWriteRow.incarnation == claim.incarnation,
+                    PendingWriteRow.segment_uuid == claim.segment_uuid,
                     PendingWriteRow.claim_generation == claim.generation,
                 )
                 .values(
@@ -2075,7 +2048,7 @@ class SQLAlchemySegmentStore(SegmentStore):
         # retries. Then second deletes, oldest first delete first. Each is
         # one range of the (claimable_at, first_deleted_at) index.
         scheduled_due = (
-            select(TombstoneRow.uuid)
+            select(TombstoneRow.incarnation, TombstoneRow.segment_uuid)
             .where(
                 TombstoneRow.claimable_at <= func.now(),
                 retention_passed,
@@ -2084,7 +2057,7 @@ class SQLAlchemySegmentStore(SegmentStore):
             .order_by(TombstoneRow.claimable_at)
         )
         second_deletes_due = (
-            select(TombstoneRow.uuid)
+            select(TombstoneRow.incarnation, TombstoneRow.segment_uuid)
             .where(
                 TombstoneRow.claimable_at.is_(None),
                 self._has_elapsed(
@@ -2105,12 +2078,14 @@ class SQLAlchemySegmentStore(SegmentStore):
                     await session.execute(
                         update(TombstoneRow)
                         .where(
-                            TombstoneRow.uuid
-                            == oldest_due.limit(1)
-                            # SQLite drops this; there the write transaction
-                            # serializes claims.
-                            .with_for_update(skip_locked=True)
-                            .scalar_subquery()
+                            tuple_(
+                                TombstoneRow.incarnation, TombstoneRow.segment_uuid
+                            ).in_(
+                                oldest_due.limit(1)
+                                # SQLite drops this; there the write
+                                # transaction serializes claims.
+                                .with_for_update(skip_locked=True)
+                            )
                         )
                         .values(
                             attempts_without_progress=(
@@ -2126,8 +2101,8 @@ class SQLAlchemySegmentStore(SegmentStore):
                             claim_generation=TombstoneRow.claim_generation + 1,
                         )
                         .returning(
-                            TombstoneRow.uuid,
                             TombstoneRow.incarnation,
+                            TombstoneRow.segment_uuid,
                             TombstoneRow.first_deleted_at,
                             TombstoneRow.claim_generation,
                             TombstoneRow.attempts_without_progress,
@@ -2147,7 +2122,8 @@ class SQLAlchemySegmentStore(SegmentStore):
                 (
                     await session.execute(
                         select(TombstoneDerivativeRow.uuid).where(
-                            TombstoneDerivativeRow.tombstone_uuid == claimed.uuid
+                            TombstoneDerivativeRow.incarnation == claimed.incarnation,
+                            TombstoneDerivativeRow.segment_uuid == claimed.segment_uuid,
                         )
                     )
                 ).scalars()
@@ -2158,7 +2134,10 @@ class SQLAlchemySegmentStore(SegmentStore):
             return None
         return TombstoneClaim(
             partition_key=partition_row.partition_key,
-            tombstone=Tombstone(uuid=claimed.uuid, derivative_uuids=derivative_uuids),
+            incarnation=claimed.incarnation,
+            tombstone=Tombstone(
+                segment_uuid=claimed.segment_uuid, derivative_uuids=derivative_uuids
+            ),
             second_delete=claimed.first_deleted_at is not None,
             generation=claimed.claim_generation,
             attempt=claimed.attempts_without_progress,
@@ -2174,14 +2153,16 @@ class SQLAlchemySegmentStore(SegmentStore):
                 # The cascade follows to the tombstone's derivatives.
                 await session.execute(
                     delete(TombstoneRow).where(
-                        TombstoneRow.uuid == claim.tombstone.uuid
+                        TombstoneRow.incarnation == claim.incarnation,
+                        TombstoneRow.segment_uuid == claim.tombstone.segment_uuid,
                     )
                 )
                 return
             await session.execute(
                 update(TombstoneRow)
                 .where(
-                    TombstoneRow.uuid == claim.tombstone.uuid,
+                    TombstoneRow.incarnation == claim.incarnation,
+                    TombstoneRow.segment_uuid == claim.tombstone.segment_uuid,
                     TombstoneRow.first_deleted_at.is_(None),
                 )
                 # Under any claim, so it starts a new generation: a later
@@ -2205,7 +2186,8 @@ class SQLAlchemySegmentStore(SegmentStore):
             ended = await (await session.connection()).execute(
                 update(TombstoneRow)
                 .where(
-                    TombstoneRow.uuid == claim.tombstone.uuid,
+                    TombstoneRow.incarnation == claim.incarnation,
+                    TombstoneRow.segment_uuid == claim.tombstone.segment_uuid,
                     TombstoneRow.claim_generation == claim.generation,
                 )
                 .values(
@@ -2222,11 +2204,12 @@ class SQLAlchemySegmentStore(SegmentStore):
             and claim.attempt >= _MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS
         ):
             logger.error(
-                "Tombstone %s in partition %r is no longer claimed after %d failed "
+                "Tombstone of segment %s in partition %r is no longer claimed "
+                "after %d failed "
                 "claims in a row, so its derivatives may stay in their index; "
                 "last error: %r. Set its attempts_without_progress to 0 in %s to "
                 "claim it again.",
-                claim.tombstone.uuid,
+                claim.tombstone.segment_uuid,
                 claim.partition_key,
                 claim.attempt,
                 error,
@@ -2242,7 +2225,8 @@ class SQLAlchemySegmentStore(SegmentStore):
             await session.execute(
                 update(TombstoneRow)
                 .where(
-                    TombstoneRow.uuid == claim.tombstone.uuid,
+                    TombstoneRow.incarnation == claim.incarnation,
+                    TombstoneRow.segment_uuid == claim.tombstone.segment_uuid,
                     TombstoneRow.claim_generation == claim.generation,
                 )
                 .values(
@@ -2378,10 +2362,10 @@ def _seconds_from_now(
     return func.now() + literal(timedelta(seconds=1), Interval) * seconds
 
 
-def _derivative_from_pending_write_derivative_row(
-    row: PendingWriteDerivativeRow, payload_codec: PayloadCodec
+def _derivative_from_derivative_row(
+    row: DerivativeRow, payload_codec: PayloadCodec
 ) -> Derivative:
-    """Convert a PendingWriteDerivativeRow into a Derivative."""
+    """Convert a DerivativeRow into a Derivative."""
     context = decode_context(json.loads(payload_codec.decode(row.context)))
     if context is None:
         context = NullContext()

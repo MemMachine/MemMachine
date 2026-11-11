@@ -1,9 +1,9 @@
 # Event memory: ingest recovery and deletion across two stores
 
-Event memory keeps events, their segments, and the links from derivatives to
-segments in a SQL segment store, and the derivatives' vectors in a vector
-store. The two share no transaction. This document is how an ingest stays
-complete and a forget stays complete anyway.
+Event memory keeps events, their segments, and the segments' derivatives in
+a SQL segment store, and the derivatives' vectors in a vector store. The
+two share no transaction. This document is how an ingest stays complete
+and a forget stays complete anyway.
 
 ## Requirements
 
@@ -23,19 +23,22 @@ complete and a forget stays complete anyway.
 
 ## The protocol
 
-**State.** Besides events, segments and links, the segment store keeps
-pending writes (one record per event, holding its derivatives until
-the vector store has them) and tombstones (one per forget, naming the
-derivatives it unlinked), in its own database and transactions. Neither
-holds a value the caller chose.
+**State.** The segment store keeps each derivative with its segment, as
+derived: what its index is written from, and the segment a hit on it
+names. Besides those, it keeps a pending write for each segment with
+derivatives, until the vector store has them, and a tombstone for each
+forgotten segment with derivatives, naming them, in its own database and
+transactions. Both are a segment's, so each holds a bounded amount of work
+when the segmenter bounds its segments, and neither holds a value the
+caller chose.
 
 **Ingest.**
 
 1. Segment, derive and embed.
 2. Start the write budget, before anything is stored.
-3. In one transaction, store the events, their segments, the derivative
-   links, and the pending writes, which the ingest holds for its budget
-   plus a margin. A batch naming an event already stored is rejected
+3. In one transaction, store the events, their segments, the derivatives,
+   and the pending writes, which the ingest holds for its budget plus a
+   margin. A batch naming an event already stored is rejected
    whole.
 4. Upsert the vectors, cancelled when the budget runs out.
 5. Delete the pending writes.
@@ -46,18 +49,19 @@ only spare the background work: a failure there is logged, and a failure
 or a stop after step 3 leaves the derivatives pending, for the background
 work to write.
 
-**Forget.** One transaction locks the events, reads their links, writes a
-tombstone naming the linked derivatives, and deletes the events, which
-cascades to segments, links, and pending writes. The vectors are then
-deleted once and the first delete recorded, and the tombstone awaits its
-second delete, due R after that record. A failure here leaves the first
+**Forget.** One transaction locks the events, reads their segments'
+derivatives, writes a tombstone for each segment with derivatives, naming
+them, and deletes the events, which cascades to segments, derivatives, and
+pending writes. The vectors are then deleted once and the first delete
+recorded, and each tombstone awaits its second delete, due R after that
+record. A failure here leaves the first
 delete to the background work.
 
 **Background work.** Any process claims, from the segment store:
 
-- pending writes whose ingest's hold has passed: it embeds them, starts a
-  budget of its own, and renews its claim, then writes them and deletes
-  the record;
+- pending writes whose ingest's hold has passed: it embeds the segment's
+  stored derivatives, starts a budget of its own, and renews its claim,
+  then writes them and deletes the record;
 - tombstones due for a delete, at once for the first and R after the
   first was recorded for the second, and deletes their derivatives from
   the vector store.
@@ -75,15 +79,19 @@ and every partition in its segment store is that EventMemory's. So the
 background work writes and deletes with the EventMemory's own stores, and
 runs whether or not any session is opened.
 
-**Further derived indexes.** Every derived index is written and deleted by
-derivative UUID, so a repeated write or delete changes nothing, and an
-index must accept that. A pending write is deleted, and a tombstone's first
-delete recorded, only once every index has done its part, so a further
-index adds writes and deletes, not rows or columns.
+**Further derived indexes.** Each derived index builds its own records
+from the stored events, segments, and derivatives, keys them its own way,
+and maps its hits to segments; it must accept a repeated write or delete
+of a record. A segment's pending write is deleted, and its tombstone's
+first delete recorded, only once every index has done its part, so a
+further index adds writes and deletes, not rows or columns. What an index
+cannot rebuild under the same keys from what is stored is stored with the
+segment, as the derivatives are: their UUIDs are minted at ingest, and a
+deriver may not give the same derivatives twice.
 
-**Search.** A vector hit with no link is dropped from the results and its
-vector deleted once, best effort and without the search waiting for it;
-the next search that finds it tries again.
+**Search.** A vector hit whose derivative is gone is dropped from the
+results and its vector deleted once, best effort and without the search
+waiting for it; the next search that finds it tries again.
 
 **Partition deletion.** The segment store's partition goes first, so its
 text is gone at once and no write starts on it; the vector store's
@@ -98,7 +106,7 @@ tombstone's deletes reach only the vectors of the events it forgot, and
 never those of an event added again under the same UUID.
 
 Every vector write is sent within the budget L of a moment its derivative
-was linked and its event not forgotten: an ingest starts its budget before
+was stored and its event not forgotten: an ingest starts its budget before
 its transaction, and a recovery starts its budget before renewing its
 claim, which a forget of the same derivatives must follow. The forget
 commits after that moment, and its first delete is recorded after the
@@ -119,8 +127,8 @@ a renewal in progress: a renewal either commits before the forget or finds
 its record gone. On PostgreSQL, transactions run at READ COMMITTED, where
 each statement reads its own snapshot, so the forget acts only on the
 events its lock returned: a statement that rereads the event list could
-delete an event committed after the links were read, cascading to links
-nobody tombstoned. SQLite serializes write transactions, so the same
+delete an event committed after the derivatives were read, cascading to
+derivatives nobody tombstoned. SQLite serializes write transactions, so the same
 transactions are atomic there.
 
 A recovery opens the vector store partition under the partition's key
