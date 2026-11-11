@@ -182,7 +182,6 @@ async def update_long_term_memory_config(
             vector_graph_store=spec.vector_graph_store,
             vector_store=spec.vector_store,
             segment_store=spec.segment_store,
-            partition_registry=spec.partition_registry,
         )
         message = service.update_long_term_memory_config(base_spec, spec.enabled)
         return UpdateMemoryConfigResponse(success=True, message=message)
