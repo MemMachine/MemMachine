@@ -40,8 +40,11 @@ holds a value the caller chose.
 4. Upsert the vectors, cancelled when the budget runs out.
 5. Delete the pending writes.
 
-A failure or a stop after step 3 leaves the events stored with their
-derivatives pending, and the background work writes them.
+The ingest succeeds once step 3 commits: its events are accepted, and
+stored with everything their derived index is built from. Steps 4 and 5
+only spare the background work: a failure there is logged, and a failure
+or a stop after step 3 leaves the derivatives pending, for the background
+work to write.
 
 **Forget.** One transaction locks the events, reads their links, writes a
 tombstone naming the linked derivatives, and deletes the events, which
@@ -155,7 +158,8 @@ one of them.
 ## Consequences
 
 - An event is readable before its vectors exist, and searchable once they
-  do.
+  do. An ingest's success means its events are stored; when they are
+  searchable is each derived index's delay, which no check reports.
 - Forgotten vectors stay physically in the vector store until their
   deletes run; their text is gone from SQL when the forget commits.
 - A deployment's sessions share its vector store, segment store, and
