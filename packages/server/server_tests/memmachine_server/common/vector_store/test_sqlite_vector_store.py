@@ -1514,6 +1514,7 @@ async def test_sqlite_variable_limit(tmp_path, operation):
         async with engine.connect() as connection:
             raw = await connection.get_raw_connection()
             driver = raw.driver_connection
+            assert driver is not None
             await driver._execute(
                 driver._conn.setlimit, sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999
             )
@@ -1528,9 +1529,11 @@ async def test_sqlite_variable_limit(tmp_path, operation):
             # Test SQL hydration independently of approximate nearest-neighbor recall.
             async with engine.connect() as connection:
                 row_ids = (
-                    await connection.scalars(select(coll._records_table.c.row_id))
+                    await connection.scalars(
+                        select(coll._records_table.c.row_id)  # ty: ignore[unresolved-attribute]
+                    )
                 ).all()
-            matches = await coll._build_matches(
+            matches = await coll._build_matches(  # ty: ignore[unresolved-attribute]
                 row_id_to_score=dict.fromkeys(row_ids, 1.0),
                 score_threshold=None,
                 return_vector=True,
@@ -1551,6 +1554,7 @@ async def test_sqlite_variable_limit(tmp_path, operation):
                 )
                 assert unapplied == 0
             return
+        assert coll is not None
         fetched = await coll.get(
             record_uuids=(record.uuid for record in records), return_vector=True
         )
