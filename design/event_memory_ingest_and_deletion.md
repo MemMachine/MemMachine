@@ -75,6 +75,12 @@ and every partition in its segment store is that EventMemory's. So the
 background work writes and deletes with the EventMemory's own stores, and
 runs whether or not any session is opened.
 
+**Further derived indexes.** Every derived index is written and deleted by
+derivative UUID, so a repeated write or delete changes nothing, and an
+index must accept that. A pending write is deleted, and a tombstone's first
+delete recorded, only once every index has done its part, so a further
+index adds writes and deletes, not rows or columns.
+
 **Search.** A vector hit with no link is dropped from the results and its
 vector deleted once, best effort and without the search waiting for it;
 the next search that finds it tries again.
@@ -152,6 +158,11 @@ one of them.
 - **One owner per tenant.** A paused former owner is the same problem as a
   paused writer, and the stores cannot reject its writes, so the deadline
   and the tombstones stay; ownership adds routing, leases and failover.
+- **Leave every index write to the background work**, the outbox's relay
+  alone. One path writes the indexes, but every event waits for a claim,
+  and ingest runs at the background work's claim rate rather than with
+  the requests'. Writing in the request and falling back to the pending
+  write keeps the common case written when the request returns.
 - **Vectors in the SQL database.** Exact, with no late writes, but only for
   the backends that offer it.
 
