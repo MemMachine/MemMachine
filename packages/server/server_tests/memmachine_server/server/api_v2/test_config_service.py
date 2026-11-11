@@ -469,7 +469,6 @@ def test_backend_flip_declarative_to_event_clears_declarative_fields(
                 "backend": "event",
                 "vector_store": "qdrant_vs",
                 "segment_store": "sqlite_db",
-                "partition_registry": "sqlite_db",
             }
         }
     )
@@ -481,9 +480,7 @@ def test_backend_flip_declarative_to_event_clears_declarative_fields(
     assert ltm.vector_graph_store is None, "stale declarative field not cleared"
     assert ltm.vector_store == "qdrant_vs"
     assert ltm.segment_store == "sqlite_db"
-    assert ltm.partition_registry == "sqlite_db"
     assert "vector_graph_store=null" in message
-    assert "partition_registry=sqlite_db" in message
     assert "backend=event" in message
 
 
@@ -497,7 +494,6 @@ def test_backend_flip_event_to_declarative_clears_event_fields(
             embedder="emb",
             vector_store="qdrant_vs",
             segment_store="sqlite_db",
-            partition_registry="sqlite_db",
         )
     )
 
@@ -517,11 +513,9 @@ def test_backend_flip_event_to_declarative_clears_event_fields(
     assert ltm.backend == "declarative"
     assert ltm.vector_store is None, "stale event field not cleared"
     assert ltm.segment_store is None, "stale event field not cleared"
-    assert ltm.partition_registry is None, "stale event field not cleared"
     assert ltm.vector_graph_store == "neo4j"
     assert "vector_store=null" in message
     assert "segment_store=null" in message
-    assert "partition_registry=null" in message
 
 
 def test_backend_no_flip_preserves_cross_backend_fields(memory_resource_manager):
