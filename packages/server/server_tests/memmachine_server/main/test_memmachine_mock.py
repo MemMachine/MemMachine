@@ -30,6 +30,7 @@ from memmachine_server.common.episode_store import (
 )
 from memmachine_server.common.errors import (
     ResourceNotFoundError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.common.filter.filter_parser import And as FilterAnd
@@ -157,6 +158,11 @@ def patched_resource_manager(monkeypatch):
     """Replace :class:`ResourceManagerImpl` with a controllable double."""
 
     fake_manager = AsyncMock()
+    session_data_manager = AsyncMock()
+    session_data_manager.get_session_info.return_value = MagicMock(
+        status=SessionDataManager.SessionStatus.Active
+    )
+    fake_manager.get_session_data_manager.return_value = session_data_manager
     monkeypatch.setattr(
         "memmachine_server.main.memmachine.ResourceManagerImpl",
         MagicMock(return_value=fake_manager),
@@ -1131,6 +1137,61 @@ async def test_count_episodes_combines_search_filter(
         ),
         right=custom_filter,
     )
+
+
+_SESSION_REQUESTS = [
+    pytest.param(
+        "add_episodes",
+        {
+            "episode_entries": [
+                EpisodeEntry(content="hello", producer_id="user", producer_role="user")
+            ]
+        },
+        id="add_episodes",
+    ),
+    pytest.param("query_search", {"query": "hello"}, id="query_search"),
+    pytest.param("list_search", {}, id="list_search"),
+    pytest.param("episodes_count", {}, id="episodes_count"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method_name", "kwargs"), _SESSION_REQUESTS)
+async def test_session_request_refuses_deleted_session_before_any_memory(
+    minimal_conf, patched_resource_manager, method_name, kwargs
+):
+    session_data_manager = await patched_resource_manager.get_session_data_manager()
+    session_data_manager.get_session_info.return_value.status = (
+        SessionDataManager.SessionStatus.Deleted
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    with pytest.raises(SessionDeletedError, match="deleted-session"):
+        await getattr(memmachine, method_name)(
+            DummySessionData("deleted-session"), **kwargs
+        )
+
+    session_data_manager.get_session_info.assert_awaited_once_with("deleted-session")
+    patched_resource_manager.get_episode_storage.assert_not_awaited()
+    patched_resource_manager.get_episodic_memory_manager.assert_not_awaited()
+    patched_resource_manager.get_semantic_session_manager.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_session_request_proceeds_for_session_without_row(
+    minimal_conf, patched_resource_manager
+):
+    session_data_manager = await patched_resource_manager.get_session_data_manager()
+    session_data_manager.get_session_info.return_value = None
+    episode_storage = MagicMock()
+    episode_storage.get_episode_messages_count = AsyncMock(return_value=0)
+    patched_resource_manager.get_episode_storage = AsyncMock(
+        return_value=episode_storage
+    )
+    memmachine = MemMachine(minimal_conf, patched_resource_manager)
+
+    assert await memmachine.episodes_count(DummySessionData("new-session")) == 0
+    episode_storage.get_episode_messages_count.assert_awaited_once()
 
 
 @pytest.mark.asyncio
