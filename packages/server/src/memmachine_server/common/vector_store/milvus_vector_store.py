@@ -216,18 +216,6 @@ def _partition_filter(partition_uuid: UUID) -> str:
 class MilvusVectorStorePartition(VectorStorePartition):
     """A partition's entities in the store's Milvus collection."""
 
-    @staticmethod
-    def _passes_threshold(
-        score: float,
-        threshold: float | None,
-        similarity_metric: SimilarityMetric,
-    ) -> bool:
-        if threshold is None:
-            return True
-        if similarity_metric.higher_is_better:
-            return score >= threshold
-        return score <= threshold
-
     def __init__(
         self,
         *,
@@ -260,6 +248,48 @@ class MilvusVectorStorePartition(VectorStorePartition):
             await self._upsert_entities(
                 [self._build_entity(record) for record in records]
             )
+
+    async def _upsert_entities(self, entities: list[dict[str, Any]]) -> None:
+        """Upsert entities, halving a batch refused as too large.
+
+        Milvus refuses a request over its proxy's gRPC receive limit with
+        RESOURCE_EXHAUSTED, before writing any of it. A batch refused so is
+        halved until the halves fit or a single entity is refused. Any other
+        error raises at once.
+        """
+        try:
+            await self._client.upsert(
+                collection_name=self._collection_name,
+                data=entities,
+                timeout=self._request_timeout_seconds,
+            )
+        except grpc.aio.AioRpcError as err:
+            if err.code() != grpc.StatusCode.RESOURCE_EXHAUSTED or len(entities) <= 1:
+                raise
+            mid = len(entities) // 2
+            await self._upsert_entities(entities[:mid])
+            await self._upsert_entities(entities[mid:])
+
+    def _build_entity(self, record: Record) -> dict[str, Any]:
+        """Build a Milvus entity from a vector store record."""
+        declared = self._store_schema.indexed_properties
+        entity: dict[str, Any] = {
+            _ID_FIELD: self._primary_id(record.uuid),
+            _RECORD_UUID_FIELD: str(record.uuid),
+            _PARTITION_KEY_FIELD: str(self._partition_uuid),
+            _VECTOR_FIELD: record.vector,
+        }
+        for key in declared:
+            value = record.properties.get(key)
+            if isinstance(value, datetime):
+                # The instant in UTC, which is all a filter compares: Milvus
+                # refuses an offset with a seconds component.
+                entity[f"{_DECLARED_FIELD_PREFIX}{key}"] = (
+                    ensure_tz_aware(value).astimezone(UTC).isoformat()
+                )
+            else:
+                entity[f"{_DECLARED_FIELD_PREFIX}{key}"] = value
+        return entity
 
     @override
     async def query(
@@ -327,6 +357,28 @@ class MilvusVectorStorePartition(VectorStorePartition):
 
             return results
 
+    def _score_from_distance(self, distance: float) -> float:
+        """The store's score for a distance Milvus returned.
+
+        Milvus returns cosine similarity and inner product as they are, and
+        the squared Euclidean distance.
+        """
+        if self._store_schema.similarity_metric is SimilarityMetric.EUCLIDEAN:
+            return math.sqrt(max(distance, 0.0))
+        return distance
+
+    @staticmethod
+    def _passes_threshold(
+        score: float,
+        threshold: float | None,
+        similarity_metric: SimilarityMetric,
+    ) -> bool:
+        if threshold is None:
+            return True
+        if similarity_metric.higher_is_better:
+            return score >= threshold
+        return score <= threshold
+
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         async with self._tracker("delete"):
@@ -347,58 +399,6 @@ class MilvusVectorStorePartition(VectorStorePartition):
         collection and across the partitions created under one name.
         """
         return f"{self._partition_uuid}:{record_uuid}"
-
-    def _build_entity(self, record: Record) -> dict[str, Any]:
-        """Build a Milvus entity from a vector store record."""
-        declared = self._store_schema.indexed_properties
-        entity: dict[str, Any] = {
-            _ID_FIELD: self._primary_id(record.uuid),
-            _RECORD_UUID_FIELD: str(record.uuid),
-            _PARTITION_KEY_FIELD: str(self._partition_uuid),
-            _VECTOR_FIELD: record.vector,
-        }
-        for key in declared:
-            value = record.properties.get(key)
-            if isinstance(value, datetime):
-                # The instant in UTC, which is all a filter compares: Milvus
-                # refuses an offset with a seconds component.
-                entity[f"{_DECLARED_FIELD_PREFIX}{key}"] = (
-                    ensure_tz_aware(value).astimezone(UTC).isoformat()
-                )
-            else:
-                entity[f"{_DECLARED_FIELD_PREFIX}{key}"] = value
-        return entity
-
-    def _score_from_distance(self, distance: float) -> float:
-        """The store's score for a distance Milvus returned.
-
-        Milvus returns cosine similarity and inner product as they are, and
-        the squared Euclidean distance.
-        """
-        if self._store_schema.similarity_metric is SimilarityMetric.EUCLIDEAN:
-            return math.sqrt(max(distance, 0.0))
-        return distance
-
-    async def _upsert_entities(self, entities: list[dict[str, Any]]) -> None:
-        """Upsert entities, halving a batch refused as too large.
-
-        Milvus refuses a request over its proxy's gRPC receive limit with
-        RESOURCE_EXHAUSTED, before writing any of it. A batch refused so is
-        halved until the halves fit or a single entity is refused. Any other
-        error raises at once.
-        """
-        try:
-            await self._client.upsert(
-                collection_name=self._collection_name,
-                data=entities,
-                timeout=self._request_timeout_seconds,
-            )
-        except grpc.aio.AioRpcError as err:
-            if err.code() != grpc.StatusCode.RESOURCE_EXHAUSTED or len(entities) <= 1:
-                raise
-            mid = len(entities) // 2
-            await self._upsert_entities(entities[:mid])
-            await self._upsert_entities(entities[mid:])
 
 
 class MilvusVectorStoreParams(VectorStoreParams):
@@ -473,6 +473,19 @@ class MilvusVectorStore(VectorStore):
         SimilarityMetric.EUCLIDEAN: "L2",
     }
 
+    def __init__(self, params: MilvusVectorStoreParams) -> None:
+        """Initialize the vector store with the provided parameters."""
+        MilvusVectorStore._validate_metric(params.store_schema.similarity_metric)
+        self._store_schema = params.store_schema
+        self._tracker = OperationTracker(
+            params.metrics_factory, prefix="vector_store_milvus"
+        )
+        self._client = params.client
+        self._collection_name = f"{_COLLECTION_NAME_PREFIX}{params.vector_store_name}"
+        self._request_timeout_seconds = params.request_timeout_seconds
+        self._max_varchar_length = params.max_varchar_length
+        self._purge_batch_size = params.purge_batch_size
+
     @staticmethod
     def _validate_metric(similarity_metric: SimilarityMetric) -> None:
         if (
@@ -488,19 +501,6 @@ class MilvusVectorStore(VectorStore):
                 f"got {similarity_metric.value!r}"
             )
 
-    def __init__(self, params: MilvusVectorStoreParams) -> None:
-        """Initialize the vector store with the provided parameters."""
-        MilvusVectorStore._validate_metric(params.store_schema.similarity_metric)
-        self._store_schema = params.store_schema
-        self._tracker = OperationTracker(
-            params.metrics_factory, prefix="vector_store_milvus"
-        )
-        self._client = params.client
-        self._collection_name = f"{_COLLECTION_NAME_PREFIX}{params.vector_store_name}"
-        self._request_timeout_seconds = params.request_timeout_seconds
-        self._max_varchar_length = params.max_varchar_length
-        self._purge_batch_size = params.purge_batch_size
-
     @property
     @override
     def store_schema(self) -> VectorStoreSchema:
@@ -510,11 +510,6 @@ class MilvusVectorStore(VectorStore):
     async def startup(self) -> None:
         async with self._tracker("startup"):
             await self._prepare_storage()
-
-    @override
-    async def shutdown(self) -> None:
-        # The caller owns the client's lifecycle.
-        pass
 
     async def _prepare_storage(self) -> None:
         """Prepare the collection every partition lives in, its indexes, and its load, each step idempotent."""
@@ -621,6 +616,11 @@ class MilvusVectorStore(VectorStore):
             self._collection_name,
             timeout=self._request_timeout_seconds,
         )
+
+    @override
+    async def shutdown(self) -> None:
+        # The caller owns the client's lifecycle.
+        pass
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:

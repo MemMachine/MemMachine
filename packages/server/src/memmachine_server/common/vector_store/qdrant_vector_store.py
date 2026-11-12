@@ -107,162 +107,6 @@ class QdrantVectorStorePartition(VectorStorePartition):
         must=[models.HasIdCondition(has_id=[])]
     )
 
-    @staticmethod
-    def _build_qdrant_filter(
-        expr: FilterExpr, indexed_properties: Mapping[str, PropertyType]
-    ) -> models.Filter:
-        """Convert a FilterExpr tree into a Qdrant Filter over the declared keys."""
-        build = QdrantVectorStorePartition._build_qdrant_filter
-        if isinstance(expr, FilterComparison):
-            if type(expr.value) is not indexed_properties[expr.field]:
-                return QdrantVectorStorePartition._NO_MATCH
-            return QdrantVectorStorePartition._build_qdrant_comparison(expr)
-        if isinstance(expr, FilterIn):
-            if (
-                expr.values
-                and type(expr.values[0]) is not indexed_properties[expr.field]
-            ):
-                return QdrantVectorStorePartition._NO_MATCH
-            return QdrantVectorStorePartition._in_filter(expr.field, expr.values)
-        if isinstance(expr, FilterIsNull):
-            return QdrantVectorStorePartition._null_filter(expr.field, negate=False)
-        if isinstance(expr, FilterNot):
-            return models.Filter(must_not=[build(expr.expr, indexed_properties)])
-        if isinstance(expr, FilterAnd):
-            return models.Filter(
-                must=[
-                    build(expr.left, indexed_properties),
-                    build(expr.right, indexed_properties),
-                ]
-            )
-        if isinstance(expr, FilterOr):
-            return models.Filter(
-                should=[
-                    build(expr.left, indexed_properties),
-                    build(expr.right, indexed_properties),
-                ]
-            )
-        message = f"Unsupported filter expression type: {type(expr)}"
-        raise TypeError(message)
-
-    @staticmethod
-    def _build_qdrant_comparison(comparison: FilterComparison) -> models.Filter:
-        """Convert a Comparison into a Qdrant Filter."""
-        field = comparison.field
-        operator = comparison.op
-        value = comparison.value
-
-        if operator in ("=", "!="):
-            negate = operator == "!="
-            if isinstance(value, float):
-                return QdrantVectorStorePartition._float_eq_filter(
-                    field, value, negate=negate
-                )
-            if isinstance(value, datetime):
-                return QdrantVectorStorePartition._datetime_eq_filter(
-                    field, value, negate=negate
-                )
-            return QdrantVectorStorePartition._match_filter(field, value, negate=negate)
-        if operator in QdrantVectorStorePartition._RANGE_OPERATORS:
-            if not isinstance(value, OrderedValue):
-                message = (
-                    f"Range filter on '{field}' requires a numeric or datetime value, "
-                    f"got {type(value).__name__}"
-                )
-                raise TypeError(message)
-            return QdrantVectorStorePartition._range_filter(
-                field, value, QdrantVectorStorePartition._RANGE_OPERATORS[operator]
-            )
-
-        message = f"Unsupported filter operator: {operator}"
-        raise ValueError(message)
-
-    @staticmethod
-    def _match_filter(
-        field: str,
-        value: bool | int | str,
-        *,
-        negate: bool,
-    ) -> models.Filter:
-        condition = models.FieldCondition(
-            key=field,
-            match=models.MatchValue(value=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
-
-    @staticmethod
-    def _float_eq_filter(field: str, value: float, *, negate: bool) -> models.Filter:
-        """Use a range filter for float equality since MatchValue doesn't accept floats."""
-        condition = models.FieldCondition(
-            key=field,
-            range=models.Range(gte=value, lte=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
-
-    @staticmethod
-    def _datetime_eq_filter(
-        field: str, value: datetime, *, negate: bool
-    ) -> models.Filter:
-        """Use a DatetimeRange filter for datetime equality since MatchValue doesn't accept datetimes."""
-        value = ensure_tz_aware(value)
-        condition = models.FieldCondition(
-            key=field,
-            range=models.DatetimeRange(gte=value, lte=value),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
-
-    @staticmethod
-    def _in_filter(field: str, value: list[int] | list[str]) -> models.Filter:
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=field,
-                    match=models.MatchAny(any=value),
-                ),
-            ],
-        )
-
-    @staticmethod
-    def _range_filter(
-        field: str,
-        value: OrderedValue,
-        range_parameter: str,
-    ) -> models.Filter:
-        if isinstance(value, datetime):
-            value = ensure_tz_aware(value)
-            return models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key=field,
-                        range=models.DatetimeRange(**{range_parameter: value}),
-                    ),
-                ],
-            )
-
-        return models.Filter(
-            must=[
-                models.FieldCondition(
-                    key=field,
-                    range=models.Range(**{range_parameter: value}),
-                ),
-            ],
-        )
-
-    @staticmethod
-    def _null_filter(field: str, *, negate: bool) -> models.Filter:
-        condition = models.IsEmptyCondition(
-            is_empty=models.PayloadField(key=field),
-        )
-        if negate:
-            return models.Filter(must_not=[condition])
-        return models.Filter(must=[condition])
-
     def __init__(
         self,
         *,
@@ -291,6 +135,46 @@ class QdrantVectorStorePartition(VectorStorePartition):
             if not records:
                 return
             await self._upsert_points([self._build_point(record) for record in records])
+
+    async def _upsert_points(self, points: list[models.PointStruct]) -> None:
+        """Upsert points, halving a batch refused as sent.
+
+        Qdrant's REST API refuses a request over its max_request_size_mb with
+        a 400, the status of any request it finds invalid, and a proxy in
+        front of it may refuse one with a 413. A batch refused with either is
+        halved until the halves fit or a single point is refused. Any other
+        error raises at once.
+        """
+        try:
+            # Waiting for Qdrant to apply the write keeps the writes it has
+            # accepted but not applied to those in flight, whose callers see
+            # the wait as latency, and reports a failure to apply.
+            await self._client.upsert(
+                collection_name=self._vector_store_name,
+                points=points,
+                wait=True,
+            )
+        except UnexpectedResponse as err:
+            if err.status_code not in (400, 413) or len(points) <= 1:
+                raise
+            mid = len(points) // 2
+            await self._upsert_points(points[:mid])
+            await self._upsert_points(points[mid:])
+
+    def _build_point(self, record: Record) -> models.PointStruct:
+        """Build a Qdrant point from a vector store record."""
+        payload: dict[str, PropertyValue] = {
+            _PAYLOAD_PARTITION_UUID: str(self._partition_uuid),
+            _PAYLOAD_RECORD_UUID: str(record.uuid),
+        }
+        for key, value in record.properties.items():
+            if isinstance(value, datetime):
+                payload[key] = ensure_tz_aware(value)
+            else:
+                payload[key] = value
+        return models.PointStruct(
+            id=str(self._point_id(record.uuid)), vector=record.vector, payload=payload
+        )
 
     @override
     async def query(
@@ -378,6 +262,162 @@ class QdrantVectorStorePartition(VectorStorePartition):
                 for batch in batch_results
             ]
 
+    @staticmethod
+    def _build_qdrant_filter(
+        expr: FilterExpr, indexed_properties: Mapping[str, PropertyType]
+    ) -> models.Filter:
+        """Convert a FilterExpr tree into a Qdrant Filter over the declared keys."""
+        build = QdrantVectorStorePartition._build_qdrant_filter
+        if isinstance(expr, FilterComparison):
+            if type(expr.value) is not indexed_properties[expr.field]:
+                return QdrantVectorStorePartition._NO_MATCH
+            return QdrantVectorStorePartition._build_qdrant_comparison(expr)
+        if isinstance(expr, FilterIn):
+            if (
+                expr.values
+                and type(expr.values[0]) is not indexed_properties[expr.field]
+            ):
+                return QdrantVectorStorePartition._NO_MATCH
+            return QdrantVectorStorePartition._in_filter(expr.field, expr.values)
+        if isinstance(expr, FilterIsNull):
+            return QdrantVectorStorePartition._null_filter(expr.field, negate=False)
+        if isinstance(expr, FilterNot):
+            return models.Filter(must_not=[build(expr.expr, indexed_properties)])
+        if isinstance(expr, FilterAnd):
+            return models.Filter(
+                must=[
+                    build(expr.left, indexed_properties),
+                    build(expr.right, indexed_properties),
+                ]
+            )
+        if isinstance(expr, FilterOr):
+            return models.Filter(
+                should=[
+                    build(expr.left, indexed_properties),
+                    build(expr.right, indexed_properties),
+                ]
+            )
+        message = f"Unsupported filter expression type: {type(expr)}"
+        raise TypeError(message)
+
+    @staticmethod
+    def _build_qdrant_comparison(comparison: FilterComparison) -> models.Filter:
+        """Convert a Comparison into a Qdrant Filter."""
+        field = comparison.field
+        operator = comparison.op
+        value = comparison.value
+
+        if operator in ("=", "!="):
+            negate = operator == "!="
+            if isinstance(value, float):
+                return QdrantVectorStorePartition._float_eq_filter(
+                    field, value, negate=negate
+                )
+            if isinstance(value, datetime):
+                return QdrantVectorStorePartition._datetime_eq_filter(
+                    field, value, negate=negate
+                )
+            return QdrantVectorStorePartition._match_filter(field, value, negate=negate)
+        if operator in QdrantVectorStorePartition._RANGE_OPERATORS:
+            if not isinstance(value, OrderedValue):
+                message = (
+                    f"Range filter on '{field}' requires a numeric or datetime value, "
+                    f"got {type(value).__name__}"
+                )
+                raise TypeError(message)
+            return QdrantVectorStorePartition._range_filter(
+                field, value, QdrantVectorStorePartition._RANGE_OPERATORS[operator]
+            )
+
+        message = f"Unsupported filter operator: {operator}"
+        raise ValueError(message)
+
+    @staticmethod
+    def _float_eq_filter(field: str, value: float, *, negate: bool) -> models.Filter:
+        """Use a range filter for float equality since MatchValue doesn't accept floats."""
+        condition = models.FieldCondition(
+            key=field,
+            range=models.Range(gte=value, lte=value),
+        )
+        if negate:
+            return models.Filter(must_not=[condition])
+        return models.Filter(must=[condition])
+
+    @staticmethod
+    def _datetime_eq_filter(
+        field: str, value: datetime, *, negate: bool
+    ) -> models.Filter:
+        """Use a DatetimeRange filter for datetime equality since MatchValue doesn't accept datetimes."""
+        value = ensure_tz_aware(value)
+        condition = models.FieldCondition(
+            key=field,
+            range=models.DatetimeRange(gte=value, lte=value),
+        )
+        if negate:
+            return models.Filter(must_not=[condition])
+        return models.Filter(must=[condition])
+
+    @staticmethod
+    def _match_filter(
+        field: str,
+        value: bool | int | str,
+        *,
+        negate: bool,
+    ) -> models.Filter:
+        condition = models.FieldCondition(
+            key=field,
+            match=models.MatchValue(value=value),
+        )
+        if negate:
+            return models.Filter(must_not=[condition])
+        return models.Filter(must=[condition])
+
+    @staticmethod
+    def _range_filter(
+        field: str,
+        value: OrderedValue,
+        range_parameter: str,
+    ) -> models.Filter:
+        if isinstance(value, datetime):
+            value = ensure_tz_aware(value)
+            return models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key=field,
+                        range=models.DatetimeRange(**{range_parameter: value}),
+                    ),
+                ],
+            )
+
+        return models.Filter(
+            must=[
+                models.FieldCondition(
+                    key=field,
+                    range=models.Range(**{range_parameter: value}),
+                ),
+            ],
+        )
+
+    @staticmethod
+    def _in_filter(field: str, value: list[int] | list[str]) -> models.Filter:
+        return models.Filter(
+            must=[
+                models.FieldCondition(
+                    key=field,
+                    match=models.MatchAny(any=value),
+                ),
+            ],
+        )
+
+    @staticmethod
+    def _null_filter(field: str, *, negate: bool) -> models.Filter:
+        condition = models.IsEmptyCondition(
+            is_empty=models.PayloadField(key=field),
+        )
+        if negate:
+            return models.Filter(must_not=[condition])
+        return models.Filter(must=[condition])
+
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         async with self._tracker("delete"):
@@ -399,46 +439,6 @@ class QdrantVectorStorePartition(VectorStorePartition):
         and across the partitions created under one name.
         """
         return uuid5(self._partition_uuid, str(record_uuid))
-
-    def _build_point(self, record: Record) -> models.PointStruct:
-        """Build a Qdrant point from a vector store record."""
-        payload: dict[str, PropertyValue] = {
-            _PAYLOAD_PARTITION_UUID: str(self._partition_uuid),
-            _PAYLOAD_RECORD_UUID: str(record.uuid),
-        }
-        for key, value in record.properties.items():
-            if isinstance(value, datetime):
-                payload[key] = ensure_tz_aware(value)
-            else:
-                payload[key] = value
-        return models.PointStruct(
-            id=str(self._point_id(record.uuid)), vector=record.vector, payload=payload
-        )
-
-    async def _upsert_points(self, points: list[models.PointStruct]) -> None:
-        """Upsert points, halving a batch refused as sent.
-
-        Qdrant's REST API refuses a request over its max_request_size_mb with
-        a 400, the status of any request it finds invalid, and a proxy in
-        front of it may refuse one with a 413. A batch refused with either is
-        halved until the halves fit or a single point is refused. Any other
-        error raises at once.
-        """
-        try:
-            # Waiting for Qdrant to apply the write keeps the writes it has
-            # accepted but not applied to those in flight, whose callers see
-            # the wait as latency, and reports a failure to apply.
-            await self._client.upsert(
-                collection_name=self._vector_store_name,
-                points=points,
-                wait=True,
-            )
-        except UnexpectedResponse as err:
-            if err.status_code not in (400, 413) or len(points) <= 1:
-                raise
-            mid = len(points) // 2
-            await self._upsert_points(points[:mid])
-            await self._upsert_points(points[mid:])
 
 
 class QdrantVectorStoreParams(VectorStoreParams):
@@ -501,24 +501,6 @@ class QdrantVectorStore(VectorStore):
         datetime: models.PayloadSchemaType.DATETIME,
     }
 
-    @staticmethod
-    def _is_already_exists_error(error: Exception) -> bool:
-        """Check if an exception indicates a resource already exists."""
-        if isinstance(error, UnexpectedResponse):
-            return error.status_code == 409
-        if isinstance(error, grpc.aio.AioRpcError):
-            return error.code() == grpc.StatusCode.ALREADY_EXISTS
-        return False
-
-    @staticmethod
-    def _is_not_found_error(error: Exception) -> bool:
-        """Check if an exception indicates a resource was not found."""
-        if isinstance(error, UnexpectedResponse):
-            return error.status_code == 404
-        if isinstance(error, grpc.aio.AioRpcError):
-            return error.code() == grpc.StatusCode.NOT_FOUND
-        return False
-
     def __init__(self, params: QdrantVectorStoreParams) -> None:
         """Initialize the vector store with the provided parameters."""
         self._vector_store_name = params.vector_store_name
@@ -539,11 +521,6 @@ class QdrantVectorStore(VectorStore):
     async def startup(self) -> None:
         async with self._tracker("startup"):
             await self._prepare_storage()
-
-    @override
-    async def shutdown(self) -> None:
-        # The caller owns the client's lifecycle.
-        pass
 
     async def _prepare_storage(self) -> None:
         """Prepare the collection every partition lives in, and its payload indexes, each step idempotent."""
@@ -597,6 +574,20 @@ class QdrantVectorStore(VectorStore):
                 if not QdrantVectorStore._is_already_exists_error(e):
                     raise
 
+    @staticmethod
+    def _is_already_exists_error(error: Exception) -> bool:
+        """Check if an exception indicates a resource already exists."""
+        if isinstance(error, UnexpectedResponse):
+            return error.status_code == 409
+        if isinstance(error, grpc.aio.AioRpcError):
+            return error.code() == grpc.StatusCode.ALREADY_EXISTS
+        return False
+
+    @override
+    async def shutdown(self) -> None:
+        # The caller owns the client's lifecycle.
+        pass
+
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
         # Every partition lives in the collection startup
@@ -643,6 +634,15 @@ class QdrantVectorStore(VectorStore):
                 wait=True,
             )
         return bool(points)
+
+    @staticmethod
+    def _is_not_found_error(error: Exception) -> bool:
+        """Check if an exception indicates a resource was not found."""
+        if isinstance(error, UnexpectedResponse):
+            return error.status_code == 404
+        if isinstance(error, grpc.aio.AioRpcError):
+            return error.code() == grpc.StatusCode.NOT_FOUND
+        return False
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:

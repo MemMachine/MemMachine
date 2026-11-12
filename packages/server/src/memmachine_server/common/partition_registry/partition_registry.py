@@ -293,28 +293,6 @@ class PartitionRegistry(ABC):
         """
         return await self._run_purge_round(self._purge_partition)
 
-    async def _purge_partition(self, partition_uuid: UUID) -> bool:
-        """Purge a deleted partition from every store and, once none finds anything, drop it from each; return whether any found records."""
-        found = await _on_every_store(
-            "purge",
-            partition_uuid,
-            [
-                store.purge_partition(partition_uuid)
-                for store in self._partitioned_stores
-            ],
-        )
-        if any(found):
-            return True
-        await _on_every_store(
-            "drop",
-            partition_uuid,
-            [
-                store.drop_partition(partition_uuid)
-                for store in self._partitioned_stores
-            ],
-        )
-        return False
-
     @abstractmethod
     async def _run_purge_round(self, purge_round: PurgeRound) -> bool:
         """
@@ -341,6 +319,28 @@ class PartitionRegistry(ABC):
                 Whether a tombstone was due.
         """
         raise NotImplementedError
+
+    async def _purge_partition(self, partition_uuid: UUID) -> bool:
+        """Purge a deleted partition from every store and, once none finds anything, drop it from each; return whether any found records."""
+        found = await _on_every_store(
+            "purge",
+            partition_uuid,
+            [
+                store.purge_partition(partition_uuid)
+                for store in self._partitioned_stores
+            ],
+        )
+        if any(found):
+            return True
+        await _on_every_store(
+            "drop",
+            partition_uuid,
+            [
+                store.drop_partition(partition_uuid)
+                for store in self._partitioned_stores
+            ],
+        )
+        return False
 
 
 async def _on_every_store[T](
