@@ -13,6 +13,7 @@ from .partition_registry import (
     Registration,
     Reservation,
 )
+from .partitioned_store import PartitionedStore
 
 __all__ = [
     "PartitionAlreadyExistsError",
@@ -20,6 +21,7 @@ __all__ = [
     "PartitionDeletedError",
     "PartitionPendingError",
     "PartitionRegistry",
+    "PartitionedStore",
     "PurgeRound",
     "Registration",
     "Reservation",

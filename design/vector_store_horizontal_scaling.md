@@ -11,7 +11,7 @@ correctness:
   delete, or a purge between processes;
 - they serialized their own operations with process-local locks;
 - a collection's name was the tenant discriminator on its records, so deleting
-  and re-creating a name did not end the old life (#1563).
+  and re-creating a name did not end the old partition (#1563).
 
 The goal is that any number of MemMachine server processes, on any hosts, can
 serve any partition of a Qdrant or Milvus store they share, with:
@@ -34,9 +34,9 @@ similarity metric, and declared properties. Every record it holds has a vector
 of that dimensionality, and any declared property it carries has its declared
 type. The composition root builds the stores its services
 need, and the name keeps two stores over one backend apart. Within a store, a
-partition holds one life of one tenant's records, addressed by the
-partition UUID its owner's [partition registry](partition_registry.md) mints for
-that life, and every search runs within one partition. Every partition of a store shares its
+partition holds one tenant's records, addressed by the UUID its owner's
+[partition registry](partition_registry.md) mints for it, and every search
+runs within one partition. Every partition of a store shares its
 dimensions, metric, and schema.
 
 ## Documents
@@ -45,7 +45,7 @@ Shared: contracts and choices made with every backend in mind.
 
 | Document | What it covers |
 |---|---|
-| [partition registry](partition_registry.md) | The SQL catalog that arbitrates which partitions exist, partition UUIDs, reservations and registrations, handles and their fencing, creation races. |
+| [partition registry](partition_registry.md) | The SQL catalog that arbitrates which partitions exist and their UUIDs, reservations and registrations, handles and their fencing, creation races, and the registry's creation and purge rounds over its stores. |
 | [purge](vector_store_purge.md) | Tombstones, the retention, the claim, backoff, dead-lettering, the sweeper. |
 | [consistency](vector_store_consistency.md) | What a query sees of earlier writes, as the contract states it; why the contract has no `get`; asynchronous clients; how tests observe state. |
 | [isolation](vector_store_isolation.md) | Isolation between partitions, record UUIDs and their reuse, and whether other vector databases can meet the guarantee. |
@@ -60,26 +60,26 @@ behind its choices.
 
 ## Lifecycle of a partition
 
-1. **Create.** The owner, such as event memory, reserves the partition name
-   in its registry, inserting a pending row under a freshly minted
-   partition UUID, has the store prepare the storage the partition UUID needs of
-   its own (on Qdrant and Milvus, none: its records go into the store's one
-   native collection, which startup prepared), and confirms the reservation,
-   which marks the row live. A racing creator loses at the registry's primary
+1. **Create.** The owner, such as event memory, creates the partition by
+   name through its registry, which reserves the name, inserting a pending
+   row under a freshly minted UUID, has every store create the storage the
+   partition keeps for itself (on Qdrant and Milvus, none: its records go
+   into the store's one native collection, which startup prepared), and
+   confirms the reservation, which marks the row live. A racing creator loses at the registry's primary
    key, and a pending partition is not opened.
 2. **Open.** The registry resolves the partition name to the live
-   partition UUID; the owner opens the store's handle on that partition UUID.
-3. **Use.** Every record a handle writes carries its partition UUID, and every
-   read and delete is scoped to it. Before each of its writes and reads, and
-   after each of its writes and deletes, the owner checks that the
-   partition UUID is still live.
+   partition; the owner opens the store's handle on its UUID.
+3. **Use.** Every record a handle writes carries the partition's UUID, and
+   every read and delete is scoped to it. Before each of its writes and
+   reads, and after each of its writes and deletes, the owner checks that
+   the partition is still live.
 4. **Delete.** One registry transaction removes the partition's row and
-   queues a tombstone. Every operation of the owner on that life raises from
-   then on, in every process.
+   queues a tombstone. Every operation of the owner on that partition raises
+   from then on, in every process.
 5. **Purge.** Once the retention (a day by default) has passed, sweepers in
-   every process claim tombstones oldest first and reclaim their records from
-   every store of the owner in bounded rounds, until a round finds none and
-   the tombstone goes.
+   every process claim tombstones oldest first and purge their records from
+   every store of the registry in bounded rounds; once a round finds none,
+   it drops the partition from every store and the tombstone goes.
 
 ## Guarantees by store
 
@@ -102,9 +102,9 @@ request timeout plus 300 seconds (see [purge](vector_store_purge.md)).
 
 ## Related work
 
-- The segment store's shared tables with partition UUID-scoped keys ([its
-  design](segment_store_shared_tables.md)) are the model for the registry's
-  partition UUID logic.
+- The segment store's shared tables, keyed by partition UUID ([its
+  design](segment_store_shared_tables.md)), are the model for the registry's
+  minting of UUIDs.
 
 ## Deployment consequences
 

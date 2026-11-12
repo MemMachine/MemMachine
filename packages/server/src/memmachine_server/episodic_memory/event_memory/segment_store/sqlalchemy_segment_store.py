@@ -121,7 +121,8 @@ class PartitionRow(BaseSegmentStore):
     It holds the configuration every handle on the partition uses, and,
     while the partition is purged, how far the purge got: every segment
     row of the partition keyed at or below purged_through is deleted;
-    NULL until the purge's first full batch.
+    NULL until the purge's first full batch, and again once a walk from it
+    reaches the end. Dropping the partition deletes the row.
     """
 
     __tablename__ = "segment_store_pt"
@@ -157,8 +158,9 @@ class SegmentRow(BaseSegmentStore):
         _JSON_AUTO, nullable=False, default=dict
     )
 
-    # No foreign key to the partition's row: the purge deletes an
-    # partition's segments in bounded batches, and its row last.
+    # No foreign key to the partition's row: the purge deletes a partition's
+    # segments in bounded batches, and the drop deletes its row once the
+    # purge finds none.
     __table_args__ = (
         Index(
             "segment_store_sg__pu_ev",
@@ -801,6 +803,9 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             derivative links follow by cascade, so a call's transaction
             also scales with the deployment's links per segment; size
             the bound with that fan-out in mind (default: 10000).
+        partition_config (SegmentStorePartitionConfig):
+            The configuration of each partition the store creates, recorded
+            with the partition (default: plaintext payloads).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(
@@ -827,6 +832,13 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             "derivative links follow by cascade, so a call's transaction "
             "also scales with the deployment's links per segment; size "
             "the bound with that fan-out in mind"
+        ),
+    )
+    partition_config: SegmentStorePartitionConfig = Field(
+        default_factory=SegmentStorePartitionConfig,
+        description=(
+            "The configuration of each partition the store creates, recorded "
+            "with the partition"
         ),
     )
 
@@ -859,6 +871,7 @@ class SQLAlchemySegmentStore(SegmentStore):
         )
 
         self._purge_max_segments = params.purge_max_segments
+        self._partition_config = params.partition_config
 
         self._is_sqlite = self._engine.dialect.name == "sqlite"
 
@@ -876,11 +889,8 @@ class SQLAlchemySegmentStore(SegmentStore):
     # Partitions
 
     @override
-    async def create_partition(
-        self,
-        partition_uuid: UUID,
-        config: SegmentStorePartitionConfig,
-    ) -> None:
+    async def create_partition(self, partition_uuid: UUID) -> None:
+        config = self._partition_config
         async with self._tracker("create_partition"):
             # Materialized before the insert so an unloadable codec config
             # fails without writing a row no handle could use.
@@ -1003,13 +1013,30 @@ class SQLAlchemySegmentStore(SegmentStore):
                     )
                 return True
 
-            if partition_row is not None:
+            if purged_through is not None:
+                # The walk from the cursor reached the end. The next call
+                # searches from the partition's first key, so a write that
+                # landed behind the cursor is found before the purge answers
+                # that nothing remains.
                 await connection.execute(
-                    delete(PartitionRow).where(
-                        PartitionRow.partition_uuid == partition_uuid
-                    )
+                    update(PartitionRow)
+                    .where(PartitionRow.partition_uuid == partition_uuid)
+                    .values(purged_through=None)
                 )
-            return deleted > 0 or partition_row is not None
+                return True
+            return deleted > 0
+
+    @override
+    async def drop_partition(self, partition_uuid: UUID) -> None:
+        async with (
+            self._tracker("drop_partition"),
+            write_connection(self._engine) as connection,
+        ):
+            await connection.execute(
+                delete(PartitionRow).where(
+                    PartitionRow.partition_uuid == partition_uuid
+                )
+            )
 
     # Helpers
 

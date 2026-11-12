@@ -237,7 +237,7 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without
     vector_store = resource_manager.get_vector_store.return_value
     segment_store = resource_manager.get_segment_store.return_value
     partition_registry.unregister.assert_awaited_once_with("s")
-    partition_registry.reserve.assert_not_awaited()
+    partition_registry.create_partition.assert_not_awaited()
     vector_store.create_partition.assert_not_awaited()
     segment_store.create_partition.assert_not_awaited()
     # Reclamation is the purge rounds'; the delete path never purges.

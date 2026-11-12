@@ -1,5 +1,6 @@
 """Protocols for accessing shared MemMachine resources."""
 
+from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from neo4j import AsyncDriver
@@ -10,7 +11,10 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
-from memmachine_server.common.partition_registry import PartitionRegistry, PurgeRound
+from memmachine_server.common.partition_registry import (
+    PartitionedStore,
+    PartitionRegistry,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
@@ -67,13 +71,13 @@ class CommonResourceManager(Protocol):
         *,
         partition_namespace: str,
         tombstone_retention_seconds: int,
-        purge_round: PurgeRound | None = None,
+        partitioned_stores: Sequence[PartitionedStore],
     ) -> PartitionRegistry:
         """
-        Return the started registry of a partition namespace in a database, building it on first access.
+        Return the started registry of a partition namespace in a database, over its stores, building it on first access.
 
-        A registry first built with a purge round runs that purge round in
-        the background, for as long as the resource manager is open.
+        The registry's purge rounds run in the background for as long as the
+        resource manager is open.
         """
         raise NotImplementedError
 

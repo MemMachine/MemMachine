@@ -35,13 +35,13 @@ def _records(count: int) -> list[Record]:
 
 
 async def _prepared(store, partition_uuid: UUID):
-    """A handle on a freshly prepared partition."""
+    """A handle on a freshly created partition."""
     await store.create_partition(partition_uuid)
     return await store.open_partition(partition_uuid)
 
 
 async def _purge(store, partition_uuid: UUID) -> int:
-    """Purge a partition UUID until the store finds nothing of it; the calls that found something."""
+    """Purge a partition until the store finds nothing of it; the calls that found something."""
     for calls in range(_MAX_PURGE_CALLS):
         if not await store.purge_partition(partition_uuid):
             return calls
@@ -143,6 +143,35 @@ class PartitionLifecycleContract:
     @pytest.mark.asyncio
     async def test_purging_an_unknown_partition_finds_nothing(self, store):
         assert await store.purge_partition(uuid4()) is False
+
+    @pytest.mark.asyncio
+    async def test_a_purged_partition_drops_and_holds_nothing(self, store):
+        partition_uuid = uuid4()
+        partition = await _prepared(store, partition_uuid)
+        baseline = await self.count_stored(store)
+        await partition.upsert(records=_records(3))
+        await self.settle(partition)
+        await _purge(store, partition_uuid)
+
+        await store.drop_partition(partition_uuid)
+        await store.drop_partition(partition_uuid)
+
+        assert await self.count_stored(store) == baseline
+        assert await store.purge_partition(partition_uuid) is False
+
+    @pytest.mark.asyncio
+    async def test_dropping_a_partition_leaves_other_partitions_alone(self, store):
+        kept = await _prepared(store, uuid4())
+        dropped_partition_uuid = uuid4()
+        await _prepared(store, dropped_partition_uuid)
+        kept_records = _records(2)
+        await kept.upsert(records=kept_records)
+        await self.settle(kept)
+
+        await _purge(store, dropped_partition_uuid)
+        await store.drop_partition(dropped_partition_uuid)
+
+        assert await self.stored_uuids(kept) == {record.uuid for record in kept_records}
 
     @pytest.mark.asyncio
     async def test_a_write_landing_after_a_purge_is_reclaimed_by_the_next(self, store):

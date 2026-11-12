@@ -2,8 +2,6 @@
 
 import asyncio
 import datetime
-import functools
-import logging
 from unittest.mock import NonCallableMagicMock, create_autospec
 from uuid import UUID, uuid4
 
@@ -16,8 +14,6 @@ from memmachine_server.common.partition_registry import (
     PartitionCreateAttemptsExhaustedError,
     PartitionDeletedError,
     PartitionPendingError,
-    Registration,
-    sqlalchemy_partition_registry,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
     SQLAlchemyPartitionRegistry,
@@ -39,9 +35,6 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
     EventMemoryPartition,
-)
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStorePartitionConfig,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
     SQLAlchemySegmentStore,
@@ -73,11 +66,14 @@ def _event(text: str) -> Event:
 @pytest_asyncio.fixture
 async def partition_registry(
     sqlalchemy_sqlite_engine: AsyncEngine,
+    segment_store: SQLAlchemySegmentStore,
+    vector_store: NonCallableMagicMock,
 ) -> SQLAlchemyPartitionRegistry:
     registry = SQLAlchemyPartitionRegistry(
         SQLAlchemyPartitionRegistryParams(
             engine=sqlalchemy_sqlite_engine,
             partition_namespace=EventMemory.PARTITION_NAMESPACE,
+            partitioned_stores=[segment_store, vector_store],
             tombstone_retention_seconds=0,
         )
     )
@@ -139,25 +135,19 @@ def _no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def _purge(event_memory: EventMemory) -> None:
     """Run the namespace's purge rounds until none is due."""
-    params = event_memory._params
-    purge_round = functools.partial(
-        EventMemory.purge_partition,
-        params.segment_store,
-        params.vector_store,
-    )
-    while await params.partition_registry.run_purge_round(purge_round):
+    while await event_memory._params.partition_registry.run_purge_round():
         pass
 
 
 async def _purged(partition_registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
-    """Partition UUIDs the purge rounds claim, running rounds until none is due."""
+    """Partition UUIDs the purge rounds claim, running rounds that find nothing until none is due."""
     purged: list[UUID] = []
 
     async def purge(partition_uuid: UUID) -> bool:
         purged.append(partition_uuid)
         return False
 
-    while await partition_registry.run_purge_round(purge):
+    while await partition_registry._run_purge_round(purge):
         pass
     return purged
 
@@ -167,7 +157,7 @@ def _partition_uuid(partition: EventMemoryPartition) -> UUID:
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_prepares_a_life_and_reopens_it(
+async def test_open_or_create_creates_a_partition_and_reopens_it(
     event_memory: EventMemory,
     segment_store: SQLAlchemySegmentStore,
     vector_store: NonCallableMagicMock,
@@ -204,11 +194,11 @@ async def test_a_deleted_partitions_handle_refuses_every_operation(
 
 
 @pytest.mark.asyncio
-async def test_an_encode_that_outlives_its_life_raises(
+async def test_an_encode_that_outlives_its_partition_raises(
     event_memory: EventMemory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The check after the writes reports a life that died during them."""
+    """The check after the writes reports a partition deleted during them."""
     partition = await event_memory.open_or_create_partition(NAME)
     add_segments = partition._segment_store_partition.add_segments
 
@@ -225,7 +215,7 @@ async def test_an_encode_that_outlives_its_life_raises(
 
 
 @pytest.mark.asyncio
-async def test_a_partition_created_again_is_a_new_life_that_starts_empty(
+async def test_a_name_created_again_names_a_new_partition_that_starts_empty(
     event_memory: EventMemory,
     segment_store: SQLAlchemySegmentStore,
 ) -> None:
@@ -243,9 +233,10 @@ async def test_a_partition_created_again_is_a_new_life_that_starts_empty(
 
 
 @pytest.mark.asyncio
-async def test_the_purge_round_reclaims_a_deleted_life(
+async def test_the_purge_round_reclaims_a_deleted_partition_from_every_store(
     event_memory: EventMemory,
     segment_store: SQLAlchemySegmentStore,
+    vector_store: NonCallableMagicMock,
 ) -> None:
     deleted = await event_memory.open_or_create_partition(NAME)
     await deleted.encode_events([_event("remember the milk")])
@@ -257,6 +248,8 @@ async def test_the_purge_round_reclaims_a_deleted_life(
     await _purge(event_memory)
 
     assert await segment_store.open_partition(_partition_uuid(deleted)) is None
+    vector_store.purge_partition.assert_any_await(_partition_uuid(deleted))
+    vector_store.drop_partition.assert_awaited_once_with(_partition_uuid(deleted))
     segments = await segment_store.open_partition(_partition_uuid(kept))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([kept_event.uuid])
@@ -281,11 +274,9 @@ async def test_open_or_create_waits_for_a_pending_partition(
     monkeypatch.setattr(
         event_memory_module, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0.05
     )
-    pending = await partition_registry.reserve(NAME)
-    await segment_store.create_partition(
-        pending.partition_uuid, SegmentStorePartitionConfig()
-    )
-    reserve = partition_registry.reserve
+    pending = await partition_registry._reserve(NAME)
+    await segment_store.create_partition(pending.partition_uuid)
+    reserve = partition_registry._reserve
     reservations = 0
 
     async def counted(partition_name: str):
@@ -293,7 +284,7 @@ async def test_open_or_create_waits_for_a_pending_partition(
         reservations += 1
         return await reserve(partition_name)
 
-    monkeypatch.setattr(partition_registry, "reserve", counted)
+    monkeypatch.setattr(partition_registry, "_reserve", counted)
     opening = asyncio.create_task(event_memory.open_or_create_partition(NAME))
     await asyncio.sleep(0.1)
     assert not opening.done()
@@ -310,7 +301,7 @@ async def test_open_or_create_reports_a_partition_that_stays_pending(
     event_memory: EventMemory,
     partition_registry: SQLAlchemyPartitionRegistry,
 ) -> None:
-    pending = await partition_registry.reserve(NAME)
+    pending = await partition_registry._reserve(NAME)
 
     with pytest.raises(PartitionPendingError) as still_pending:
         await event_memory.open_or_create_partition(NAME)
@@ -329,7 +320,7 @@ async def test_open_or_create_gives_up_from_the_race_it_last_lost(
     async def taken(partition_name: str):
         raise lost
 
-    monkeypatch.setattr(partition_registry, "reserve", taken)
+    monkeypatch.setattr(partition_registry, "create_partition", taken)
 
     with pytest.raises(
         PartitionCreateAttemptsExhaustedError, match="no progress"
@@ -339,256 +330,7 @@ async def test_open_or_create_gives_up_from_the_race_it_last_lost(
 
 
 @pytest.mark.asyncio
-async def test_a_failed_creation_frees_the_name_and_queues_its_partition_uuid(
-    event_memory: EventMemory,
-    partition_registry: SQLAlchemyPartitionRegistry,
-    vector_store: NonCallableMagicMock,
-) -> None:
-    partition_uuids: list[UUID] = []
-
-    async def refused(partition_uuid: UUID) -> None:
-        partition_uuids.append(partition_uuid)
-        raise RuntimeError("the backend refused")
-
-    vector_store.create_partition.side_effect = refused
-    with pytest.raises(RuntimeError, match="refused"):
-        await event_memory.open_or_create_partition(NAME)
-
-    assert await partition_registry.resolve(NAME) is None
-    assert await _purged(partition_registry) == partition_uuids
-    vector_store.create_partition.side_effect = None
-    created = await event_memory.open_or_create_partition(NAME)
-    assert _partition_uuid(created) not in partition_uuids
-
-
-@pytest.mark.asyncio
-async def test_a_cancelled_creation_frees_the_name_and_queues_its_partition_uuid(
-    event_memory: EventMemory,
-    partition_registry: SQLAlchemyPartitionRegistry,
-    vector_store: NonCallableMagicMock,
-) -> None:
-    started = asyncio.Event()
-    partition_uuids: list[UUID] = []
-
-    async def hangs(partition_uuid: UUID) -> None:
-        partition_uuids.append(partition_uuid)
-        started.set()
-        await asyncio.Event().wait()
-
-    vector_store.create_partition.side_effect = hangs
-    creating = asyncio.create_task(event_memory.open_or_create_partition(NAME))
-    await started.wait()
-    creating.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await creating
-
-    assert await partition_registry.resolve(NAME) is None
-    assert await _purged(partition_registry) == partition_uuids
-
-
-@pytest.mark.asyncio
-async def test_cancelling_the_reservation_after_a_cancelled_preparation_survives_another_cancellation(
-    event_memory: EventMemory,
-    partition_registry: SQLAlchemyPartitionRegistry,
-    vector_store: NonCallableMagicMock,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started = asyncio.Event()
-    cancelling = asyncio.Event()
-    release = asyncio.Event()
-    reservation_type = sqlalchemy_partition_registry._SQLAlchemyReservation
-    cancel = reservation_type.cancel
-
-    async def hangs(partition_uuid: UUID) -> None:
-        started.set()
-        await asyncio.Event().wait()
-
-    async def slow(reservation) -> None:
-        cancelling.set()
-        await release.wait()
-        await cancel(reservation)
-
-    vector_store.create_partition.side_effect = hangs
-    monkeypatch.setattr(reservation_type, "cancel", slow)
-    creating = asyncio.create_task(event_memory.open_or_create_partition(NAME))
-    await started.wait()
-    creating.cancel()
-    await asyncio.wait_for(cancelling.wait(), 5)
-    creating.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await creating
-
-    release.set()
-    await asyncio.wait_for(
-        asyncio.gather(*event_memory_module._reservation_cancellations), 5
-    )
-    assert await partition_registry.resolve(NAME) is None
-
-
-@pytest.mark.asyncio
-async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_reported(
-    event_memory: EventMemory,
-    vector_store: NonCallableMagicMock,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A creation cancelled again stops awaiting the reservation's cancel; the
-    cancel's failure is still logged, naming the partition."""
-    started = asyncio.Event()
-    cancelling = asyncio.Event()
-    release = asyncio.Event()
-
-    async def hangs(partition_uuid: UUID) -> None:
-        started.set()
-        await asyncio.Event().wait()
-
-    async def fails_late(reservation) -> None:
-        cancelling.set()
-        await release.wait()
-        raise ConnectionError("the registry is unreachable")
-
-    vector_store.create_partition.side_effect = hangs
-    monkeypatch.setattr(
-        sqlalchemy_partition_registry._SQLAlchemyReservation, "cancel", fails_late
-    )
-    creating = asyncio.create_task(event_memory.open_or_create_partition(NAME))
-    await started.wait()
-    creating.cancel()
-    await asyncio.wait_for(cancelling.wait(), 5)
-    creating.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await creating
-
-    with caplog.at_level(logging.ERROR):
-        release.set()
-        await asyncio.wait_for(
-            asyncio.gather(
-                *event_memory_module._reservation_cancellations,
-                return_exceptions=True,
-            ),
-            5,
-        )
-        await asyncio.sleep(0)
-    assert [
-        r
-        for r in caplog.records
-        if r.levelno == logging.ERROR
-        and repr(NAME) in r.getMessage()
-        and r.exc_info is not None
-        and isinstance(r.exc_info[1], ConnectionError)
-    ]
-    assert not event_memory_module._reservation_cancellations
-
-
-@pytest.mark.asyncio
-async def test_a_confirmation_that_fails_frees_the_name(
-    event_memory: EventMemory,
-    partition_registry: SQLAlchemyPartitionRegistry,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def unreachable(reservation) -> Registration:
-        raise ConnectionError("the registry is unreachable")
-
-    with monkeypatch.context() as patched:
-        patched.setattr(
-            sqlalchemy_partition_registry._SQLAlchemyReservation,
-            "confirm",
-            unreachable,
-        )
-        with pytest.raises(ConnectionError):
-            await event_memory.open_or_create_partition(NAME)
-
-    assert await partition_registry.resolve(NAME) is None
-    assert await event_memory.open_or_create_partition(NAME) is not None
-
-
-@pytest.mark.asyncio
-async def test_a_cancelled_confirmation_frees_the_name(
-    event_memory: EventMemory,
-    partition_registry: SQLAlchemyPartitionRegistry,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    confirming = asyncio.Event()
-
-    async def hangs(reservation) -> Registration:
-        confirming.set()
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
-
-    with monkeypatch.context() as patched:
-        patched.setattr(
-            sqlalchemy_partition_registry._SQLAlchemyReservation, "confirm", hangs
-        )
-        creating = asyncio.create_task(event_memory.open_or_create_partition(NAME))
-        await confirming.wait()
-        creating.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await creating
-        await asyncio.wait_for(
-            asyncio.gather(*event_memory_module._reservation_cancellations), 5
-        )
-
-    assert await partition_registry.resolve(NAME) is None
-
-
-@pytest.mark.asyncio
-async def test_a_confirmation_that_committed_before_failing_stands(
-    event_memory: EventMemory,
-    partition_registry: SQLAlchemyPartitionRegistry,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The cancel acts only on a pending partition, so a creation whose
-    confirmation committed but whose reply was lost leaves it live."""
-    confirm = sqlalchemy_partition_registry._SQLAlchemyReservation.confirm
-
-    async def commits_then_fails(reservation) -> Registration:
-        await confirm(reservation)
-        raise ConnectionError("the reply was lost")
-
-    with monkeypatch.context() as patched:
-        patched.setattr(
-            sqlalchemy_partition_registry._SQLAlchemyReservation,
-            "confirm",
-            commits_then_fails,
-        )
-        with pytest.raises(ConnectionError):
-            await event_memory.open_or_create_partition(NAME)
-
-    assert await partition_registry.resolve(NAME) is not None
-
-
-@pytest.mark.asyncio
-async def test_a_failed_preparation_the_registry_cannot_undo_stays_pending_until_deleted(
-    event_memory: EventMemory,
-    vector_store: NonCallableMagicMock,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def refused(partition_uuid: UUID) -> None:
-        raise RuntimeError("the backend refused")
-
-    async def unreachable(reservation) -> None:
-        raise ConnectionError("the registry is unreachable")
-
-    vector_store.create_partition.side_effect = refused
-    with monkeypatch.context() as unregistration:
-        unregistration.setattr(
-            sqlalchemy_partition_registry._SQLAlchemyReservation,
-            "cancel",
-            unreachable,
-        )
-        with pytest.raises(RuntimeError, match="refused"):
-            await event_memory.open_or_create_partition(NAME)
-
-    vector_store.create_partition.side_effect = None
-    with pytest.raises(PartitionPendingError):
-        await event_memory.open_or_create_partition(NAME)
-
-    await event_memory.delete_partition(NAME)
-    assert await event_memory.open_or_create_partition(NAME) is not None
-
-
-@pytest.mark.asyncio
-async def test_open_or_create_creates_again_after_a_deletion_during_preparation(
+async def test_open_or_create_creates_again_after_a_deletion_during_creation(
     event_memory: EventMemory,
     partition_registry: SQLAlchemyPartitionRegistry,
     vector_store: NonCallableMagicMock,

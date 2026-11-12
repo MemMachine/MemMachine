@@ -669,7 +669,7 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
     await manager.delete_episodic_session(session_key)
 
     partition_registry.unregister.assert_awaited_once_with(session_key)
-    partition_registry.reserve.assert_not_awaited()
+    partition_registry.create_partition.assert_not_awaited()
     vector_store.create_partition.assert_not_awaited()
     vector_store.open_partition.assert_not_awaited()
     segment_store.create_partition.assert_not_awaited()

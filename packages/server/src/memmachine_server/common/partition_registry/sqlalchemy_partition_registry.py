@@ -63,6 +63,7 @@ from .partition_registry import (
     Registration,
     Reservation,
 )
+from .partitioned_store import PartitionedStore
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,9 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             The namespace the registry serves: registry objects with the same
             namespace on the same database are one registry. It is non-empty,
             at most `_PARTITION_NAMESPACE_MAX_BYTES` bytes, and free of NUL.
+        partitioned_stores (list[PartitionedStore]):
+            The stores that hold the namespace's partitions: the registry
+            creates, purges, and drops each partition in every one.
         tombstone_retention_seconds (int):
             Seconds a deleted partition's records are kept before its purge
             starts, on the database clock. It must exceed, by orders of
@@ -190,6 +194,13 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         description=(
             "The namespace the registry serves: registry objects with the same "
             "namespace on the same database are one registry"
+        ),
+    )
+    partitioned_stores: list[InstanceOf[PartitionedStore]] = Field(
+        ...,
+        description=(
+            "The stores that hold the namespace's partitions: the registry "
+            "creates, purges, and drops each partition in every one"
         ),
     )
     tombstone_retention_seconds: int = Field(
@@ -266,6 +277,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
 
     def __init__(self, params: SQLAlchemyPartitionRegistryParams) -> None:
         """Initialize with the provided parameters."""
+        super().__init__(params.partitioned_stores)
         self._engine = params.engine
         self._is_sqlite = params.engine.dialect.name == "sqlite"
         self._partition_namespace = params.partition_namespace
@@ -286,7 +298,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             await connection.run_sync(BasePartitionRegistry.metadata.create_all)
 
     @override
-    async def reserve(self, partition_name: str) -> Reservation:
+    async def _reserve(self, partition_name: str) -> Reservation:
         # The primary key arbitrates the partition name across processes.
         # An insert rejected for another reason, such as a minted UUID that is
         # registered or awaiting purge, is tried again with a fresh one.
@@ -401,7 +413,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         )
 
     @override
-    async def run_purge_round(self, purge_round: PurgeRound) -> bool:
+    async def _run_purge_round(self, purge_round: PurgeRound) -> bool:
         claim = await self._claim_oldest_due_tombstone()
         if claim is None:
             return False

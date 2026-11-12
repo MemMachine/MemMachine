@@ -165,7 +165,7 @@ variation.
 Bounded batches. A round lists up to `purge_batch_size` of the partition's
 primary keys, by a query on the partition UUID field at the store's read level,
 and deletes them by key. Measured (Milvus 3.0.2; 2.11M points in this layout,
-dead partition UUIDs of 10k to 1M among live tenants under search, upsert, and
+deleted partitions of 10k to 1M among live tenants under search, upsert, and
 scroll traffic; 2 CPUs / 4 GB): rounds stayed flat at about 100 ms to the end
 of a 1M purge, with at most a 0.3 s stall for other tenants; one filter-delete
 of 1M points instead stalled every tenant's reads and writes for 2.7-9 s at
@@ -175,12 +175,12 @@ of 10,000 against 70-75 ms by primary-key range (1.4M rows, Milvus 2.6.24).
 The listing reads at Bounded, as every other read does, and is correct there:
 a Bounded read is at most `common.gracefulTime` (5 s by default) behind and
 waits rather than read staler, far inside the tombstone retention, so a round
-that lists nothing has found the partition UUID empty. When the query node keeps
+that lists nothing has found the partition empty. When the query node keeps
 up, a Bounded read waits for nothing, so a round can list entities the
 previous round deleted but the node has not applied yet, and delete them
 again. At the resource manager's one-second pause after a busy round this does
 not happen. Measured (Milvus
-2.6.24, 4 CPUs / 5 GB; one dead partition UUID of 200,000 entities among 50 live
+2.6.24, 4 CPUs / 5 GB; one deleted partition of 200,000 entities among 50 live
 tenants of 2,000, 128 dimensions; rounds of 10,000 on the async client while 4
 tasks search live tenants; two runs each):
 
@@ -194,7 +194,7 @@ tasks search live tenants; two runs each):
 | Strong | none | 20 | 0 | 2.2-2.4 s | 7.6-12.9 ms |
 
 At 1M the pattern held (Milvus 3.0.2, the conditions of the first
-measurement above, one dead partition UUID of 1M, rounds of 10,000): at the
+measurement above, one deleted partition of 1M, rounds of 10,000): at the
 one-second pause Bounded took 114.4 and 114.9 s over 101-102 rounds against
 Session's 120.8 and 121.2 s over 101, every entity purged each time; with no
 pause Bounded took 118.9 s over 379 rounds against Session's 25.0 s over 101.

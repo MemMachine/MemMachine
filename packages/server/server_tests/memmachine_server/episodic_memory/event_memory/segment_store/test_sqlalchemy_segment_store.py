@@ -102,8 +102,8 @@ def _plaintext_partition_config() -> SegmentStorePartitionConfig:
 async def _open(
     store: SQLAlchemySegmentStore, partition_uuid: UUID = PARTITION_UUID
 ) -> SQLAlchemySegmentStorePartition:
-    """Prepare a partition with the plaintext config and open a handle on it."""
-    await store.create_partition(partition_uuid, _plaintext_partition_config())
+    """Create a partition, with the store's plaintext config, and open a handle on it."""
+    await store.create_partition(partition_uuid)
     partition = await store.open_partition(partition_uuid)
     assert partition is not None
     return partition
@@ -1375,7 +1375,7 @@ async def test_an_uncreated_partition_does_not_open(
 async def test_a_created_partition_opens_with_its_config(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    await store.create_partition(PARTITION_UUID, SegmentStorePartitionConfig())
+    await store.create_partition(PARTITION_UUID)
 
     partition = await store.open_partition(PARTITION_UUID)
     assert partition is not None
@@ -1383,14 +1383,14 @@ async def test_a_created_partition_opens_with_its_config(
 
 
 @pytest.mark.asyncio
-async def test_preparing_again_with_the_same_config_changes_nothing(
+async def test_creating_again_with_the_same_config_changes_nothing(
     store: SQLAlchemySegmentStore,
 ) -> None:
     partition = await _open(store)
     segment = _seg()
     await partition.add_segments(_links(segment))
 
-    await store.create_partition(PARTITION_UUID, _plaintext_partition_config())
+    await store.create_partition(PARTITION_UUID)
     assert await _row_counts(store, PARTITION_UUID) == (1, 1)
     assert segment.uuid in await partition.get_segment_contexts([segment.uuid])
 
@@ -1400,31 +1400,34 @@ class _ForeignPayloadCodecConfig(PlaintextPayloadCodecConfig):
 
 
 @pytest.mark.asyncio
-async def test_preparing_again_with_a_different_config_raises_mismatch(
+async def test_creating_again_with_a_different_config_raises_mismatch(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Preparing a partition UUID under a different config is refused, not adapted."""
+    """Creating a partition again under a different config is refused, not adapted."""
     await _open(store)
 
     requested = SegmentStorePartitionConfig(
         payload_codec_config=_ForeignPayloadCodecConfig()
     )
+    foreign = SQLAlchemySegmentStore(
+        SQLAlchemySegmentStoreParams(engine=store._engine, partition_config=requested)
+    )
     with pytest.raises(SegmentStorePartitionConfigMismatchError) as exc_info:
-        await store.create_partition(PARTITION_UUID, requested)
+        await foreign.create_partition(PARTITION_UUID)
     assert exc_info.value.partition_uuid == PARTITION_UUID
     assert exc_info.value.existing_config == _plaintext_partition_config()
     assert exc_info.value.requested_config == requested
 
-    # The partition UUID itself is untouched and still opens.
+    # The partition itself is untouched and still opens.
     assert await store.open_partition(PARTITION_UUID) is not None
 
 
 @pytest.mark.asyncio
-async def test_an_unloadable_codec_config_prepares_nothing(
+async def test_an_unloadable_codec_config_creates_nothing(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A codec that cannot be materialized leaves no partition UUID row behind."""
+    """A codec that cannot be materialized leaves no partition row behind."""
 
     async def unloadable(config) -> None:
         raise NotImplementedError("unsupported codec")
@@ -1432,7 +1435,7 @@ async def test_an_unloadable_codec_config_prepares_nothing(
     with monkeypatch.context() as patched:
         patched.setattr(store, "_load_payload_codec", unloadable)
         with pytest.raises(NotImplementedError):
-            await store.create_partition(PARTITION_UUID, _plaintext_partition_config())
+            await store.create_partition(PARTITION_UUID)
     async with store._create_session() as session:
         rows = (
             await session.execute(select(func.count()).select_from(PartitionRow))
@@ -1441,7 +1444,7 @@ async def test_an_unloadable_codec_config_prepares_nothing(
 
 
 @pytest.mark.asyncio
-async def test_purge_removes_the_segments_their_links_and_the_partition(
+async def test_purge_removes_the_segments_and_their_links_and_the_drop_the_partition(
     store: SQLAlchemySegmentStore,
 ) -> None:
     partition = await _open(store)
@@ -1449,19 +1452,24 @@ async def test_purge_removes_the_segments_their_links_and_the_partition(
 
     assert await store.purge_partition(PARTITION_UUID) is True
     assert await _row_counts(store, PARTITION_UUID) == (0, 0)
-    assert await store.open_partition(PARTITION_UUID) is None
     assert await store.purge_partition(PARTITION_UUID) is False
+    # The partition keeps its own row until it is dropped.
+    assert await store.open_partition(PARTITION_UUID) is not None
+
+    await store.drop_partition(PARTITION_UUID)
+    assert await store.open_partition(PARTITION_UUID) is None
+    await store.drop_partition(PARTITION_UUID)
 
 
 @pytest.mark.asyncio
-async def test_purge_removes_a_partition_that_holds_no_segments(
+async def test_a_partition_that_holds_no_segments_purges_nothing_and_drops(
     store: SQLAlchemySegmentStore,
 ) -> None:
     await _open(store)
 
-    assert await store.purge_partition(PARTITION_UUID) is True
-    assert await store.open_partition(PARTITION_UUID) is None
     assert await store.purge_partition(PARTITION_UUID) is False
+    await store.drop_partition(PARTITION_UUID)
+    assert await store.open_partition(PARTITION_UUID) is None
 
 
 @pytest.mark.asyncio
@@ -1555,13 +1563,58 @@ async def test_purge_is_bounded_and_continues_after_its_cursor(
 
         assert await store.purge_partition(PARTITION_UUID) is True
         assert await _row_counts(store, PARTITION_UUID) == (1, 1)
+        # The walk from the cursor reaches the end, and the cursor is cleared
+        # for a search from the first key.
         assert await store.purge_partition(PARTITION_UUID) is True
         assert await _row_counts(store, PARTITION_UUID) == (0, 0)
-        assert await store.open_partition(PARTITION_UUID) is None
+        assert await _purge_cursor(store) is None
         assert await store.purge_partition(PARTITION_UUID) is False
     finally:
         async with sqlalchemy_sqlite_engine.begin() as conn:
             await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+
+
+@pytest.mark.asyncio
+async def test_purge_finds_nothing_only_after_searching_from_the_first_key(
+    sqlalchemy_sqlite_engine: AsyncEngine,
+) -> None:
+    """A segment written behind the cursor is purged before the purge finds nothing."""
+    store = SQLAlchemySegmentStore(
+        SQLAlchemySegmentStoreParams(
+            engine=sqlalchemy_sqlite_engine,
+            purge_max_segments=2,
+        )
+    )
+    await store.startup()
+    try:
+        partition = await _open(store)
+        await partition.add_segments(
+            _links(*(_seg(ts_offset_seconds=index) for index in range(3)))
+        )
+        assert await store.purge_partition(PARTITION_UUID) is True
+        assert await _purge_cursor(store) is not None
+
+        # A late write keyed below every key the purge has passed.
+        behind = _seg().model_copy(update={"uuid": UUID(int=1)})
+        await partition.add_segments(_links(behind))
+
+        while await store.purge_partition(PARTITION_UUID):
+            pass
+        assert await _row_counts(store, PARTITION_UUID) == (0, 0)
+    finally:
+        async with sqlalchemy_sqlite_engine.begin() as conn:
+            await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+
+
+async def _purge_cursor(store: SQLAlchemySegmentStore) -> UUID | None:
+    async with store._create_session() as session:
+        return (
+            await session.execute(
+                select(PartitionRow.purged_through).where(
+                    PartitionRow.partition_uuid == PARTITION_UUID
+                )
+            )
+        ).scalar_one()
 
 
 @pytest.mark.asyncio
@@ -1597,7 +1650,7 @@ async def test_concurrent_purges_of_one_partition_reclaim_everything(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Racing purgers of one partition UUID neither error nor leave rows behind."""
+    """Racing purgers of one partition neither error nor leave rows behind."""
     monkeypatch.setattr(store, "_purge_max_segments", 2)
     partition = await _open(store)
     await partition.add_segments(
@@ -1611,17 +1664,17 @@ async def test_concurrent_purges_of_one_partition_reclaim_everything(
     await asyncio.wait_for(asyncio.gather(drain(), drain(), drain()), 60)
 
     assert await _row_counts(store, PARTITION_UUID) == (0, 0)
-    assert await store.open_partition(PARTITION_UUID) is None
 
 
 @pytest.mark.asyncio
-async def test_purge_reclaims_a_write_that_lands_after_the_partition_is_gone(
+async def test_purge_reclaims_a_write_that_lands_after_the_partition_is_dropped(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """A late write under a purged partition UUID is reclaimed by the next call."""
+    """A late write to a dropped partition is reclaimed by the next purge call."""
     partition = await _open(store)
     while await store.purge_partition(PARTITION_UUID):
         pass
+    await store.drop_partition(PARTITION_UUID)
 
     await partition.add_segments(_links(_seg()))
 

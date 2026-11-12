@@ -41,13 +41,13 @@ passed since its deletion.
   store's own reads, which may lag writes by a delay the store states (see
   [consistency](vector_store_consistency.md)): at most `common.gracefulTime`
   (5 s by default) on Milvus at Bounded. The retention exceeds that delay too,
-  so a round that runs after it and finds nothing proves the partition UUID empty. A round that lists
+  so a round that runs after it and finds nothing proves the partition empty. A round that lists
   records an earlier round deleted, before the deletion is reflected, deletes
   them again: a repeated round, never a wrong result.
 - **The retention decides nothing about validity.** A stale write is refused
   by the handle's check after it; the retention only has to outlast any write
-  in flight. A write that lands after its tombstone is gone stays under a dead
-  partition UUID no partition reads: leaked storage, never a wrong result.
+  in flight. A write that lands after its tombstone is gone stays in a deleted
+  partition no handle reads: leaked storage, never a wrong result.
 - **The configuration enforces a floor of 10 × the vector store's
   `request_timeout_seconds` + 300 s** on event memory's retention when its
   vector store is Qdrant or Milvus. The request timeout is the only part of a write's time in flight
@@ -64,18 +64,21 @@ passed since its deletion.
   same text form as `CURRENT_TIMESTAMP` so stamps and cutoff compare in time
   order). A changed retention therefore reaches every tombstone already
   queued, and no client clock enters a decision.
-- A partition UUID is never re-minted while its tombstone exists, so no new
-  partition can adopt, or have reclaimed out from under it, a dead life's
-  records.
+- A UUID is never minted again while its tombstone exists, so no new
+  partition can adopt, or have reclaimed out from under it, a deleted
+  partition's records.
 
 ### The purge round
 
-`VectorStore.purge_partition(partition_uuid)` is part of the
-contract: each call deletes a bounded batch of what the partition UUID holds and
-returns whether it found anything. Qdrant and Milvus delete records (per
-backend, below); both SQLite stores drop the partition's tables at once.
+`purge_partition(partition_uuid)` and `drop_partition(partition_uuid)` are
+part of every store's contract (`PartitionedStore`): a purge call deletes a
+bounded batch of a deleted partition's records from storage it shares with
+other partitions and returns whether it found any, and a drop removes the
+storage the partition keeps for itself. Qdrant and Milvus purge records (per
+backend, below) and have nothing to drop; both SQLite stores find nothing to
+purge and drop the partition's tables at once.
 
-`PartitionRegistry.run_purge_round(purge_round)` does a bounded amount of work
+`PartitionRegistry.run_purge_round()` does a bounded amount of work
 and returns whether it ran a round, `False` once nothing is due, so a caller
 drains the queue by calling it until `False`. A call is one round on the
 tombstone that came due first, and runs it in three steps:
@@ -90,13 +93,13 @@ tombstone that came due first, and runs it in three steps:
    claim is taking and purgers on every process split a backlog without
    coordinating. SQLite drops the locking clause; there the claim's write
    serializes claims, for one statement.
-2. **Round.** The registry calls the owner's purge round with the
-   tombstone's partition UUID, with no transaction open. The owner's round runs
-   every store's `purge_partition` on the partition UUID and returns
-   whether any found something (see [partition
+2. **Round.** With no transaction open, the registry runs every store's
+   `purge_partition` on the tombstone's partition, and once none finds
+   anything, every store's `drop_partition`. The round answers whether any
+   purge found records (see [partition
    registry](partition_registry.md#deletion-and-purge)).
 3. **Record.** In a short transaction: a round that found nothing removes the
-   tombstone, which frees the partition UUID; a round that found records ends its
+   tombstone, which frees the UUID; a round that found records ends its
    claim, keeping the tombstone due, and resets its attempts without
    progress.
 
@@ -113,7 +116,7 @@ transaction, holding back vacuum or meeting
 
 - **The lease spreads work; correctness does not rest on it.** A round is safe
   to repeat and to run on two purgers at once, and a round that finds the
-  partition UUID empty after the retention has finished its purge, under any
+  partition empty after the retention has finished its purge, under any
   claim. The lease lets purgers split a backlog, each taking a different
   tombstone, where without it they would all take the oldest. A repeated round
   costs Qdrant a scroll and a filter-delete that matches nothing; on Milvus it
@@ -128,7 +131,7 @@ transaction, holding back vacuum or meeting
   another, each bounded by the store's request timeout. A round that outlasts
   its lease may run beside a later round on the same tombstone, which is
   harmless but repeats work. When it ends, it logs a warning naming the
-  partition UUID and the lease. The measured rounds take about 100 ms per Milvus
+  partition and the lease. The measured rounds take about 100 ms per Milvus
   batch and, on Qdrant, whose single filter-delete makes the longest round,
   about 1.3 s per million points (see the per-backend documents).
 - **The generation fences the claim's own writes.** A round ends its claim,
@@ -140,7 +143,7 @@ transaction, holding back vacuum or meeting
   whoever found it. The fence covers the registry's writes only: the backend
   cannot condition a delete on a value held in the registry's database, so a
   round that outlasted its lease still sends its deletes, which reach only its
-  own dead partition UUID.
+  own deleted partition.
 - **The lease runs on the database's clock.** The claim computes
   `claimable_at` from the database's `now()`, as a failure does its backoff and
   a claim its retention. The generation is assigned by the database too; a
@@ -154,7 +157,7 @@ every round that does not finish uses an attempt, whether it raised or its
 purger died, as job queues count attempts when work is taken. A round that
 raises ends its claim, while the claim is the latest, and sets `claimable_at` to
 when the backoff will have passed, on the database clock; its error carries a
-note naming the partition UUID and the attempt. A round that never ended writes
+note naming the partition and the attempt. A round that never ended writes
 nothing.
 
 - **Backoff.** After its a-th attempt fails, a tombstone is claimed again once
@@ -164,12 +167,12 @@ nothing.
   s, 60 s, 120 s, and so on, at most 1 h. The tombstones behind it are claimed
   meanwhile, so one failing tombstone does not hold the queue.
 - **Retries are logged.** A claim of a second or later attempt logs a warning
-  naming the partition UUID and the attempt ("attempt 3 of 10"). Each log line
+  naming the partition and the attempt ("attempt 3 of 10"). Each log line
   is about the event at its time: nothing is logged later about an attempt
   that never ended.
 - **Dead-lettering.** After 10 attempts without progress, about 3 hours of
-  retries, claims skip the tombstone: it is kept, and its partition UUID reserved.
-  A last attempt that raises is reported by an error log naming the partition UUID,
+  retries, claims skip the tombstone: it is kept, and its UUID reserved.
+  A last attempt that raises is reported by an error log naming the partition,
   the last error, and the table. A last attempt whose purger died is not, since
   nothing runs on the tombstone after it; its claim's warning, "attempt 10 of
   10", is the last line about it. Setting its `attempts_without_progress` back
@@ -188,16 +191,16 @@ never purges a visible problem instead of garbage that is quietly retried.
 ### Per-backend rounds
 
 Each backend deletes the way it measured best: Qdrant with one filter-delete
-of the whole partition UUID per round, Milvus in bounded batches listed by the
-partition UUID. The measurements are in the [Qdrant](qdrant_vector_store.md) and
+of the whole partition per round, Milvus in bounded batches listed by the
+partition's UUID. The measurements are in the [Qdrant](qdrant_vector_store.md) and
 [Milvus](milvus_vector_store.md) documents. A native collection that is gone
 holds nothing: the store's purge finds nothing there.
 
 ### The sweeper
 
 The store never schedules its own purge. The resource manager starts one
-sweeper task per partition registry, with its owner's purge round, the first
-time it builds the registry, and `close()` cancels them. A sweeper calls
+sweeper task per partition registry the first time it builds the registry,
+and `close()` cancels them. A sweeper calls
 `run_purge_round()` again after 1 s when it ran a round and after 60 s when
 nothing was due; a round that raises is logged and retried a tick later. Sweepers on other
 processes need no coordination: the claim arbitrates.
@@ -272,11 +275,11 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - **A token the purger mints for each claim**, in place of the generation.
   Either fences the claim's writes; the generation needs nothing from the
   purger, since the database assigns it.
-- **Fence the tombstone's removal too.** A partition UUID found empty after the
+- **Fence the tombstone's removal too.** A partition found empty after the
   retention needs no more rounds, whoever found it, so the fence would only
   discard the finding and repeat the round.
 - **A progress cursor on the tombstone**, as the segment store's queue keeps.
-  Qdrant's round deletes the whole partition UUID at once and leaves nothing to
+  Qdrant's round deletes the whole partition at once and leaves nothing to
   resume. Milvus lists the partition's keys by its field, and its rounds
   stayed flat to the end of a 1M purge, where the segment store's batches
   needed the cursor to avoid stepping over every row already purged; listing

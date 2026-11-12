@@ -164,10 +164,11 @@ async def _open(store: SQLiteVectorStore) -> SQLiteVectorStorePartition:
     return await store.open_partition(partition_uuid)
 
 
-async def _purge(store: SQLiteVectorStore, partition_uuid: UUID) -> None:
-    """Purge the partition UUID until the store finds nothing of it."""
+async def _purge_and_drop(store: SQLiteVectorStore, partition_uuid: UUID) -> None:
+    """Purge a partition until the store finds nothing of it, then drop it, as its registry does."""
     while await store.purge_partition(partition_uuid):
         pass
+    await store.drop_partition(partition_uuid)
 
 
 @pytest_asyncio.fixture
@@ -240,9 +241,7 @@ class TestPartitionLifecycle:
         assert [match.record_uuid for match in result.matches] == [shared.uuid]
 
     @pytest.mark.asyncio
-    async def test_purge_removes_what_the_partition_holds_then_finds_nothing(
-        self, tmp_path
-    ):
+    async def test_drop_removes_what_the_partition_holds(self, tmp_path):
         store, engine = await _fresh_store(
             tmp_path / "test.db", tmp_path, save_threshold=2
         )
@@ -265,20 +264,24 @@ class TestPartitionLifecycle:
         assert await _pending_operation_count(engine) == 1
         assert len(list((tmp_path / "indexes").glob("*.idx"))) == 1
 
-        assert await store.purge_partition(partition_uuid) is True
+        # The records live in the partition's own table and index, so the
+        # purge finds none in shared storage, and the drop removes them.
+        assert await store.purge_partition(partition_uuid) is False
+        await store.drop_partition(partition_uuid)
 
         assert await _get_index_saved(engine, partition_uuid) is None
         assert await _table_names(engine) == baseline
         assert await _pending_operation_count(engine) == 0
         assert list((tmp_path / "indexes").glob("*.idx")) == []
-        assert await store.purge_partition(partition_uuid) is False
+        await store.drop_partition(partition_uuid)
 
         await store.shutdown()
         await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_purging_an_unknown_partition_finds_nothing(self, store):
+    async def test_purging_or_dropping_an_unknown_partition_finds_nothing(self, store):
         assert await store.purge_partition(uuid4()) is False
+        await store.drop_partition(uuid4())
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):
@@ -799,13 +802,13 @@ class TestPartitionIsolation:
         results_a = await partition_a.query(query_vectors=[v1], limit=10)
         assert {match.record_uuid for match in results_a[0].matches} == {r1.uuid}
 
-        await _purge(store, partition_a._partition_uuid)
+        await _purge_and_drop(store, partition_a._partition_uuid)
         assert set(await _stored(partition_b)) == {r2.uuid}
         await other.shutdown()
 
     @pytest.mark.asyncio
-    async def test_purge_does_not_affect_sibling(self, store):
-        """Purging one partition UUID doesn't break a sibling sharing the store's tables."""
+    async def test_dropping_a_partition_does_not_affect_sibling(self, store):
+        """Dropping one partition doesn't break a sibling sharing the store's tables."""
         partition_a = await _open(store)
         partition_b = await _open(store)
 
@@ -815,7 +818,7 @@ class TestPartitionIsolation:
         await partition_a.upsert(records=[r1])
         await partition_b.upsert(records=[r2])
 
-        await _purge(store, partition_a._partition_uuid)
+        await _purge_and_drop(store, partition_a._partition_uuid)
 
         results = await partition_b.query(query_vectors=[v1], limit=10)
         assert len(results[0].matches) == 1
@@ -1377,7 +1380,7 @@ class TestCrashRecovery:
 
     @pytest.mark.asyncio
     async def test_cascade_deletes_pending_ops(self, tmp_path):
-        """Purging a partition UUID cascades to its pending operations."""
+        """Dropping a partition cascades to its pending operations."""
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
@@ -1389,7 +1392,7 @@ class TestCrashRecovery:
         await partition.upsert(records=records)
         assert await _pending_operation_count(engine1) == 2
 
-        await _purge(store1, partition._partition_uuid)
+        await _purge_and_drop(store1, partition._partition_uuid)
         assert await _pending_operation_count(engine1) == 0
 
         await store1.shutdown()
@@ -1411,7 +1414,7 @@ class TestCrashRecovery:
             await store.open_partition(uuid4())
 
         with pytest.raises(RuntimeError, match="startup"):
-            await store.purge_partition(uuid4())
+            await store.drop_partition(uuid4())
 
         await engine.dispose()
 
@@ -1614,7 +1617,7 @@ class TestPartitionResources:
     """A partition's tables and index file live until it is purged."""
 
     @pytest.mark.asyncio
-    async def test_purging_a_partition_leaves_no_tables_or_index_files(self, tmp_path):
+    async def test_dropping_a_partition_leaves_no_tables_or_index_files(self, tmp_path):
         store, engine = await _fresh_store(
             tmp_path / "test.db", tmp_path, save_threshold=1
         )
@@ -1626,7 +1629,7 @@ class TestPartitionResources:
         assert len(await _table_names(engine) - baseline) == 1
         assert len(list((tmp_path / "indexes").glob("*.idx"))) == 1
 
-        await _purge(store, partition._partition_uuid)
+        await _purge_and_drop(store, partition._partition_uuid)
 
         assert await _table_names(engine) == baseline
         assert list((tmp_path / "indexes").glob("*.idx")) == []
@@ -1676,18 +1679,18 @@ class TestPartitionResources:
         )
 
         assert len(await _table_names(engine) - baseline) == 1
-        await _purge(store, partition_uuid)
+        await _purge_and_drop(store, partition_uuid)
         assert await _table_names(engine) == baseline
 
     @pytest.mark.asyncio
-    async def test_a_save_that_a_purge_overtakes_leaves_no_index_file(self, tmp_path):
-        """No file holds a purged partition's vectors, whichever finishes first."""
+    async def test_a_save_that_a_drop_overtakes_leaves_no_index_file(self, tmp_path):
+        """No file holds a dropped partition's vectors, whichever finishes first."""
         stores: list[SQLiteVectorStore] = []
         partition_uuid = uuid4()
 
-        class _PurgedWhileSaving(USearchVectorSearchEngine):
+        class _DroppedWhileSaving(USearchVectorSearchEngine):
             async def save(self, path: str) -> None:
-                await _purge(stores[0], partition_uuid)
+                await _purge_and_drop(stores[0], partition_uuid)
                 await super().save(path)
 
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
@@ -1698,7 +1701,7 @@ class TestPartitionResources:
                 engine,
                 index_directory=str(tmp_path / "indexes"),
                 save_threshold=1,
-                vector_search_engine_factory=lambda ndim, metric: _PurgedWhileSaving(
+                vector_search_engine_factory=lambda ndim, metric: _DroppedWhileSaving(
                     num_dimensions=ndim, similarity_metric=metric
                 ),
             )
@@ -1708,13 +1711,13 @@ class TestPartitionResources:
         await store.create_partition(partition_uuid)
         partition = await store.open_partition(partition_uuid)
 
-        # Crossing the save threshold saves the index, and the purge commits
+        # Crossing the save threshold saves the index, and the drop commits
         # while the file is written.
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
 
-        assert await store.purge_partition(partition_uuid) is False
+        await store.drop_partition(partition_uuid)
         assert list((tmp_path / "indexes").glob("*.idx")) == []
 
         await store.shutdown()

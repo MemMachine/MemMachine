@@ -458,24 +458,18 @@ class SQLiteVecVectorStore(VectorStore):
 
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:
-        # The partition's records live in its own tables, so one call drops
-        # them all.
+        # A partition's records live in its own tables, which drop_partition
+        # removes.
+        return False
+
+    @override
+    async def drop_partition(self, partition_uuid: UUID) -> None:
         records_table = self._records_table(partition_uuid)
         vector_table_name = self._vector_table_name(partition_uuid)
         async with write_session(self._create_session) as session:
-            found = (
-                await session.execute(
-                    text(
-                        "SELECT count(*) FROM sqlite_master "
-                        "WHERE type = 'table' AND name IN (:records, :vectors)"
-                    ),
-                    {"records": records_table.name, "vectors": vector_table_name},
-                )
-            ).scalar_one()
             await session.execute(text(f"DROP TABLE IF EXISTS [{vector_table_name}]"))
             await session.execute(text(f"DROP TABLE IF EXISTS [{records_table.name}]"))
         self._sa_metadata.remove(records_table)
-        return found > 0
 
     # Helpers.
 
