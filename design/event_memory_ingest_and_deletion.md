@@ -98,9 +98,9 @@ forgotten event never reach the records of the event added again under
 its UUID.
 
 **Search.** A vector hit whose derivative names no stored segment is
-dropped from the results and its vector deleted once, best effort and
-without the search waiting for it; the next search that finds it tries
-again.
+dropped from the results, and its vector is deleted without the search
+waiting for it; if that delete fails, the next search that finds the hit
+deletes it again.
 
 **Partition deletion.** The segment store's partition goes first, so its
 text is gone at once and no write starts on it; the vector store's
