@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
-    PartitionIncarnationEndedError,
+    PartitionDeletedError,
     PartitionPendingError,
     Registration,
     sqlalchemy_partition_registry,
@@ -107,10 +107,10 @@ def vector_store() -> NonCallableMagicMock:
     )
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
-    vector_store.open_partition_incarnation.side_effect = lambda incarnation: (
+    vector_store.open_partition.side_effect = lambda partition_uuid: (
         InMemoryVectorStorePartition(store_schema=store_schema)
     )
-    vector_store.purge_partition_incarnation.return_value = False
+    vector_store.purge_partition.return_value = False
     return vector_store
 
 
@@ -141,7 +141,7 @@ async def _purge(event_memory: EventMemory) -> None:
     """Run the namespace's purge rounds until none is due."""
     params = event_memory._params
     purge_round = functools.partial(
-        EventMemory.purge_partition_incarnation,
+        EventMemory.purge_partition,
         params.segment_store,
         params.vector_store,
     )
@@ -150,11 +150,11 @@ async def _purge(event_memory: EventMemory) -> None:
 
 
 async def _purged(partition_registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
-    """Incarnations the purge rounds claim, running rounds until none is due."""
+    """Partition UUIDs the purge rounds claim, running rounds until none is due."""
     purged: list[UUID] = []
 
-    async def purge(incarnation: UUID) -> bool:
-        purged.append(incarnation)
+    async def purge(partition_uuid: UUID) -> bool:
+        purged.append(partition_uuid)
         return False
 
     while await partition_registry.run_purge_round(purge):
@@ -162,8 +162,8 @@ async def _purged(partition_registry: SQLAlchemyPartitionRegistry) -> list[UUID]
     return purged
 
 
-def _incarnation(partition: EventMemoryPartition) -> UUID:
-    return partition._registration.incarnation
+def _partition_uuid(partition: EventMemoryPartition) -> UUID:
+    return partition._registration.partition_uuid
 
 
 @pytest.mark.asyncio
@@ -178,11 +178,9 @@ async def test_open_or_create_prepares_a_life_and_reopens_it(
 
     reopened = await event_memory.open_or_create_partition(NAME)
 
-    assert _incarnation(reopened) == _incarnation(created)
-    vector_store.prepare_partition_incarnation.assert_awaited_once_with(
-        _incarnation(created)
-    )
-    segments = await segment_store.open_partition_incarnation(_incarnation(created))
+    assert _partition_uuid(reopened) == _partition_uuid(created)
+    vector_store.create_partition.assert_awaited_once_with(_partition_uuid(created))
+    segments = await segment_store.open_partition(_partition_uuid(created))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([event.uuid])
 
@@ -197,11 +195,11 @@ async def test_a_deleted_partitions_handle_refuses_every_operation(
 
     await event_memory.delete_partition(NAME)
 
-    with pytest.raises(PartitionIncarnationEndedError):
+    with pytest.raises(PartitionDeletedError):
         await partition.encode_events([_event("too late")])
-    with pytest.raises(PartitionIncarnationEndedError):
+    with pytest.raises(PartitionDeletedError):
         await partition.query("milk")
-    with pytest.raises(PartitionIncarnationEndedError):
+    with pytest.raises(PartitionDeletedError):
         await partition.forget_events([event.uuid])
 
 
@@ -221,9 +219,9 @@ async def test_an_encode_that_outlives_its_life_raises(
     monkeypatch.setattr(
         partition._segment_store_partition, "add_segments", deleted_meanwhile
     )
-    with pytest.raises(PartitionIncarnationEndedError) as ended:
+    with pytest.raises(PartitionDeletedError) as ended:
         await partition.encode_events([_event("remember the milk")])
-    assert ended.value.incarnation == _incarnation(partition)
+    assert ended.value.partition_uuid == _partition_uuid(partition)
 
 
 @pytest.mark.asyncio
@@ -238,8 +236,8 @@ async def test_a_partition_created_again_is_a_new_life_that_starts_empty(
 
     new = await event_memory.open_or_create_partition(NAME)
 
-    assert _incarnation(new) != _incarnation(old)
-    segments = await segment_store.open_partition_incarnation(_incarnation(new))
+    assert _partition_uuid(new) != _partition_uuid(old)
+    segments = await segment_store.open_partition(_partition_uuid(new))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([event.uuid]) == {}
 
@@ -258,8 +256,8 @@ async def test_the_purge_round_reclaims_a_deleted_life(
 
     await _purge(event_memory)
 
-    assert await segment_store.open_partition_incarnation(_incarnation(deleted)) is None
-    segments = await segment_store.open_partition_incarnation(_incarnation(kept))
+    assert await segment_store.open_partition(_partition_uuid(deleted)) is None
+    segments = await segment_store.open_partition(_partition_uuid(kept))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([kept_event.uuid])
 
@@ -284,8 +282,8 @@ async def test_open_or_create_waits_for_a_pending_partition(
         event_memory_module, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0.05
     )
     pending = await partition_registry.reserve(NAME)
-    await segment_store.prepare_partition_incarnation(
-        pending.incarnation, SegmentStorePartitionConfig()
+    await segment_store.create_partition(
+        pending.partition_uuid, SegmentStorePartitionConfig()
     )
     reserve = partition_registry.reserve
     reservations = 0
@@ -304,7 +302,7 @@ async def test_open_or_create_waits_for_a_pending_partition(
 
     await pending.confirm()
     opened = await opening
-    assert _incarnation(opened) == pending.incarnation
+    assert _partition_uuid(opened) == pending.partition_uuid
 
 
 @pytest.mark.asyncio
@@ -341,43 +339,43 @@ async def test_open_or_create_gives_up_from_the_race_it_last_lost(
 
 
 @pytest.mark.asyncio
-async def test_a_failed_preparation_frees_the_name_and_queues_its_incarnation(
+async def test_a_failed_creation_frees_the_name_and_queues_its_partition_uuid(
     event_memory: EventMemory,
     partition_registry: SQLAlchemyPartitionRegistry,
     vector_store: NonCallableMagicMock,
 ) -> None:
-    incarnations: list[UUID] = []
+    partition_uuids: list[UUID] = []
 
-    async def refused(incarnation: UUID) -> None:
-        incarnations.append(incarnation)
+    async def refused(partition_uuid: UUID) -> None:
+        partition_uuids.append(partition_uuid)
         raise RuntimeError("the backend refused")
 
-    vector_store.prepare_partition_incarnation.side_effect = refused
+    vector_store.create_partition.side_effect = refused
     with pytest.raises(RuntimeError, match="refused"):
         await event_memory.open_or_create_partition(NAME)
 
     assert await partition_registry.resolve(NAME) is None
-    assert await _purged(partition_registry) == incarnations
-    vector_store.prepare_partition_incarnation.side_effect = None
+    assert await _purged(partition_registry) == partition_uuids
+    vector_store.create_partition.side_effect = None
     created = await event_memory.open_or_create_partition(NAME)
-    assert _incarnation(created) not in incarnations
+    assert _partition_uuid(created) not in partition_uuids
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_preparation_frees_the_name_and_queues_its_incarnation(
+async def test_a_cancelled_creation_frees_the_name_and_queues_its_partition_uuid(
     event_memory: EventMemory,
     partition_registry: SQLAlchemyPartitionRegistry,
     vector_store: NonCallableMagicMock,
 ) -> None:
     started = asyncio.Event()
-    incarnations: list[UUID] = []
+    partition_uuids: list[UUID] = []
 
-    async def hangs(incarnation: UUID) -> None:
-        incarnations.append(incarnation)
+    async def hangs(partition_uuid: UUID) -> None:
+        partition_uuids.append(partition_uuid)
         started.set()
         await asyncio.Event().wait()
 
-    vector_store.prepare_partition_incarnation.side_effect = hangs
+    vector_store.create_partition.side_effect = hangs
     creating = asyncio.create_task(event_memory.open_or_create_partition(NAME))
     await started.wait()
     creating.cancel()
@@ -385,7 +383,7 @@ async def test_a_cancelled_preparation_frees_the_name_and_queues_its_incarnation
         await creating
 
     assert await partition_registry.resolve(NAME) is None
-    assert await _purged(partition_registry) == incarnations
+    assert await _purged(partition_registry) == partition_uuids
 
 
 @pytest.mark.asyncio
@@ -401,7 +399,7 @@ async def test_cancelling_the_reservation_after_a_cancelled_preparation_survives
     reservation_type = sqlalchemy_partition_registry._SQLAlchemyReservation
     cancel = reservation_type.cancel
 
-    async def hangs(incarnation: UUID) -> None:
+    async def hangs(partition_uuid: UUID) -> None:
         started.set()
         await asyncio.Event().wait()
 
@@ -410,7 +408,7 @@ async def test_cancelling_the_reservation_after_a_cancelled_preparation_survives
         await release.wait()
         await cancel(reservation)
 
-    vector_store.prepare_partition_incarnation.side_effect = hangs
+    vector_store.create_partition.side_effect = hangs
     monkeypatch.setattr(reservation_type, "cancel", slow)
     creating = asyncio.create_task(event_memory.open_or_create_partition(NAME))
     await started.wait()
@@ -440,7 +438,7 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
     cancelling = asyncio.Event()
     release = asyncio.Event()
 
-    async def hangs(incarnation: UUID) -> None:
+    async def hangs(partition_uuid: UUID) -> None:
         started.set()
         await asyncio.Event().wait()
 
@@ -449,7 +447,7 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
         await release.wait()
         raise ConnectionError("the registry is unreachable")
 
-    vector_store.prepare_partition_incarnation.side_effect = hangs
+    vector_store.create_partition.side_effect = hangs
     monkeypatch.setattr(
         sqlalchemy_partition_registry._SQLAlchemyReservation, "cancel", fails_late
     )
@@ -565,13 +563,13 @@ async def test_a_failed_preparation_the_registry_cannot_undo_stays_pending_until
     vector_store: NonCallableMagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def refused(incarnation: UUID) -> None:
+    async def refused(partition_uuid: UUID) -> None:
         raise RuntimeError("the backend refused")
 
     async def unreachable(reservation) -> None:
         raise ConnectionError("the registry is unreachable")
 
-    vector_store.prepare_partition_incarnation.side_effect = refused
+    vector_store.create_partition.side_effect = refused
     with monkeypatch.context() as unregistration:
         unregistration.setattr(
             sqlalchemy_partition_registry._SQLAlchemyReservation,
@@ -581,7 +579,7 @@ async def test_a_failed_preparation_the_registry_cannot_undo_stays_pending_until
         with pytest.raises(RuntimeError, match="refused"):
             await event_memory.open_or_create_partition(NAME)
 
-    vector_store.prepare_partition_incarnation.side_effect = None
+    vector_store.create_partition.side_effect = None
     with pytest.raises(PartitionPendingError):
         await event_memory.open_or_create_partition(NAME)
 
@@ -595,16 +593,16 @@ async def test_open_or_create_creates_again_after_a_deletion_during_preparation(
     partition_registry: SQLAlchemyPartitionRegistry,
     vector_store: NonCallableMagicMock,
 ) -> None:
-    incarnations: list[UUID] = []
+    partition_uuids: list[UUID] = []
 
-    async def deleted_the_first_time(incarnation: UUID) -> None:
-        incarnations.append(incarnation)
-        if len(incarnations) == 1:
+    async def deleted_the_first_time(partition_uuid: UUID) -> None:
+        partition_uuids.append(partition_uuid)
+        if len(partition_uuids) == 1:
             await partition_registry.unregister(NAME)
 
-    vector_store.prepare_partition_incarnation.side_effect = deleted_the_first_time
+    vector_store.create_partition.side_effect = deleted_the_first_time
     opened = await event_memory.open_or_create_partition(NAME)
 
-    assert len(incarnations) == 2
-    assert _incarnation(opened) == incarnations[1]
-    assert await _purged(partition_registry) == incarnations[:1]
+    assert len(partition_uuids) == 2
+    assert _partition_uuid(opened) == partition_uuids[1]
+    assert await _purged(partition_registry) == partition_uuids[:1]

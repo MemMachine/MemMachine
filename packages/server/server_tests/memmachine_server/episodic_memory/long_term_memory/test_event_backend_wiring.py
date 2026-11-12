@@ -187,7 +187,7 @@ def vector_store_partition(store_schema):
 def segment_store():
     """Stand-in for the parent SegmentStore lifecycle methods."""
     store = create_autospec(SegmentStore, instance=True)
-    store.purge_partition_incarnation.return_value = False
+    store.purge_partition.return_value = False
     return store
 
 
@@ -209,11 +209,11 @@ async def _event_long_term_memory(
     """A LongTermMemory on session `sess1`'s partition, which the given stores hand out."""
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = "sess1"
-    registration.incarnation = uuid4()
+    registration.partition_uuid = uuid4()
     partition_registry = create_autospec(PartitionRegistry, instance=True)
     partition_registry.resolve.return_value = registration
-    vector_store.open_partition_incarnation.return_value = vector_store_partition
-    segment_store.open_partition_incarnation.return_value = segment_store_partition
+    vector_store.open_partition.return_value = vector_store_partition
+    segment_store.open_partition.return_value = segment_store_partition
     event_memory = EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,

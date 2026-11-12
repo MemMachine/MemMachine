@@ -151,15 +151,15 @@ async def _store_with(
 
 
 async def _open(store: SQLiteVecVectorStore) -> SQLiteVecVectorStorePartition:
-    """A handle on a freshly prepared partition incarnation."""
-    incarnation = uuid4()
-    await store.prepare_partition_incarnation(incarnation)
-    return await store.open_partition_incarnation(incarnation)
+    """A handle on a freshly prepared partition."""
+    partition_uuid = uuid4()
+    await store.create_partition(partition_uuid)
+    return await store.open_partition(partition_uuid)
 
 
-async def _purge(store: SQLiteVecVectorStore, incarnation: UUID) -> None:
-    """Purge an incarnation until the store finds nothing of it."""
-    while await store.purge_partition_incarnation(incarnation):
+async def _purge(store: SQLiteVecVectorStore, partition_uuid: UUID) -> None:
+    """Purge a partition UUID until the store finds nothing of it."""
+    while await store.purge_partition(partition_uuid):
         pass
 
 
@@ -168,12 +168,12 @@ async def partition(store):
     return await _open(store)
 
 
-# ── Partition incarnation lifecycle ──
+# ── Partition lifecycle ──
 
 
 class TestPartitionLifecycle:
     @pytest.mark.asyncio
-    async def test_a_prepared_incarnation_opens_and_holds_its_records(self, store):
+    async def test_a_created_partition_opens_and_holds_its_records(self, store):
         partition = await _open(store)
         assert isinstance(partition, SQLiteVecVectorStorePartition)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
@@ -183,19 +183,19 @@ class TestPartitionLifecycle:
         assert set(await _stored(partition)) == {record.uuid}
 
     @pytest.mark.asyncio
-    async def test_preparing_an_incarnation_again_changes_nothing(self, store):
+    async def test_creating_a_partition_again_changes_nothing(self, store):
         partition = await _open(store)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await partition.upsert(records=[record])
 
-        await store.prepare_partition_incarnation(partition._incarnation)
+        await store.create_partition(partition._partition_uuid)
 
         assert set(await _stored(partition)) == {record.uuid}
 
     @pytest.mark.asyncio
-    async def test_handles_on_one_incarnation_share_its_records(self, store):
+    async def test_handles_on_one_partition_share_its_records(self, store):
         first = await _open(store)
-        second = await store.open_partition_incarnation(first._incarnation)
+        second = await store.open_partition(first._partition_uuid)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await first.upsert(records=[record])
 
@@ -203,7 +203,7 @@ class TestPartitionLifecycle:
         assert [match.record_uuid for match in found.matches] == [record.uuid]
 
     @pytest.mark.asyncio
-    async def test_incarnations_are_isolated_from_one_another(self, store):
+    async def test_partitions_are_isolated_from_one_another(self, store):
         first = await _open(store)
         second = await _open(store)
         shared = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
@@ -223,23 +223,23 @@ class TestPartitionLifecycle:
         assert found.matches[0].score == pytest.approx(0.0, abs=0.01)
 
     @pytest.mark.asyncio
-    async def test_purge_drops_an_incarnations_tables_and_records(self, store):
+    async def test_purge_drops_a_partitions_tables_and_records(self, store):
         partition = await _open(store)
-        incarnation = partition._incarnation
+        partition_uuid = partition._partition_uuid
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
 
-        assert await store.purge_partition_incarnation(incarnation) is True
+        assert await store.purge_partition(partition_uuid) is True
 
         assert not any(
-            incarnation.hex in name for name in await _table_names(store._engine)
+            partition_uuid.hex in name for name in await _table_names(store._engine)
         )
-        assert await store.purge_partition_incarnation(incarnation) is False
+        assert await store.purge_partition(partition_uuid) is False
 
     @pytest.mark.asyncio
-    async def test_purging_an_unknown_incarnation_finds_nothing(self, store):
-        assert await store.purge_partition_incarnation(uuid4()) is False
+    async def test_purging_an_unknown_partition_finds_nothing(self, store):
+        assert await store.purge_partition(uuid4()) is False
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):
@@ -749,7 +749,7 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_stores_on_one_engine_are_isolated(self, store):
-        """Two stores over one engine, each with its own incarnation, never see each other's rows."""
+        """Two stores over one engine, each with its own partition UUID, never see each other's rows."""
         other = await _store_with(store, "other_store")
         partition_a = await _open(store)
         partition_b = await _open(other)
@@ -764,13 +764,13 @@ class TestPartitionIsolation:
         results_a = await partition_a.query(query_vectors=[v1], limit=10)
         assert {match.record_uuid for match in results_a[0].matches} == {r1.uuid}
 
-        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_a._partition_uuid)
         assert set(await _stored(partition_b)) == {r2.uuid}
         await other.shutdown()
 
     @pytest.mark.asyncio
-    async def test_purging_an_incarnation_does_not_affect_sibling(self, store):
-        """Purging one incarnation leaves a sibling's records searchable."""
+    async def test_purging_a_partition_does_not_affect_sibling(self, store):
+        """Purging one partition UUID leaves a sibling's records searchable."""
         partition_a = await _open(store)
         partition_b = await _open(store)
 
@@ -780,7 +780,7 @@ class TestPartitionIsolation:
         await partition_a.upsert(records=[r1])
         await partition_b.upsert(records=[r2])
 
-        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_a._partition_uuid)
 
         results = await partition_b.query(query_vectors=[v1], limit=10)
         assert len(results[0].matches) == 1
@@ -1068,10 +1068,10 @@ async def _table_names(engine) -> set[str]:
 
 
 class TestPartitionResources:
-    """A partition incarnation's tables exist from its preparation until its purge."""
+    """A partition's tables exist from its preparation until its purge."""
 
     @pytest.mark.asyncio
-    async def test_preparing_an_incarnation_creates_only_its_tables(self, store):
+    async def test_creating_a_partition_creates_only_its_tables(self, store):
         engine = store._engine
         baseline = await _table_names(engine)
 
@@ -1082,10 +1082,10 @@ class TestPartitionResources:
             partition._records_table.name,
             partition._vector_table_name,
         } <= created
-        assert all(partition._incarnation.hex in name for name in created)
+        assert all(partition._partition_uuid.hex in name for name in created)
 
     @pytest.mark.asyncio
-    async def test_purging_an_incarnation_leaves_none_of_its_tables(self, store):
+    async def test_purging_a_partition_leaves_none_of_its_tables(self, store):
         engine = store._engine
         baseline = await _table_names(engine)
         partition = await _open(store)
@@ -1094,29 +1094,29 @@ class TestPartitionResources:
         )
         assert await _table_names(engine) != baseline
 
-        await _purge(store, partition._incarnation)
+        await _purge(store, partition._partition_uuid)
 
         assert await _table_names(engine) == baseline
 
     @pytest.mark.asyncio
-    async def test_purging_an_incarnation_leaves_other_incarnations_tables(self, store):
+    async def test_purging_a_partition_leaves_other_partitions_tables(self, store):
         engine = store._engine
         await _open(store)
         baseline = await _table_names(engine)
         purged = await _open(store)
 
-        await _purge(store, purged._incarnation)
+        await _purge(store, purged._partition_uuid)
 
         assert await _table_names(engine) == baseline
 
     @pytest.mark.asyncio
-    async def test_racing_prepares_of_an_incarnation_both_succeed(self, store):
-        incarnation = uuid4()
+    async def test_racing_creates_of_a_partition_both_succeed(self, store):
+        partition_uuid = uuid4()
         await asyncio.gather(
-            store.prepare_partition_incarnation(incarnation),
-            store.prepare_partition_incarnation(incarnation),
+            store.create_partition(partition_uuid),
+            store.create_partition(partition_uuid),
         )
-        partition = await store.open_partition_incarnation(incarnation)
+        partition = await store.open_partition(partition_uuid)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
 
         await partition.upsert(records=[record])

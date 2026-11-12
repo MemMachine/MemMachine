@@ -18,11 +18,11 @@ from memmachine_server.episodic_memory.event_memory.segment_store.data_types imp
 
 
 class SegmentStorePartition(ABC):
-    """A handle on one partition incarnation's segments in a segment store.
+    """A handle on one partition's segments in a segment store.
 
-    Every operation reads and writes the incarnation it was opened on, and
-    no other. The handle checks nothing about whether the incarnation is
-    still live: its owner fences each operation by the incarnation's
+    Every operation reads and writes the partition it was opened on, and no
+    other. The handle checks nothing about whether the partition is still
+    live: its owner fences each operation by the partition's
     registration.
     """
 
@@ -160,11 +160,11 @@ class SegmentStore(ABC):
     """
     Abstract base class for a segment store.
 
-    The store holds each partition incarnation's segments under the
-    incarnation, and holds no partition names: its owner's partition
-    registry mints the incarnations and decides which is live. A partition's
-    incarnations are isolated from one another: segments written under one
-    are never read under another.
+    The store holds each partition's segments under the partition's UUID, and
+    holds no partition names: its owner's partition registry names each
+    partition, mints its UUID, and decides which is live. Partitions are
+    isolated from one another, including partitions created under the same
+    name: segments written to one are never read from another.
     """
 
     @abstractmethod
@@ -178,45 +178,45 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def prepare_partition_incarnation(
+    async def create_partition(
         self,
-        incarnation: UUID,
+        partition_uuid: UUID,
         config: SegmentStorePartitionConfig,
     ) -> None:
         """
-        Prepare the storage a partition incarnation needs of its own.
+        Create the storage a partition needs of its own.
 
-        Records the incarnation's configuration, which every handle opened
+        Records the partition's configuration, which every handle opened
         on it uses. Safe to repeat with the same configuration.
 
         Args:
-            incarnation (UUID):
-                The partition incarnation, minted by the owner's registry.
+            partition_uuid (UUID):
+                The partition's UUID, minted by the owner's registry.
             config (SegmentStorePartitionConfig):
-                Configuration for the incarnation.
+                Configuration for the partition.
 
         Raises:
             SegmentStorePartitionConfigMismatchError:
-                If the incarnation was prepared with a different
+                If the partition was created with a different
                 configuration.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition_incarnation(
-        self, incarnation: UUID
+    async def open_partition(
+        self, partition_uuid: UUID
     ) -> SegmentStorePartition | None:
         """
-        Open a handle on a prepared partition incarnation.
+        Open a handle on a created partition.
 
         Args:
-            incarnation (UUID):
-                The partition incarnation.
+            partition_uuid (UUID):
+                The partition's UUID.
 
         Returns:
             SegmentStorePartition | None:
-                A handle bound to the incarnation, or None if the
-                incarnation was never prepared or its purge has removed it.
+                A handle bound to the partition, or None if the partition was
+                never created or its purge has removed it.
         """
         raise NotImplementedError
 
@@ -234,24 +234,24 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def purge_partition_incarnation(self, incarnation: UUID) -> bool:
+    async def purge_partition(self, partition_uuid: UUID) -> bool:
         """
-        Delete a bounded batch of what a partition incarnation holds: its segments, then its own storage.
+        Delete a bounded batch of what a partition holds: its segments, then its own storage.
 
-        The owner's purge rounds call it once the incarnation's partition is
-        deleted and its retention has passed, until it returns False. Each
+        The owner's purge rounds call it once the partition is deleted and
+        its retention has passed, until it returns False. Each
         call does a bounded amount of work, sized so it does not noticeably
         degrade concurrent request serving, commits what it did or nothing,
         and is safe to repeat and to run from several processes at once.
 
         Args:
-            incarnation (UUID):
-                The incarnation of a deleted partition.
+            partition_uuid (UUID):
+                The deleted partition's UUID.
 
         Returns:
             bool:
-                Whether the call found anything of the incarnation's, so a
-                call that returns False proves the incarnation gone from
-                the store.
+                Whether the call found anything of the partition's, so a
+                call that returns False proves the partition gone from the
+                store.
         """
         raise NotImplementedError

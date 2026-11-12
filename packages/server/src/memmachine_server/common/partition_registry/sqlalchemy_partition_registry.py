@@ -2,8 +2,8 @@
 A partition registry in a relational database, through SQLAlchemy.
 
 A table of registered partitions keyed by namespace and partition name,
-each with its incarnation and whether it is live (its storage prepared), and
-a queue of deleted incarnations claimed in the order they come due. The
+each with its UUID and whether it is live (its storage created), and
+a queue of deleted partition UUIDs claimed in the order they come due. The
 primary key arbitrates registration across processes, a conditional update
 confirms a reservation, unregistration is one transaction, and a purge
 claim is a lease on a tombstone that one short write takes and another ends.
@@ -53,7 +53,7 @@ from .data_types import (
     _PARTITION_NAMESPACE_MAX_BYTES,
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
-    PartitionIncarnationEndedError,
+    PartitionDeletedError,
     PartitionPendingError,
     validate_partition_namespace,
 )
@@ -90,8 +90,10 @@ class PartitionRow(BasePartitionRegistry):
     partition_name: MappedColumn[str] = mapped_column(
         String(_PARTITION_NAME_MAX_BYTES), primary_key=True
     )
-    incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
-    # Whether the partition's storage is prepared; it is pending until then.
+    partition_uuid: MappedColumn[UUID] = mapped_column(
+        Uuid, nullable=False, unique=True
+    )
+    # Whether the partition's storage is created; it is pending until then.
     live: MappedColumn[bool] = mapped_column(Boolean, nullable=False)
     registered_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -99,14 +101,14 @@ class PartitionRow(BasePartitionRegistry):
 
 
 class PurgeQueueRow(BasePartitionRegistry):
-    """A deleted partition's tombstone: its incarnation awaiting purge.
+    """A deleted partition's tombstone: its partition UUID awaiting purge.
 
     It holds only what a purge round reads.
     """
 
     __tablename__ = "partition_registry_gc"
 
-    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    partition_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     partition_namespace: MappedColumn[str] = mapped_column(
         String(_PARTITION_NAMESPACE_MAX_BYTES), nullable=False
     )
@@ -142,7 +144,7 @@ class _RegistryInsertRejectedError(Exception):
 class _TombstoneClaim:
     """A purge round's claim on a tombstone."""
 
-    incarnation: UUID
+    partition_uuid: UUID
     claim_generation: int
     # The claim's attempt number since the last progress, from 1.
     attempt: int
@@ -256,7 +258,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     A purge claim holds its tombstone for the purge lease, or
     until its round ends, and no transaction stays open during the round.
     After `_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS` attempts without progress, a
-    tombstone is dead-lettered: kept, its incarnation reserved, and skipped by
+    tombstone is dead-lettered: kept, its UUID reserved, and skipped by
     claims; a last attempt that raises is reported in an error log. Setting its
     `attempts_without_progress` back to 0 and its `claimable_at` to NULL
     returns it to the purge.
@@ -286,19 +288,19 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     @override
     async def reserve(self, partition_name: str) -> Reservation:
         # The primary key arbitrates the partition name across processes.
-        # An insert rejected for another reason, such as a minted incarnation
-        # that is registered or awaiting purge, is tried again with a fresh one.
+        # An insert rejected for another reason, such as a minted UUID that is
+        # registered or awaiting purge, is tried again with a fresh one.
         attempts = 0
         while True:
-            incarnation = uuid4()
+            partition_uuid = uuid4()
             try:
-                await self._insert_pending_partition(partition_name, incarnation)
+                await self._insert_pending_partition(partition_name, partition_uuid)
             except _RegistryInsertRejectedError as err:
                 logger.warning(
-                    "Reserving partition %r under incarnation %s was rejected: "
+                    "Reserving partition %r under UUID %s was rejected: "
                     "%s; minting another",
                     partition_name,
-                    incarnation,
+                    partition_uuid,
                     err,
                 )
                 attempts += 1
@@ -310,16 +312,16 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                 continue
             return _SQLAlchemyReservation(
                 partition_name=partition_name,
-                incarnation=incarnation,
+                partition_uuid=partition_uuid,
                 engine=self._engine,
                 partition_namespace=self._partition_namespace,
             )
 
     async def _insert_pending_partition(
-        self, partition_name: str, incarnation: UUID
+        self, partition_name: str, partition_uuid: UUID
     ) -> None:
         # The queue check runs after the insert, so a concurrent deletion
-        # queuing a colliding incarnation, which the insert waited on, is
+        # queuing a colliding partition UUID, which the insert waited on, is
         # visible to it; the locking read sees the latest committed state.
         try:
             async with write_connection(self._engine) as connection:
@@ -327,25 +329,25 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                     insert(PartitionRow).values(
                         partition_namespace=self._partition_namespace,
                         partition_name=partition_name,
-                        incarnation=incarnation,
+                        partition_uuid=partition_uuid,
                         live=False,
                         registered_at=func.now(),
                     )
                 )
                 queued = (
                     await connection.execute(
-                        select(PurgeQueueRow.incarnation)
-                        .where(PurgeQueueRow.incarnation == incarnation)
+                        select(PurgeQueueRow.partition_uuid)
+                        .where(PurgeQueueRow.partition_uuid == partition_uuid)
                         .with_for_update(read=True)
                     )
                 ).scalar_one_or_none()
                 if queued is not None:
-                    raise _RegistryInsertRejectedError("the incarnation awaits purge")
+                    raise _RegistryInsertRejectedError("the UUID awaits purge")
         except IntegrityError as err:
             async with self._engine.connect() as connection:
                 taken = (
                     await connection.execute(
-                        select(PartitionRow.incarnation).where(
+                        select(PartitionRow.partition_uuid).where(
                             PartitionRow.partition_namespace
                             == self._partition_namespace,
                             PartitionRow.partition_name == partition_name,
@@ -366,7 +368,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             row = (
                 await connection.execute(
                     select(
-                        PartitionRow.incarnation,
+                        PartitionRow.partition_uuid,
                         PartitionRow.live,
                         PartitionRow.registered_at,
                     ).where(
@@ -385,7 +387,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             )
         return _SQLAlchemyRegistration(
             partition_name=partition_name,
-            incarnation=row.incarnation,
+            partition_uuid=row.partition_uuid,
             engine=self._engine,
             partition_namespace=self._partition_namespace,
         )
@@ -405,16 +407,16 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             return False
         if claim.attempt > 1:
             logger.warning(
-                "Purge round on incarnation %s is attempt %d of %d",
-                claim.incarnation,
+                "Purge round on partition %s is attempt %d of %d",
+                claim.partition_uuid,
                 claim.attempt,
                 _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
             )
         try:
-            any_records_found = await purge_round(claim.incarnation)
+            any_records_found = await purge_round(claim.partition_uuid)
         except Exception as error:
             error.add_note(
-                f"Purge round on incarnation {claim.incarnation}, attempt "
+                f"Purge round on partition {claim.partition_uuid}, attempt "
                 f"{claim.attempt} of {_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS}"
             )
             await self._end_tombstone_claim_after_failure(claim, error)
@@ -433,7 +435,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         ended is taken again once its lease, and then the backoff, have passed.
         """
         oldest_due = (
-            select(PurgeQueueRow.incarnation)
+            select(PurgeQueueRow.partition_uuid)
             .where(
                 PurgeQueueRow.partition_namespace == self._partition_namespace,
                 self._has_elapsed(
@@ -456,7 +458,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             row = (
                 await connection.execute(
                     update(PurgeQueueRow)
-                    .where(PurgeQueueRow.incarnation == oldest_due)
+                    .where(PurgeQueueRow.partition_uuid == oldest_due)
                     .values(
                         attempts_without_progress=(
                             PurgeQueueRow.attempts_without_progress + 1
@@ -470,7 +472,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                         claim_generation=PurgeQueueRow.claim_generation + 1,
                     )
                     .returning(
-                        PurgeQueueRow.incarnation,
+                        PurgeQueueRow.partition_uuid,
                         PurgeQueueRow.claim_generation,
                         PurgeQueueRow.attempts_without_progress,
                     )
@@ -479,7 +481,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         if row is None:
             return None
         return _TombstoneClaim(
-            incarnation=row.incarnation,
+            partition_uuid=row.partition_uuid,
             claim_generation=row.claim_generation,
             attempt=row.attempts_without_progress,
         )
@@ -540,7 +542,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             ended = await connection.execute(
                 update(PurgeQueueRow)
                 .where(
-                    PurgeQueueRow.incarnation == claim.incarnation,
+                    PurgeQueueRow.partition_uuid == claim.partition_uuid,
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
                 .values(
@@ -557,11 +559,11 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         # Claims take only tombstones under the bound.
         if claim.attempt >= _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS:
             logger.error(
-                "Purge of incarnation %s is dead-lettered after %d attempts "
+                "Purge of partition %s is dead-lettered after %d attempts "
                 "without progress: its records stay and it is no longer claimed. "
                 "Last error: %r. Set its attempts_without_progress to 0 and its "
                 "claimable_at to NULL in %s to retry it.",
-                claim.incarnation,
+                claim.partition_uuid,
                 claim.attempt,
                 error,
                 PurgeQueueRow.__tablename__,
@@ -583,8 +585,8 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             if not task.cancelled() and task.exception() is not None:
                 logger.error(
                     "Could not end the claim of a cancelled purge round on "
-                    "incarnation %s; it ends with its lease",
-                    claim.incarnation,
+                    "partition %s; it ends with its lease",
+                    claim.partition_uuid,
                     exc_info=task.exception(),
                 )
 
@@ -598,7 +600,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             await connection.execute(
                 update(PurgeQueueRow)
                 .where(
-                    PurgeQueueRow.incarnation == claim.incarnation,
+                    PurgeQueueRow.partition_uuid == claim.partition_uuid,
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
                 .values(
@@ -614,8 +616,8 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     ) -> None:
         """Record a purge round's outcome on its tombstone.
 
-        Finding nothing removes the tombstone under any claim, since an
-        incarnation found empty after the retention needs no more rounds.
+        Finding nothing removes the tombstone under any claim, since a
+        partition found empty after the retention needs no more rounds.
         Finding records ends the claim and resets its attempts without
         progress, if the claim is the latest.
         """
@@ -623,7 +625,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             async with write_connection(self._engine) as connection:
                 await connection.execute(
                     delete(PurgeQueueRow).where(
-                        PurgeQueueRow.incarnation == claim.incarnation
+                        PurgeQueueRow.partition_uuid == claim.partition_uuid
                     )
                 )
             return
@@ -631,7 +633,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             ended = await connection.execute(
                 update(PurgeQueueRow)
                 .where(
-                    PurgeQueueRow.incarnation == claim.incarnation,
+                    PurgeQueueRow.partition_uuid == claim.partition_uuid,
                     PurgeQueueRow.claim_generation == claim.claim_generation,
                 )
                 .values(attempts_without_progress=0, claimable_at=None)
@@ -642,9 +644,9 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     def _report_purge_round_outlasting_its_claim(self, claim: _TombstoneClaim) -> None:
         """Report a purge round that ended after its tombstone was claimed again or removed."""
         logger.warning(
-            "Purge round on incarnation %s outlasted its claim's %d s lease: the "
+            "Purge round on partition %s outlasted its claim's %d s lease: the "
             "tombstone was claimed again or removed while it ran",
-            claim.incarnation,
+            claim.partition_uuid,
             self._purge_lease_seconds,
         )
 
@@ -658,7 +660,7 @@ class _SQLAlchemyReservation(Reservation):
 
     @override
     async def confirm(self) -> Registration:
-        # Conditional on the incarnation and on the row being pending, so a
+        # Conditional on the UUID and on the row being pending, so a
         # creation marks live only the partition it reserved.
         async with write_connection(self.engine) as connection:
             result = await connection.execute(
@@ -666,18 +668,18 @@ class _SQLAlchemyReservation(Reservation):
                 .where(
                     PartitionRow.partition_namespace == self.partition_namespace,
                     PartitionRow.partition_name == self.partition_name,
-                    PartitionRow.incarnation == self.incarnation,
+                    PartitionRow.partition_uuid == self.partition_uuid,
                     PartitionRow.live.is_(False),
                 )
                 .values(live=True)
             )
         if result.rowcount != 1:
-            raise PartitionIncarnationEndedError(
-                self.partition_namespace, self.partition_name, self.incarnation
+            raise PartitionDeletedError(
+                self.partition_namespace, self.partition_name, self.partition_uuid
             )
         return _SQLAlchemyRegistration(
             partition_name=self.partition_name,
-            incarnation=self.incarnation,
+            partition_uuid=self.partition_uuid,
             engine=self.engine,
             partition_namespace=self.partition_namespace,
         )
@@ -689,7 +691,7 @@ class _SQLAlchemyReservation(Reservation):
         await _unregister_where(
             self.engine,
             self.partition_namespace,
-            PartitionRow.incarnation == self.incarnation,
+            PartitionRow.partition_uuid == self.partition_uuid,
             PartitionRow.live.is_(False),
         )
 
@@ -706,15 +708,15 @@ class _SQLAlchemyRegistration(Registration):
         async with self.engine.connect() as connection:
             current = (
                 await connection.execute(
-                    select(PartitionRow.incarnation).where(
+                    select(PartitionRow.partition_uuid).where(
                         PartitionRow.partition_namespace == self.partition_namespace,
                         PartitionRow.partition_name == self.partition_name,
                     )
                 )
             ).scalar_one_or_none()
-        if current != self.incarnation:
-            raise PartitionIncarnationEndedError(
-                self.partition_namespace, self.partition_name, self.incarnation
+        if current != self.partition_uuid:
+            raise PartitionDeletedError(
+                self.partition_namespace, self.partition_name, self.partition_uuid
             )
 
 
@@ -734,14 +736,14 @@ async def _unregister_where(
                 .where(
                     PartitionRow.partition_namespace == partition_namespace, *conditions
                 )
-                .returning(PartitionRow.incarnation)
+                .returning(PartitionRow.partition_uuid)
             )
         ).one_or_none()
         if row is None:
             return
         await connection.execute(
             insert(PurgeQueueRow).values(
-                incarnation=row.incarnation,
+                partition_uuid=row.partition_uuid,
                 partition_namespace=partition_namespace,
                 enqueued_at=func.now(),
             )

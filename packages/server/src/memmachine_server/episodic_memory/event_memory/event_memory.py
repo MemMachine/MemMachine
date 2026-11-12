@@ -32,7 +32,7 @@ from memmachine_server.common.metrics_factory import (
 from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
-    PartitionIncarnationEndedError,
+    PartitionDeletedError,
     PartitionPendingError,
     PartitionRegistry,
     Registration,
@@ -164,9 +164,9 @@ class EventMemory:
     Event memory over a segment store and a vector store.
 
     Event memory owns its partition namespace: its registry names each
-    partition and mints an incarnation for each of its lives, and each store
-    holds a life's records under the incarnation. Handles on a partition
-    read and write that life only.
+    partition and mints its UUID, and each store holds a partition's records
+    under the UUID. A name deleted and created again names a new partition,
+    and a handle reads and writes the partition it was opened on only.
     """
 
     PARTITION_NAMESPACE: Final[str] = "event_memory"
@@ -217,8 +217,8 @@ class EventMemory:
         """
         Open the partition if it exists, or create it if it does not.
 
-        Creating reserves the name in the registry, prepares every store's
-        storage under the minted incarnation, and confirms the reservation.
+        Creating reserves the name in the registry, creates every store's
+        storage under the minted UUID, and confirms the reservation.
 
         Args:
             partition_name (str):
@@ -226,7 +226,7 @@ class EventMemory:
 
         Returns:
             EventMemoryPartition:
-                A handle bound to the partition's current life.
+                A handle bound to the partition registered under the name.
 
         Raises:
             ValueError:
@@ -237,26 +237,22 @@ class EventMemory:
             PartitionCreateAttemptsExhaustedError:
                 If every attempt to open or create the partition lost the
                 name to another creator or deleter.
-            PartitionIncarnationEndedError:
+            PartitionDeletedError:
                 If the partition was deleted before its handle was built.
         """
         validate_partition_name(partition_name)
         registration = await self._open_or_create_registration(partition_name)
-        segment_store_partition = (
-            await self._params.segment_store.open_partition_incarnation(
-                registration.incarnation
-            )
+        segment_store_partition = await self._params.segment_store.open_partition(
+            registration.partition_uuid
         )
         if segment_store_partition is None:
-            raise PartitionIncarnationEndedError(
+            raise PartitionDeletedError(
                 self._params.partition_registry.partition_namespace,
                 registration.partition_name,
-                registration.incarnation,
+                registration.partition_uuid,
             )
-        vector_store_partition = (
-            await self._params.vector_store.open_partition_incarnation(
-                registration.incarnation
-            )
+        vector_store_partition = await self._params.vector_store.open_partition(
+            registration.partition_uuid
         )
         return EventMemoryPartition(
             self._params,
@@ -275,14 +271,12 @@ class EventMemory:
         is answered; a pending one is another creator's, so the call waits for
         it; no partition means create; losing the reservation means another
         creator took the name meanwhile; and losing the confirmation means a
-        deleter removed the partition while its storage was prepared, so the
+        deleter removed the partition while its storage was created, so the
         call creates again.
         """
         partition_registry = self._params.partition_registry
         pending_error: PartitionPendingError | None = None
-        lost_race: (
-            PartitionAlreadyExistsError | PartitionIncarnationEndedError | None
-        ) = None
+        lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
         for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
             if attempt:
                 await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
@@ -300,8 +294,8 @@ class EventMemory:
                 lost_race = err
                 continue
             try:
-                return await self._prepare_and_confirm_or_cancel(reservation)
-            except PartitionIncarnationEndedError as err:
+                return await self._create_and_confirm_or_cancel(reservation)
+            except PartitionDeletedError as err:
                 lost_race = err
                 continue
         # The last lookup found the partition pending.
@@ -312,10 +306,10 @@ class EventMemory:
             f"after {_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
         ) from lost_race
 
-    async def _prepare_and_confirm_or_cancel(
+    async def _create_and_confirm_or_cancel(
         self, reservation: Reservation
     ) -> Registration:
-        """Prepare a reserved partition's storage and confirm the reservation, cancelling it if either raises or the creation is cancelled.
+        """Create a reserved partition's storage and confirm the reservation, cancelling it if either raises or the creation is cancelled.
 
         The cancel acts only on a pending partition, so a confirmation that
         committed before its failure or cancellation was observed stands. A
@@ -323,7 +317,7 @@ class EventMemory:
         until it is deleted.
         """
         try:
-            await self._prepare_partition_incarnation(reservation.incarnation)
+            await self._create_partition(reservation.partition_uuid)
             return await reservation.confirm()
         except BaseException:
             # Shielded, so a cancelled creation still frees the name. The task
@@ -348,16 +342,16 @@ class EventMemory:
                 await asyncio.shield(cancellation)
             raise
 
-    async def _prepare_partition_incarnation(self, incarnation: UUID) -> None:
-        """Prepare every store's storage for a reserved partition incarnation."""
+    async def _create_partition(self, partition_uuid: UUID) -> None:
+        """Create every store's storage for a reserved partition."""
         await _on_every_store(
-            "prepare",
-            incarnation,
+            "create",
+            partition_uuid,
             [
-                self._params.segment_store.prepare_partition_incarnation(
-                    incarnation, SegmentStorePartitionConfig()
+                self._params.segment_store.create_partition(
+                    partition_uuid, SegmentStorePartitionConfig()
                 ),
-                self._params.vector_store.prepare_partition_incarnation(incarnation),
+                self._params.vector_store.create_partition(partition_uuid),
             ],
         )
 
@@ -366,7 +360,7 @@ class EventMemory:
         Delete the partition. Idempotent.
 
         The partition is unreachable once its name is unregistered, and its
-        incarnation's records await the purge.
+        partition's records await the purge.
 
         Args:
             partition_name (str):
@@ -375,38 +369,38 @@ class EventMemory:
         await self._params.partition_registry.unregister(partition_name)
 
     @staticmethod
-    async def purge_partition_incarnation(
+    async def purge_partition(
         segment_store: SegmentStore,
         vector_store: VectorStore,
-        incarnation: UUID,
+        partition_uuid: UUID,
     ) -> bool:
         """
-        Purge a bounded batch of a deleted partition incarnation's records from every store.
+        Purge a bounded batch of a deleted partition's records from every store.
 
         The purge round of event memory's partition namespace: the registry
-        calls it once the incarnation's retention has passed, until it
+        calls it once the partition's retention has passed, until it
         returns False. Every store finishes its batch before the round's
         outcome is decided, so the stores that answer keep purging while
         another is down; the round then raises the first store's error.
 
         Args:
             segment_store (SegmentStore):
-                The segment store holding the incarnation's segments.
+                The segment store holding the partition's segments.
             vector_store (VectorStore):
-                The vector store holding the incarnation's derivatives.
-            incarnation (UUID):
-                The incarnation of a deleted partition.
+                The vector store holding the partition's derivatives.
+            partition_uuid (UUID):
+                The deleted partition's UUID.
 
         Returns:
             bool:
-                Whether any store found anything of the incarnation's.
+                Whether any store found anything of the partition's.
         """
         found = await _on_every_store(
             "purge",
-            incarnation,
+            partition_uuid,
             [
-                segment_store.purge_partition_incarnation(incarnation),
-                vector_store.purge_partition_incarnation(incarnation),
+                segment_store.purge_partition(partition_uuid),
+                vector_store.purge_partition(partition_uuid),
             ],
         )
         return any(found)
@@ -635,9 +629,9 @@ class EventMemoryPartition:
     """
     A handle on one partition of an EventMemory.
 
-    Reads and writes only its partition's life in each store, and fences
-    each operation by the life's registration: an operation begun after the
-    partition was deleted raises PartitionIncarnationEndedError, whether or
+    Reads and writes only its partition in each store, and fences each
+    operation by the partition's registration: an operation begun after the
+    partition was deleted raises PartitionDeletedError, whether or
     not a partition was created again under the name since. Obtained from
     `EventMemory.open_or_create_partition`.
     """
@@ -659,7 +653,7 @@ class EventMemoryPartition:
             params (EventMemoryParams):
                 Parameters of the EventMemory.
             registration (Registration):
-                The registration of the partition's life.
+                The partition's registration.
             segment_store_partition (SegmentStorePartition):
                 The partition's segment store partition.
             vector_store_partition (VectorStorePartition):
@@ -744,13 +738,13 @@ class EventMemoryPartition:
             ValueError:
                 If any event supplies an illegal property key, or one of
                 the memory's own reserved keys.
-            PartitionIncarnationEndedError:
+            PartitionDeletedError:
                 If the partition was deleted before the events were stored,
                 or while they were.
         """
         async with self._tracker("encode_events"):
             # Checked before and after the writes: a write that completed
-            # under a life that died meanwhile raises instead of reporting
+            # to a partition deleted meanwhile raises instead of reporting
             # success, and the purge reclaims what it wrote.
             await self._registration.require_current()
             await self._encode_events(events, format_options=format_options)
@@ -935,7 +929,7 @@ class EventMemoryPartition:
                 The query result.
 
         Raises:
-            PartitionIncarnationEndedError:
+            PartitionDeletedError:
                 If the partition was deleted before the query began.
 
         """
@@ -1113,7 +1107,7 @@ class EventMemoryPartition:
         Forget events by their UUIDs.
 
         Raises:
-            PartitionIncarnationEndedError:
+            PartitionDeletedError:
                 If the partition was deleted before the events were
                 forgotten, or while they were.
         """
@@ -1123,7 +1117,7 @@ class EventMemoryPartition:
 
         async with self._tracker("forget_events"):
             # Checked after the deletes only: a delete adds nothing a purge
-            # must reclaim, and reaches only this life's records.
+            # must reclaim, and reaches only this partition's records.
             await self._forget_events(event_uuids)
             await self._registration.require_current()
 
@@ -1165,16 +1159,16 @@ class EventMemoryPartition:
 
 
 async def _on_every_store[T](
-    step: str, incarnation: UUID, calls: Sequence[Awaitable[T]]
+    step: str, partition_uuid: UUID, calls: Sequence[Awaitable[T]]
 ) -> list[T]:
-    """Run one step of a partition incarnation's lifecycle on every store at once, and raise the first error once every store has finished."""
+    """Run one step of a partition's lifecycle on every store at once, and raise the first error once every store has finished."""
     results = await asyncio.gather(*calls, return_exceptions=True)
     errors = [result for result in results if isinstance(result, BaseException)]
     for error in errors:
         logger.error(
-            "A store failed to %s partition incarnation %s",
+            "A store failed to %s partition %s",
             step,
-            incarnation,
+            partition_uuid,
             exc_info=error,
         )
     if errors:

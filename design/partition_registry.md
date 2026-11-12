@@ -21,7 +21,7 @@ processes:
   write in flight during it.
 
 With a catalog in a relational database, each store is safe on its own. But
-each store keeps its own catalog of partitions and mints its own incarnation
+each store keeps its own catalog of partitions and mints its own partition UUID
 for each life of a name: the segment store, the registry behind the Qdrant
 and Milvus stores, and both SQLite vector stores, each with its own mint
 loop. Event memory keeps events, segments, and derivative links in the
@@ -46,11 +46,11 @@ composes its stores by name:
 A tenant's catalog entry lives where a primary key and a transaction can
 arbitrate it: a relational database, reached through SQLAlchemy. One
 registry per memory system holds the catalog of the memory's tenants. It
-mints one incarnation for each life of a partition name, and every store of
-the memory holds that life's records under that incarnation. Stores keep no
+mints one partition UUID for each life of a partition name, and every store of
+the memory holds that life's records under that partition UUID. Stores keep no
 catalog of their own and mint nothing, and a backend keeps only records, each
-carrying the *incarnation* of the life that wrote it. A partition's
-incarnations are isolated from one another: records written under one are
+carrying the *partition UUID* of the life that wrote it. A partition's
+partition UUIDs are isolated from one another: records written under one are
 never read under another, so a partition's next life starts empty in every
 store.
 
@@ -60,7 +60,7 @@ store.
   memory system, such as `event_memory`, shared by every process serving it.
   It arbitrates creation, makes deletion one transaction, queues each deleted
   life as a tombstone, and runs purge rounds on due tombstones through a
-  callback. It knows partition names, incarnations, and tombstones, and
+  callback. It knows partition names, partition UUIDs, and tombstones, and
   nothing about stores. `PartitionRegistry` (`common/partition_registry/`)
   is the ABC, and `SQLAlchemyPartitionRegistry` its one implementation. It
   supports PostgreSQL and SQLite 3.35 or newer (for `RETURNING`), and its
@@ -69,7 +69,7 @@ store.
   holds its stores, prepares each store's partition for a new life, opens
   each store's partition for a live one, fences its operations, and
   supplies the purge callback.
-- **A store** holds records under incarnations. It prepares a life's
+- **A store** holds records under partition UUIDs. It prepares a life's
   storage, opens a handle on a live life, and purges a dead life's records,
   each when its owner calls it. Nothing in the owner assumes how a backend
   lays records out. Qdrant and Milvus keep every partition of a store in its
@@ -77,7 +77,7 @@ store.
   backend with a unit per tenant, such as a Pinecone or turbopuffer
   namespace, a Chroma collection, or a Weaviate tenant, makes the partition's
   unit when it prepares the life's storage, which runs after the reservation
-  that mints the incarnation naming it, and its purge drops it.
+  that mints the partition UUID naming it, and its purge drops it.
 - **`Reservation` and `Registration`** are handles on one life of a
   partition (see [Reservations and
   registrations](#reservations-and-registrations)).
@@ -114,30 +114,30 @@ class PartitionRegistry(ABC):
     async def run_purge_round(self, purge_round: PurgeRound) -> bool: ...
 
 
-class Reservation:  # partition_name, incarnation
+class Reservation:  # partition_name, partition_uuid
     async def confirm(self) -> Registration: ...
     async def cancel(self) -> None: ...
 
 
-class Registration:  # partition_name, incarnation
+class Registration:  # partition_name, partition_uuid
     async def require_current(self) -> None: ...
 ```
 
-A store's side of the lifecycle, addressed by a partition's incarnation, since
+A store's side of the lifecycle, addressed by a partition's partition UUID, since
 stores hold no names:
 
 ```python
-async def prepare_partition_incarnation(self, incarnation: UUID) -> None: ...
-async def open_partition_incarnation(self, incarnation: UUID) -> StorePartition: ...
-async def purge_partition_incarnation(self, incarnation: UUID) -> bool: ...
+async def create_partition(self, partition_uuid: UUID) -> None: ...
+async def open_partition(self, partition_uuid: UUID) -> StorePartition: ...
+async def purge_partition(self, partition_uuid: UUID) -> bool: ...
 ```
 
-`prepare_partition_incarnation` prepares the storage a life needs of its own,
-raises when it cannot, and is safe to repeat. `open_partition_incarnation`
-answers a partition handle bound to the incarnation, which checks its inputs
-and nothing about the life. `purge_partition_incarnation` deletes a bounded
-batch of what the incarnation holds: its records, then the storage
-`prepare_partition_incarnation` made for it. It is safe to repeat and to run
+`create_partition` prepares the storage a life needs of its own,
+raises when it cannot, and is safe to repeat. `open_partition`
+answers a partition handle bound to the partition UUID, which checks its inputs
+and nothing about the life. `purge_partition` deletes a bounded
+batch of what the partition UUID holds: its records, then the storage
+`create_partition` made for it. It is safe to repeat and to run
 on two processes at once, and returns whether it found anything, so a round
 that finds nothing proves the life gone from the store. Deletion is the
 registry's, and a store deletes a life's storage only in its purge, after
@@ -147,7 +147,7 @@ outlive it, even on a backend that creates storage on first write.
 ### Reservations and registrations
 
 The registry is addressed by partition name. What acts on one life of a
-partition is a handle bound to that life's incarnation: the creator's
+partition is a handle bound to that life's partition UUID: the creator's
 reservation, or a registration.
 
 | Object | Operations | Answered by |
@@ -157,13 +157,13 @@ reservation, or a registration.
 | `Registration` | `require_current` | `resolve`, `confirm` |
 
 - **Why handles.** Every operation on one life of a partition needs that
-  life's incarnation: confirming it, cancelling it, and checking that it was
-  not deleted. As methods of the registry, each would take the incarnation as
+  life's partition UUID: confirming it, cancelling it, and checking that it was
+  not deleted. As methods of the registry, each would take the partition UUID as
   an argument. The registry would then have two addressing schemes, names and
-  incarnations, and every caller would carry the UUID `reserve` minted back
+  partition UUIDs, and every caller would carry the UUID `reserve` minted back
   into later calls, where any UUID fits: another partition's, a deleted
   one's, or one compared by hand against a lookup. On a handle, the
-  incarnation is bound once, when the registry answers the handle, and no
+  partition UUID is bound once, when the registry answers the handle, and no
   call takes it again. Its holder reads it to address the stores' records,
   and never passes it back.
 - **Why two types.** What may be done with a partition depends on who holds
@@ -181,9 +181,9 @@ reservation, or a registration.
   a deletion shows as the handle's methods raising. The words follow two
   known patterns: Try-Confirm/Cancel for the creator (reserve, then confirm
   or cancel), and the stale handle for everyone else (`require_current`,
-  `PartitionIncarnationEndedError`).
+  `PartitionDeletedError`).
 - **Why no state fields.** A handle's fields (partition name and
-  incarnation) belong to its life and never change. Whether the partition is
+  partition UUID) belong to its life and never change. Whether the partition is
   pending, live, or deleted changes under every holder: a `live` field would
   be a snapshot, made stale by the creator's own `confirm`. The state is
   conveyed instead by the outcome of each call. `reserve` answers a
@@ -195,13 +195,13 @@ reservation, or a registration.
   are all addressed by name. An owner's handle on a tenant is
   built from one registration, and its fence is one call. The owner's
   creation flow reads as the lifecycle it implements: reserve, prepare
-  storage under the reservation's incarnation, then confirm the reservation,
+  storage under the reservation's partition UUID, then confirm the reservation,
   or cancel it if the preparation fails.
 
-### Names and incarnations
+### Names and partition UUIDs
 
 Callers address partitions by name, and only the registry holds names. A
-store addresses its partitions by incarnation, so the segment store's
+store addresses its partitions by partition UUID, so the segment store's
 32-byte identifier rule gives way to the registry's own rule: a name is
 non-empty, at most 255 bytes, and free of NUL, which PostgreSQL's text type
 cannot store. A caller's identifier, such as a session id, is the partition
@@ -229,16 +229,16 @@ keeps the schema static.
 | Column | Type | Role |
 |---|---|---|
 | `partition_namespace`, `partition_name` | string, primary key | The partition's identity. The primary key arbitrates creation. |
-| `incarnation` | UUID, unique | The partition's current life. Its records carry it. |
+| `partition_uuid` | UUID, unique | The partition's current life. Its records carry it. |
 | `live` | boolean | Whether the partition's storage is prepared. A pending partition holds its name; only a live one is opened. |
 | `registered_at` | timestamp | When the partition was registered, on the database clock. An operator finds a partition stuck pending by it, and opening a pending partition reports it. |
 
-`partition_registry_gc`, the purge queue, one row per deleted incarnation
+`partition_registry_gc`, the purge queue, one row per deleted partition UUID
 (its *tombstone*; see [purge](vector_store_purge.md)):
 
 | Column | Type | Role |
 |---|---|---|
-| `incarnation` | UUID, primary key | The deleted life whose records remain. |
+| `partition_uuid` | UUID, primary key | The deleted life whose records remain. |
 | `partition_namespace` | string | Whose purge claims the tombstone. |
 | `enqueued_at` | timestamp | When the deletion committed, on the database clock. |
 | `attempts_without_progress` | integer | Purge rounds claimed since a round last found records and deleted them, the open one included; a cancelled round's attempt is taken back. |
@@ -249,27 +249,27 @@ Index `partition_registry_gc__ns_ea` on (`partition_namespace`, `enqueued_at`)
 bounds the purge claim, equality before order. The index follows the
 repository's naming scheme (table, two letters per column).
 
-The incarnation alone locates a dead life's records, since every store holds
+The partition UUID alone locates a dead life's records, since every store holds
 them under it. A tombstone holds only what the purge reads.
 
 ### Operations
 
 **`reserve(partition_name) -> Reservation`.** Mints a random
 UUID (version 4) and inserts the partition's row, pending. In the same
-transaction, *after* the insert, a locking read checks that the incarnation is
+transaction, *after* the insert, a locking read checks that the partition UUID is
 not waiting in the purge queue. After the insert, a concurrent deletion that
 moved a colliding row to the queue has already committed, because the insert
-waited on it. After the check no queue row for this incarnation can appear
+waited on it. After the check no queue row for this partition UUID can appear
 before commit, because the only row carrying it is this uncommitted one. A
 primary-key violation with a row under the name, live or pending, raises
-`PartitionAlreadyExistsError`. A rejected incarnation (unique violation, or
+`PartitionAlreadyExistsError`. A rejected partition UUID (unique violation, or
 queued) is re-minted, up to 10 attempts, then
 `PartitionCreateAttemptsExhaustedError`. The loop and its bound are the
 segment store's.
 
 **`Reservation.confirm()`** marks the row live with an `UPDATE` conditional on
-the reservation's incarnation, which is unique, and on the row being pending,
-and answers the `Registration`; it raises `PartitionIncarnationEndedError`
+the reservation's partition UUID, which is unique, and on the row being pending,
+and answers the `Registration`; it raises `PartitionDeletedError`
 when it matches nothing. A creation whose partition was deleted while its
 storage was prepared matches nothing, so it cannot confirm a partition
 reserved under the name since.
@@ -278,18 +278,18 @@ reserved under the name since.
 state: a `Registration` when it is live, `PartitionPendingError`, with when
 the partition was reserved, when it is pending, and `None` when there is
 none. It is how a handle is opened: callers address partitions by name, and
-the name is resolved to a live incarnation once, at open.
+the name is resolved to a live partition UUID once, at open.
 
 **`Registration.require_current()`** reads the row under the
-registration's name and raises `PartitionIncarnationEndedError` unless it
-carries the registration's incarnation. It is how a handle is fenced (see
+registration's name and raises `PartitionDeletedError` unless it
+carries the registration's partition UUID. It is how a handle is fenced (see
 [Fencing](#fencing)).
 
 **`unregister(partition_name)`** is one transaction: `DELETE ... RETURNING` the
 partition's row, pending or live, then insert its tombstone with
 `enqueued_at = now()`. The partition is unreachable when it commits.
 **`Reservation.cancel()`** does the same for the row carrying the
-reservation's incarnation while it is pending: a creation whose storage
+reservation's partition UUID while it is pending: a creation whose storage
 preparation raised takes back its own reservation that way, never one made
 under the name since, and never its partition once confirmed, which only a
 deletion by name ends, even when the confirmation committed but its answer
@@ -304,8 +304,8 @@ purge](#deletion-and-purge).
 ### Creation
 
 Creation is *reserved, prepared, then confirmed*. The owner reserves the
-name, which mints the incarnation and leaves the life pending, calls every
-store's `prepare_partition_incarnation` at once, and confirms the
+name, which mints the partition UUID and leaves the life pending, calls every
+store's `create_partition` at once, and confirms the
 reservation, which makes the life live. Every call finishes before the
 outcome is decided: if any raised, the owner logs each error, cancels the
 reservation, and raises the first, so no store is still preparing storage
@@ -322,7 +322,7 @@ stores matters, since nothing opens the life before it is confirmed.
   partition holds the name.
 - A preparation or confirmation that raises, or is cancelled, cancels the
   reservation when the registry can, which frees the name and queues the
-  incarnation's tombstone; a confirmation that committed before its failure
+  partition's tombstone; a confirmation that committed before its failure
   was observed stands, since the cancel acts only on a pending partition. The
   reservation's cancellation is shielded, so a cancellation of the creation
   does not cut it short. Otherwise, and after a crash, the partition stays
@@ -330,16 +330,16 @@ stores matters, since nothing opens the life before it is confirmed.
 - A life is confirmed only once every store has prepared its storage, so
   storage that cannot be prepared never goes live. Whatever a failed or
   interrupted preparation leaves is recoverable: the life's own storage is
-  reclaimed by its incarnation's purge rounds once it is cancelled or
-  deleted. Every creation prepares storage under a new incarnation, so
+  reclaimed by its partition's purge rounds once it is cancelled or
+  deleted. Every creation prepares storage under a new partition UUID, so
   nothing deletes and creates storage in place. The storage a store's
   partitions share is prepared at startup, each step idempotent, so a
   startup that failed part way is completed by the next (the
   [Qdrant](qdrant_vector_store.md) and [Milvus](milvus_vector_store.md)
   documents say how).
 - A partition deleted while its storage is prepared is not marked live, since
-  the mark is conditional on its incarnation: the creation raises
-  `PartitionIncarnationEndedError`.
+  the mark is conditional on its partition UUID: the creation raises
+  `PartitionDeletedError`.
 
 Only creation creates. Opening a name reads the registry: a live life is
 opened, and a pending one is waited for, a bounded number of times, and
@@ -347,7 +347,7 @@ then reported as pending. A creation that stopped part way, with its
 process, leaves its life pending until the name is deleted. Whether and when
 to give up on a creation is its caller's decision: the caller deletes the
 name and creates it again, and the stopped creator's `confirm`, conditional
-on its own incarnation, then fails.
+on its own partition UUID, then fails.
 
 An owner that opens a name and creates the partition when none holds it
 composes the two itself, as read-then-create retried a bounded number of
@@ -362,8 +362,8 @@ opens a session's partition this way, and semantic memory its one partition.
 
 ### Fencing
 
-A handle is bound to the incarnation it was opened under. After that life is
-deleted, every operation on the handle raises `PartitionIncarnationEndedError`,
+A handle is bound to the partition UUID it was opened under. After that life is
+deleted, every operation on the handle raises `PartitionDeletedError`,
 and a partition created again under the same name is a new life the old
 handle cannot reach.
 
@@ -377,7 +377,7 @@ first, a query the second, and a forget the third.
 - The check after a write makes a write that completed under a life that
   died meanwhile raise instead of reporting success.
 - A delete checks once, after it runs: it adds nothing a purge must reclaim,
-  and a stale handle's delete reaches only its own incarnation.
+  and a stale handle's delete reaches only its own partition UUID.
 - A handle is given its registration alone.
 - A read is not checked afterwards. A deleted life's records stay until a
   purge round claims its tombstone, so a read in flight when the deletion
@@ -386,7 +386,7 @@ first, a query the second, and a forget the third.
 - Stores, SQL ones included, check nothing themselves. No lock spans a
   store's call or transaction, on the registry or in a process.
 
-A write can still land under a dead incarnation: between its two checks, or
+A write can still land under a dead partition UUID: between its two checks, or
 after a check that never ran because the process died. No store refuses it
 and no handle reads it, so the purge reclaims it, which is why a tombstone
 waits out a retention before its purge starts. Every write finishes within a
@@ -400,20 +400,20 @@ paused remote writer already is.
 
 `unregister(partition_name)` is one transaction: the name is free and the
 life unreachable when it commits, and its tombstone is queued. A creation
-under the name mints a new incarnation at once, so a re-created tenant starts
+under the name mints a new partition UUID at once, so a re-created tenant starts
 empty in every store.
 
 A tombstone comes due once the namespace's retention has passed since the
 deletion. A purge round claims it under a lease, with backoff and
-dead-lettering, and calls the owner's callback with the incarnation. The
-callback runs every store's `purge_partition_incarnation` to completion at
+dead-lettering, and calls the owner's callback with the partition UUID. The
+callback runs every store's `purge_partition` to completion at
 once, then raises if any raised, and otherwise answers whether any found
 records; the tombstone goes when a round finds nothing in any store.
 Letting every store finish its batch keeps the stores that answer purging
 while another is down; the round still counts as failed, so the registry's
 backoff applies. A store
 keeps whatever progress its purge needs between rounds, such as the segment
-store's per-table cursors, under the incarnation, and drops it when its purge
+store's per-table cursors, under the partition UUID, and drops it when its purge
 finds nothing. A namespace's rounds run through its owner's stores: a round
 run through stores that cannot reach the records finds none, removes the
 tombstone, and leaves the records behind.
@@ -439,23 +439,23 @@ stores.
 
 - Event memory's registry holds its partition namespace. Its stores are the
   segment store and the vector store, each holding a tenant's records under
-  the incarnation. The segment store keeps one row per incarnation, with its
+  the partition UUID. The segment store keeps one row per partition UUID, with its
   payload codec configuration and, during its purge, its cursors, and no
   name.
 - `delete_partition` is `unregister`. The purge callback purges the segment
-  store's and the vector store's records of the incarnation.
+  store's and the vector store's records of the partition UUID.
 - Event memory's deployment configuration (`episodic_memory.long_term_memory`)
   names the registry's database (`partition_registry`, required for the
   event backend) and the retention (`tombstone_retention_seconds`), one of
   each for every session's partition.
 - A further derived index is a further store: one more
-  `prepare_partition_incarnation` call and one more
-  `purge_partition_incarnation` call, with no schema change.
+  `create_partition` call and one more
+  `purge_partition` call, with no schema change.
 
 Semantic memory's vector-store backend keeps the one partition it never
 deletes: it opens the name `semantic_memory` in the namespace
 `semantic_memory` through the registry, as event memory opens a name, and
-opens its vector store's partition by the incarnation. The registry is in
+opens its vector store's partition by the partition UUID. The registry is in
 the SQL database semantic memory's vector backend already uses, and the
 partition is never deleted, so semantic memory takes no new setting: its
 retention is fixed at a day.
@@ -504,8 +504,8 @@ queue, its idempotent deletion that queues a tombstone, and its claim under
   database, and an operation pays one check before and one after its
   writes, whatever number of stores it calls.
 - **Deletion is by name.** Callers delete partitions by name, and the name is
-  resolved to its incarnation inside the deleting transaction. Keying it by
-  incarnation alone would make every caller resolve the name first, in a
+  resolved to its partition UUID inside the deleting transaction. Keying it by
+  partition UUID alone would make every caller resolve the name first, in a
   separate transaction, and would still need the name-addressed path for a
   caller that holds no handle; a pending reservation's `cancel` serves the
   creation taking back its own. A memory system's lifecycle is tied to no
@@ -557,13 +557,13 @@ queue, its idempotent deletion that queues a tombstone, and its claim under
   the cost of a second liveness mechanism and of placing the registry in
   that database.
 - **Storage first, registry last**, with no pending state. Storage named by a
-  life's incarnation cannot be made before the registry mints the
-  incarnation, so a life's own storage is prepared after its reservation,
+  life's partition UUID cannot be made before the registry mints the
+  partition UUID, so a life's own storage is prepared after its reservation,
   and the storage a store's partitions share is prepared at startup. The cost
   is a pending row a crash leaves, deleted like any other.
-- **One registry class for both levels**, with `mark_live(incarnation)`,
-  `unregister_incarnation(incarnation)` and a lookup answering the state as
-  fields. Callers carry incarnations back into the registry, any incarnation
+- **One registry class for both levels**, with `mark_live(partition_uuid)`,
+  `unregister_partition(partition_uuid)` and a lookup answering the state as
+  fields. Callers carry partition UUIDs back into the registry, any partition UUID
   fits any call, and the state fields go stale; see
   [Reservations and registrations](#reservations-and-registrations).
 - **One handle type for every state**, answered by `reserve` and the lookup
@@ -574,7 +574,7 @@ queue, its idempotent deletion that queues a tombstone, and its claim under
   name does not.
 - **Opening by a lookup and a separate liveness read.** Opening would take
   two reads instead of one.
-- **The incarnation as the only identifier**, with names resolved elsewhere.
+- **The partition UUID as the only identifier**, with names resolved elsewhere.
   Callers address partitions by name, so the name lookup has to be arbitrated
   somewhere; the primary key on `(partition_namespace, partition_name)` is that
   place.
@@ -587,4 +587,4 @@ queue, its idempotent deletion that queues a tombstone, and its claim under
 - A deleted tenant's records stay physically until its purge, after the
   retention; they are unreachable from the deletion.
 - A store is used through its owner, which holds the registry.
-- Stores address partitions by incarnation, not by name.
+- Stores address partitions by partition UUID, not by name.

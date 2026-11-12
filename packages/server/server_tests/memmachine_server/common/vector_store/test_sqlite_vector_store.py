@@ -37,7 +37,7 @@ from memmachine_server.common.vector_store.sqlite_vector_store import (
     SQLiteVectorStore,
     SQLiteVectorStoreParams,
     SQLiteVectorStorePartition,
-    _PartitionIncarnationRow,
+    _PartitionRow,
     _PendingOperationRow,
 )
 from memmachine_server.common.vector_store.vector_search_engine.usearch_engine import (
@@ -158,15 +158,15 @@ async def _store_with(store, vector_store_name: str, **overrides) -> SQLiteVecto
 
 
 async def _open(store: SQLiteVectorStore) -> SQLiteVectorStorePartition:
-    """A handle on a freshly prepared partition incarnation."""
-    incarnation = uuid4()
-    await store.prepare_partition_incarnation(incarnation)
-    return await store.open_partition_incarnation(incarnation)
+    """A handle on a freshly prepared partition."""
+    partition_uuid = uuid4()
+    await store.create_partition(partition_uuid)
+    return await store.open_partition(partition_uuid)
 
 
-async def _purge(store: SQLiteVectorStore, incarnation: UUID) -> None:
-    """Purge the incarnation until the store finds nothing of it."""
-    while await store.purge_partition_incarnation(incarnation):
+async def _purge(store: SQLiteVectorStore, partition_uuid: UUID) -> None:
+    """Purge the partition UUID until the store finds nothing of it."""
+    while await store.purge_partition(partition_uuid):
         pass
 
 
@@ -175,12 +175,12 @@ async def partition(store):
     return await _open(store)
 
 
-# ── Partition incarnation lifecycle ──
+# ── Partition lifecycle ──
 
 
 class TestPartitionLifecycle:
     @pytest.mark.asyncio
-    async def test_a_prepared_incarnation_opens_and_holds_its_records(self, store):
+    async def test_a_created_partition_opens_and_holds_its_records(self, store):
         partition = await _open(store)
         assert isinstance(partition, SQLiteVectorStorePartition)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
@@ -192,18 +192,18 @@ class TestPartitionLifecycle:
         assert [match.record_uuid for match in result.matches] == [record.uuid]
 
     @pytest.mark.asyncio
-    async def test_preparing_an_incarnation_again_changes_nothing(self, tmp_path):
+    async def test_creating_a_partition_again_changes_nothing(self, tmp_path):
         store, engine = await _fresh_store(
             tmp_path / "test.db", tmp_path, save_threshold=1
         )
         partition = await _open(store)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await partition.upsert(records=[record])
-        assert await _get_index_saved(engine, partition._incarnation) is True
+        assert await _get_index_saved(engine, partition._partition_uuid) is True
 
-        await store.prepare_partition_incarnation(partition._incarnation)
+        await store.create_partition(partition._partition_uuid)
 
-        assert await _get_index_saved(engine, partition._incarnation) is True
+        assert await _get_index_saved(engine, partition._partition_uuid) is True
         assert set(await _stored(partition)) == {record.uuid}
         [result] = await partition.query(query_vectors=[record.vector], limit=5)
         assert [match.record_uuid for match in result.matches] == [record.uuid]
@@ -212,7 +212,7 @@ class TestPartitionLifecycle:
         await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_incarnations_are_isolated_from_one_another(self, store):
+    async def test_partitions_are_isolated_from_one_another(self, store):
         first = await _open(store)
         second = await _open(store)
         shared = _make_record(
@@ -240,7 +240,7 @@ class TestPartitionLifecycle:
         assert [match.record_uuid for match in result.matches] == [shared.uuid]
 
     @pytest.mark.asyncio
-    async def test_purge_removes_what_the_incarnation_holds_then_finds_nothing(
+    async def test_purge_removes_what_the_partition_holds_then_finds_nothing(
         self, tmp_path
     ):
         store, engine = await _fresh_store(
@@ -248,7 +248,7 @@ class TestPartitionLifecycle:
         )
         baseline = await _table_names(engine)
         partition = await _open(store)
-        incarnation = partition._incarnation
+        partition_uuid = partition._partition_uuid
         # Two operations reach the save threshold and write the index file;
         # a third stays pending.
         await partition.upsert(
@@ -260,25 +260,25 @@ class TestPartitionLifecycle:
         await partition.upsert(
             records=[_make_record(vector=_normalize([0.0, 0.0, 1.0]))]
         )
-        assert await _get_index_saved(engine, incarnation) is True
+        assert await _get_index_saved(engine, partition_uuid) is True
         assert len(await _table_names(engine) - baseline) == 1
         assert await _pending_operation_count(engine) == 1
         assert len(list((tmp_path / "indexes").glob("*.idx"))) == 1
 
-        assert await store.purge_partition_incarnation(incarnation) is True
+        assert await store.purge_partition(partition_uuid) is True
 
-        assert await _get_index_saved(engine, incarnation) is None
+        assert await _get_index_saved(engine, partition_uuid) is None
         assert await _table_names(engine) == baseline
         assert await _pending_operation_count(engine) == 0
         assert list((tmp_path / "indexes").glob("*.idx")) == []
-        assert await store.purge_partition_incarnation(incarnation) is False
+        assert await store.purge_partition(partition_uuid) is False
 
         await store.shutdown()
         await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_purging_an_unknown_incarnation_finds_nothing(self, store):
-        assert await store.purge_partition_incarnation(uuid4()) is False
+    async def test_purging_an_unknown_partition_finds_nothing(self, store):
+        assert await store.purge_partition(uuid4()) is False
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):
@@ -799,13 +799,13 @@ class TestPartitionIsolation:
         results_a = await partition_a.query(query_vectors=[v1], limit=10)
         assert {match.record_uuid for match in results_a[0].matches} == {r1.uuid}
 
-        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_a._partition_uuid)
         assert set(await _stored(partition_b)) == {r2.uuid}
         await other.shutdown()
 
     @pytest.mark.asyncio
     async def test_purge_does_not_affect_sibling(self, store):
-        """Purging one incarnation doesn't break a sibling sharing the store's tables."""
+        """Purging one partition UUID doesn't break a sibling sharing the store's tables."""
         partition_a = await _open(store)
         partition_b = await _open(store)
 
@@ -815,7 +815,7 @@ class TestPartitionIsolation:
         await partition_a.upsert(records=[r1])
         await partition_b.upsert(records=[r2])
 
-        await _purge(store, partition_a._incarnation)
+        await _purge(store, partition_a._partition_uuid)
 
         results = await partition_b.query(query_vectors=[v1], limit=10)
         assert len(results[0].matches) == 1
@@ -1142,15 +1142,15 @@ class TestConcurrentAsync:
     async def test_concurrent_first_opens_share_one_search_engine(self, tmp_path):
         db_path = tmp_path / "test.db"
         creator, creator_engine = await _fresh_store(db_path, tmp_path)
-        incarnation = (await _open(creator))._incarnation
+        partition_uuid = (await _open(creator))._partition_uuid
         await creator.shutdown()
         await creator_engine.dispose()
 
         # A restarted store, whose first opens load the saved index.
         store, engine = await _fresh_store(db_path, tmp_path)
         first, second = await asyncio.gather(
-            store.open_partition_incarnation(incarnation),
-            store.open_partition_incarnation(incarnation),
+            store.open_partition(partition_uuid),
+            store.open_partition(partition_uuid),
         )
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await first.upsert(records=[record])
@@ -1203,14 +1203,13 @@ async def _unapplied_operation_counts(engine) -> dict[str, int]:
     async with session_factory() as session:
         rows = (
             await session.execute(
-                select(_PartitionIncarnationRow.vector_store_name, func.count())
+                select(_PartitionRow.vector_store_name, func.count())
                 .join(
                     _PendingOperationRow,
-                    _PendingOperationRow.incarnation
-                    == _PartitionIncarnationRow.incarnation,
+                    _PendingOperationRow.partition_uuid == _PartitionRow.partition_uuid,
                 )
                 .where(_PendingOperationRow.applied.is_(False))
-                .group_by(_PartitionIncarnationRow.vector_store_name)
+                .group_by(_PartitionRow.vector_store_name)
             )
         ).all()
     return {row[0]: row[1] for row in rows}
@@ -1237,7 +1236,7 @@ class TestCrashRecovery:
 
         # Restart with fresh in-memory engines.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition_incarnation(partition._incarnation)
+        partition_2 = await store2.open_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1267,7 +1266,7 @@ class TestCrashRecovery:
 
         # Restart: replay should re-apply unapplied ops to the engine.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition_incarnation(partition._incarnation)
+        partition_2 = await store2.open_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1314,7 +1313,7 @@ class TestCrashRecovery:
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition_incarnation(partition._incarnation)
+        partition_2 = await store2.open_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1343,7 +1342,7 @@ class TestCrashRecovery:
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition_incarnation(partition._incarnation)
+        partition_2 = await store2.open_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1378,7 +1377,7 @@ class TestCrashRecovery:
 
     @pytest.mark.asyncio
     async def test_cascade_deletes_pending_ops(self, tmp_path):
-        """Purging an incarnation cascades to its pending operations."""
+        """Purging a partition UUID cascades to its pending operations."""
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
 
@@ -1390,7 +1389,7 @@ class TestCrashRecovery:
         await partition.upsert(records=records)
         assert await _pending_operation_count(engine1) == 2
 
-        await _purge(store1, partition._incarnation)
+        await _purge(store1, partition._partition_uuid)
         assert await _pending_operation_count(engine1) == 0
 
         await store1.shutdown()
@@ -1406,13 +1405,13 @@ class TestCrashRecovery:
         store = SQLiteVectorStore(_params(engine))
 
         with pytest.raises(RuntimeError, match="startup"):
-            await store.prepare_partition_incarnation(uuid4())
+            await store.create_partition(uuid4())
 
         with pytest.raises(RuntimeError, match="startup"):
-            await store.open_partition_incarnation(uuid4())
+            await store.open_partition(uuid4())
 
         with pytest.raises(RuntimeError, match="startup"):
-            await store.purge_partition_incarnation(uuid4())
+            await store.purge_partition(uuid4())
 
         await engine.dispose()
 
@@ -1420,14 +1419,14 @@ class TestCrashRecovery:
 # ── Index file durability contract ──
 
 
-async def _get_index_saved(engine, incarnation: UUID) -> bool | None:
-    """The incarnation's index_saved flag, or None if the incarnation has no row."""
+async def _get_index_saved(engine, partition_uuid: UUID) -> bool | None:
+    """The partition's index_saved flag, or None if the partition UUID has no row."""
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         return (
             await session.execute(
-                select(_PartitionIncarnationRow.index_saved).where(
-                    _PartitionIncarnationRow.incarnation == incarnation,
+                select(_PartitionRow.index_saved).where(
+                    _PartitionRow.partition_uuid == partition_uuid,
                 )
             )
         ).scalar_one_or_none()
@@ -1438,12 +1437,12 @@ class TestIndexFileDurability:
 
     @pytest.mark.asyncio
     async def test_saved_flag_starts_false(self, tmp_path):
-        """A freshly prepared incarnation has index_saved=False."""
+        """A freshly prepared partition UUID has index_saved=False."""
         db_path = tmp_path / "test.db"
         store, engine = await _fresh_store(db_path, tmp_path)
         partition = await _open(store)
 
-        assert await _get_index_saved(engine, partition._incarnation) is False
+        assert await _get_index_saved(engine, partition._partition_uuid) is False
 
         await store.shutdown()
         await engine.dispose()
@@ -1459,7 +1458,7 @@ class TestIndexFileDurability:
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
 
-        assert await _get_index_saved(engine, partition._incarnation) is True
+        assert await _get_index_saved(engine, partition._partition_uuid) is True
 
         await store.shutdown()
         await engine.dispose()
@@ -1476,10 +1475,10 @@ class TestIndexFileDurability:
         )
 
         # Below save_threshold, so _maybe_save_index has not flipped the flag yet.
-        assert await _get_index_saved(engine, partition._incarnation) is False
+        assert await _get_index_saved(engine, partition._partition_uuid) is False
 
         await store.shutdown()
-        assert await _get_index_saved(engine, partition._incarnation) is True
+        assert await _get_index_saved(engine, partition._partition_uuid) is True
 
         await engine.dispose()
 
@@ -1527,13 +1526,13 @@ class TestIndexFileDurability:
         assert len(idx_files) == 1
         idx_files[0].unlink()
 
-        # Restart: open_partition_incarnation must surface the failure, not
+        # Restart: open_partition must surface the failure, not
         # return an engine silently rebuilt empty.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
         with pytest.raises(IndexLoadError) as exc_info:
-            await store2.open_partition_incarnation(partition._incarnation)
+            await store2.open_partition(partition._partition_uuid)
         assert exc_info.value.vector_store_name == VECTOR_STORE_NAME
-        assert exc_info.value.incarnation == partition._incarnation
+        assert exc_info.value.partition_uuid == partition._partition_uuid
         assert exc_info.value.__cause__ is not None
 
         await store2.shutdown()
@@ -1559,9 +1558,9 @@ class TestIndexFileDurability:
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
         with pytest.raises(IndexLoadError) as exc_info:
-            await store2.open_partition_incarnation(partition._incarnation)
+            await store2.open_partition(partition._partition_uuid)
         assert exc_info.value.vector_store_name == VECTOR_STORE_NAME
-        assert exc_info.value.incarnation == partition._incarnation
+        assert exc_info.value.partition_uuid == partition._partition_uuid
         assert exc_info.value.__cause__ is not None
 
         await store2.shutdown()
@@ -1588,7 +1587,7 @@ class TestIndexFileDurability:
         )
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition_incarnation(partition._incarnation)
+        partition_2 = await store2.open_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1612,12 +1611,10 @@ async def _table_names(engine) -> set[str]:
 
 
 class TestPartitionResources:
-    """A partition incarnation's tables and index file live until it is purged."""
+    """A partition's tables and index file live until it is purged."""
 
     @pytest.mark.asyncio
-    async def test_purging_an_incarnation_leaves_no_tables_or_index_files(
-        self, tmp_path
-    ):
+    async def test_purging_a_partition_leaves_no_tables_or_index_files(self, tmp_path):
         store, engine = await _fresh_store(
             tmp_path / "test.db", tmp_path, save_threshold=1
         )
@@ -1629,7 +1626,7 @@ class TestPartitionResources:
         assert len(await _table_names(engine) - baseline) == 1
         assert len(list((tmp_path / "indexes").glob("*.idx"))) == 1
 
-        await _purge(store, partition._incarnation)
+        await _purge(store, partition._partition_uuid)
 
         assert await _table_names(engine) == baseline
         assert list((tmp_path / "indexes").glob("*.idx")) == []
@@ -1642,11 +1639,11 @@ class TestPartitionResources:
         """Both handles' records survive a restart, saved from the one engine they hold."""
         db_path = tmp_path / "test.db"
         store1, engine1 = await _fresh_store(db_path, tmp_path)
-        incarnation = uuid4()
-        await store1.prepare_partition_incarnation(incarnation)
+        partition_uuid = uuid4()
+        await store1.create_partition(partition_uuid)
         partitions = await asyncio.gather(
-            store1.open_partition_incarnation(incarnation),
-            store1.open_partition_incarnation(incarnation),
+            store1.open_partition(partition_uuid),
+            store1.open_partition(partition_uuid),
         )
         records = [
             _make_record(vector=_normalize([1.0, 0.0, 0.0])),
@@ -1658,7 +1655,7 @@ class TestPartitionResources:
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition = await store2.open_partition_incarnation(incarnation)
+        partition = await store2.open_partition(partition_uuid)
         [found] = await partition.query(query_vectors=[records[0].vector], limit=5)
         assert {match.record_uuid for match in found.matches} == {
             record.uuid for record in records
@@ -1668,31 +1665,29 @@ class TestPartitionResources:
         await engine2.dispose()
 
     @pytest.mark.asyncio
-    async def test_concurrent_preparations_of_an_incarnation_leave_one_table(
-        self, store
-    ):
+    async def test_concurrent_creations_of_a_partition_leave_one_table(self, store):
         engine = store._sqlalchemy_engine
         baseline = await _table_names(engine)
-        incarnation = uuid4()
+        partition_uuid = uuid4()
 
         await asyncio.gather(
-            store.prepare_partition_incarnation(incarnation),
-            store.prepare_partition_incarnation(incarnation),
+            store.create_partition(partition_uuid),
+            store.create_partition(partition_uuid),
         )
 
         assert len(await _table_names(engine) - baseline) == 1
-        await _purge(store, incarnation)
+        await _purge(store, partition_uuid)
         assert await _table_names(engine) == baseline
 
     @pytest.mark.asyncio
     async def test_a_save_that_a_purge_overtakes_leaves_no_index_file(self, tmp_path):
-        """No file holds a purged incarnation's vectors, whichever finishes first."""
+        """No file holds a purged partition's vectors, whichever finishes first."""
         stores: list[SQLiteVectorStore] = []
-        incarnation = uuid4()
+        partition_uuid = uuid4()
 
         class _PurgedWhileSaving(USearchVectorSearchEngine):
             async def save(self, path: str) -> None:
-                await _purge(stores[0], incarnation)
+                await _purge(stores[0], partition_uuid)
                 await super().save(path)
 
         engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
@@ -1710,8 +1705,8 @@ class TestPartitionResources:
         )
         stores.append(store)
         await store.startup()
-        await store.prepare_partition_incarnation(incarnation)
-        partition = await store.open_partition_incarnation(incarnation)
+        await store.create_partition(partition_uuid)
+        partition = await store.open_partition(partition_uuid)
 
         # Crossing the save threshold saves the index, and the purge commits
         # while the file is written.
@@ -1719,7 +1714,7 @@ class TestPartitionResources:
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
 
-        assert await store.purge_partition_incarnation(incarnation) is False
+        assert await store.purge_partition(partition_uuid) is False
         assert list((tmp_path / "indexes").glob("*.idx")) == []
 
         await store.shutdown()

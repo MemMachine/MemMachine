@@ -20,15 +20,14 @@ from .data_types import (
 
 class VectorStorePartition(ABC):
     """
-    A handle on one partition incarnation's records in a vector store.
+    A handle on one partition's records in a vector store.
 
-    All data operations are scoped to the incarnation: a record's UUID names
-    it in this incarnation only, and the same UUID in another names another
-    record. The handle owns nothing: a caller builds one with
-    `VectorStore.open_partition_incarnation`, drops it, and builds another at
+    All data operations are scoped to the partition: a record's UUID names it
+    in this partition only, and the same UUID in another names another record. The handle owns nothing: a caller builds one with
+    `VectorStore.open_partition`, drops it, and builds another at
     will. The handle checks its inputs, and nothing about whether the
-    incarnation is still live: its owner fences each operation by the
-    incarnation's registration.
+    partition is still live: its owner fences each operation by the
+    partition's registration.
 
     An `upsert` or `delete` is durable once it returns; queries may not
     reflect it right away. A store that guarantees more states it.
@@ -142,11 +141,11 @@ class VectorStore(ABC):
     The schema is fixed for the life of the store's data: changing it is a
     migration.
 
-    The store holds each partition incarnation's records under the
-    incarnation, and holds no partition names: its owner's partition
-    registry mints the incarnations and decides which is live. A partition's
-    incarnations are isolated from one another: records written under one
-    are never read under another.
+    The store holds each partition's records under the partition's UUID, and
+    holds no partition names: its owner's partition registry names each
+    partition, mints its UUID, and decides which is live. Partitions are
+    isolated from one another, including partitions created under the same
+    name: records written to one are never read from another.
 
     Naming constraints:
         - Vector store names and property keys must match `[a-z0-9_]+`
@@ -162,7 +161,7 @@ class VectorStore(ABC):
 
     @abstractmethod
     async def startup(self) -> None:
-        """Start the store, creating idempotently what must exist before a partition incarnation is prepared."""
+        """Start the store, creating idempotently what must exist before a partition is created."""
         raise NotImplementedError
 
     @abstractmethod
@@ -171,54 +170,51 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def prepare_partition_incarnation(self, incarnation: UUID) -> None:
+    async def create_partition(self, partition_uuid: UUID) -> None:
         """
-        Prepare the storage a partition incarnation needs of its own.
+        Create the storage a partition needs of its own.
 
         A store whose partitions share all their storage has nothing to
-        prepare. Safe to repeat, and to run on several processes at once.
+        create. Safe to repeat, and to run on several processes at once.
 
         Args:
-            incarnation (UUID):
-                The partition incarnation, minted by the owner's registry.
+            partition_uuid (UUID):
+                The partition's UUID, minted by the owner's registry.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition_incarnation(
-        self, incarnation: UUID
-    ) -> VectorStorePartition:
+    async def open_partition(self, partition_uuid: UUID) -> VectorStorePartition:
         """
-        Open a handle on a prepared partition incarnation.
+        Open a handle on a created partition.
 
         Args:
-            incarnation (UUID):
-                The partition incarnation.
+            partition_uuid (UUID):
+                The partition's UUID.
 
         Returns:
             VectorStorePartition:
-                A handle bound to the incarnation.
+                A handle bound to the partition.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def purge_partition_incarnation(self, incarnation: UUID) -> bool:
+    async def purge_partition(self, partition_uuid: UUID) -> bool:
         """
-        Delete a bounded batch of what a partition incarnation holds: its records, then its own storage.
+        Delete a bounded batch of what a partition holds: its records, then its own storage.
 
-        The owner's purge rounds call it once the incarnation has ended, its
-        partition deleted or its creation cancelled, and the retention has
-        passed, until it returns False. Each call does a bounded amount of
+        The owner's purge rounds call it once the partition was deleted or its
+        creation cancelled, and the retention has passed, until it returns False. Each call does a bounded amount of
         work, and is safe to repeat and to run on several processes at once.
 
         Args:
-            incarnation (UUID):
-                The ended partition incarnation.
+            partition_uuid (UUID):
+                The deleted partition's UUID.
 
         Returns:
             bool:
-                Whether the call found anything of the incarnation's, so a
-                call that returns False proves the incarnation gone from the
+                Whether the call found anything of the partition's, so a
+                call that returns False proves the partition gone from the
                 store.
         """
         raise NotImplementedError

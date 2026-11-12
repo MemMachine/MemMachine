@@ -19,7 +19,7 @@ from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
-    PartitionIncarnationEndedError,
+    PartitionDeletedError,
     PartitionPendingError,
     PartitionRegistry,
     Registration,
@@ -207,13 +207,13 @@ class SemanticResourceManager:
             feature_store_name,
             partition_namespace=_PARTITION_NAMESPACE,
             tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
-            purge_round=vector_store.purge_partition_incarnation,
+            purge_round=vector_store.purge_partition,
         )
         registration = await SemanticResourceManager._open_or_create_partition(
             partition_registry, vector_store
         )
-        vector_partition = await vector_store.open_partition_incarnation(
-            registration.incarnation
+        vector_partition = await vector_store.open_partition(
+            registration.partition_uuid
         )
         storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()
@@ -230,13 +230,11 @@ class SemanticResourceManager:
         is answered; a pending one is another process's creation, so the call
         waits for it; no partition means create; losing the reservation means
         another process took the name meanwhile; and losing the confirmation
-        means the partition was deleted while its storage was prepared, so the
+        means the partition was deleted while its storage was created, so the
         call creates again.
         """
         pending_error: PartitionPendingError | None = None
-        lost_race: (
-            PartitionAlreadyExistsError | PartitionIncarnationEndedError | None
-        ) = None
+        lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
         for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
             if attempt:
                 await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
@@ -254,10 +252,10 @@ class SemanticResourceManager:
                 lost_race = err
                 continue
             try:
-                return await SemanticResourceManager._prepare_and_confirm_or_cancel(
+                return await SemanticResourceManager._create_and_confirm_or_cancel(
                     reservation, vector_store
                 )
-            except PartitionIncarnationEndedError as err:
+            except PartitionDeletedError as err:
                 lost_race = err
                 continue
         # The last lookup found the partition pending.
@@ -269,10 +267,10 @@ class SemanticResourceManager:
         ) from lost_race
 
     @staticmethod
-    async def _prepare_and_confirm_or_cancel(
+    async def _create_and_confirm_or_cancel(
         reservation: Reservation, vector_store: VectorStore
     ) -> Registration:
-        """Prepare the reserved partition's storage and confirm the reservation, cancelling it if either raises or the creation is cancelled.
+        """Create the reserved partition's storage and confirm the reservation, cancelling it if either raises or the creation is cancelled.
 
         The cancel acts only on a pending partition, so a confirmation that
         committed before its failure or cancellation was observed stands. A
@@ -280,7 +278,7 @@ class SemanticResourceManager:
         until it is deleted.
         """
         try:
-            await vector_store.prepare_partition_incarnation(reservation.incarnation)
+            await vector_store.create_partition(reservation.partition_uuid)
             return await reservation.confirm()
         except BaseException:
             # Shielded, so a cancelled creation still frees the name. The task

@@ -268,7 +268,7 @@ def _registry() -> NonCallableMagicMock:
     return registry
 
 
-async def _found_nothing(incarnation: UUID) -> bool:
+async def _found_nothing(partition_uuid: UUID) -> bool:
     return False
 
 

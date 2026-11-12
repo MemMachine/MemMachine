@@ -72,21 +72,19 @@ class PartitionPendingError(Exception):
         )
 
 
-class PartitionIncarnationEndedError(Exception):
-    """Raised when an incarnation of a partition is no longer the life registered under its name: the partition was deleted, before or after its creation completed."""
+class PartitionDeletedError(Exception):
+    """Raised when a partition is no longer the one registered under its name: it was deleted, before or after its creation completed."""
 
     def __init__(
-        self, partition_namespace: str, partition_name: str, incarnation: UUID
+        self, partition_namespace: str, partition_name: str, partition_uuid: UUID
     ) -> None:
-        """Initialize with the partition's namespace and name, and the incarnation that ended."""
+        """Initialize with the deleted partition's namespace, name, and UUID."""
         self.partition_namespace = partition_namespace
         self.partition_name = partition_name
-        self.incarnation = incarnation
+        self.partition_uuid = partition_uuid
         super().__init__(
-            f"Incarnation {incarnation} of partition {partition_name!r} in "
-            f"namespace {partition_namespace!r} has ended: the partition was "
-            "deleted, or deleted and created again, after the incarnation was "
-            "reserved"
+            f"Partition {partition_uuid} under name {partition_name!r} in "
+            f"namespace {partition_namespace!r} was deleted"
         )
 
 

@@ -19,11 +19,11 @@ has to be able to keep the promise.
 
 ## Partition lives
 
-- An incarnation is a random UUID (version 4) minted by the registry when a
+- A partition UUID is a random UUID (version 4) minted by the registry when a
   partition's name is reserved, one per partition life (see [partition
   registry](partition_registry.md)). Every read, write, and
   delete of a handle is scoped to it.
-- An incarnation is never re-minted while it is registered, pending or live,
+- A partition UUID is never re-minted while it is registered, pending or live,
   or its tombstone is queued, so a new life starts empty: no dead life's
   records are adopted by it or reclaimed out from under it, whatever record
   UUIDs either life used.
@@ -43,10 +43,10 @@ reads, replaces, or deletes another's.
 | Store | How ids are scoped to a partition |
 |---|---|
 | SQLite, sqlite-vec | a records table per partition |
-| Milvus | the incarnation in the primary key, `"{incarnation}:{record_uuid}"` (see [Milvus](milvus_vector_store.md)) |
-| Qdrant | the point id is a UUIDv5 of the record UUID under the incarnation, with the record UUID kept in the payload (see [Qdrant](qdrant_vector_store.md)) |
+| Milvus | the partition UUID in the primary key, `"{partition_uuid}:{record_uuid}"` (see [Milvus](milvus_vector_store.md)) |
+| Qdrant | the point id is a UUIDv5 of the record UUID under the partition UUID, with the record UUID kept in the payload (see [Qdrant](qdrant_vector_store.md)) |
 
-A UUIDv5 carries 122 bits, and deriving one from a random incarnation and any
+A UUIDv5 carries 122 bits, and deriving one from a random partition UUID and any
 record UUID gives a caller no way to aim at another partition's point: a
 SHA-1 collision needs control of both inputs.
 
@@ -77,7 +77,7 @@ backends was run). Every one can, almost always by scoping the id.
   ingestion path honors it, and a slip replaces another tenant's record, a
   security failure far from its cause.
 - **A conditional upsert on Qdrant** (`update_filter` on the writer's
-  incarnation, first write wins). It keeps partitions from replacing each
+  partition UUID, first write wins). It keeps partitions from replacing each
   other's points, but a reused UUID's record is dropped without an error, the
   contract has to keep a uniqueness rule for callers, and single-point writes
   ran 46% slower. It is Qdrant-specific, where scoping the id is what nearly
@@ -87,6 +87,6 @@ backends was run). Every one can, almost always by scoping the id.
   and the write.
 - **Bare or reversible point ids on Qdrant.** A bare record UUID as the point
   id lets one partition's upsert replace another's point; a reversible
-  derivation lets anyone who learns two incarnations compute a colliding UUID.
+  derivation lets anyone who learns two partition UUIDs compute a colliding UUID.
   The [Qdrant](qdrant_vector_store.md) document has the analysis and the cost
   of reading the record UUID from the payload.

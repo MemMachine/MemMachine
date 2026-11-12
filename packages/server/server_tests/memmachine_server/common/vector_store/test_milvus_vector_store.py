@@ -152,13 +152,13 @@ async def _stored(
     return {UUID(row["record_uuid"]): row for row in rows}
 
 
-async def _incarnation_uuids(
-    client: AsyncMilvusClient, collection_name: str, incarnation: UUID
+async def _partition_uuid_records(
+    client: AsyncMilvusClient, collection_name: str, partition_uuid: UUID
 ) -> list[UUID]:
-    """The record UUIDs Milvus holds under an incarnation, once per entity, read past the store at Strong."""
+    """The record UUIDs Milvus holds under a partition UUID, once per entity, read past the store at Strong."""
     rows = await client.query(
         collection_name=collection_name,
-        filter=f'partition_key == "{incarnation}"',
+        filter=f'partition_key == "{partition_uuid}"',
         output_fields=["record_uuid"],
         limit=16384,
         consistency_level="Strong",
@@ -167,19 +167,19 @@ async def _incarnation_uuids(
 
 
 async def _open(store: MilvusVectorStore) -> MilvusVectorStorePartition:
-    """A handle on a freshly prepared partition incarnation."""
-    incarnation = uuid4()
-    await store.prepare_partition_incarnation(incarnation)
-    return await store.open_partition_incarnation(incarnation)
+    """A handle on a freshly prepared partition."""
+    partition_uuid = uuid4()
+    await store.create_partition(partition_uuid)
+    return await store.open_partition(partition_uuid)
 
 
-async def _purge(store: MilvusVectorStore, incarnation: UUID) -> None:
-    """Purge an incarnation until the store finds nothing of it, failing on a purge that never ends."""
+async def _purge(store: MilvusVectorStore, partition_uuid: UUID) -> None:
+    """Purge a partition UUID until the store finds nothing of it, failing on a purge that never ends."""
     for _ in range(_MAX_PURGE_CALLS):
-        if not await store.purge_partition_incarnation(incarnation):
+        if not await store.purge_partition(partition_uuid):
             return
     pytest.fail(
-        f"incarnation {incarnation} still held records after "
+        f"partition UUID {partition_uuid} still held records after "
         f"{_MAX_PURGE_CALLS} purge calls"
     )
 
@@ -364,7 +364,7 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
     await partition.query(query_vectors=[vector], limit=1)
     await partition.delete(record_uuids=[record.uuid])
     # The purge finds the record the delete left and reclaims it.
-    await _purge(timed, partition._incarnation)
+    await _purge(timed, partition._partition_uuid)
 
     assert {name for name, spy in spies.items() if spy.call_count} >= set(
         _CLIENT_REQUESTS
@@ -393,7 +393,7 @@ def test_a_setting_that_is_not_positive_is_refused(setting):
 async def partition(store):
     partition = await _open(store)
     yield partition
-    await _purge(store, partition._incarnation)
+    await _purge(store, partition._partition_uuid)
 
 
 class TestPartitionLifecycle:
@@ -435,7 +435,7 @@ class TestPartitionLifecycle:
             "vector",
             "_p_name",
         }
-        await _purge(partial, partition._incarnation)
+        await _purge(partial, partition._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_a_vector_store_name_may_begin_with_a_digit(self, store):
@@ -446,7 +446,7 @@ class TestPartitionLifecycle:
         )
         await digit_first.startup()
         partition = await _open(digit_first)
-        await _purge(digit_first, partition._incarnation)
+        await _purge(digit_first, partition._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_partitions_share_the_store_collection(self, store):
@@ -456,7 +456,7 @@ class TestPartitionLifecycle:
             partition = await _open(store)
             record = _make_record(vector=[1.0, 0.0, 0.0])
             await partition.upsert(records=[record])
-            records[partition._incarnation] = record
+            records[partition._partition_uuid] = record
 
         rows = await store._client.query(
             collection_name=store._collection_name,
@@ -471,8 +471,8 @@ class TestPartitionLifecycle:
             record.uuid for record in records.values()
         }
 
-        for incarnation in records:
-            await _purge(store, incarnation)
+        for partition_uuid in records:
+            await _purge(store, partition_uuid)
 
     @pytest.mark.asyncio
     async def test_native_collection_schema(self, store):
@@ -521,7 +521,7 @@ class TestPartitionLifecycle:
             "_p_created_at",
         }
 
-        await _purge(store, partition._incarnation)
+        await _purge(store, partition._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_the_longest_declared_key_names_a_field_milvus_accepts(self, store):
@@ -551,7 +551,7 @@ class TestPartitionLifecycle:
         )
         assert [match.record_uuid for match in result.matches] == [record.uuid]
 
-        await _purge(longest, partition._incarnation)
+        await _purge(longest, partition._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):
@@ -661,10 +661,10 @@ class TestUpsertAndQuery:
         await partition.upsert(records=records)
 
         assert sorted(
-            await _incarnation_uuids(
+            await _partition_uuid_records(
                 partition._client,
                 partition._collection_name,
-                partition._incarnation,
+                partition._partition_uuid,
             )
         ) == sorted(record.uuid for record in records)
 
@@ -1178,7 +1178,7 @@ class TestFilterModel:
                 if evaluate_filter(property_filter, record.properties)
             }, property_filter
 
-        await _purge(modeled, partition._incarnation)
+        await _purge(modeled, partition._partition_uuid)
 
 
 @dataclass
@@ -1188,7 +1188,7 @@ class _ModelPartitions:
     store: MilvusVectorStore
     handles: dict[str, MilvusVectorStorePartition]
     records: dict[str, dict[UUID, Record]]
-    dead_incarnations: list[UUID] = field(default_factory=list)
+    dead_partition_uuids: list[UUID] = field(default_factory=list)
 
     async def upsert(self, partition_name: str, batch: list[Record]) -> list[Record]:
         """Upsert a batch, and return the records it replaced."""
@@ -1204,28 +1204,28 @@ class _ModelPartitions:
             self.records[partition_name].pop(record_uuid, None)
 
     async def recreate(self, partition_name: str) -> None:
-        """Move the partition to a fresh incarnation, leaving its current one dead."""
-        self.dead_incarnations.append(self.handles[partition_name]._incarnation)
+        """Move the partition to a fresh partition UUID, leaving its current one dead."""
+        self.dead_partition_uuids.append(self.handles[partition_name]._partition_uuid)
         self.handles[partition_name] = await _open(self.store)
         self.records[partition_name] = {}
 
     async def purge(self) -> None:
-        """Purge every dead incarnation, and check that none keeps a record."""
-        for incarnation in self.dead_incarnations:
-            await _purge(self.store, incarnation)
+        """Purge every dead partition UUID, and check that none keeps a record."""
+        for partition_uuid in self.dead_partition_uuids:
+            await _purge(self.store, partition_uuid)
             assert (
-                await _incarnation_uuids(
-                    self.store._client, self.store._collection_name, incarnation
+                await _partition_uuid_records(
+                    self.store._client, self.store._collection_name, partition_uuid
                 )
                 == []
-            ), incarnation
+            ), partition_uuid
 
     async def check(self, rng: random.Random) -> None:
         """Check what each partition holds, and what its settled queries select."""
         for partition_name, handle in self.handles.items():
             records = self.records[partition_name]
-            stored = await _incarnation_uuids(
-                self.store._client, handle._collection_name, handle._incarnation
+            stored = await _partition_uuid_records(
+                self.store._client, handle._collection_name, handle._partition_uuid
             )
             assert sorted(stored) == sorted(records), partition_name
             await _settle(handle)
@@ -1254,8 +1254,8 @@ class TestOperationModel:
     @pytest.mark.asyncio
     async def test_a_random_sequence_of_operations_agrees_with_a_model(self, store):
         """Seeded upserts, new and replacing, deletes of present and absent
-        records, moves of a partition to a fresh incarnation, and purges of
-        the dead incarnations, on two partitions of one store: after each
+        records, moves of a partition to a fresh partition UUID, and purges of
+        the dead partition UUIDs, on two partitions of one store: after each
         step, each partition holds the model's records, its settled queries
         select what the model selects, and a replaced record's old values
         select nothing."""
@@ -1314,7 +1314,7 @@ class TestOperationModel:
                 ) from error
 
         for handle in model.handles.values():
-            await _purge(modeled, handle._incarnation)
+            await _purge(modeled, handle._partition_uuid)
 
 
 class TestScores:
@@ -1346,7 +1346,7 @@ class TestScores:
 
         [result] = await partition.query(query_vectors=[[1.0, 0.0, 0.0]], limit=1)
         assert result.matches[0].score == pytest.approx(expected, abs=1e-3)
-        await _purge(scored, partition._incarnation)
+        await _purge(scored, partition._partition_uuid)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1401,7 +1401,7 @@ class TestScores:
         assert [match.score for match in result.matches] == pytest.approx(
             expected_scores, abs=1e-3
         )
-        await _purge(scored, partition._incarnation)
+        await _purge(scored, partition._partition_uuid)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1450,7 +1450,7 @@ class TestScores:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await _purge(scored, partition._incarnation)
+        await _purge(scored, partition._partition_uuid)
 
 
 # The client's reads; each takes an optional consistency level.
@@ -1486,7 +1486,7 @@ class TestConsistency:
         await partition.upsert(records=[record])
         await _settle(partition)
         await partition.query(query_vectors=[record.vector], limit=1)
-        await _purge(bounded, partition._incarnation)
+        await _purge(bounded, partition._partition_uuid)
 
         description = await store._client.describe_collection(bounded._collection_name)
         assert description["consistency_level"] == ConsistencyLevel.Bounded
@@ -1527,11 +1527,11 @@ class TestDelete:
 
 
 def _partition_on(client: AsyncMilvusClient) -> MilvusVectorStorePartition:
-    """A handle on a given client, bound to a fresh incarnation."""
+    """A handle on a given client, bound to a fresh partition UUID."""
     return MilvusVectorStorePartition(
         client=client,
         collection_name=f"sys_{VECTOR_STORE_NAME}",
-        incarnation=uuid4(),
+        partition_uuid=uuid4(),
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
@@ -1639,7 +1639,7 @@ async def test_a_purge_round_milvus_does_not_accept_in_full_raises():
     client = MagicMock(spec=AsyncMilvusClient)
     client.prepare_index_params = AsyncMilvusClient.prepare_index_params
     # The native collection exists with its index, and holds two entities of
-    # the purged incarnation.
+    # the purged partition UUID.
     client.has_collection = AsyncMock(return_value=True)
     client.list_indexes = AsyncMock(return_value=["vector"])
     client.load_collection = AsyncMock(return_value=None)
@@ -1648,7 +1648,7 @@ async def test_a_purge_round_milvus_does_not_accept_in_full_raises():
     store = await _started_store(client, store_schema=_schema(indexed_properties={}))
 
     with pytest.raises(pymilvus.MilvusException):
-        await store.purge_partition_incarnation(uuid4())
+        await store.purge_partition(uuid4())
 
 
 class TestPartitionIsolation:
@@ -1684,8 +1684,8 @@ class TestPartitionIsolation:
         [kept] = await partition_b.query(query_vectors=[v1], limit=10)
         assert [match.record_uuid for match in kept.matches] == [record_uuid]
 
-        await _purge(store, partition_a._incarnation)
-        await _purge(store, partition_b._incarnation)
+        await _purge(store, partition_a._partition_uuid)
+        await _purge(store, partition_b._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_a_query_returns_only_its_own_partitions_records(self, store):
@@ -1728,7 +1728,7 @@ class TestPartitionIsolation:
                 )
 
         for partition, _ in own_records:
-            await _purge(isolated, partition._incarnation)
+            await _purge(isolated, partition._partition_uuid)
 
 
 class TestPurgeBatches:
@@ -1742,13 +1742,13 @@ class TestPurgeBatches:
             ]
         )
         await _settle(partition)
-        incarnation = partition._incarnation
+        partition_uuid = partition._partition_uuid
 
-        async def left_of_the_incarnation() -> int:
+        async def left_of_the_partition() -> int:
             return len(
                 await store._client.query(
                     collection_name=store._collection_name,
-                    filter=f'partition_key == "{incarnation}"',
+                    filter=f'partition_key == "{partition_uuid}"',
                     output_fields=["id"],
                     limit=16384,
                     consistency_level="Strong",
@@ -1756,9 +1756,9 @@ class TestPurgeBatches:
             )
 
         left_after_each_round = []
-        while await store.purge_partition_incarnation(incarnation):
+        while await store.purge_partition(partition_uuid):
             await _settle(partition)
-            left_after_each_round.append(await left_of_the_incarnation())
+            left_after_each_round.append(await left_of_the_partition())
         # Batches of 2, until a round finds nothing.
         assert left_after_each_round == [3, 1, 0]
 
@@ -1766,7 +1766,7 @@ class TestPurgeBatches:
 class TestPurge:
     @pytest.mark.asyncio
     async def test_a_purge_on_a_dropped_native_collection_finds_nothing(self, store):
-        """An incarnation whose native collection is gone holds nothing: its
+        """A partition UUID whose native collection is gone holds nothing: its
         purge raises nothing and finds nothing."""
         # A name of its own, so dropping its native collection spares the others.
         dropped = await _started_store(
@@ -1778,15 +1778,13 @@ class TestPurge:
         )
         await store._client.drop_collection(dropped._collection_name)
 
-        assert (
-            await dropped.purge_partition_incarnation(partition._incarnation) is False
-        )
+        assert await dropped.purge_partition(partition._partition_uuid) is False
 
     @pytest.mark.asyncio
     async def test_purgers_on_two_stores_reclaim_the_deleted_partitions_alone(
         self, store, other_store
     ):
-        """Purgers on two stores, purging the deleted partitions' incarnations
+        """Purgers on two stores, purging the deleted partitions' partition UUIDs
         at once in small batches, reclaim every one's records and leave the
         live partition's."""
         handles = []
@@ -1800,8 +1798,8 @@ class TestPurge:
             )
             handles.append(handle)
         live = handles.pop(0)
-        live_uuids = await _incarnation_uuids(
-            store._client, live._collection_name, live._incarnation
+        live_uuids = await _partition_uuid_records(
+            store._client, live._collection_name, live._partition_uuid
         )
         await _settle(live)
         purgers = [
@@ -1811,7 +1809,7 @@ class TestPurge:
 
         await asyncio.gather(
             *(
-                _purge(purger, handle._incarnation)
+                _purge(purger, handle._partition_uuid)
                 for purger in purgers
                 for handle in handles
             )
@@ -1819,23 +1817,23 @@ class TestPurge:
 
         for handle in handles:
             assert (
-                await _incarnation_uuids(
-                    store._client, handle._collection_name, handle._incarnation
+                await _partition_uuid_records(
+                    store._client, handle._collection_name, handle._partition_uuid
                 )
                 == []
             )
         assert sorted(
-            await _incarnation_uuids(
-                store._client, live._collection_name, live._incarnation
+            await _partition_uuid_records(
+                store._client, live._collection_name, live._partition_uuid
             )
         ) == sorted(live_uuids)
         assert len(live_uuids) == 7
         assert [
-            await purger.purge_partition_incarnation(handle._incarnation)
+            await purger.purge_partition(handle._partition_uuid)
             for purger in purgers
             for handle in handles
         ] == [False] * (len(purgers) * len(handles))
-        await _purge(store, live._incarnation)
+        await _purge(store, live._partition_uuid)
 
 
 class TestLifecycleContract(PartitionLifecycleContract):
@@ -1858,7 +1856,7 @@ class TestLifecycleContract(PartitionLifecycleContract):
     async def stored_uuids(partition) -> set[UUID]:
         rows = await partition._client.query(
             collection_name=partition._collection_name,
-            filter=f'partition_key == "{partition._incarnation}"',
+            filter=f'partition_key == "{partition._partition_uuid}"',
             output_fields=["record_uuid"],
             limit=16384,
             consistency_level="Strong",
