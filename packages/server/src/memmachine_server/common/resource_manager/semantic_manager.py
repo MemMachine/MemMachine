@@ -1,8 +1,6 @@
 """Manager for semantic memory resources and services."""
 
 import asyncio
-import contextlib
-import logging
 from typing import cast
 
 from pydantic import InstanceOf
@@ -23,10 +21,9 @@ from memmachine_server.common.partition_registry import (
     PartitionPendingError,
     PartitionRegistry,
     Registration,
-    Reservation,
 )
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
+from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -70,17 +67,11 @@ _PARTITION_NAME = "semantic_memory"
 _TOMBSTONE_RETENTION_SECONDS = 86400
 """The retention of semantic memory's namespace, whose tombstones are only those of creations that failed."""
 
-logger = logging.getLogger(__name__)
-
 # Attempts opening or creating the partition makes,
 # _OPEN_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
 # partition that stays pending or a name it keeps losing.
 _MAX_OPEN_OR_CREATE_ATTEMPTS = 10
 _OPEN_OR_CREATE_RETRY_DELAY_SECONDS = 1
-
-# Reservations cancelled after a failed creation, held until done so the
-# garbage collector cannot drop one whose creation was cancelled.
-_reservation_cancellations: set[asyncio.Task[None]] = set()
 
 
 class SemanticResourceManager:
@@ -207,10 +198,10 @@ class SemanticResourceManager:
             feature_store_name,
             partition_namespace=_PARTITION_NAMESPACE,
             tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
-            purge_round=vector_store.purge_partition,
+            partitioned_stores=[vector_store],
         )
         registration = await SemanticResourceManager._open_or_create_partition(
-            partition_registry, vector_store
+            partition_registry
         )
         vector_partition = await vector_store.open_partition(
             registration.partition_uuid
@@ -221,17 +212,17 @@ class SemanticResourceManager:
 
     @staticmethod
     async def _open_or_create_partition(
-        partition_registry: PartitionRegistry, vector_store: VectorStore
+        partition_registry: PartitionRegistry,
     ) -> Registration:
         """
         Answer the registration of semantic memory's partition, creating it if no partition holds its name.
 
         Read-then-create, retried a bounded number of times: a live partition
         is answered; a pending one is another process's creation, so the call
-        waits for it; no partition means create; losing the reservation means
-        another process took the name meanwhile; and losing the confirmation
-        means the partition was deleted while its storage was created, so the
-        call creates again.
+        waits for it; no partition means create; a creation that finds the
+        name taken lost it to another process meanwhile; and one that finds
+        the partition deleted lost it while the store created it, so the call
+        creates again.
         """
         pending_error: PartitionPendingError | None = None
         lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
@@ -247,15 +238,8 @@ class SemanticResourceManager:
             if registration is not None:
                 return registration
             try:
-                reservation = await partition_registry.reserve(_PARTITION_NAME)
-            except PartitionAlreadyExistsError as err:
-                lost_race = err
-                continue
-            try:
-                return await SemanticResourceManager._create_and_confirm_or_cancel(
-                    reservation, vector_store
-                )
-            except PartitionDeletedError as err:
+                return await partition_registry.create_partition(_PARTITION_NAME)
+            except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
                 lost_race = err
                 continue
         # The last lookup found the partition pending.
@@ -265,42 +249,6 @@ class SemanticResourceManager:
             f"Opening or creating semantic memory's partition made no progress "
             f"after {_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
         ) from lost_race
-
-    @staticmethod
-    async def _create_and_confirm_or_cancel(
-        reservation: Reservation, vector_store: VectorStore
-    ) -> Registration:
-        """Create the reserved partition's storage and confirm the reservation, cancelling it if either raises or the creation is cancelled.
-
-        The cancel acts only on a pending partition, so a confirmation that
-        committed before its failure or cancellation was observed stands. A
-        partition whose reservation the registry cannot cancel stays pending
-        until it is deleted.
-        """
-        try:
-            await vector_store.create_partition(reservation.partition_uuid)
-            return await reservation.confirm()
-        except BaseException:
-            # Shielded, so a cancelled creation still frees the name. The task
-            # reports its own failure, since a creation cancelled again stops
-            # awaiting it before it ends.
-            cancellation = asyncio.create_task(reservation.cancel())
-            _reservation_cancellations.add(cancellation)
-
-            def finish(task: asyncio.Task[None]) -> None:
-                _reservation_cancellations.discard(task)
-                if not task.cancelled() and task.exception() is not None:
-                    logger.exception(
-                        "Could not cancel the reservation of semantic memory's "
-                        "partition after its creation failed or was cancelled; "
-                        "it stays pending until deleted",
-                        exc_info=task.exception(),
-                    )
-
-            cancellation.add_done_callback(finish)
-            with contextlib.suppress(Exception):
-                await asyncio.shield(cancellation)
-            raise
 
     async def get_semantic_config_storage(self) -> SemanticConfigStorage:
         database = self._conf.config_database

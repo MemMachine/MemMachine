@@ -1,6 +1,5 @@
 """Helpers for building long-term memory from configuration."""
 
-import functools
 import hashlib
 import logging
 
@@ -180,7 +179,7 @@ async def _event_memory_partition_registry(
     vector_store: VectorStore,
 ) -> PartitionRegistry:
     """
-    The registry of event memory's partition namespace, whose purge rounds run in the background.
+    The registry of event memory's partition namespace, over its segment store and vector store, whose purge rounds run in the background.
 
     Raises:
         ConfigurationError: If the deployment names no registry database
@@ -196,9 +195,7 @@ async def _event_memory_partition_registry(
         deployment.partition_registry,
         partition_namespace=EventMemory.PARTITION_NAMESPACE,
         tombstone_retention_seconds=deployment.tombstone_retention_seconds,
-        purge_round=functools.partial(
-            EventMemory.purge_partition, segment_store, vector_store
-        ),
+        partitioned_stores=[segment_store, vector_store],
     )
 
 

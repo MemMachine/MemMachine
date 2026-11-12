@@ -13,20 +13,20 @@ and a point's id was its record's UUID. The contract guarded against it with a r
 on callers, that a record's UUID is minted by the service and never a value a
 caller supplied, which held only as long as every ingestion path honored it.
 This document answers what keeps partitions apart, what happens when a UUID
-is reused (across partitions, across lives of one partition, or by a caller
+is reused (across partitions, across partitions created under one name, or by a caller
 that chose it), and what the contract can promise, given that every backend
 has to be able to keep the promise.
 
-## Partition lives
+## Partitions under one name
 
-- A partition UUID is a random UUID (version 4) minted by the registry when a
-  partition's name is reserved, one per partition life (see [partition
-  registry](partition_registry.md)). Every read, write, and
-  delete of a handle is scoped to it.
-- A partition UUID is never re-minted while it is registered, pending or live,
-  or its tombstone is queued, so a new life starts empty: no dead life's
-  records are adopted by it or reclaimed out from under it, whatever record
-  UUIDs either life used.
+- A partition's UUID is a random UUID (version 4) minted by the registry when
+  the partition's name is reserved, one for each partition created under the
+  name (see [partition registry](partition_registry.md)). Every read, write,
+  and delete of a handle is scoped to it.
+- A UUID is never minted again while it is registered, pending or live, or
+  its tombstone is queued, so a partition created again under a name starts
+  empty: no deleted partition's records are adopted by it or reclaimed out
+  from under it, whatever record UUIDs either partition used.
 
 ## The guarantee
 

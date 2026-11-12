@@ -157,10 +157,11 @@ async def _open(store: SQLiteVecVectorStore) -> SQLiteVecVectorStorePartition:
     return await store.open_partition(partition_uuid)
 
 
-async def _purge(store: SQLiteVecVectorStore, partition_uuid: UUID) -> None:
-    """Purge a partition UUID until the store finds nothing of it."""
+async def _purge_and_drop(store: SQLiteVecVectorStore, partition_uuid: UUID) -> None:
+    """Purge a partition until the store finds nothing of it, then drop it, as its registry does."""
     while await store.purge_partition(partition_uuid):
         pass
+    await store.drop_partition(partition_uuid)
 
 
 @pytest_asyncio.fixture
@@ -223,23 +224,27 @@ class TestPartitionLifecycle:
         assert found.matches[0].score == pytest.approx(0.0, abs=0.01)
 
     @pytest.mark.asyncio
-    async def test_purge_drops_a_partitions_tables_and_records(self, store):
+    async def test_drop_removes_a_partitions_tables_and_records(self, store):
         partition = await _open(store)
         partition_uuid = partition._partition_uuid
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
 
-        assert await store.purge_partition(partition_uuid) is True
+        # The records live in the partition's own tables, so the purge finds
+        # none in shared storage, and the drop removes them with the tables.
+        assert await store.purge_partition(partition_uuid) is False
+        await store.drop_partition(partition_uuid)
 
         assert not any(
             partition_uuid.hex in name for name in await _table_names(store._engine)
         )
-        assert await store.purge_partition(partition_uuid) is False
+        await store.drop_partition(partition_uuid)
 
     @pytest.mark.asyncio
-    async def test_purging_an_unknown_partition_finds_nothing(self, store):
+    async def test_purging_or_dropping_an_unknown_partition_finds_nothing(self, store):
         assert await store.purge_partition(uuid4()) is False
+        await store.drop_partition(uuid4())
 
     @pytest.mark.asyncio
     async def test_unsupported_metric_raises(self, store):
@@ -764,13 +769,13 @@ class TestPartitionIsolation:
         results_a = await partition_a.query(query_vectors=[v1], limit=10)
         assert {match.record_uuid for match in results_a[0].matches} == {r1.uuid}
 
-        await _purge(store, partition_a._partition_uuid)
+        await _purge_and_drop(store, partition_a._partition_uuid)
         assert set(await _stored(partition_b)) == {r2.uuid}
         await other.shutdown()
 
     @pytest.mark.asyncio
-    async def test_purging_a_partition_does_not_affect_sibling(self, store):
-        """Purging one partition UUID leaves a sibling's records searchable."""
+    async def test_dropping_a_partition_does_not_affect_sibling(self, store):
+        """Dropping one partition leaves a sibling's records searchable."""
         partition_a = await _open(store)
         partition_b = await _open(store)
 
@@ -780,7 +785,7 @@ class TestPartitionIsolation:
         await partition_a.upsert(records=[r1])
         await partition_b.upsert(records=[r2])
 
-        await _purge(store, partition_a._partition_uuid)
+        await _purge_and_drop(store, partition_a._partition_uuid)
 
         results = await partition_b.query(query_vectors=[v1], limit=10)
         assert len(results[0].matches) == 1
@@ -1085,7 +1090,7 @@ class TestPartitionResources:
         assert all(partition._partition_uuid.hex in name for name in created)
 
     @pytest.mark.asyncio
-    async def test_purging_a_partition_leaves_none_of_its_tables(self, store):
+    async def test_dropping_a_partition_leaves_none_of_its_tables(self, store):
         engine = store._engine
         baseline = await _table_names(engine)
         partition = await _open(store)
@@ -1094,18 +1099,18 @@ class TestPartitionResources:
         )
         assert await _table_names(engine) != baseline
 
-        await _purge(store, partition._partition_uuid)
+        await _purge_and_drop(store, partition._partition_uuid)
 
         assert await _table_names(engine) == baseline
 
     @pytest.mark.asyncio
-    async def test_purging_a_partition_leaves_other_partitions_tables(self, store):
+    async def test_dropping_a_partition_leaves_other_partitions_tables(self, store):
         engine = store._engine
         await _open(store)
         baseline = await _table_names(engine)
         purged = await _open(store)
 
-        await _purge(store, purged._partition_uuid)
+        await _purge_and_drop(store, purged._partition_uuid)
 
         assert await _table_names(engine) == baseline
 

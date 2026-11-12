@@ -150,8 +150,8 @@ shipped: it has no graphless layout or exact-search workaround.
 
 ## Purge
 
-One filter-delete of the whole partition UUID per round: the round scrolls for
-one point under the partition UUID and, when it finds one, deletes by filter.
+One filter-delete of the whole partition per round: the round scrolls for
+one point of the partition and, when it finds one, deletes by filter.
 Measured (Qdrant 1.18.3, 1.19.0 and 1.19.1; 2.11M points in this layout, dead
 partition UUIDs of 10k to 1M among live tenants under search, upsert, and scroll
 traffic; 2 CPUs / 4 GB): the delete stalls writes and scrolls on the shard,

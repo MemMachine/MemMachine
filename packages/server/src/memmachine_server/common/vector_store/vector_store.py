@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
+from memmachine_server.common.partition_registry import PartitionedStore
 
 from .data_types import (
     QueryResult,
@@ -130,7 +131,7 @@ class VectorStorePartition(ABC):
         raise NotImplementedError
 
 
-class VectorStore(ABC):
+class VectorStore(PartitionedStore):
     """
     Abstract base class for a vector store.
 
@@ -141,11 +142,9 @@ class VectorStore(ABC):
     The schema is fixed for the life of the store's data: changing it is a
     migration.
 
-    The store holds each partition's records under the partition's UUID, and
-    holds no partition names: its owner's partition registry names each
-    partition, mints its UUID, and decides which is live. Partitions are
-    isolated from one another, including partitions created under the same
-    name: records written to one are never read from another.
+    The store holds each partition's records under the partition's UUID; its
+    owner's partition registry creates, purges, and drops partitions through
+    the `PartitionedStore` methods.
 
     Naming constraints:
         - Vector store names and property keys must match `[a-z0-9_]+`
@@ -170,20 +169,6 @@ class VectorStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def create_partition(self, partition_uuid: UUID) -> None:
-        """
-        Create the storage a partition needs of its own.
-
-        A store whose partitions share all their storage has nothing to
-        create. Safe to repeat, and to run on several processes at once.
-
-        Args:
-            partition_uuid (UUID):
-                The partition's UUID, minted by the owner's registry.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
     async def open_partition(self, partition_uuid: UUID) -> VectorStorePartition:
         """
         Open a handle on a created partition.
@@ -195,27 +180,6 @@ class VectorStore(ABC):
         Returns:
             VectorStorePartition:
                 A handle bound to the partition.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def purge_partition(self, partition_uuid: UUID) -> bool:
-        """
-        Delete a bounded batch of what a partition holds: its records, then its own storage.
-
-        The owner's purge rounds call it once the partition was deleted or its
-        creation cancelled, and the retention has passed, until it returns False. Each call does a bounded amount of
-        work, and is safe to repeat and to run on several processes at once.
-
-        Args:
-            partition_uuid (UUID):
-                The deleted partition's UUID.
-
-        Returns:
-            bool:
-                Whether the call found anything of the partition's, so a
-                call that returns False proves the partition gone from the
-                store.
         """
         raise NotImplementedError
 

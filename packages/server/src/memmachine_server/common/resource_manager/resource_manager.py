@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from asyncio import Lock
+from collections.abc import Sequence
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -19,7 +20,10 @@ from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
 )
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
-from memmachine_server.common.partition_registry import PartitionRegistry, PurgeRound
+from memmachine_server.common.partition_registry import (
+    PartitionedStore,
+    PartitionRegistry,
+)
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
     SQLAlchemyPartitionRegistry,
     SQLAlchemyPartitionRegistryParams,
@@ -66,9 +70,7 @@ _PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS = 60.0
 _PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS = 1.0
 
 
-async def _run_purge_rounds_forever(
-    partition_registry: PartitionRegistry, purge_round: PurgeRound
-) -> None:
+async def _run_purge_rounds_forever(partition_registry: PartitionRegistry) -> None:
     """Run a partition namespace's purge rounds for as long as the task runs.
 
     A call that ran a round is followed after a short pause, one that found
@@ -78,12 +80,12 @@ async def _run_purge_rounds_forever(
 
     A module-level coroutine on purpose: the event loop keeps a pending task
     alive while it sleeps, so the task pins whatever its frame references.
-    Referencing only the registry and its purge round lets a manager dropped
-    without close() be collected instead of pinned.
+    Referencing only the registry lets a manager dropped without close() be
+    collected instead of pinned.
     """
     while True:
         try:
-            more = await partition_registry.run_purge_round(purge_round)
+            more = await partition_registry.run_purge_round()
         except Exception:
             logger.exception(
                 "Purge round of partition namespace %r failed; retrying next tick",
@@ -229,12 +231,11 @@ class ResourceManagerImpl:
         *,
         partition_namespace: str,
         tombstone_retention_seconds: int,
-        purge_round: PurgeRound | None = None,
+        partitioned_stores: Sequence[PartitionedStore],
     ) -> PartitionRegistry:
-        """Return the started registry of a partition namespace in a database, building it on first access.
+        """Return the started registry of a partition namespace in a database, over its stores, building it on first access.
 
-        A registry first built with a purge round runs that purge round in
-        the background until close().
+        The registry's purge rounds run in the background until close().
         """
         key = (database, partition_namespace)
         if key not in self._partition_registries:
@@ -244,17 +245,15 @@ class ResourceManagerImpl:
                         SQLAlchemyPartitionRegistryParams(
                             engine=await self.get_sql_engine(database),
                             partition_namespace=partition_namespace,
+                            partitioned_stores=list(partitioned_stores),
                             tombstone_retention_seconds=tombstone_retention_seconds,
                         )
                     )
                     await registry.startup()
                     self._partition_registries[key] = registry
-                    if purge_round is not None:
-                        self._partition_registry_purge_tasks.append(
-                            asyncio.create_task(
-                                _run_purge_rounds_forever(registry, purge_round)
-                            )
-                        )
+                    self._partition_registry_purge_tasks.append(
+                        asyncio.create_task(_run_purge_rounds_forever(registry))
+                    )
         return self._partition_registries[key]
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:

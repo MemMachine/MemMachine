@@ -1,12 +1,11 @@
 """Event memory system for storing and retrieving events."""
 
 import asyncio
-import contextlib
 import datetime
 import json
 import logging
 import time
-from collections.abc import Awaitable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from typing import Final, cast
 from uuid import UUID
 
@@ -36,7 +35,6 @@ from memmachine_server.common.partition_registry import (
     PartitionPendingError,
     PartitionRegistry,
     Registration,
-    Reservation,
     validate_partition_name,
 )
 from memmachine_server.common.property_keys import (
@@ -68,7 +66,6 @@ from .formatting import format_timestamp
 from .segment_store import (
     SegmentStore,
     SegmentStorePartition,
-    SegmentStorePartitionConfig,
 )
 from .segmenter import Segmenter
 
@@ -89,10 +86,6 @@ _BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY}
 _MAX_OPEN_OR_CREATE_ATTEMPTS = 10
 _OPEN_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
-# Reservations cancelled after a failed creation, held until done so the
-# garbage collector cannot drop one whose creation was cancelled.
-_reservation_cancellations: set[asyncio.Task[None]] = set()
-
 
 class EventMemoryParams(BaseModel):
     """
@@ -100,8 +93,9 @@ class EventMemoryParams(BaseModel):
 
     Attributes:
         partition_registry (PartitionRegistry):
-            Registry of event memory's partition namespace, shared by every
-            process serving it. Started by the caller.
+            Registry of event memory's partition namespace, over its segment
+            store and its vector store, shared by every process serving it.
+            Started by the caller.
         segment_store (SegmentStore):
             Segment store holding the events' segments.
         vector_store (VectorStore):
@@ -124,8 +118,9 @@ class EventMemoryParams(BaseModel):
     partition_registry: InstanceOf[PartitionRegistry] = Field(
         ...,
         description=(
-            "Registry of event memory's partition namespace, shared by every "
-            "process serving it. Started by the caller"
+            "Registry of event memory's partition namespace, over its segment "
+            "store and its vector store, shared by every process serving it. "
+            "Started by the caller"
         ),
     )
     segment_store: InstanceOf[SegmentStore] = Field(
@@ -217,8 +212,8 @@ class EventMemory:
         """
         Open the partition if it exists, or create it if it does not.
 
-        Creating reserves the name in the registry, creates every store's
-        storage under the minted UUID, and confirms the reservation.
+        Creating goes through the registry, which creates the partition in
+        every store before confirming it.
 
         Args:
             partition_name (str):
@@ -269,10 +264,10 @@ class EventMemory:
 
         Read-then-create, retried a bounded number of times: a live partition
         is answered; a pending one is another creator's, so the call waits for
-        it; no partition means create; losing the reservation means another
-        creator took the name meanwhile; and losing the confirmation means a
-        deleter removed the partition while its storage was created, so the
-        call creates again.
+        it; no partition means create; a creation that finds the name taken
+        lost it to another creator meanwhile; and one that finds the
+        partition deleted lost it to a deleter while the stores created it,
+        so the call creates again.
         """
         partition_registry = self._params.partition_registry
         pending_error: PartitionPendingError | None = None
@@ -289,13 +284,8 @@ class EventMemory:
             if registration is not None:
                 return registration
             try:
-                reservation = await partition_registry.reserve(partition_name)
-            except PartitionAlreadyExistsError as err:
-                lost_race = err
-                continue
-            try:
-                return await self._create_and_confirm_or_cancel(reservation)
-            except PartitionDeletedError as err:
+                return await partition_registry.create_partition(partition_name)
+            except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
                 lost_race = err
                 continue
         # The last lookup found the partition pending.
@@ -306,104 +296,18 @@ class EventMemory:
             f"after {_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
         ) from lost_race
 
-    async def _create_and_confirm_or_cancel(
-        self, reservation: Reservation
-    ) -> Registration:
-        """Create a reserved partition's storage and confirm the reservation, cancelling it if either raises or the creation is cancelled.
-
-        The cancel acts only on a pending partition, so a confirmation that
-        committed before its failure or cancellation was observed stands. A
-        partition whose reservation the registry cannot cancel stays pending
-        until it is deleted.
-        """
-        try:
-            await self._create_partition(reservation.partition_uuid)
-            return await reservation.confirm()
-        except BaseException:
-            # Shielded, so a cancelled creation still frees the name. The task
-            # reports its own failure, since a creation cancelled again stops
-            # awaiting it before it ends.
-            cancellation = asyncio.create_task(reservation.cancel())
-            _reservation_cancellations.add(cancellation)
-
-            def finish(task: asyncio.Task[None]) -> None:
-                _reservation_cancellations.discard(task)
-                if not task.cancelled() and task.exception() is not None:
-                    logger.exception(
-                        "Could not cancel the reservation of partition %r after "
-                        "its creation failed or was cancelled; it stays pending "
-                        "until deleted",
-                        reservation.partition_name,
-                        exc_info=task.exception(),
-                    )
-
-            cancellation.add_done_callback(finish)
-            with contextlib.suppress(Exception):
-                await asyncio.shield(cancellation)
-            raise
-
-    async def _create_partition(self, partition_uuid: UUID) -> None:
-        """Create every store's storage for a reserved partition."""
-        await _on_every_store(
-            "create",
-            partition_uuid,
-            [
-                self._params.segment_store.create_partition(
-                    partition_uuid, SegmentStorePartitionConfig()
-                ),
-                self._params.vector_store.create_partition(partition_uuid),
-            ],
-        )
-
     async def delete_partition(self, partition_name: str) -> None:
         """
         Delete the partition. Idempotent.
 
         The partition is unreachable once its name is unregistered, and its
-        partition's records await the purge.
+        records await the registry's purge rounds.
 
         Args:
             partition_name (str):
                 The name of the partition to delete.
         """
         await self._params.partition_registry.unregister(partition_name)
-
-    @staticmethod
-    async def purge_partition(
-        segment_store: SegmentStore,
-        vector_store: VectorStore,
-        partition_uuid: UUID,
-    ) -> bool:
-        """
-        Purge a bounded batch of a deleted partition's records from every store.
-
-        The purge round of event memory's partition namespace: the registry
-        calls it once the partition's retention has passed, until it
-        returns False. Every store finishes its batch before the round's
-        outcome is decided, so the stores that answer keep purging while
-        another is down; the round then raises the first store's error.
-
-        Args:
-            segment_store (SegmentStore):
-                The segment store holding the partition's segments.
-            vector_store (VectorStore):
-                The vector store holding the partition's derivatives.
-            partition_uuid (UUID):
-                The deleted partition's UUID.
-
-        Returns:
-            bool:
-                Whether any store found anything of the partition's.
-        """
-        found = await _on_every_store(
-            "purge",
-            partition_uuid,
-            [
-                segment_store.purge_partition(partition_uuid),
-                vector_store.purge_partition(partition_uuid),
-            ],
-        )
-        return any(found)
 
     @staticmethod
     def string_from_segment_context(
@@ -1156,24 +1060,6 @@ class EventMemoryPartition:
         await self._segment_store_partition.delete_segments(
             segment_uuids=segment_uuids,
         )
-
-
-async def _on_every_store[T](
-    step: str, partition_uuid: UUID, calls: Sequence[Awaitable[T]]
-) -> list[T]:
-    """Run one step of a partition's lifecycle on every store at once, and raise the first error once every store has finished."""
-    results = await asyncio.gather(*calls, return_exceptions=True)
-    errors = [result for result in results if isinstance(result, BaseException)]
-    for error in errors:
-        logger.error(
-            "A store failed to %s partition %s",
-            step,
-            partition_uuid,
-            exc_info=error,
-        )
-    if errors:
-        raise errors[0]
-    return [result for result in results if not isinstance(result, BaseException)]
 
 
 def _extract_text(block: Block) -> str | None:

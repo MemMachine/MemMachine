@@ -684,3 +684,8 @@ class MilvusVectorStore(VectorStore):
             )
             _validate_every_key_accepted(result, len(primary_ids))
         return bool(primary_ids)
+
+    @override
+    async def drop_partition(self, partition_uuid: UUID) -> None:
+        # Every partition lives in the collection startup prepared.
+        return

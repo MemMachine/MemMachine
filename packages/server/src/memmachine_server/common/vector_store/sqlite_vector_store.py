@@ -31,7 +31,6 @@ from sqlalchemy import (
     event,
     func,
     select,
-    text,
     update,
 )
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -156,12 +155,12 @@ async def _save_partition_index(
     search_engine: VectorSearchEngine,
     path: str,
 ) -> None:
-    """Save a partition's index to disk, leaving no file if the partition is purged."""
+    """Save a partition's index to disk, leaving no file if the partition is dropped."""
     await search_engine.save(path)
 
     async with write_session(create_session) as session:
-        # The write lock holds a purge off until this commits, and the purge
-        # then unlinks the file; no match means a purge committed first, so
+        # The write lock holds a drop off until this commits, and the drop
+        # then unlinks the file; no match means a drop committed first, so
         # the file this wrote must go.
         saved = await (await session.connection()).execute(
             update(_PartitionRow)
@@ -782,26 +781,22 @@ class SQLiteVectorStore(VectorStore):
 
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:
-        # The partition's records live in its own table and index, so one
-        # call drops them all; its pending operations go with its row by the
-        # foreign key's cascade.
+        # A partition's records live in its own table and index, which
+        # drop_partition removes.
+        return False
+
+    @override
+    async def drop_partition(self, partition_uuid: UUID) -> None:
+        # The partition's pending operations go with its row by the foreign
+        # key's cascade.
         self._require_started()
         records_table = self._records_table(partition_uuid)
         async with write_session(self._create_session) as session:
-            deleted = await (await session.connection()).execute(
+            await session.execute(
                 delete(_PartitionRow).where(
                     _PartitionRow.partition_uuid == partition_uuid
                 )
             )
-            tables = (
-                await session.execute(
-                    text(
-                        "SELECT count(*) FROM sqlite_master "
-                        "WHERE type = 'table' AND name = :name"
-                    ),
-                    {"name": records_table.name},
-                )
-            ).scalar_one()
             connection = await session.connection()
             await connection.run_sync(
                 self._sa_metadata.drop_all, tables=[records_table]
@@ -809,13 +804,10 @@ class SQLiteVectorStore(VectorStore):
         self._sa_metadata.remove(records_table)
         self._search_engines.pop(partition_uuid, None)
 
-        # A save this purge overtakes unlinks the file it writes.
-        index_file = False
+        # A save this drop overtakes unlinks the file it writes.
         index_path = self._index_path(partition_uuid)
         if index_path is not None:
-            index_file = await asyncio.to_thread(index_path.exists)
             await asyncio.to_thread(index_path.unlink, missing_ok=True)
-        return deleted.rowcount > 0 or tables > 0 or index_file
 
     # Helpers.
 

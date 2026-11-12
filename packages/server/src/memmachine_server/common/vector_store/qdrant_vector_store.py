@@ -654,3 +654,8 @@ class QdrantVectorStore(VectorStore):
                 wait=True,
             )
         return bool(points)
+
+    @override
+    async def drop_partition(self, partition_uuid: UUID) -> None:
+        # Every partition lives in the collection startup prepared.
+        return
