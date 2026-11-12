@@ -315,12 +315,68 @@ class QdrantVectorStorePartition(VectorStorePartition):
                 )
             if not query_vectors:
                 return []
-            return await self._query(
-                query_vectors,
-                limit=limit,
-                score_threshold=score_threshold,
-                property_filter=property_filter,
+
+            qdrant_filter = _partition_filter(self._partition_uuid)
+            if property_filter is not None:
+                qdrant_filter = models.Filter(
+                    must=[
+                        qdrant_filter,
+                        QdrantVectorStorePartition._build_qdrant_filter(
+                            property_filter, self._store_schema.indexed_properties
+                        ),
+                    ]
+                )
+
+            # Qdrant keeps only scores strictly better than its threshold,
+            # compared in single precision, so send the next single-precision
+            # value on the worse side; the check below applies the caller's
+            # threshold exactly.
+            higher_is_better = self._store_schema.similarity_metric.higher_is_better
+            qdrant_score_threshold = None
+            if score_threshold is not None:
+                worse = np.float32(-np.inf if higher_is_better else np.inf)
+                adjacent = float(np.nextafter(np.float32(score_threshold), worse))
+                if math.isfinite(adjacent):
+                    qdrant_score_threshold = adjacent
+            requests = [
+                models.QueryRequest(
+                    query=query_vector,
+                    filter=qdrant_filter,
+                    score_threshold=qdrant_score_threshold,
+                    limit=limit,
+                    with_vector=False,
+                    with_payload=models.PayloadSelectorInclude(
+                        include=[_PAYLOAD_RECORD_UUID]
+                    ),
+                )
+                for query_vector in query_vectors
+            ]
+
+            batch_results = await self._client.query_batch_points(
+                collection_name=self._vector_store_name,
+                requests=requests,
             )
+
+            return [
+                QueryResult(
+                    matches=[
+                        QueryMatch(
+                            score=point.score,
+                            record_uuid=UUID(
+                                (point.payload or {})[_PAYLOAD_RECORD_UUID]
+                            ),
+                        )
+                        for point in batch.points
+                        if score_threshold is None
+                        or (
+                            point.score >= score_threshold
+                            if higher_is_better
+                            else point.score <= score_threshold
+                        )
+                    ]
+                )
+                for batch in batch_results
+            ]
 
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
@@ -383,73 +439,6 @@ class QdrantVectorStorePartition(VectorStorePartition):
             mid = len(points) // 2
             await self._upsert_points(points[:mid])
             await self._upsert_points(points[mid:])
-
-    async def _query(
-        self,
-        query_vectors: list[list[float]],
-        *,
-        limit: int,
-        score_threshold: float | None,
-        property_filter: FilterExpr | None,
-    ) -> list[QueryResult]:
-        qdrant_filter = _partition_filter(self._partition_uuid)
-        if property_filter is not None:
-            qdrant_filter = models.Filter(
-                must=[
-                    qdrant_filter,
-                    QdrantVectorStorePartition._build_qdrant_filter(
-                        property_filter, self._store_schema.indexed_properties
-                    ),
-                ]
-            )
-
-        # Qdrant keeps only scores strictly better than its threshold, compared
-        # in single precision, so send the next single-precision value on the
-        # worse side; the check below applies the caller's threshold exactly.
-        higher_is_better = self._store_schema.similarity_metric.higher_is_better
-        qdrant_score_threshold = None
-        if score_threshold is not None:
-            worse = np.float32(-np.inf if higher_is_better else np.inf)
-            adjacent = float(np.nextafter(np.float32(score_threshold), worse))
-            if math.isfinite(adjacent):
-                qdrant_score_threshold = adjacent
-        requests = [
-            models.QueryRequest(
-                query=query_vector,
-                filter=qdrant_filter,
-                score_threshold=qdrant_score_threshold,
-                limit=limit,
-                with_vector=False,
-                with_payload=models.PayloadSelectorInclude(
-                    include=[_PAYLOAD_RECORD_UUID]
-                ),
-            )
-            for query_vector in query_vectors
-        ]
-
-        batch_results = await self._client.query_batch_points(
-            collection_name=self._vector_store_name,
-            requests=requests,
-        )
-
-        return [
-            QueryResult(
-                matches=[
-                    QueryMatch(
-                        score=point.score,
-                        record_uuid=UUID((point.payload or {})[_PAYLOAD_RECORD_UUID]),
-                    )
-                    for point in batch.points
-                    if score_threshold is None
-                    or (
-                        point.score >= score_threshold
-                        if higher_is_better
-                        else point.score <= score_threshold
-                    )
-                ]
-            )
-            for batch in batch_results
-        ]
 
 
 class QdrantVectorStoreParams(VectorStoreParams):
