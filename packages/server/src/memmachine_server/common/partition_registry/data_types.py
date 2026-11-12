@@ -53,7 +53,7 @@ class PartitionAlreadyExistsError(Exception):
 
 
 class PartitionPendingError(Exception):
-    """Raised when opening a partition whose creation has not completed."""
+    """Raised when getting a partition whose creation has not completed."""
 
     def __init__(
         self,
@@ -89,4 +89,4 @@ class PartitionDeletedError(Exception):
 
 
 class PartitionCreateAttemptsExhaustedError(Exception):
-    """Raised when creating a partition, or opening it by creating it, gave up after repeated attempts that made no progress."""
+    """Raised when creating a partition, or getting it by creating it, gave up after repeated attempts that made no progress."""

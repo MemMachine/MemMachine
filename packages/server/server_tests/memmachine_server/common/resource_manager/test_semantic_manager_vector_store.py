@@ -31,7 +31,7 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
 async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_engine):
     vector_store = MagicMock()
     partition = MagicMock()
-    vector_store.open_partition = AsyncMock(return_value=partition)
+    vector_store.get_partition = AsyncMock(return_value=partition)
     registration = MagicMock()
     registration.partition_uuid = uuid4()
     partition_registry = MagicMock()
@@ -82,7 +82,7 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
         partitioned_stores=[vector_store],
     )
     partition_registry.resolve.assert_awaited_once_with("semantic_memory")
-    vector_store.open_partition.assert_awaited_once_with(registration.partition_uuid)
+    vector_store.get_partition.assert_awaited_once_with(registration.partition_uuid)
 
     await storage.cleanup()
 
@@ -112,17 +112,15 @@ async def partition_registry(
 
 @pytest.fixture(autouse=True)
 def _no_retry_delay(monkeypatch):
-    monkeypatch.setattr(semantic_manager, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr(semantic_manager, "_GET_OR_CREATE_RETRY_DELAY_SECONDS", 0)
 
 
 @pytest.mark.asyncio
 async def test_semantic_memory_creates_its_partition_once_and_reopens_it(
     partition_registry, partitioned_vector_store
 ):
-    created = await SemanticResourceManager._open_or_create_partition(
-        partition_registry
-    )
-    reopened = await SemanticResourceManager._open_or_create_partition(
+    created = await SemanticResourceManager._get_or_create_partition(partition_registry)
+    reopened = await SemanticResourceManager._get_or_create_partition(
         partition_registry
     )
 
@@ -136,11 +134,11 @@ async def test_semantic_memory_creates_its_partition_once_and_reopens_it(
 async def test_semantic_memory_waits_for_another_process_creating_its_partition(
     partition_registry, partitioned_vector_store, monkeypatch
 ):
-    monkeypatch.setattr(semantic_manager, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0.05)
+    monkeypatch.setattr(semantic_manager, "_GET_OR_CREATE_RETRY_DELAY_SECONDS", 0.05)
     pending = await partition_registry._reserve("semantic_memory")
 
     opening = asyncio.create_task(
-        SemanticResourceManager._open_or_create_partition(partition_registry)
+        SemanticResourceManager._get_or_create_partition(partition_registry)
     )
     await asyncio.sleep(0.1)
     assert not opening.done()
@@ -163,7 +161,7 @@ async def test_a_failed_creation_of_semantic_memorys_partition_frees_its_name(
     partitioned_vector_store.create_partition.side_effect = refused
 
     with pytest.raises(RuntimeError, match="refused"):
-        await SemanticResourceManager._open_or_create_partition(partition_registry)
+        await SemanticResourceManager._get_or_create_partition(partition_registry)
 
     assert await partition_registry.resolve("semantic_memory") is None
     purged: list[UUID] = []

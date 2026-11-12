@@ -101,7 +101,7 @@ def _deployment_resource_manager(
         similarity_metric=SimilarityMetric.COSINE,
         indexed_properties=event_backend_indexed_properties(),
     )
-    vector_store.open_partition.return_value = create_autospec(
+    vector_store.get_partition.return_value = create_autospec(
         VectorStorePartition, instance=True
     )
     embedder = create_autospec(Embedder, instance=True)
@@ -116,7 +116,7 @@ def _deployment_resource_manager(
     resource_manager.get_segment_store.return_value = create_autospec(
         SegmentStore, instance=True
     )
-    resource_manager.get_segment_store.return_value.open_partition.return_value = (
+    resource_manager.get_segment_store.return_value.get_partition.return_value = (
         create_autospec(SegmentStorePartition, instance=True)
     )
     registration = create_autospec(Registration, instance=True)
@@ -161,7 +161,7 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     assert partition.similarity_metric is SimilarityMetric.COSINE
     partition_registry = resource_manager.get_partition_registry.return_value
     partition_registry.resolve.assert_awaited_once_with("raced")
-    vector_store.open_partition.assert_awaited_once_with(
+    vector_store.get_partition.assert_awaited_once_with(
         partition_registry.resolve.return_value.partition_uuid
     )
     registry_call = resource_manager.get_partition_registry.await_args

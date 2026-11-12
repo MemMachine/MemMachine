@@ -67,11 +67,11 @@ _PARTITION_NAME = "semantic_memory"
 _TOMBSTONE_RETENTION_SECONDS = 86400
 """The retention of semantic memory's namespace, whose tombstones are only those of creations that failed."""
 
-# Attempts opening or creating the partition makes,
-# _OPEN_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
+# Attempts getting or creating the partition makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
 # partition that stays pending or a name it keeps losing.
-_MAX_OPEN_OR_CREATE_ATTEMPTS = 10
-_OPEN_OR_CREATE_RETRY_DELAY_SECONDS = 1
+_MAX_GET_OR_CREATE_ATTEMPTS = 10
+_GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
 
 class SemanticResourceManager:
@@ -200,18 +200,16 @@ class SemanticResourceManager:
             tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
             partitioned_stores=[vector_store],
         )
-        registration = await SemanticResourceManager._open_or_create_partition(
+        registration = await SemanticResourceManager._get_or_create_partition(
             partition_registry
         )
-        vector_partition = await vector_store.open_partition(
-            registration.partition_uuid
-        )
+        vector_partition = await vector_store.get_partition(registration.partition_uuid)
         storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
         await storage.startup()
         return storage
 
     @staticmethod
-    async def _open_or_create_partition(
+    async def _get_or_create_partition(
         partition_registry: PartitionRegistry,
     ) -> Registration:
         """
@@ -226,9 +224,9 @@ class SemanticResourceManager:
         """
         pending_error: PartitionPendingError | None = None
         lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
-        for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
+        for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
             if attempt:
-                await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
+                await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
             try:
                 registration = await partition_registry.resolve(_PARTITION_NAME)
             except PartitionPendingError as err:
@@ -246,8 +244,8 @@ class SemanticResourceManager:
         if pending_error is not None:
             raise pending_error
         raise PartitionCreateAttemptsExhaustedError(
-            f"Opening or creating semantic memory's partition made no progress "
-            f"after {_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
+            f"Getting or creating semantic memory's partition made no progress "
+            f"after {_MAX_GET_OR_CREATE_ATTEMPTS} attempts"
         ) from lost_race
 
     async def get_semantic_config_storage(self) -> SemanticConfigStorage:

@@ -21,7 +21,7 @@ from memmachine_server.episodic_memory.event_memory.segment_store.data_types imp
 class SegmentStorePartition(ABC):
     """A handle on one partition's segments in a segment store.
 
-    Every operation reads and writes the partition it was opened on, and no
+    Every operation reads and writes the partition it is bound to, and no
     other. The handle checks nothing about whether the partition is still
     live: its owner fences each operation by the partition's
     registration.
@@ -164,7 +164,7 @@ class SegmentStore(PartitionedStore):
     The store holds each partition's segments under the partition's UUID; its
     owner's partition registry creates, purges, and drops partitions through
     the `PartitionedStore` methods. A partition keeps the configuration it was
-    created with, which every handle opened on it uses. A purge call commits
+    created with, which every handle on it uses. A purge call commits
     what it did or nothing.
     """
 
@@ -179,11 +179,9 @@ class SegmentStore(PartitionedStore):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(
-        self, partition_uuid: UUID
-    ) -> SegmentStorePartition | None:
+    async def get_partition(self, partition_uuid: UUID) -> SegmentStorePartition | None:
         """
-        Open a handle on a created partition.
+        Get a handle on a created partition.
 
         Args:
             partition_uuid (UUID):
@@ -193,18 +191,5 @@ class SegmentStore(PartitionedStore):
             SegmentStorePartition | None:
                 A handle bound to the partition, or None if the partition was
                 never created or was dropped.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def close_partition(
-        self, segment_store_partition: SegmentStorePartition
-    ) -> None:
-        """
-        Close a partition-scoped handle.
-
-        Args:
-            segment_store_partition (SegmentStorePartition):
-                The partition-scoped handle to close.
         """
         raise NotImplementedError

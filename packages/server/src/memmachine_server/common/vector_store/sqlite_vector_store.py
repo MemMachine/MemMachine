@@ -763,7 +763,7 @@ class SQLiteVectorStore(VectorStore):
             )
 
     @override
-    async def open_partition(self, partition_uuid: UUID) -> SQLiteVectorStorePartition:
+    async def get_partition(self, partition_uuid: UUID) -> SQLiteVectorStorePartition:
         self._require_started()
         index_path = self._index_path(partition_uuid)
         return SQLiteVectorStorePartition(

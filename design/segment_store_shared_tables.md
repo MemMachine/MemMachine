@@ -72,7 +72,7 @@ with a new UUID.
   DDL, no lock beyond the row, microseconds. Creating again with the same
   config changes nothing; a different config raises the config-mismatch
   error.
-- **Open**: read the partition's row. The handle captures the
+- **Get**: read the partition's row. The handle captures the
   partition's UUID and the codec.
 - **Delete** is the owner's: unregistering the tenant's name in its
   registry is O(1) regardless of tenant size, and the tenant is unreachable

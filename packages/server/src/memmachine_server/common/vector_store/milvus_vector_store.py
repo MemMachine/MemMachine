@@ -629,7 +629,7 @@ class MilvusVectorStore(VectorStore):
         return
 
     @override
-    async def open_partition(self, partition_uuid: UUID) -> MilvusVectorStorePartition:
+    async def get_partition(self, partition_uuid: UUID) -> MilvusVectorStorePartition:
         return MilvusVectorStorePartition(
             client=self._client,
             collection_name=self._collection_name,

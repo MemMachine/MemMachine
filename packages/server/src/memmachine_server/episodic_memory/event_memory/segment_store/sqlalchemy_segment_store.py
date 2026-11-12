@@ -915,10 +915,10 @@ class SQLAlchemySegmentStore(SegmentStore):
                 )
 
     @override
-    async def open_partition(
+    async def get_partition(
         self, partition_uuid: UUID
     ) -> SQLAlchemySegmentStorePartition | None:
-        async with self._tracker("open_partition"):
+        async with self._tracker("get_partition"):
             partition_row = await self._get_partition_row(partition_uuid)
             if partition_row is None:
                 return None
@@ -935,12 +935,6 @@ class SQLAlchemySegmentStore(SegmentStore):
                 payload_codec=await self._load_payload_codec(config),
                 tracker=self._tracker,
             )
-
-    @override
-    async def close_partition(
-        self, segment_store_partition: SegmentStorePartition
-    ) -> None:
-        pass
 
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:

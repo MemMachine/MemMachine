@@ -104,7 +104,7 @@ async def _open(
 ) -> SQLAlchemySegmentStorePartition:
     """Create a partition, with the store's plaintext config, and open a handle on it."""
     await store.create_partition(partition_uuid)
-    partition = await store.open_partition(partition_uuid)
+    partition = await store.get_partition(partition_uuid)
     assert partition is not None
     return partition
 
@@ -1368,7 +1368,7 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
 async def test_an_uncreated_partition_does_not_open(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    assert await store.open_partition(uuid4()) is None
+    assert await store.get_partition(uuid4()) is None
 
 
 @pytest.mark.asyncio
@@ -1377,7 +1377,7 @@ async def test_a_created_partition_opens_with_its_config(
 ) -> None:
     await store.create_partition(PARTITION_UUID)
 
-    partition = await store.open_partition(PARTITION_UUID)
+    partition = await store.get_partition(PARTITION_UUID)
     assert partition is not None
     assert partition.config == _plaintext_partition_config()
 
@@ -1419,7 +1419,7 @@ async def test_creating_again_with_a_different_config_raises_mismatch(
     assert exc_info.value.requested_config == requested
 
     # The partition itself is untouched and still opens.
-    assert await store.open_partition(PARTITION_UUID) is not None
+    assert await store.get_partition(PARTITION_UUID) is not None
 
 
 @pytest.mark.asyncio
@@ -1454,10 +1454,10 @@ async def test_purge_removes_the_segments_and_their_links_and_the_drop_the_parti
     assert await _row_counts(store, PARTITION_UUID) == (0, 0)
     assert await store.purge_partition(PARTITION_UUID) is False
     # The partition keeps its own row until it is dropped.
-    assert await store.open_partition(PARTITION_UUID) is not None
+    assert await store.get_partition(PARTITION_UUID) is not None
 
     await store.drop_partition(PARTITION_UUID)
-    assert await store.open_partition(PARTITION_UUID) is None
+    assert await store.get_partition(PARTITION_UUID) is None
     await store.drop_partition(PARTITION_UUID)
 
 
@@ -1469,7 +1469,7 @@ async def test_a_partition_that_holds_no_segments_purges_nothing_and_drops(
 
     assert await store.purge_partition(PARTITION_UUID) is False
     await store.drop_partition(PARTITION_UUID)
-    assert await store.open_partition(PARTITION_UUID) is None
+    assert await store.get_partition(PARTITION_UUID) is None
 
 
 @pytest.mark.asyncio
