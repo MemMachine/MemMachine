@@ -197,7 +197,7 @@ async def _event_memory_partition_registry(
         partition_namespace=EventMemory.PARTITION_NAMESPACE,
         tombstone_retention_seconds=deployment.tombstone_retention_seconds,
         purge_round=functools.partial(
-            EventMemory.purge_partition_incarnation, segment_store, vector_store
+            EventMemory.purge_partition, segment_store, vector_store
         ),
     )
 

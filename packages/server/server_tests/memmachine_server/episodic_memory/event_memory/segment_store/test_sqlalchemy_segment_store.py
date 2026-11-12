@@ -49,15 +49,15 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
     BaseSegmentStore,
     DerivativeLinkRow,
-    PartitionIncarnationRow,
+    PartitionRow,
     SegmentRow,
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
     SQLAlchemySegmentStorePartition,
 )
 
-INCARNATION = UUID("00000000-0000-4000-8000-000000000001")
-OTHER_INCARNATION = UUID("00000000-0000-4000-8000-000000000002")
+PARTITION_UUID = UUID("00000000-0000-4000-8000-000000000001")
+OTHER_PARTITION_UUID = UUID("00000000-0000-4000-8000-000000000002")
 BASE_TIME = datetime(2024, 1, 1, tzinfo=UTC)
 _NULL_CONTEXT = NullContext()
 
@@ -100,35 +100,33 @@ def _plaintext_partition_config() -> SegmentStorePartitionConfig:
 
 
 async def _open(
-    store: SQLAlchemySegmentStore, incarnation: UUID = INCARNATION
+    store: SQLAlchemySegmentStore, partition_uuid: UUID = PARTITION_UUID
 ) -> SQLAlchemySegmentStorePartition:
-    """Prepare a partition incarnation with the plaintext config and open a handle on it."""
-    await store.prepare_partition_incarnation(
-        incarnation, _plaintext_partition_config()
-    )
-    partition = await store.open_partition_incarnation(incarnation)
+    """Prepare a partition with the plaintext config and open a handle on it."""
+    await store.create_partition(partition_uuid, _plaintext_partition_config())
+    partition = await store.open_partition(partition_uuid)
     assert partition is not None
     return partition
 
 
 async def _row_counts(
     owner: SQLAlchemySegmentStore | SQLAlchemySegmentStorePartition,
-    incarnation: UUID,
+    partition_uuid: UUID,
 ) -> tuple[int, int]:
-    """The incarnation's segment and derivative-link row counts."""
+    """The partition's segment and derivative-link row counts."""
     async with owner._create_session() as session:
         segments = (
             await session.execute(
                 select(func.count())
                 .select_from(SegmentRow)
-                .where(SegmentRow.incarnation == incarnation)
+                .where(SegmentRow.partition_uuid == partition_uuid)
             )
         ).scalar_one()
         links = (
             await session.execute(
                 select(func.count())
                 .select_from(DerivativeLinkRow)
-                .where(DerivativeLinkRow.incarnation == incarnation)
+                .where(DerivativeLinkRow.partition_uuid == partition_uuid)
             )
         ).scalar_one()
     return segments, links
@@ -1082,7 +1080,7 @@ async def test_add_segments_failing_partway_writes_nothing(
     with pytest.raises(IntegrityError):
         await partition.add_segments({rejected[0]: [uuid4()], rejected[1]: [taken]})
 
-    assert await _row_counts(partition, partition._incarnation) == (1, 1)
+    assert await _row_counts(partition, partition._partition_uuid) == (1, 1)
     assert (
         await partition.get_segment_contexts([segment.uuid for segment in rejected])
         == {}
@@ -1111,7 +1109,7 @@ async def test_segment_write_whose_commit_fails_changes_nothing(
     ):
         await write
 
-    assert await _row_counts(store, partition._incarnation) == (1, 1)
+    assert await _row_counts(store, partition._partition_uuid) == (1, 1)
     assert kept.uuid in await partition.get_segment_contexts([kept.uuid])
 
 
@@ -1150,7 +1148,7 @@ async def test_concurrent_add_disjoint(
             await session.execute(select(func.count()).select_from(SegmentRow))
         ).scalar()
     assert count == 50
-    assert await _row_counts(part, part._incarnation) == (50, 50)
+    assert await _row_counts(part, part._partition_uuid) == (50, 50)
 
 
 @pytest.mark.asyncio
@@ -1354,7 +1352,7 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
             partition.delete_segments(backward),
         )
         await partition.delete_segments(rng.sample(uuids, len(uuids)))
-        assert await _row_counts(partition, partition._incarnation) == (0, 0)
+        assert await _row_counts(partition, partition._partition_uuid) == (0, 0)
 
     rng = random.Random(7)
     for _ in range(10):
@@ -1362,26 +1360,24 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
 
 
 # ===================================================================
-# Partition incarnations
+# Partitions
 # ===================================================================
 
 
 @pytest.mark.asyncio
-async def test_an_unprepared_incarnation_does_not_open(
+async def test_an_uncreated_partition_does_not_open(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    assert await store.open_partition_incarnation(uuid4()) is None
+    assert await store.open_partition(uuid4()) is None
 
 
 @pytest.mark.asyncio
-async def test_a_prepared_incarnation_opens_with_its_config(
+async def test_a_created_partition_opens_with_its_config(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    await store.prepare_partition_incarnation(
-        INCARNATION, SegmentStorePartitionConfig()
-    )
+    await store.create_partition(PARTITION_UUID, SegmentStorePartitionConfig())
 
-    partition = await store.open_partition_incarnation(INCARNATION)
+    partition = await store.open_partition(PARTITION_UUID)
     assert partition is not None
     assert partition.config == _plaintext_partition_config()
 
@@ -1394,10 +1390,8 @@ async def test_preparing_again_with_the_same_config_changes_nothing(
     segment = _seg()
     await partition.add_segments(_links(segment))
 
-    await store.prepare_partition_incarnation(
-        INCARNATION, _plaintext_partition_config()
-    )
-    assert await _row_counts(store, INCARNATION) == (1, 1)
+    await store.create_partition(PARTITION_UUID, _plaintext_partition_config())
+    assert await _row_counts(store, PARTITION_UUID) == (1, 1)
     assert segment.uuid in await partition.get_segment_contexts([segment.uuid])
 
 
@@ -1409,20 +1403,20 @@ class _ForeignPayloadCodecConfig(PlaintextPayloadCodecConfig):
 async def test_preparing_again_with_a_different_config_raises_mismatch(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Preparing an incarnation under a different config is refused, not adapted."""
+    """Preparing a partition UUID under a different config is refused, not adapted."""
     await _open(store)
 
     requested = SegmentStorePartitionConfig(
         payload_codec_config=_ForeignPayloadCodecConfig()
     )
     with pytest.raises(SegmentStorePartitionConfigMismatchError) as exc_info:
-        await store.prepare_partition_incarnation(INCARNATION, requested)
-    assert exc_info.value.incarnation == INCARNATION
+        await store.create_partition(PARTITION_UUID, requested)
+    assert exc_info.value.partition_uuid == PARTITION_UUID
     assert exc_info.value.existing_config == _plaintext_partition_config()
     assert exc_info.value.requested_config == requested
 
-    # The incarnation itself is untouched and still opens.
-    assert await store.open_partition_incarnation(INCARNATION) is not None
+    # The partition UUID itself is untouched and still opens.
+    assert await store.open_partition(PARTITION_UUID) is not None
 
 
 @pytest.mark.asyncio
@@ -1430,7 +1424,7 @@ async def test_an_unloadable_codec_config_prepares_nothing(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A codec that cannot be materialized leaves no incarnation row behind."""
+    """A codec that cannot be materialized leaves no partition UUID row behind."""
 
     async def unloadable(config) -> None:
         raise NotImplementedError("unsupported codec")
@@ -1438,65 +1432,61 @@ async def test_an_unloadable_codec_config_prepares_nothing(
     with monkeypatch.context() as patched:
         patched.setattr(store, "_load_payload_codec", unloadable)
         with pytest.raises(NotImplementedError):
-            await store.prepare_partition_incarnation(
-                INCARNATION, _plaintext_partition_config()
-            )
+            await store.create_partition(PARTITION_UUID, _plaintext_partition_config())
     async with store._create_session() as session:
         rows = (
-            await session.execute(
-                select(func.count()).select_from(PartitionIncarnationRow)
-            )
+            await session.execute(select(func.count()).select_from(PartitionRow))
         ).scalar_one()
     assert rows == 0
 
 
 @pytest.mark.asyncio
-async def test_purge_removes_the_segments_their_links_and_the_incarnation(
+async def test_purge_removes_the_segments_their_links_and_the_partition(
     store: SQLAlchemySegmentStore,
 ) -> None:
     partition = await _open(store)
     await partition.add_segments(_links(_seg(), _seg(ts_offset_seconds=1)))
 
-    assert await store.purge_partition_incarnation(INCARNATION) is True
-    assert await _row_counts(store, INCARNATION) == (0, 0)
-    assert await store.open_partition_incarnation(INCARNATION) is None
-    assert await store.purge_partition_incarnation(INCARNATION) is False
+    assert await store.purge_partition(PARTITION_UUID) is True
+    assert await _row_counts(store, PARTITION_UUID) == (0, 0)
+    assert await store.open_partition(PARTITION_UUID) is None
+    assert await store.purge_partition(PARTITION_UUID) is False
 
 
 @pytest.mark.asyncio
-async def test_purge_removes_an_incarnation_that_holds_no_segments(
+async def test_purge_removes_a_partition_that_holds_no_segments(
     store: SQLAlchemySegmentStore,
 ) -> None:
     await _open(store)
 
-    assert await store.purge_partition_incarnation(INCARNATION) is True
-    assert await store.open_partition_incarnation(INCARNATION) is None
-    assert await store.purge_partition_incarnation(INCARNATION) is False
+    assert await store.purge_partition(PARTITION_UUID) is True
+    assert await store.open_partition(PARTITION_UUID) is None
+    assert await store.purge_partition(PARTITION_UUID) is False
 
 
 @pytest.mark.asyncio
-async def test_purge_of_an_unprepared_incarnation_finds_nothing(
+async def test_purge_of_an_uncreated_partition_finds_nothing(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    assert await store.purge_partition_incarnation(uuid4()) is False
+    assert await store.purge_partition(uuid4()) is False
 
 
 @pytest.mark.asyncio
-async def test_purge_leaves_other_incarnations_whole(
+async def test_purge_leaves_other_partitions_whole(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    keeper = await _open(store, OTHER_INCARNATION)
+    keeper = await _open(store, OTHER_PARTITION_UUID)
     segment = _seg()
     derivative_uuid = uuid4()
     await keeper.add_segments({segment: [derivative_uuid]})
     doomed = await _open(store)
     await doomed.add_segments(_links(_seg(), _seg(ts_offset_seconds=1)))
 
-    while await store.purge_partition_incarnation(INCARNATION):
+    while await store.purge_partition(PARTITION_UUID):
         pass
 
-    assert await _row_counts(store, OTHER_INCARNATION) == (1, 1)
-    # The derivative-link cascade still works for the incarnation the purge
+    assert await _row_counts(store, OTHER_PARTITION_UUID) == (1, 1)
+    # The derivative-link cascade still works for the partition UUID the purge
     # left.
     await keeper.delete_segments([segment.uuid])
     assert await keeper.get_derivative_uuids_by_segment_uuids([segment.uuid]) == {}
@@ -1508,25 +1498,25 @@ async def test_purge_keeps_the_foreign_key_enforced(
     pg_store: SQLAlchemySegmentStore,
     sqlalchemy_pg_engine: AsyncEngine,
 ) -> None:
-    """Purging one incarnation must not drop the derivative-link foreign key."""
-    await _open(pg_store, OTHER_INCARNATION)
+    """Purging one partition UUID must not drop the derivative-link foreign key."""
+    await _open(pg_store, OTHER_PARTITION_UUID)
     await _open(pg_store)
 
-    while await pg_store.purge_partition_incarnation(INCARNATION):
+    while await pg_store.purge_partition(PARTITION_UUID):
         pass
 
     # A derivative link pointing at no segment must still be rejected in the
-    # incarnation the purge left.
+    # partition UUID the purge left.
     with pytest.raises(IntegrityError):
         async with sqlalchemy_pg_engine.begin() as connection:
             await connection.execute(
                 text(
                     "INSERT INTO segment_store_dv_ln"
-                    " (incarnation, uuid, segment_uuid)"
-                    " VALUES (:incarnation, :uuid, :segment_uuid)"
+                    " (partition_uuid, uuid, segment_uuid)"
+                    " VALUES (:partition_uuid, :uuid, :segment_uuid)"
                 ),
                 {
-                    "incarnation": OTHER_INCARNATION,
+                    "partition_uuid": OTHER_PARTITION_UUID,
                     "uuid": uuid4(),
                     "segment_uuid": uuid4(),
                 },
@@ -1551,24 +1541,24 @@ async def test_purge_is_bounded_and_continues_after_its_cursor(
         await partition.add_segments(_links(*segments))
         ordered = sorted(segment.uuid for segment in segments)
 
-        assert await store.purge_partition_incarnation(INCARNATION) is True
-        assert await _row_counts(store, INCARNATION) == (3, 3)
+        assert await store.purge_partition(PARTITION_UUID) is True
+        assert await _row_counts(store, PARTITION_UUID) == (3, 3)
         async with store._create_session() as session:
             cursor = (
                 await session.execute(
-                    select(PartitionIncarnationRow.purged_through).where(
-                        PartitionIncarnationRow.incarnation == INCARNATION
+                    select(PartitionRow.purged_through).where(
+                        PartitionRow.partition_uuid == PARTITION_UUID
                     )
                 )
             ).scalar_one()
         assert cursor == ordered[1]
 
-        assert await store.purge_partition_incarnation(INCARNATION) is True
-        assert await _row_counts(store, INCARNATION) == (1, 1)
-        assert await store.purge_partition_incarnation(INCARNATION) is True
-        assert await _row_counts(store, INCARNATION) == (0, 0)
-        assert await store.open_partition_incarnation(INCARNATION) is None
-        assert await store.purge_partition_incarnation(INCARNATION) is False
+        assert await store.purge_partition(PARTITION_UUID) is True
+        assert await _row_counts(store, PARTITION_UUID) == (1, 1)
+        assert await store.purge_partition(PARTITION_UUID) is True
+        assert await _row_counts(store, PARTITION_UUID) == (0, 0)
+        assert await store.open_partition(PARTITION_UUID) is None
+        assert await store.purge_partition(PARTITION_UUID) is False
     finally:
         async with sqlalchemy_sqlite_engine.begin() as conn:
             await conn.run_sync(BaseSegmentStore.metadata.drop_all)
@@ -1594,20 +1584,20 @@ async def test_a_failed_purge_call_leaves_nothing_half_done(
         _failing_next_commit(store._engine),
         pytest.raises(RuntimeError, match="injected commit failure"),
     ):
-        await store.purge_partition_incarnation(INCARNATION)
-    assert await _row_counts(store, INCARNATION) == (5, 5)
+        await store.purge_partition(PARTITION_UUID)
+    assert await _row_counts(store, PARTITION_UUID) == (5, 5)
 
-    while await store.purge_partition_incarnation(INCARNATION):
+    while await store.purge_partition(PARTITION_UUID):
         pass
-    assert await _row_counts(store, INCARNATION) == (0, 0)
+    assert await _row_counts(store, PARTITION_UUID) == (0, 0)
 
 
 @pytest.mark.asyncio
-async def test_concurrent_purges_of_one_incarnation_reclaim_everything(
+async def test_concurrent_purges_of_one_partition_reclaim_everything(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Racing purgers of one incarnation neither error nor leave rows behind."""
+    """Racing purgers of one partition UUID neither error nor leave rows behind."""
     monkeypatch.setattr(store, "_purge_max_segments", 2)
     partition = await _open(store)
     await partition.add_segments(
@@ -1615,50 +1605,50 @@ async def test_concurrent_purges_of_one_incarnation_reclaim_everything(
     )
 
     async def drain() -> None:
-        while await store.purge_partition_incarnation(INCARNATION):
+        while await store.purge_partition(PARTITION_UUID):
             pass
 
     await asyncio.wait_for(asyncio.gather(drain(), drain(), drain()), 60)
 
-    assert await _row_counts(store, INCARNATION) == (0, 0)
-    assert await store.open_partition_incarnation(INCARNATION) is None
+    assert await _row_counts(store, PARTITION_UUID) == (0, 0)
+    assert await store.open_partition(PARTITION_UUID) is None
 
 
 @pytest.mark.asyncio
-async def test_purge_reclaims_a_write_that_lands_after_the_incarnation_is_gone(
+async def test_purge_reclaims_a_write_that_lands_after_the_partition_is_gone(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """A late write under a purged incarnation is reclaimed by the next call."""
+    """A late write under a purged partition UUID is reclaimed by the next call."""
     partition = await _open(store)
-    while await store.purge_partition_incarnation(INCARNATION):
+    while await store.purge_partition(PARTITION_UUID):
         pass
 
     await partition.add_segments(_links(_seg()))
 
-    assert await store.purge_partition_incarnation(INCARNATION) is True
-    assert await _row_counts(store, INCARNATION) == (0, 0)
-    assert await store.purge_partition_incarnation(INCARNATION) is False
+    assert await store.purge_partition(PARTITION_UUID) is True
+    assert await _row_counts(store, PARTITION_UUID) == (0, 0)
+    assert await store.purge_partition(PARTITION_UUID) is False
 
 
 @pytest.mark.asyncio
-async def test_purging_while_other_incarnations_are_written_leaves_exactly_their_rows(
+async def test_purging_while_other_partitions_are_written_leaves_exactly_their_rows(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Purges of some incarnations and writes to others interleave cleanly."""
+    """Purges of some partition UUIDs and writes to others interleave cleanly."""
     monkeypatch.setattr(store, "_purge_max_segments", 3)
     retired: list[UUID] = []
     for _ in range(3):
-        incarnation = uuid4()
-        partition = await _open(store, incarnation)
+        partition_uuid = uuid4()
+        partition = await _open(store, partition_uuid)
         await partition.add_segments(
             _links(*(_seg(ts_offset_seconds=index) for index in range(5)))
         )
-        retired.append(incarnation)
+        retired.append(partition_uuid)
     live = [await _open(store, uuid4()) for _ in range(2)]
 
-    async def purge(incarnation: UUID) -> None:
-        while await store.purge_partition_incarnation(incarnation):
+    async def purge(partition_uuid: UUID) -> None:
+        while await store.purge_partition(partition_uuid):
             pass
 
     async def write(partition: SQLAlchemySegmentStorePartition, seed: int) -> int:
@@ -1680,15 +1670,15 @@ async def test_purging_while_other_incarnations_are_written_leaves_exactly_their
     results = await asyncio.wait_for(
         asyncio.gather(
             *(write(partition, seed) for seed, partition in enumerate(live)),
-            *(purge(incarnation) for incarnation in retired),
+            *(purge(partition_uuid) for partition_uuid in retired),
         ),
         120,
     )
 
-    for incarnation in retired:
-        assert await _row_counts(store, incarnation) == (0, 0)
+    for partition_uuid in retired:
+        assert await _row_counts(store, partition_uuid) == (0, 0)
     for partition, written in zip(live, results[: len(live)], strict=True):
-        assert await _row_counts(store, partition._incarnation) == (written, written)
+        assert await _row_counts(store, partition._partition_uuid) == (written, written)
 
 
 async def _assert_handles_match_model(
@@ -1719,11 +1709,11 @@ async def test_random_operation_sequences_agree_with_a_model(
 ) -> None:
     """Random sequences of every data operation agree with an in-memory model.
 
-    Adds and segment deletes in a few slots' current incarnations, retiring
-    a slot's incarnation for a new one, and bounded purge calls on retired
-    incarnations. After every step each current incarnation reads back
+    Adds and segment deletes in a few slots' current partition UUIDs, retiring
+    a slot's partition UUID for a new one, and bounded purge calls on retired
+    partition UUIDs. After every step each current partition UUID reads back
     exactly the model's segments and links, and once every retired
-    incarnation is purged, the tables hold exactly the current rows.
+    partition UUID is purged, the tables hold exactly the current rows.
     """
     rng = random.Random(seed)
     monkeypatch.setattr(store, "_purge_max_segments", 3)
@@ -1736,9 +1726,9 @@ async def test_random_operation_sequences_agree_with_a_model(
         slot = rng.choice(slots)
         operation = rng.choice(["add", "add", "delete_segments", "retire", "purge"])
         if operation == "purge" and retired:
-            await store.purge_partition_incarnation(rng.choice(retired))
+            await store.purge_partition(rng.choice(retired))
         elif operation == "retire" and slot in handles:
-            retired.append(handles.pop(slot)._incarnation)
+            retired.append(handles.pop(slot)._partition_uuid)
             model.pop(slot)
         elif operation in ("add", "delete_segments"):
             if slot not in handles:
@@ -1765,8 +1755,8 @@ async def test_random_operation_sequences_agree_with_a_model(
 
         await _assert_handles_match_model(handles, model)
 
-    for incarnation in retired:
-        while await store.purge_partition_incarnation(incarnation):
+    for partition_uuid in retired:
+        while await store.purge_partition(partition_uuid):
             pass
     async with store._create_session() as session:
         segment_rows = (

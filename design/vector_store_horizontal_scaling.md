@@ -35,7 +35,7 @@ of that dimensionality, and any declared property it carries has its declared
 type. The composition root builds the stores its services
 need, and the name keeps two stores over one backend apart. Within a store, a
 partition holds one life of one tenant's records, addressed by the
-incarnation its owner's [partition registry](partition_registry.md) mints for
+partition UUID its owner's [partition registry](partition_registry.md) mints for
 that life, and every search runs within one partition. Every partition of a store shares its
 dimensions, metric, and schema.
 
@@ -45,7 +45,7 @@ Shared: contracts and choices made with every backend in mind.
 
 | Document | What it covers |
 |---|---|
-| [partition registry](partition_registry.md) | The SQL catalog that arbitrates which partitions exist, incarnations, reservations and registrations, handles and their fencing, creation races. |
+| [partition registry](partition_registry.md) | The SQL catalog that arbitrates which partitions exist, partition UUIDs, reservations and registrations, handles and their fencing, creation races. |
 | [purge](vector_store_purge.md) | Tombstones, the retention, the claim, backoff, dead-lettering, the sweeper. |
 | [consistency](vector_store_consistency.md) | What a query sees of earlier writes, as the contract states it; why the contract has no `get`; asynchronous clients; how tests observe state. |
 | [isolation](vector_store_isolation.md) | Isolation between partitions, record UUIDs and their reuse, and whether other vector databases can meet the guarantee. |
@@ -62,17 +62,17 @@ behind its choices.
 
 1. **Create.** The owner, such as event memory, reserves the partition name
    in its registry, inserting a pending row under a freshly minted
-   incarnation, has the store prepare the storage the incarnation needs of
+   partition UUID, has the store prepare the storage the partition UUID needs of
    its own (on Qdrant and Milvus, none: its records go into the store's one
    native collection, which startup prepared), and confirms the reservation,
    which marks the row live. A racing creator loses at the registry's primary
    key, and a pending partition is not opened.
 2. **Open.** The registry resolves the partition name to the live
-   incarnation; the owner opens the store's handle on that incarnation.
-3. **Use.** Every record a handle writes carries its incarnation, and every
+   partition UUID; the owner opens the store's handle on that partition UUID.
+3. **Use.** Every record a handle writes carries its partition UUID, and every
    read and delete is scoped to it. Before each of its writes and reads, and
    after each of its writes and deletes, the owner checks that the
-   incarnation is still live.
+   partition UUID is still live.
 4. **Delete.** One registry transaction removes the partition's row and
    queues a tombstone. Every operation of the owner on that life raises from
    then on, in every process.
@@ -102,9 +102,9 @@ request timeout plus 300 seconds (see [purge](vector_store_purge.md)).
 
 ## Related work
 
-- The segment store's shared tables with incarnation-scoped keys ([its
+- The segment store's shared tables with partition UUID-scoped keys ([its
   design](segment_store_shared_tables.md)) are the model for the registry's
-  incarnation logic.
+  partition UUID logic.
 
 ## Deployment consequences
 

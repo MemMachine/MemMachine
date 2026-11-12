@@ -670,10 +670,10 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
 
     partition_registry.unregister.assert_awaited_once_with(session_key)
     partition_registry.reserve.assert_not_awaited()
-    vector_store.prepare_partition_incarnation.assert_not_awaited()
-    vector_store.open_partition_incarnation.assert_not_awaited()
-    segment_store.prepare_partition_incarnation.assert_not_awaited()
-    segment_store.open_partition_incarnation.assert_not_awaited()
+    vector_store.create_partition.assert_not_awaited()
+    vector_store.open_partition.assert_not_awaited()
+    segment_store.create_partition.assert_not_awaited()
+    segment_store.open_partition.assert_not_awaited()
 
 
 @pytest.mark.asyncio

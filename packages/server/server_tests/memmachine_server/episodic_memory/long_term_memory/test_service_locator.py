@@ -101,7 +101,7 @@ def _deployment_resource_manager(
         similarity_metric=SimilarityMetric.COSINE,
         indexed_properties=event_backend_indexed_properties(),
     )
-    vector_store.open_partition_incarnation.return_value = create_autospec(
+    vector_store.open_partition.return_value = create_autospec(
         VectorStorePartition, instance=True
     )
     embedder = create_autospec(Embedder, instance=True)
@@ -116,11 +116,11 @@ def _deployment_resource_manager(
     resource_manager.get_segment_store.return_value = create_autospec(
         SegmentStore, instance=True
     )
-    resource_manager.get_segment_store.return_value.open_partition_incarnation.return_value = create_autospec(
-        SegmentStorePartition, instance=True
+    resource_manager.get_segment_store.return_value.open_partition.return_value = (
+        create_autospec(SegmentStorePartition, instance=True)
     )
     registration = create_autospec(Registration, instance=True)
-    registration.incarnation = uuid4()
+    registration.partition_uuid = uuid4()
     partition_registry = create_autospec(PartitionRegistry, instance=True)
     partition_registry.resolve.return_value = registration
     resource_manager.get_partition_registry.return_value = partition_registry
@@ -161,8 +161,8 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     assert partition.similarity_metric is SimilarityMetric.COSINE
     partition_registry = resource_manager.get_partition_registry.return_value
     partition_registry.resolve.assert_awaited_once_with("raced")
-    vector_store.open_partition_incarnation.assert_awaited_once_with(
-        partition_registry.resolve.return_value.incarnation
+    vector_store.open_partition.assert_awaited_once_with(
+        partition_registry.resolve.return_value.partition_uuid
     )
     registry_call = resource_manager.get_partition_registry.await_args
     assert registry_call.args == ("pr",)
@@ -238,11 +238,11 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without
     segment_store = resource_manager.get_segment_store.return_value
     partition_registry.unregister.assert_awaited_once_with("s")
     partition_registry.reserve.assert_not_awaited()
-    vector_store.prepare_partition_incarnation.assert_not_awaited()
-    segment_store.prepare_partition_incarnation.assert_not_awaited()
+    vector_store.create_partition.assert_not_awaited()
+    segment_store.create_partition.assert_not_awaited()
     # Reclamation is the purge rounds'; the delete path never purges.
-    vector_store.purge_partition_incarnation.assert_not_awaited()
-    segment_store.purge_partition_incarnation.assert_not_awaited()
+    vector_store.purge_partition.assert_not_awaited()
+    segment_store.purge_partition.assert_not_awaited()
 
 
 @pytest.mark.asyncio

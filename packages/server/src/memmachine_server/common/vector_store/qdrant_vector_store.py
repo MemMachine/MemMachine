@@ -63,34 +63,34 @@ from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 # System keys start with _SYSTEM_KEY_PREFIX, whose hyphen no property key may
 # contain (Record requires identifiers), so the two never collide.
 _SYSTEM_KEY_PREFIX = "sys-"
-_PAYLOAD_INCARNATION = f"{_SYSTEM_KEY_PREFIX}incarnation"
-"""The payload key holding the incarnation of the partition a point belongs to.
+_PAYLOAD_PARTITION_UUID = f"{_SYSTEM_KEY_PREFIX}partition_uuid"
+"""The payload key holding the partition UUID of the partition a point belongs to.
 
 A partition created again under a deleted one's name gets a fresh
-incarnation, so it holds only the points written under that incarnation.
+partition UUID, so it holds only the points written under that partition UUID.
 """
 _PAYLOAD_RECORD_UUID = f"{_SYSTEM_KEY_PREFIX}record_uuid"
 """The payload key holding a point's record UUID.
 
-A point's id is derived from its incarnation and record UUID (`_point_id`),
+A point's id is derived from its partition UUID and record UUID (`_point_id`),
 so a query reads the record UUID from here.
 """
 
 
-def _incarnation_filter(incarnation: UUID) -> models.Filter:
-    """Build a Qdrant filter that matches the points of one partition incarnation."""
+def _partition_filter(partition_uuid: UUID) -> models.Filter:
+    """Build a Qdrant filter that matches the points of one partition."""
     return models.Filter(
         must=[
             models.FieldCondition(
-                key=_PAYLOAD_INCARNATION,
-                match=models.MatchValue(value=str(incarnation)),
+                key=_PAYLOAD_PARTITION_UUID,
+                match=models.MatchValue(value=str(partition_uuid)),
             ),
         ],
     )
 
 
 class QdrantVectorStorePartition(VectorStorePartition):
-    """A partition incarnation's points in the store's Qdrant collection."""
+    """A partition's points in the store's Qdrant collection."""
 
     _RANGE_OPERATORS: ClassVar[dict[str, str]] = {
         ">": "gt",
@@ -268,14 +268,14 @@ class QdrantVectorStorePartition(VectorStorePartition):
         *,
         client: AsyncQdrantClient,
         vector_store_name: str,
-        incarnation: UUID,
+        partition_uuid: UUID,
         store_schema: VectorStoreSchema,
         tracker: OperationTracker,
     ) -> None:
-        """Initialize with a Qdrant client and the incarnation the handle is bound to."""
+        """Initialize with a Qdrant client and the partition the handle is bound to."""
         self._client = client
         self._vector_store_name = vector_store_name
-        self._incarnation = incarnation
+        self._partition_uuid = partition_uuid
         self._store_schema = store_schema
         self._tracker = tracker
 
@@ -337,17 +337,17 @@ class QdrantVectorStorePartition(VectorStorePartition):
             )
 
     def _point_id(self, record_uuid: UUID) -> UUID:
-        """The point id of a record: a UUIDv5 of the record UUID under the incarnation.
+        """The point id of a record: a UUIDv5 of the record UUID under the partition UUID.
 
         Point ids are distinct across the partitions of the store's collection
-        and across a name's incarnations.
+        and across the partitions created under one name.
         """
-        return uuid5(self._incarnation, str(record_uuid))
+        return uuid5(self._partition_uuid, str(record_uuid))
 
     def _build_point(self, record: Record) -> models.PointStruct:
         """Build a Qdrant point from a vector store record."""
         payload: dict[str, PropertyValue] = {
-            _PAYLOAD_INCARNATION: str(self._incarnation),
+            _PAYLOAD_PARTITION_UUID: str(self._partition_uuid),
             _PAYLOAD_RECORD_UUID: str(record.uuid),
         }
         for key, value in record.properties.items():
@@ -392,7 +392,7 @@ class QdrantVectorStorePartition(VectorStorePartition):
         score_threshold: float | None,
         property_filter: FilterExpr | None,
     ) -> list[QueryResult]:
-        qdrant_filter = _incarnation_filter(self._incarnation)
+        qdrant_filter = _partition_filter(self._partition_uuid)
         if property_filter is not None:
             qdrant_filter = models.Filter(
                 must=[
@@ -479,7 +479,7 @@ class QdrantVectorStore(VectorStore):
     """Asynchronous Qdrant-based implementation of VectorStore.
 
     The store is one native Qdrant collection, named at construction, in
-    which a partition incarnation is the points carrying it in their
+    which a partition is the points carrying it in their
     payload.
     """
 
@@ -493,7 +493,7 @@ class QdrantVectorStore(VectorStore):
     }
 
     # The store filters only on indexed keys (the declared keys and the
-    # incarnation). Strict mode makes the server refuse a filter on any other
+    # partition UUID). Strict mode makes the server refuse a filter on any other
     # key instead of scanning for it, so a missing index fails a search
     # rather than slowing it.
     _STRICT_MODE: ClassVar[models.StrictModeConfig] = models.StrictModeConfig(
@@ -557,7 +557,7 @@ class QdrantVectorStore(VectorStore):
         pass
 
     async def _prepare_storage(self) -> None:
-        """Prepare the collection every partition incarnation lives in, and its payload indexes, each step idempotent."""
+        """Prepare the collection every partition lives in, and its payload indexes, each step idempotent."""
         distance = QdrantVectorStore._SIMILARITY_METRIC_TO_QDRANT_DISTANCE[
             self._store_schema.similarity_metric
         ]
@@ -582,7 +582,7 @@ class QdrantVectorStore(VectorStore):
 
         indexes: list[tuple[str, Any]] = [
             (
-                _PAYLOAD_INCARNATION,
+                _PAYLOAD_PARTITION_UUID,
                 models.KeywordIndexParams(
                     type=models.KeywordIndexType.KEYWORD,
                     is_tenant=True,
@@ -609,35 +609,33 @@ class QdrantVectorStore(VectorStore):
                     raise
 
     @override
-    async def prepare_partition_incarnation(self, incarnation: UUID) -> None:
-        # Every partition incarnation lives in the collection startup
+    async def create_partition(self, partition_uuid: UUID) -> None:
+        # Every partition lives in the collection startup
         # prepared.
         return
 
     @override
-    async def open_partition_incarnation(
-        self, incarnation: UUID
-    ) -> QdrantVectorStorePartition:
+    async def open_partition(self, partition_uuid: UUID) -> QdrantVectorStorePartition:
         return QdrantVectorStorePartition(
             client=self._client,
             vector_store_name=self._vector_store_name,
-            incarnation=incarnation,
+            partition_uuid=partition_uuid,
             store_schema=self._store_schema,
             tracker=self._tracker,
         )
 
     @override
-    async def purge_partition_incarnation(self, incarnation: UUID) -> bool:
-        async with self._tracker("purge_partition_incarnation"):
-            return await self._purge_partition_incarnation(incarnation)
+    async def purge_partition(self, partition_uuid: UUID) -> bool:
+        async with self._tracker("purge_partition"):
+            return await self._purge_partition(partition_uuid)
 
-    async def _purge_partition_incarnation(self, incarnation: UUID) -> bool:
-        # If a point remains under the incarnation, one filter-delete removes
+    async def _purge_partition(self, partition_uuid: UUID) -> bool:
+        # If a point of the partition remains, one filter-delete removes
         # them all.
         try:
             points, _ = await self._client.scroll(
                 collection_name=self._vector_store_name,
-                scroll_filter=_incarnation_filter(incarnation),
+                scroll_filter=_partition_filter(partition_uuid),
                 limit=1,
                 with_payload=False,
                 with_vectors=False,
@@ -651,7 +649,7 @@ class QdrantVectorStore(VectorStore):
             await self._client.delete(
                 collection_name=self._vector_store_name,
                 points_selector=models.FilterSelector(
-                    filter=_incarnation_filter(incarnation),
+                    filter=_partition_filter(partition_uuid),
                 ),
                 wait=True,
             )

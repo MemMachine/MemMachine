@@ -36,7 +36,7 @@ Milvus collection is named `sys_` followed by the vector store name. Event
 memory keeps the registry of its partitions in the relational database that
 `episodic_memory.long_term_memory.partition_registry` names, so any number of
 server processes can share one Qdrant or Milvus backend; the SQLite stores are
-bound to one node. The registry mints each partition's incarnation, a random
+bound to one node. The registry mints each partition's UUID, a random
 UUID under which the vector store and the segment store keep the partition's
 data, so every process that shares event memory's stores names the same
 registry database, and deployments with separate registries can share a

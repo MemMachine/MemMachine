@@ -36,7 +36,7 @@ from memmachine_server.common.vector_store.data_types import (
     VectorStoreSchema,
 )
 from memmachine_server.common.vector_store.qdrant_vector_store import (
-    _PAYLOAD_INCARNATION,
+    _PAYLOAD_PARTITION_UUID,
     _PAYLOAD_RECORD_UUID,
     QdrantVectorStore,
     QdrantVectorStoreParams,
@@ -61,14 +61,14 @@ INDEXED_PROPERTIES: dict[str, PropertyType] = {
 
 
 async def _stored_uuids(partition) -> set[UUID]:
-    """Record UUIDs Qdrant holds under the handle's incarnation, read past the store."""
+    """Record UUIDs Qdrant holds under the handle's partition UUID, read past the store."""
     points, _ = await partition._client.scroll(
         collection_name=partition._vector_store_name,
         scroll_filter=models.Filter(
             must=[
                 models.FieldCondition(
-                    key=_PAYLOAD_INCARNATION,
-                    match=models.MatchValue(value=str(partition._incarnation)),
+                    key=_PAYLOAD_PARTITION_UUID,
+                    match=models.MatchValue(value=str(partition._partition_uuid)),
                 )
             ]
         ),
@@ -80,7 +80,7 @@ async def _stored_uuids(partition) -> set[UUID]:
 
 
 async def _count_stored(store: QdrantVectorStore) -> int:
-    """Points Qdrant holds in the store's native collection, every incarnation's included."""
+    """Points Qdrant holds in the store's native collection, every partition's included."""
     result = await store._client.count(
         collection_name=store._vector_store_name, exact=True
     )
@@ -94,19 +94,19 @@ _MAX_PURGE_CALLS = 1000
 
 
 async def _open(store: QdrantVectorStore) -> QdrantVectorStorePartition:
-    """A handle on a freshly prepared partition incarnation."""
-    incarnation = uuid4()
-    await store.prepare_partition_incarnation(incarnation)
-    return await store.open_partition_incarnation(incarnation)
+    """A handle on a freshly prepared partition."""
+    partition_uuid = uuid4()
+    await store.create_partition(partition_uuid)
+    return await store.open_partition(partition_uuid)
 
 
-async def _purge(store: QdrantVectorStore, incarnation: UUID) -> None:
-    """Purge an incarnation until the store finds nothing of it."""
+async def _purge(store: QdrantVectorStore, partition_uuid: UUID) -> None:
+    """Purge a partition UUID until the store finds nothing of it."""
     for _ in range(_MAX_PURGE_CALLS):
-        if not await store.purge_partition_incarnation(incarnation):
+        if not await store.purge_partition(partition_uuid):
             return
     pytest.fail(
-        f"incarnation {incarnation} still held records after "
+        f"partition UUID {partition_uuid} still held records after "
         f"{_MAX_PURGE_CALLS} purge calls"
     )
 
@@ -152,7 +152,7 @@ async def store(any_qdrant_client):
 async def partition(store):
     partition = await _open(store)
     yield partition
-    await _purge(store, partition._incarnation)
+    await _purge(store, partition._partition_uuid)
 
 
 def _normalize(v: list[float]) -> list[float]:
@@ -321,7 +321,7 @@ class TestSimilarityMetrics:
             record_uuid for _, record_uuid in expected[:2]
         ]
 
-        await _purge(store, partition._incarnation)
+        await _purge(store, partition._partition_uuid)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("metric", list(SimilarityMetric))
@@ -364,15 +364,15 @@ class TestSimilarityMetrics:
         assert [match.record_uuid for match in past_edge.matches] == [
             match.record_uuid for match in ranked.matches[:2]
         ]
-        await _purge(store, partition._incarnation)
+        await _purge(store, partition._partition_uuid)
 
 
 def _partition_on(client: AsyncQdrantClient) -> QdrantVectorStorePartition:
-    """A handle on a given client, bound to a fresh incarnation."""
+    """A handle on a given client, bound to a fresh partition UUID."""
     return QdrantVectorStorePartition(
         client=client,
         vector_store_name=VECTOR_STORE_NAME,
-        incarnation=uuid4(),
+        partition_uuid=uuid4(),
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
@@ -1118,7 +1118,7 @@ class TestDelete:
 class TestPartitionIsolation:
     @pytest.mark.asyncio
     async def test_partitions_share_the_store_collection(self, store):
-        """Every partition incarnation's records are points in the store's one native collection."""
+        """Every partition's records are points in the store's one native collection."""
         stored_before = await _count_stored(store)
         partitions = [await _open(store) for _ in range(2)]
         for partition in partitions:
@@ -1129,7 +1129,7 @@ class TestPartitionIsolation:
         assert await _count_stored(store) == stored_before + 2
 
         for partition in partitions:
-            await _purge(store, partition._incarnation)
+            await _purge(store, partition._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_query_only_returns_own_partition(self, store):
@@ -1151,8 +1151,8 @@ class TestPartitionIsolation:
         assert uuids_a == {r1.uuid}
         assert uuids_b == {r2.uuid}
 
-        await _purge(store, partition_a._incarnation)
-        await _purge(store, partition_b._incarnation)
+        await _purge(store, partition_a._partition_uuid)
+        await _purge(store, partition_b._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_a_query_returns_only_its_own_partitions_records(self, store):
@@ -1169,8 +1169,8 @@ class TestPartitionIsolation:
         [result] = await partition_a.query(query_vectors=[v1], limit=10)
         assert [match.record_uuid for match in result.matches] == [r1.uuid]
 
-        await _purge(store, partition_a._incarnation)
-        await _purge(store, partition_b._incarnation)
+        await _purge(store, partition_a._partition_uuid)
+        await _purge(store, partition_b._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_a_filtered_query_returns_only_its_own_partitions_records(
@@ -1227,23 +1227,23 @@ class TestPartitionIsolation:
                     record.uuid for record in own
                 ], property_filter
 
-        await _purge(store, partition_a._incarnation)
-        await _purge(store, partition_b._incarnation)
+        await _purge(store, partition_a._partition_uuid)
+        await _purge(store, partition_b._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_stores_of_two_names_keep_their_records_in_separate_storage(
         self, store
     ):
         """Stores of two names share no storage, even on one client and
-        under one partition incarnation and schema."""
+        under one partition and schema."""
         other = QdrantVectorStore(
             _params(store._client, vector_store_name=f"{VECTOR_STORE_NAME}_other")
         )
         await other.startup()
-        incarnation = uuid4()
-        await store.prepare_partition_incarnation(incarnation)
-        await other.prepare_partition_incarnation(incarnation)
-        writer = await store.open_partition_incarnation(incarnation)
+        partition_uuid = uuid4()
+        await store.create_partition(partition_uuid)
+        await other.create_partition(partition_uuid)
+        writer = await store.open_partition(partition_uuid)
         writer_before = await _count_stored(store)
         other_before = await _count_stored(other)
 
@@ -1257,8 +1257,8 @@ class TestPartitionIsolation:
         assert await _count_stored(store) == writer_before + 3
         assert await _count_stored(other) == other_before
 
-        await _purge(store, incarnation)
-        await _purge(other, incarnation)
+        await _purge(store, partition_uuid)
+        await _purge(other, partition_uuid)
 
     @pytest.mark.asyncio
     async def test_the_same_uuid_in_two_partitions_is_two_records(self, store):
@@ -1287,8 +1287,8 @@ class TestPartitionIsolation:
         assert await _stored_uuids(partition_a) == set()
         assert await _stored_uuids(partition_b) == {record_uuid}
 
-        await _purge(store, partition_a._incarnation)
-        await _purge(store, partition_b._incarnation)
+        await _purge(store, partition_a._partition_uuid)
+        await _purge(store, partition_b._partition_uuid)
 
     @pytest.mark.asyncio
     async def test_delete_only_affects_own_partition(self, store):
@@ -1307,8 +1307,8 @@ class TestPartitionIsolation:
 
         assert await _stored_uuids(partition_b) == {r2.uuid}
 
-        await _purge(store, partition_a._incarnation)
-        await _purge(store, partition_b._incarnation)
+        await _purge(store, partition_a._partition_uuid)
+        await _purge(store, partition_b._partition_uuid)
 
 
 # ── Purge ──
@@ -1319,7 +1319,7 @@ class TestPurge:
     async def test_a_purge_on_a_dropped_native_collection_finds_nothing(
         self, any_qdrant_client
     ):
-        """An incarnation whose native collection is gone holds nothing: its
+        """A partition UUID whose native collection is gone holds nothing: its
         purge raises nothing and finds nothing."""
         # A name of its own, so dropping its native collection spares the others.
         dropped = QdrantVectorStore(
@@ -1332,9 +1332,7 @@ class TestPurge:
         )
         await any_qdrant_client.delete_collection(dropped._vector_store_name)
 
-        assert (
-            await dropped.purge_partition_incarnation(partition._incarnation) is False
-        )
+        assert await dropped.purge_partition(partition._partition_uuid) is False
 
 
 # ── A seeded operation sequence against a model ──
@@ -1440,7 +1438,7 @@ def _assert_matches_model(
 class _ModelRun:
     """Operations on the model test's partitions, each applied to the store and to the model.
 
-    Each key's partition is one incarnation at a time; an incarnation
+    Each key's partition is one partition UUID at a time; a partition UUID
     replaced under its key waits in `retired` until a drain purges it.
     """
 
@@ -1491,12 +1489,12 @@ class _ModelRun:
         _assert_matches_model(result, expected, query)
 
     async def recreate(self, key: str) -> None:
-        self.retired.append(self.handles[key]._incarnation)
+        self.retired.append(self.handles[key]._partition_uuid)
         await self.create(key)
 
     async def drain(self, key: str) -> None:
-        for incarnation in self.retired:
-            await _purge(self.store, incarnation)
+        for partition_uuid in self.retired:
+            await _purge(self.store, partition_uuid)
         self.retired.clear()
         assert await _count_stored(self.store) == self.baseline + sum(
             len(records) for records in self.model.values()
@@ -1520,8 +1518,8 @@ class TestAgainstAModel:
         """Two partitions of one store take a seeded sequence of upserts
         (re-upserts change or drop properties), deletes (of their own, the
         other partition's and absent UUIDs), filtered queries, replacement by
-        a fresh incarnation under the same key, and drains that purge the
-        replaced incarnations. After each step the records stored, a query's
+        a fresh partition UUID under the same key, and drains that purge the
+        replaced partition UUIDs. After each step the records stored, a query's
         matches and a drain's count agree with a model that holds each
         partition's records."""
         store = QdrantVectorStore(
@@ -1558,11 +1556,11 @@ class TestAgainstAModel:
                     f"step {step}: {operation.__name__} on {key}"
                 ) from error
 
-        for incarnation in [
+        for partition_uuid in [
             *run.retired,
-            *(handle._incarnation for handle in run.handles.values()),
+            *(handle._partition_uuid for handle in run.handles.values()),
         ]:
-            await _purge(store, incarnation)
+            await _purge(store, partition_uuid)
         assert await _count_stored(store) == run.baseline
 
 
@@ -1580,9 +1578,9 @@ class TestMetrics:
         store = QdrantVectorStore(_params(qdrant_client, metrics_factory=mock_factory))
         await store.startup()
 
-        incarnation = uuid4()
-        await store.prepare_partition_incarnation(incarnation)
-        partition = await store.open_partition_incarnation(incarnation)
+        partition_uuid = uuid4()
+        await store.create_partition(partition_uuid)
+        partition = await store.open_partition(partition_uuid)
         mock_histogram.reset_mock()
 
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -1596,11 +1594,11 @@ class TestMetrics:
 
         mock_histogram.reset_mock()
 
-        await _purge(store, incarnation)
+        await _purge(store, partition_uuid)
 
         assert mock_histogram.observe.called
         call_labels = mock_histogram.observe.call_args
-        assert call_labels[1]["labels"]["operation"] == "purge_partition_incarnation"
+        assert call_labels[1]["labels"]["operation"] == "purge_partition"
         assert call_labels[1]["labels"]["status"] == "ok"
 
 
@@ -1638,8 +1636,8 @@ class TestCollectionProvisioningAcrossWorkers:
         try:
             info = await qdrant_client.get_collection(native)
             indexed = set(info.payload_schema or {})
-            assert _PAYLOAD_INCARNATION in indexed, (
-                "the tenant incarnation index is missing: a collection that already "
+            assert _PAYLOAD_PARTITION_UUID in indexed, (
+                "the tenant partition UUID index is missing: a collection that already "
                 "existed never had its payload indexes created, so tenant "
                 f"filtering is unindexed. present: {sorted(indexed)}"
             )
@@ -1669,7 +1667,7 @@ class TestCollectionProvisioningAcrossWorkers:
     ):
         """Two workers start stores of one name at once, so both prepare the
         native collection they share at the same moment. Both startups
-        succeed, and a partition incarnation each worker opens holds its own
+        succeed, and a partition each worker opens holds its own
         records."""
         client_a = new_qdrant_client(prefer_grpc=prefer_grpc)
         client_b = new_qdrant_client(prefer_grpc=prefer_grpc)
@@ -1753,7 +1751,7 @@ class TestStrictMode:
             property_filter=Comparison(field="age", op="=", value=5),
         )
         assert [match.record_uuid for match in result.matches] == [held.uuid]
-        await _purge(store, partition._incarnation)
+        await _purge(store, partition._partition_uuid)
 
 
 class TestStrictModeIsRequested:

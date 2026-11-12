@@ -31,9 +31,9 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
 async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_engine):
     vector_store = MagicMock()
     partition = MagicMock()
-    vector_store.open_partition_incarnation = AsyncMock(return_value=partition)
+    vector_store.open_partition = AsyncMock(return_value=partition)
     registration = MagicMock()
-    registration.incarnation = uuid4()
+    registration.partition_uuid = uuid4()
     partition_registry = MagicMock()
     partition_registry.resolve = AsyncMock(return_value=registration)
 
@@ -79,12 +79,10 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
         "semantic_db",
         partition_namespace="semantic_memory",
         tombstone_retention_seconds=86400,
-        purge_round=vector_store.purge_partition_incarnation,
+        purge_round=vector_store.purge_partition,
     )
     partition_registry.resolve.assert_awaited_once_with("semantic_memory")
-    vector_store.open_partition_incarnation.assert_awaited_once_with(
-        registration.incarnation
-    )
+    vector_store.open_partition.assert_awaited_once_with(registration.partition_uuid)
 
     await storage.cleanup()
 
@@ -112,7 +110,7 @@ async def test_semantic_memory_creates_its_partition_once_and_reopens_it(
     partition_registry,
 ):
     vector_store = MagicMock()
-    vector_store.prepare_partition_incarnation = AsyncMock()
+    vector_store.create_partition = AsyncMock()
 
     created = await SemanticResourceManager._open_or_create_partition(
         partition_registry, vector_store
@@ -121,10 +119,8 @@ async def test_semantic_memory_creates_its_partition_once_and_reopens_it(
         partition_registry, vector_store
     )
 
-    assert reopened.incarnation == created.incarnation
-    vector_store.prepare_partition_incarnation.assert_awaited_once_with(
-        created.incarnation
-    )
+    assert reopened.partition_uuid == created.partition_uuid
+    vector_store.create_partition.assert_awaited_once_with(created.partition_uuid)
 
 
 @pytest.mark.asyncio
@@ -133,7 +129,7 @@ async def test_semantic_memory_waits_for_another_process_creating_its_partition(
 ):
     monkeypatch.setattr(semantic_manager, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0.05)
     vector_store = MagicMock()
-    vector_store.prepare_partition_incarnation = AsyncMock()
+    vector_store.create_partition = AsyncMock()
     pending = await partition_registry.reserve("semantic_memory")
 
     opening = asyncio.create_task(
@@ -145,22 +141,22 @@ async def test_semantic_memory_waits_for_another_process_creating_its_partition(
     assert not opening.done()
 
     await pending.confirm()
-    assert (await opening).incarnation == pending.incarnation
-    vector_store.prepare_partition_incarnation.assert_not_awaited()
+    assert (await opening).partition_uuid == pending.partition_uuid
+    vector_store.create_partition.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_a_failed_preparation_of_semantic_memorys_partition_frees_its_name(
     partition_registry,
 ):
-    incarnations: list[UUID] = []
+    partition_uuids: list[UUID] = []
 
-    async def refused(incarnation: UUID) -> None:
-        incarnations.append(incarnation)
+    async def refused(partition_uuid: UUID) -> None:
+        partition_uuids.append(partition_uuid)
         raise RuntimeError("the backend refused")
 
     vector_store = MagicMock()
-    vector_store.prepare_partition_incarnation = AsyncMock(side_effect=refused)
+    vector_store.create_partition = AsyncMock(side_effect=refused)
 
     with pytest.raises(RuntimeError, match="refused"):
         await SemanticResourceManager._open_or_create_partition(
@@ -170,10 +166,10 @@ async def test_a_failed_preparation_of_semantic_memorys_partition_frees_its_name
     assert await partition_registry.resolve("semantic_memory") is None
     purged: list[UUID] = []
 
-    async def purge(incarnation: UUID) -> bool:
-        purged.append(incarnation)
+    async def purge(partition_uuid: UUID) -> bool:
+        purged.append(partition_uuid)
         return False
 
     while await partition_registry.run_purge_round(purge):
         pass
-    assert purged == incarnations
+    assert purged == partition_uuids

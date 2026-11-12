@@ -27,11 +27,13 @@ def test_segment_store_partition_config_round_trip() -> None:
     assert clone == config
 
 
-def test_segment_store_partition_config_mismatch_error_names_the_incarnation() -> None:
-    incarnation = UUID("00000000-0000-4000-8000-000000000001")
+def test_segment_store_partition_config_mismatch_error_names_the_partition_uuid() -> (
+    None
+):
+    partition_uuid = UUID("00000000-0000-4000-8000-000000000001")
     config = SegmentStorePartitionConfig()
 
-    err = SegmentStorePartitionConfigMismatchError(incarnation, config, config)
+    err = SegmentStorePartitionConfigMismatchError(partition_uuid, config, config)
 
-    assert err.incarnation == incarnation
-    assert str(incarnation) in str(err)
+    assert err.partition_uuid == partition_uuid
+    assert str(partition_uuid) in str(err)

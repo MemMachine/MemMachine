@@ -1,4 +1,4 @@
-# Segment store: shared tables with incarnation-scoped tenant keys
+# Segment store: shared tables with partition UUID-scoped tenant keys
 
 Status: accepted 2026-08-31. Supersedes the per-tenant partitioned layout of
 the SQLAlchemy segment store on all dialects.
@@ -39,47 +39,47 @@ tenant may hold tens of thousands to tens of millions of rows.
 One physical schema on every dialect; the ORM models are the tables.
 
 The store holds no tenant names. Its owner's [partition
-registry](partition_registry.md) names each tenant, mints an `incarnation`
+registry](partition_registry.md) names each tenant, mints an `partition_uuid`
 (a random UUID) for each of its lives, and never mints one again while any
-trace of it remains; the store addresses everything by incarnation.
+trace of it remains; the store addresses everything by partition UUID.
 
-- `segment_store_pt_in`: one row per prepared incarnation, holding its
-  payload codec config and, while the incarnation is purged, the purge's
+- `segment_store_pt`: one row per prepared partition UUID, holding its
+  payload codec config and, while the partition UUID is purged, the purge's
   cursor, the last segment key purged.
 - `segment_store_sg` and `segment_store_dv_ln`, the segment and
   derivative-link tables, shared by all tenants and not partitioned. Rows
-  carry no tenant name; they are keyed by the incarnation alone, so
+  carry no tenant name; they are keyed by the partition UUID alone, so
   addressing the wrong tenant is structurally impossible rather than
   guarded against. A 16-byte UUID also keeps index entries narrower than a
   composite string key, and random UUIDs are unique across nodes without
   coordination, so a tenant's rows move between databases verbatim.
 
 The link table keeps its foreign key to the segment table (`ON DELETE
-CASCADE`), both sides keyed by incarnation. The segment table has no
-foreign key to the incarnation's row: the purge deletes an incarnation's
+CASCADE`), both sides keyed by partition UUID. The segment table has no
+foreign key to the partition's row: the purge deletes a partition's
 segments in batches, and its row last.
 
-"Incarnation" is the established term for a per-lifetime random identifier
-(cf. Kafka's broker incarnation ID). It is deliberately not "generation" or
+"Partition UUID" is the established term for a per-lifetime random identifier
+(cf. Kafka's broker partition UUID ID). It is deliberately not "generation" or
 "epoch", which would imply ordered, comparable values.
 
 ### Tenant lifecycle
 
-- **Prepare**: insert the incarnation's row with its codec config. No DDL,
+- **Prepare**: insert the partition's row with its codec config. No DDL,
   no lock beyond the row, microseconds. Preparing again with the same
   config changes nothing; a different config raises the config-mismatch
   error.
-- **Open**: read the incarnation's row. The handle captures the
-  incarnation and the codec.
+- **Open**: read the partition's row. The handle captures the
+  partition UUID and the codec.
 - **Delete** is the owner's: unregistering the tenant's name in its
   registry is O(1) regardless of tenant size, and the tenant is unreachable
   at once. The store is not called.
-- **Re-create**: the owner registers a fresh incarnation, safe at any
-  time; the old incarnation's rows are invisible to the successor even
+- **Re-create**: the owner registers a fresh partition UUID, safe at any
+  time; the old partition's rows are invisible to the successor even
   while its purge is still sweeping them.
-- **Purge**: `purge_partition_incarnation(incarnation) -> bool` on the
+- **Purge**: `purge_partition(partition UUID) -> bool` on the
   `SegmentStore` ABC. The owner's purge rounds call it for a deleted
-  incarnation once the registry's retention has passed, until it returns
+  partition UUID once the registry's retention has passed, until it returns
   False; how much one call does is implementation policy. The caller is
   promised only that a call does not noticeably degrade concurrent request
   serving, and every bound below exists to keep that promise. The deletion
@@ -89,32 +89,32 @@ segments in batches, and its row last.
     committed progress survives interruption.
   - Segment rows are deleted in batches of up to
     `SQLAlchemySegmentStoreParams.purge_max_segments` per call. A batch
-    continues from the incarnation's cursor: it reads the next keys after
+    continues from the partition's cursor: it reads the next keys after
     `purged_through` in primary-key order, deletes that key range, and
     records its last key in the same transaction. No batch reads a row an
     earlier batch deleted; PostgreSQL keeps deleted rows in the table and
     its indexes until vacuum, and a batch that started from the
-    incarnation's first key would step over all of them, making each
-    batch, and the call that finds the incarnation empty, cost in
+    partition's first key would step over all of them, making each
+    batch, and the call that finds the partition UUID empty, cost in
     proportion to what was already purged. The cursor relies on no row
-    being written into an incarnation once its purge starts, which the
+    being written into a partition UUID once its purge starts, which the
     retention guarantees: every write finishes within a bound well under
-    it. A row that lands anyway is found once the incarnation's row is
-    gone, since a call without a cursor starts from the incarnation's
+    it. A row that lands anyway is found once the partition's row is
+    gone, since a call without a cursor starts from the partition's
     first key. The link table follows by cascade, measured faster than
     deleting link rows manually at one and at four links per segment.
     Cascade deletion saturates around 3M link rows/s as density grows
     (380k segments/s at one link per segment, 46k at 64), so heavily
     linked partitions still purge in sub-second calls. Link fan-out is set
     by the deriver, not something the store can reject after derivation.
-  - The incarnation's row goes only in a call whose own deletes found fewer
+  - The partition's row goes only in a call whose own deletes found fewer
     rows than its bound, and a call returns whether it found anything, so a
-    call that returns False proves the incarnation gone from the store.
+    call that returns False proves the partition UUID gone from the store.
     Link rows go with their segments by the foreign key's cascade and
     nothing else: the store requires foreign-key enforcement of its engine
     (on SQLite, per connection) and does not verify it, so an engine
     without enforcement leaves link rows behind.
-  - Purgers of one incarnation, from any process, serialize on its row's
+  - Purgers of one partition UUID, from any process, serialize on its row's
     lock (`FOR UPDATE`), so each reads the cursor its predecessor
     committed. On SQLite, which drops locking clauses, the call holds the
     database's write lock from BEGIN instead. With a cursor read before the
@@ -134,20 +134,20 @@ segments in batches, and its row last.
 
 ### Fencing
 
-The store checks nothing about whether an incarnation is still live. Its
-owner fences each operation by the incarnation's registration (see
+The store checks nothing about whether a partition UUID is still live. Its
+owner fences each operation by the partition's registration (see
 [fencing](partition_registry.md#fencing)): an operation begun after the
-tenant's deletion raises, and a write that lands under a dead incarnation
+tenant's deletion raises, and a write that lands under a dead partition UUID
 is reclaimed by the purge, which starts only after the retention.
 
 ### Locking model
 
 Row locks only. Writers lock nothing beyond the rows they write;
 `delete_segments` locks its segment rows in key order on PostgreSQL; the
-purge takes `FOR UPDATE` on its incarnation's row, which only purgers of
-the same incarnation contend for. No table-level lock, no DDL, and no lock
+purge takes `FOR UPDATE` on its partition's row, which only purgers of
+the same partition UUID contend for. No table-level lock, no DDL, and no lock
 upgrade anywhere in the store, which removes the measured deadlock classes
-at the root: reclamation touches only rows of an incarnation no request can
+at the root: reclamation touches only rows of a partition UUID no request can
 reach. On SQLite, which drops locking clauses, every write transaction of
 the store takes the database's write lock at BEGIN (`BEGIN IMMEDIATE`,
 through the `enable_sqlite_explicit_begin` setup the store requires of its
@@ -201,7 +201,7 @@ requirement excludes.
 - Replication and sharding: three ordinary tables. Logical replication
   covers new tenants automatically (they are rows, not relations), and
   moving a tenant between nodes is an indexed row copy plus the owner
-  registering a fresh incarnation, which fences all stale handles.
+  registering a fresh partition UUID, which fences all stale handles.
 - Tenant deletion is O(rows) physically, in the background: a deleted
   partition is unreachable at once, and its rows are reclaimed by the
   owner's purge rounds, at the pace their bounds and pause set. A

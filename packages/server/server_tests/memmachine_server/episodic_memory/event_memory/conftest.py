@@ -229,14 +229,14 @@ async def open_event_memory_partition(
     """Open a partition of an EventMemory whose stores hand out the given partitions, and whose vector store has `store_schema`."""
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = "partition"
-    registration.incarnation = uuid4()
+    registration.partition_uuid = uuid4()
     partition_registry = create_autospec(PartitionRegistry, instance=True)
     partition_registry.resolve.return_value = registration
     segment_store = create_autospec(SegmentStore, instance=True)
-    segment_store.open_partition_incarnation.return_value = segment_store_partition
+    segment_store.open_partition.return_value = segment_store_partition
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
-    vector_store.open_partition_incarnation.return_value = vector_store_partition
+    vector_store.open_partition.return_value = vector_store_partition
     event_memory = EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,

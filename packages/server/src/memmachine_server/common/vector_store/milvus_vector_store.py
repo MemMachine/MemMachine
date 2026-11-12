@@ -67,10 +67,10 @@ internals with a leading underscore, so the prefix begins with a letter.
 _ID_FIELD = "id"
 _RECORD_UUID_FIELD = "record_uuid"
 _PARTITION_KEY_FIELD = "partition_key"
-"""The native partition-key field, holding the incarnation of the partition an entity belongs to.
+"""The native partition-key field, holding the partition UUID of the partition an entity belongs to.
 
 A partition created again under a deleted one's name gets a fresh
-incarnation, so it holds only the entities written under that incarnation.
+partition UUID, so it holds only the entities written under that partition UUID.
 """
 _VECTOR_FIELD = "vector"
 _DECLARED_FIELD_PREFIX = "_p_"
@@ -79,7 +79,7 @@ _DECLARED_FIELD_PREFIX = "_p_"
 _UUID_LENGTH = 36
 """The length of a UUID's hyphenated text form (RFC 9562), the form stored."""
 _PRIMARY_ID_LENGTH = 2 * _UUID_LENGTH + 1
-"""The length of a primary key, `"{incarnation}:{record_uuid}"`."""
+"""The length of a primary key, `"{partition_uuid}:{record_uuid}"`."""
 _FALSE_EXPR = f"{_ID_FIELD} in []"
 """A Milvus expression no entity satisfies; Milvus refuses a bare `false`."""
 
@@ -206,13 +206,15 @@ def _validate_every_key_accepted(result: Mapping[str, int], sent: int) -> None:
         )
 
 
-def _incarnation_filter(incarnation: UUID) -> str:
-    """A Milvus expression matching the entities of one partition incarnation."""
-    return f"{_PARTITION_KEY_FIELD} == {_expression_string_literal(str(incarnation))}"
+def _partition_filter(partition_uuid: UUID) -> str:
+    """A Milvus expression matching the entities of one partition."""
+    return (
+        f"{_PARTITION_KEY_FIELD} == {_expression_string_literal(str(partition_uuid))}"
+    )
 
 
 class MilvusVectorStorePartition(VectorStorePartition):
-    """A partition incarnation's entities in the store's Milvus collection."""
+    """A partition's entities in the store's Milvus collection."""
 
     @staticmethod
     def _passes_threshold(
@@ -231,15 +233,15 @@ class MilvusVectorStorePartition(VectorStorePartition):
         *,
         client: AsyncMilvusClient,
         collection_name: str,
-        incarnation: UUID,
+        partition_uuid: UUID,
         store_schema: VectorStoreSchema,
         tracker: OperationTracker,
         request_timeout_seconds: int,
     ) -> None:
-        """Initialize with a Milvus client and the incarnation the handle is bound to."""
+        """Initialize with a Milvus client and the partition the handle is bound to."""
         self._client = client
         self._collection_name = collection_name
-        self._incarnation = incarnation
+        self._partition_uuid = partition_uuid
         self._store_schema = store_schema
         self._tracker = tracker
         self._request_timeout_seconds = request_timeout_seconds
@@ -303,12 +305,12 @@ class MilvusVectorStorePartition(VectorStorePartition):
             _validate_every_key_accepted(result, len(primary_ids))
 
     def _primary_id(self, record_uuid: UUID) -> str:
-        """The primary key of a record: the incarnation and the record UUID.
+        """The primary key of a record: the partition UUID and the record UUID.
 
         Primary keys are distinct across the partitions sharing the native
-        collection and across a name's incarnations.
+        collection and across the partitions created under one name.
         """
-        return f"{self._incarnation}:{record_uuid}"
+        return f"{self._partition_uuid}:{record_uuid}"
 
     def _build_entity(self, record: Record) -> dict[str, Any]:
         """Build a Milvus entity from a vector store record."""
@@ -316,7 +318,7 @@ class MilvusVectorStorePartition(VectorStorePartition):
         entity: dict[str, Any] = {
             _ID_FIELD: self._primary_id(record.uuid),
             _RECORD_UUID_FIELD: str(record.uuid),
-            _PARTITION_KEY_FIELD: str(self._incarnation),
+            _PARTITION_KEY_FIELD: str(self._partition_uuid),
             _VECTOR_FIELD: record.vector,
         }
         for key in declared:
@@ -370,7 +372,7 @@ class MilvusVectorStorePartition(VectorStorePartition):
         score_threshold: float | None,
         property_filter: FilterExpr | None,
     ) -> list[QueryResult]:
-        filter_expr = _incarnation_filter(self._incarnation)
+        filter_expr = _partition_filter(self._partition_uuid)
         if property_filter is not None:
             property_expr = _filter_expression(
                 property_filter, self._store_schema.indexed_properties
@@ -471,7 +473,7 @@ class MilvusVectorStore(VectorStore):
     """Asynchronous Milvus-based implementation of VectorStore.
 
     The store is one native Milvus collection, named at construction, in
-    which a partition incarnation is the entities carrying it in the
+    which a partition is the entities carrying it in the
     partition-key field.
 
     Reads run at Bounded, the consistency level the store creates its
@@ -529,7 +531,7 @@ class MilvusVectorStore(VectorStore):
         pass
 
     async def _prepare_storage(self) -> None:
-        """Prepare the collection every partition incarnation lives in, its indexes, and its load, each step idempotent."""
+        """Prepare the collection every partition lives in, its indexes, and its load, each step idempotent."""
         # Each step runs when it is missing, and the collection is loaded, so
         # the next startup completes one that failed part way.
         index_params = self._client.prepare_index_params()
@@ -635,31 +637,29 @@ class MilvusVectorStore(VectorStore):
         )
 
     @override
-    async def prepare_partition_incarnation(self, incarnation: UUID) -> None:
-        # Every partition incarnation lives in the collection startup
+    async def create_partition(self, partition_uuid: UUID) -> None:
+        # Every partition lives in the collection startup
         # prepared.
         return
 
     @override
-    async def open_partition_incarnation(
-        self, incarnation: UUID
-    ) -> MilvusVectorStorePartition:
+    async def open_partition(self, partition_uuid: UUID) -> MilvusVectorStorePartition:
         return MilvusVectorStorePartition(
             client=self._client,
             collection_name=self._collection_name,
-            incarnation=incarnation,
+            partition_uuid=partition_uuid,
             store_schema=self._store_schema,
             tracker=self._tracker,
             request_timeout_seconds=self._request_timeout_seconds,
         )
 
     @override
-    async def purge_partition_incarnation(self, incarnation: UUID) -> bool:
-        async with self._tracker("purge_partition_incarnation"):
-            return await self._purge_partition_incarnation(incarnation)
+    async def purge_partition(self, partition_uuid: UUID) -> bool:
+        async with self._tracker("purge_partition"):
+            return await self._purge_partition(partition_uuid)
 
-    async def _purge_partition_incarnation(self, incarnation: UUID) -> bool:
-        # Deletes the incarnation's entities by primary key, one listed batch
+    async def _purge_partition(self, partition_uuid: UUID) -> bool:
+        # Deletes the partition's entities by primary key, one listed batch
         # per round, keeping each delete short for every tenant of the native
         # collection.
         if not await self._client.has_collection(
@@ -670,7 +670,7 @@ class MilvusVectorStore(VectorStore):
             return False
         listed = await self._client.query(
             collection_name=self._collection_name,
-            filter=_incarnation_filter(incarnation),
+            filter=_partition_filter(partition_uuid),
             output_fields=[_ID_FIELD],
             limit=self._purge_batch_size,
             timeout=self._request_timeout_seconds,

@@ -48,20 +48,20 @@ class SegmentStorePartitionConfig(BaseModel):
 
 
 class SegmentStorePartitionConfigMismatchError(Exception):
-    """Raised when preparing a partition incarnation with a different configuration than it was prepared with."""
+    """Raised when creating a partition with a different configuration than it was created with."""
 
     def __init__(
         self,
-        incarnation: UUID,
+        partition_uuid: UUID,
         existing_config: SegmentStorePartitionConfig,
         requested_config: SegmentStorePartitionConfig,
     ) -> None:
-        """Initialize with the incarnation and configurations."""
-        self.incarnation = incarnation
+        """Initialize with the partition's UUID and the configurations."""
+        self.partition_uuid = partition_uuid
         self.existing_config = existing_config
         self.requested_config = requested_config
         super().__init__(
-            f"Partition incarnation {incarnation} was prepared with a different "
+            f"Partition {partition_uuid} was created with a different "
             f"configuration. Existing config: {existing_config.model_dump_json()}, "
             f"requested config: {requested_config.model_dump_json()}."
         )
