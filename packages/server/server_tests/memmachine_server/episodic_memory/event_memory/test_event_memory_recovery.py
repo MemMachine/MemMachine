@@ -553,6 +553,35 @@ async def test_background_work_deletes_a_forgotten_events_vectors_twice(
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 0
 
 
+async def test_an_event_encoded_again_right_after_its_forget_keeps_its_new_vectors(
+    event_memory: EventMemory,
+    vector_store_partition: _FailingVectorStorePartition,
+    sqlalchemy_sqlite_engine: AsyncEngine,
+):
+    """Both deletes of the forgotten life reach only its own derivatives, not those of the event encoded again under its UUID."""
+    partition = await event_memory.open_or_create_partition("partition")
+    event = _event("hello")
+    await partition.encode_events([event])
+    vector_store_partition.fail_deletes = True
+    await partition.forget_events([event.uuid])
+    vector_store_partition.fail_deletes = False
+    [forgotten_record_uuid] = vector_store_partition.records
+
+    await partition.encode_events([event])
+    assert await event_memory._delete_tombstoned_derivatives()
+    await _age_tombstones(sqlalchemy_sqlite_engine, timedelta(days=2))
+    assert await event_memory._delete_tombstoned_derivatives()
+    assert await _tombstone_count(sqlalchemy_sqlite_engine) == 0
+
+    assert len(vector_store_partition.records) == 1
+    assert forgotten_record_uuid not in vector_store_partition.records
+    result = await partition.query("hello")
+    assert [
+        [segment.event_uuid for segment in context.segments]
+        for context in result.scored_segment_contexts
+    ] == [[event.uuid]]
+
+
 async def test_a_forget_ends_the_derivatives_pending_with_it(
     event_memory: EventMemory,
     vector_store_partition: _FailingVectorStorePartition,
