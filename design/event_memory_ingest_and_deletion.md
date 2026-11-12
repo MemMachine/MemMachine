@@ -10,6 +10,8 @@ and a forget stays complete anyway.
 - **Deletion.** After a forget commits, the events and their segments are
   gone from SQL, and their derivatives' vectors are deleted at once and
   again after a retention R; the derivatives go with the second delete.
+- **Adding again.** A forgotten event can be added again under its UUID as
+  soon as the forget commits.
 - **Late writes.** A write to the vector store can be applied after its
   client stopped waiting for it, and after a delete sent later. A write
   landing more than R after its forget is outside this design, provided no
@@ -90,7 +92,10 @@ first delete recorded, only once every index has done its part, so a
 further index adds writes and deletes, not rows or columns. What an index
 cannot rebuild under the same keys from what is stored is stored with the
 segment, as the derivatives are: their UUIDs are minted at ingest, and a
-deriver may not give the same derivatives twice.
+deriver may not give the same derivatives twice. An index keys its records
+by what an ingest mints, never by the event's UUID, so the deletes of a
+forgotten event never reach the records of the event added again under
+its UUID.
 
 **Search.** A vector hit whose derivative names no stored segment is
 dropped from the results and its vector deleted once, best effort and
@@ -149,8 +154,8 @@ life. Embedding before the budget starts lets a recovery take as long to
 embed as an ingest does.
 
 The protocol was model-checked on small instances (an event encoded once,
-with one or two recovery workers and a crash and a timeout at any step; a
-forget at any moment) for
+with one or two recovery workers and a crash and a timeout at any step, or
+encoded, forgotten and encoded again; a forget at any moment) for
 deletion, findability of every stored vector, completion, durability and
 erasure. Removing any one piece above breaks one of them.
 
