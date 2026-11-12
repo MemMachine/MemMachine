@@ -876,7 +876,7 @@ class EventMemoryPartition:
                 exc_info=True,
             )
             return
-        t_pending_writes = time.monotonic()
+        t_pending_write_deletion = time.monotonic()
 
         phase_durations = {
             "segmentation": t_segmentation - t_start,
@@ -884,7 +884,7 @@ class EventMemoryPartition:
             "embedding": t_embedding - t_derivation,
             "segment_store": t_segment_store - t_embedding,
             "vector_store": t_vector_store - t_segment_store,
-            "pending_writes": t_pending_writes - t_vector_store,
+            "pending_write_deletion": t_pending_write_deletion - t_vector_store,
         }
 
         logger.debug(
@@ -893,7 +893,7 @@ class EventMemoryPartition:
                 f"{phase}={duration:.3f}s"
                 for phase, duration in phase_durations.items()
             ),
-            t_pending_writes - t_start,
+            t_pending_write_deletion - t_start,
         )
 
         if self._encode_events_phase_seconds is not None:
