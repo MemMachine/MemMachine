@@ -288,7 +288,7 @@ class IndexJobRow(BaseSegmentStore):
     tombstone goes with the derivatives. A segment has at most one.
     """
 
-    __tablename__ = "segment_store_ij"
+    __tablename__ = "segment_store_jb"
 
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
@@ -322,7 +322,7 @@ class IndexJobRow(BaseSegmentStore):
     __table_args__ = (
         # Serves the pending write claims.
         Index(
-            "segment_store_ij__ca",
+            "segment_store_jb__ca",
             "claimable_at",
             sqlite_where=text("forgotten_at IS NULL"),
             postgresql_where=text("forgotten_at IS NULL"),
@@ -330,7 +330,7 @@ class IndexJobRow(BaseSegmentStore):
         # Serves both tombstone claims: by schedule, and second deletes by
         # their first delete.
         Index(
-            "segment_store_ij__ca_fd",
+            "segment_store_jb__ca_fd",
             "claimable_at",
             "first_deleted_at",
             sqlite_where=text("forgotten_at IS NOT NULL"),
