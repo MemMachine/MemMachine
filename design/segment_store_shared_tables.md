@@ -50,7 +50,7 @@ One physical schema on every dialect; the ORM models are the tables.
   than a composite string key, and random UUIDs are unique across nodes
   without coordination, so a tenant's rows move between databases
   verbatim.
-- `segment_store_ij`, index jobs, one per segment: its pending write, then
+- `segment_store_jb`, index jobs, one per segment: its pending write, then
   its tombstone, the work a derived index of the derivatives leaves behind
   (`event_memory_ingest_and_deletion.md`).
 - `segment_store_gc`, the purge queue: one row per dead incarnation, with a
