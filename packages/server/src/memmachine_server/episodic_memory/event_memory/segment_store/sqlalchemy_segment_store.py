@@ -17,6 +17,7 @@ from pydantic import (
 )
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     ColumnCollection,
     ColumnElement,
     DateTime,
@@ -320,6 +321,12 @@ class IndexJobRow(BaseSegmentStore):
     )
 
     __table_args__ = (
+        # A pending write is always scheduled, and has no first delete.
+        CheckConstraint(
+            "forgotten_at IS NOT NULL"
+            " OR (first_deleted_at IS NULL AND claimable_at IS NOT NULL)",
+            name="segment_store_jb__pending_write_scheduled",
+        ),
         # Serves the pending write claims.
         Index(
             "segment_store_jb__ca",
