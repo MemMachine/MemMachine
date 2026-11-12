@@ -50,16 +50,17 @@ One physical schema on every dialect; the ORM models are the tables.
   than a composite string key, and random UUIDs are unique across nodes
   without coordination, so a tenant's rows move between databases
   verbatim.
-- `segment_store_jb`, index jobs, one per segment: its pending write, then
-  its tombstone, the work a derived index of the derivatives leaves behind
-  (`event_memory_ingest_and_deletion.md`).
+- `segment_store_pw`, pending writes, and `segment_store_tb`, tombstones,
+  each a segment's: the work a derived index of the derivatives leaves
+  behind (`event_memory_ingest_and_deletion.md`).
 - `segment_store_gc`, the purge queue: one row per dead incarnation, with a
   cursor per table the purge reclaims, the last key purged. An entry holds
   only what the purge reads.
 
-The segment table keeps its foreign key to the event table (`ON DELETE
-CASCADE`), keyed by incarnation; derivatives outlive a forgotten segment
-until its tombstone goes, so they have none to it. The segment table has no
+The pending write table keeps its foreign key to the segment table, and
+the segment table its to the event table (`ON DELETE CASCADE`), both
+keyed by incarnation; derivatives outlive a forgotten segment until its
+tombstone goes, so they have none to it. The segment table has no
 foreign key to the registry: registry rows and data rows are decoupled so
 that registry deletion is O(1), and the rows left behind are exactly what
 the purge queue tracks.
@@ -110,7 +111,8 @@ on random-UUID collision resistance.
     committed progress survives interruption.
   - Rows are deleted in batches of up to
     `SQLAlchemySegmentStoreParams.purge_max_rows` per call, shared by
-    the derivative, segment, event and index job tables in that order. A batch
+    the derivative, segment, event and tombstone tables in that order,
+    a segment's pending write following it by cascade. A batch
     continues from its table's cursor: it reads the next keys after the
     cursor in primary-key order, deletes that key range, and records its
     last key in the same transaction. No batch reads a row an

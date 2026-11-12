@@ -165,13 +165,13 @@ class SegmentStorePartition(ABC):
         event_uuids: Iterable[UUID],
     ) -> list[Tombstone]:
         """
-        Delete events with their segments, leaving a tombstone for each segment.
+        Delete events with their segments and pending writes, leaving a tombstone for each segment.
 
-        All of it commits together or not at all. A segment's tombstone
-        takes the place of its pending write and names its derivatives,
-        which stay until the tombstone goes. A renewal of a claim on these
-        events' pending writes either commits first or finds the claim
-        ended. An event the partition does not hold is skipped. Idempotent.
+        All of it commits together or not at all. A tombstone names its
+        segment's derivatives, which stay until the tombstone goes. A
+        renewal of a claim on these events' pending writes either commits
+        first or finds them gone. An event the partition does not hold is
+        skipped. Idempotent.
 
         Args:
             event_uuids (Iterable[UUID]):

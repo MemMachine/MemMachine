@@ -37,9 +37,10 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStoreEventAlreadyExistsError,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
-    IndexJobRow,
+    PendingWriteRow,
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
+    TombstoneRow,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
@@ -441,9 +442,9 @@ async def _age_pending_writes(engine: AsyncEngine, delta: timedelta) -> None:
     """Make every pending write claimable since `delta` ago, past its writer's lease."""
     async with engine.begin() as connection:
         await connection.execute(
-            update(IndexJobRow)
-            .where(IndexJobRow.forgotten_at.is_(None))
-            .values(claimable_at=_database_time_ago(engine, delta))
+            update(PendingWriteRow).values(
+                claimable_at=_database_time_ago(engine, delta)
+            )
         )
 
 
@@ -451,8 +452,8 @@ async def _age_tombstones(engine: AsyncEngine, delta: timedelta) -> None:
     """Move every recorded first delete back to `delta` ago."""
     async with engine.begin() as connection:
         await connection.execute(
-            update(IndexJobRow)
-            .where(IndexJobRow.first_deleted_at.is_not(None))
+            update(TombstoneRow)
+            .where(TombstoneRow.first_deleted_at.is_not(None))
             .values(first_deleted_at=_database_time_ago(engine, delta))
         )
 
@@ -460,11 +461,7 @@ async def _age_tombstones(engine: AsyncEngine, delta: timedelta) -> None:
 async def _tombstone_count(engine: AsyncEngine) -> int:
     async with engine.connect() as connection:
         return (
-            await connection.execute(
-                select(func.count())
-                .select_from(IndexJobRow)
-                .where(IndexJobRow.forgotten_at.is_not(None))
-            )
+            await connection.execute(select(func.count()).select_from(TombstoneRow))
         ).scalar_one()
 
 

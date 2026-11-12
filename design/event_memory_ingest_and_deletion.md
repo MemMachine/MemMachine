@@ -28,12 +28,12 @@ and a forget stays complete anyway.
 
 **State.** The segment store keeps each derivative with its segment, as
 derived: what its index is written from, and the segment a hit on it
-names. Besides those, it keeps a job for each segment, in its own database
-and transactions: the segment's pending write, until the vector store has
-its derivatives, and from the forget, its tombstone, until the second
-delete, with the derivatives kept for it. A job is a segment's, so it holds
-a bounded amount of work when the segmenter bounds its segments, and holds
-no value the caller chose.
+names. Besides those, it keeps
+a pending write for each segment, until the vector store has its
+derivatives, and a tombstone for each forgotten segment, until the second
+delete, in its own database and transactions. Both are a segment's, so
+each holds a bounded amount of work when the segmenter bounds its
+segments, and neither holds a value the caller chose.
 
 **Ingest.**
 
@@ -53,10 +53,10 @@ or a stop after step 3 leaves the derivatives pending, for the background
 work to write.
 
 **Forget.** One transaction locks the events and their segments, reads
-the segments' derivatives, makes each segment's pending write its
-tombstone, or writes the tombstone where the pending write is gone, and
-deletes the events, which cascades to the segments. The derivatives stay
-for the tombstones, and a hit on one no longer names a segment. The
+the segments' derivatives, writes a tombstone for each segment, and
+deletes the events, which cascades to the segments and their pending
+writes. The derivatives stay for the tombstones, and a hit on one no
+longer names a segment. The
 vectors are then deleted once and the first delete recorded, and each
 tombstone awaits its second delete, due R after that record, which
 removes it with its derivatives. A failure here leaves the first delete to
@@ -71,12 +71,12 @@ the background work.
   first was recorded for the second, and deletes their derivatives from
   the vector store.
 
-Each job stores when a claim may next take it. A claim holds its job for
-a lease, and one that never ends is taken again once the lease and then
-the backoff have passed. A failed claim backs off, doubling, a cancelled
-one takes back its attempt, and a job is no longer taken after repeated
-failures, which is reported. The second delete's retention is a condition
-of its own, so no schedule brings it forward.
+Each record stores when a claim may next take it. A claim holds its record
+for a lease, and one that never ends is taken again once the lease and
+then the backoff have passed. A failed claim backs off, doubling, a
+cancelled one takes back its attempt, and a record is no longer taken
+after repeated failures, which is reported. The second delete's retention
+is a condition of its own, so no schedule brings it forward.
 
 The records name no vector store or embedder: a deployment has one
 EventMemory, built from its configuration and started with the server,
@@ -131,15 +131,11 @@ Cancelling the upsert at the deadline bounds when the last request is
 sent, whatever the vector store does inside one call. A request already
 sent may still land; d covers it.
 
-A claim's renewal holds its job's row, so the forget waits for a renewal
-in progress: a renewal either commits before the forget or finds no
-pending write. Every statement of a claim names its job's kind as well as
-its generation: a tombstone written after its pending write was deleted
-starts its generations over, so a generation alone could match a claim on
-the pending write. A claim still open on the pending write then ends: its
-renewal fails, and its finish, failure or cancellation changes nothing.
-The writer's own delete of its pending writes holds no claim, so it
-deletes only pending writes, never a tombstone a forget made since. On PostgreSQL, transactions run at
+A claim's renewal holds its record's row, so the forget's cascade waits
+for a renewal in progress: a renewal either commits before the forget or
+finds its record gone. Pending writes and tombstones are separate tables,
+so neither a claim on a pending write nor the writer's own delete of its
+pending writes can reach a tombstone. On PostgreSQL, transactions run at
 READ COMMITTED, where each statement reads its own snapshot, so the forget
 acts only on the events its lock returned: a statement that rereads the
 event list could delete an event committed after the segments were read,
@@ -177,8 +173,10 @@ erasure. Removing any one piece above breaks one of them.
   write read the whole derivative.
 - **Keep the forgotten segments too, until the second delete.** Every read
   of segments would then have to skip forgotten ones.
-- **A table for pending writes and another for tombstones.** Both carry the
-  same claim state and statements, and a segment could hold one of each.
+- **One table for pending writes and tombstones.** The forget would turn a
+  segment's row from one into the other, keeping only its key, and every
+  statement on a row would have to name its kind as well as its
+  generation; columns would mean something for one kind only.
 - **Time the second delete from the forget.** The forget's time must then
   follow every renewal it waited for, which on PostgreSQL takes deleting
   the pending writes before taking the time, and taking it at the insert
@@ -208,7 +206,8 @@ erasure. Removing any one piece above breaks one of them.
 - A deployment's sessions share its vector store, segment store, and
   embedder. Pointing the deployment at other stores moves no data.
 - Recovery needs the embedder and the vector store, and waits out their
-  outages in its backoff. A job that keeps failing is reported and kept,
-  with a tombstone's derivatives, and needs an operator to retry it.
+  outages in its backoff. A record or tombstone that keeps failing is
+  reported and kept, with a tombstone's derivatives, and needs an operator
+  to retry it.
 - A process paused longer than R between its budget check and a send, and
   a restore of SQL from a backup, are outside this design.

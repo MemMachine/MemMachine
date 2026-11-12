@@ -39,7 +39,6 @@ from sqlalchemy import (
     literal,
     or_,
     select,
-    text,
     true,
     tuple_,
     update,
@@ -182,7 +181,8 @@ class EventRow(BaseSegmentStore):
 
     The primary key is what makes an event addable once: a second
     `add_event_segments` naming it conflicts here, before any segment is written.
-    Deleting the row cascades to the event's segments.
+    Deleting the row cascades to the event's segments, and through them to
+    their pending writes.
     """
 
     __tablename__ = "segment_store_ev"
@@ -277,72 +277,89 @@ class DerivativeRow(BaseSegmentStore):
     )
 
 
-class IndexJobRow(BaseSegmentStore):
-    """A segment's work on its derived index: its pending write, then its tombstone.
+class PendingWriteRow(BaseSegmentStore):
+    """A segment whose derivatives await their derived index.
 
-    Written as the pending write, with the segment; its writer deletes it
-    once the index has the segment's derivatives, and a claim takes it when
-    the writer does not. The forget makes it the segment's tombstone,
-    writing it again if it was deleted: the derived index entries of the
-    segment's derivatives are deleted once at once, and once more after the
-    store's retention has passed since the first delete, when the
-    tombstone goes with the derivatives. A segment has at most one.
+    Written with the segment; its writer deletes it once the index has the
+    segment's derivatives, and a claim takes it when the writer does not.
+    Deleted with its segment, so a forgotten event leaves none behind.
     """
 
-    __tablename__ = "segment_store_jb"
+    __tablename__ = "segment_store_pw"
 
     incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    # When the forget made the job a tombstone; None while it is a pending
-    # write.
-    forgotten_at: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+    # When a claim may take the record: once its writer's lease has passed,
+    # once an open claim's lease and then the backoff have passed, or once
+    # the backoff after a failed claim has passed.
+    claimable_at: MappedColumn[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
     )
-    # When the tombstone's first delete was recorded; None until then.
-    first_deleted_at: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # When a claim may take the job: a pending write once its writer's lease
-    # has passed, a tombstone at once from the forget; then once an open
-    # claim's lease and then the backoff have passed, or once the backoff
-    # after a failed claim has passed. None from a tombstone's first delete
-    # record until a claim of the second sets it.
-    claimable_at: MappedColumn[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    # Claims since the job last made progress, the open one included.
+    # Claims since the record last made progress, the open one included.
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    # Incremented by each claim, and by the record of a tombstone's first
-    # delete; a claim ends only itself.
+    # Incremented by each claim; a claim ends only itself.
     claim_generation: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
 
     __table_args__ = (
-        # A pending write is always scheduled, and has no first delete.
+        ForeignKeyConstraint(
+            ["incarnation", "segment_uuid"],
+            [
+                "segment_store_sg.incarnation",
+                "segment_store_sg.uuid",
+            ],
+            ondelete="CASCADE",
+        ),
+        Index("segment_store_pw__ca", "claimable_at"),
+    )
+
+
+class TombstoneRow(BaseSegmentStore):
+    """A forgotten segment's tombstone, for the derivatives the forget kept.
+
+    Their derived index entries are deleted once at once, and once more
+    after the store's retention has passed since the first delete, when the
+    tombstone goes with the derivatives.
+    """
+
+    __tablename__ = "segment_store_tb"
+
+    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    # When the first delete was recorded; None while the tombstone awaits it.
+    first_deleted_at: MappedColumn[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # When a claim may take the tombstone, once its delete is due: at once
+    # from the forget, once an open claim's lease and then the backoff have
+    # passed, or once the backoff after a failed claim has passed. None from
+    # the first delete's record until a claim of the second sets it.
+    claimable_at: MappedColumn[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Claims since the tombstone last made progress, the open one included.
+    attempts_without_progress: MappedColumn[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    # Incremented by each claim, and by the first delete's record; a claim
+    # ends only itself.
+    claim_generation: MappedColumn[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+
+    __table_args__ = (
+        # Until its first delete, a tombstone is scheduled, or no claim
+        # would find it.
         CheckConstraint(
-            "forgotten_at IS NOT NULL"
-            " OR (first_deleted_at IS NULL AND claimable_at IS NOT NULL)",
-            name="segment_store_jb__pending_write_scheduled",
+            "first_deleted_at IS NOT NULL OR claimable_at IS NOT NULL",
+            name="segment_store_tb__scheduled_until_first_delete",
         ),
-        # Serves the pending write claims.
-        Index(
-            "segment_store_jb__ca",
-            "claimable_at",
-            sqlite_where=text("forgotten_at IS NULL"),
-            postgresql_where=text("forgotten_at IS NULL"),
-        ),
-        # Serves both tombstone claims: by schedule, and second deletes by
-        # their first delete.
-        Index(
-            "segment_store_jb__ca_fd",
-            "claimable_at",
-            "first_deleted_at",
-            sqlite_where=text("forgotten_at IS NOT NULL"),
-            postgresql_where=text("forgotten_at IS NOT NULL"),
-        ),
+        # Serves both claims: by schedule, and second deletes by their
+        # first delete.
+        Index("segment_store_tb__ca_fd", "claimable_at", "first_deleted_at"),
     )
 
 
@@ -352,13 +369,13 @@ class PurgeQueueRow(BaseSegmentStore):
     Claimed oldest-first by the enqueue stamp, which is the database clock,
     so entries from every server order on one clock; entries stamped in the
     same tick are unordered among themselves. The incarnation identifies
-    the rows to reclaim. The purge reclaims derivatives, then segments,
-    then events, then index jobs, each continuing after its own cursor:
-    every row of the incarnation keyed at or below the cursor is deleted,
-    and a cursor is NULL until its first full batch. A batch that ends
-    exactly on the last row of one table leaves that table's cursor naming
-    it, which says nothing about the next table, hence a cursor per table.
-    An entry holds only what the purge reads.
+    the rows to reclaim. The purge reclaims derivatives, then segments with
+    their pending writes, then events, then tombstones, each continuing
+    after its own cursor: every row of the incarnation keyed at or below
+    the cursor is deleted, and a cursor is NULL until its first full batch.
+    A batch that ends exactly on the last row of one table leaves that
+    table's cursor naming it, which says nothing about the next table,
+    hence a cursor per table. An entry holds only what the purge reads.
     """
 
     __tablename__ = "segment_store_gc"
@@ -376,7 +393,7 @@ class PurgeQueueRow(BaseSegmentStore):
     events_purged_through: MappedColumn[UUID | None] = mapped_column(
         Uuid, nullable=True
     )
-    index_jobs_purged_through: MappedColumn[UUID | None] = mapped_column(
+    tombstones_purged_through: MappedColumn[UUID | None] = mapped_column(
         Uuid, nullable=True
     )
 
@@ -606,7 +623,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             return
         # One multi-row statement, so every row carries the database clock.
         await session.execute(
-            insert(IndexJobRow).values(
+            insert(PendingWriteRow).values(
                 [
                     {
                         "incarnation": self._incarnation,
@@ -635,13 +652,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         ):
             await self._ensure_partition_live(session, pin=True)
             await session.execute(
-                delete(IndexJobRow).where(
-                    IndexJobRow.incarnation == self._incarnation,
-                    IndexJobRow.segment_uuid.in_(segment_uuids),
-                    # Pending writes only: the caller holds no claim to
-                    # check, and a forget since may have made one a
-                    # tombstone.
-                    IndexJobRow.forgotten_at.is_(None),
+                delete(PendingWriteRow).where(
+                    PendingWriteRow.incarnation == self._incarnation,
+                    PendingWriteRow.segment_uuid.in_(segment_uuids),
                 )
             )
 
@@ -1094,35 +1107,22 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 derivative_uuids_by_segment[segment_uuid].append(derivative_uuid)
 
             if segment_uuids:
-                # Each segment's pending write becomes its tombstone, or the
-                # tombstone is written if the pending write is gone. An open
-                # claim on the pending write ends, as claims name their
-                # job's kind.
-                insert_rows = sqlite_insert if self._is_sqlite else postgresql_insert
-                write_tombstones = insert_rows(IndexJobRow).values(
-                    [
-                        {
-                            "incarnation": self._incarnation,
-                            "segment_uuid": segment_uuid,
-                            "forgotten_at": func.now(),
-                            "claimable_at": func.now(),
-                        }
-                        for segment_uuid in segment_uuids
-                    ]
-                )
                 await session.execute(
-                    write_tombstones.on_conflict_do_update(
-                        index_elements=["incarnation", "segment_uuid"],
-                        set_={
-                            "forgotten_at": write_tombstones.excluded.forgotten_at,
-                            "claimable_at": write_tombstones.excluded.claimable_at,
-                            "attempts_without_progress": 0,
-                        },
+                    insert(TombstoneRow).values(
+                        [
+                            {
+                                "incarnation": self._incarnation,
+                                "segment_uuid": segment_uuid,
+                                "claimable_at": func.now(),
+                            }
+                            for segment_uuid in segment_uuids
+                        ]
                     )
                 )
 
-            # The cascade follows to the events' segments; their
-            # derivatives stay for the tombstones.
+            # The cascade follows to the events' segments, and through them
+            # to their pending writes; their derivatives stay for the
+            # tombstones.
             await session.execute(
                 delete(EventRow).where(
                     EventRow.incarnation == self._incarnation,
@@ -1147,12 +1147,11 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         ):
             await self._ensure_partition_live(session, pin=True)
             await session.execute(
-                update(IndexJobRow)
+                update(TombstoneRow)
                 .where(
-                    IndexJobRow.incarnation == self._incarnation,
-                    IndexJobRow.segment_uuid.in_(segment_uuids),
-                    IndexJobRow.forgotten_at.is_not(None),
-                    IndexJobRow.first_deleted_at.is_(None),
+                    TombstoneRow.incarnation == self._incarnation,
+                    TombstoneRow.segment_uuid.in_(segment_uuids),
+                    TombstoneRow.first_deleted_at.is_(None),
                 )
                 # Made without a claim, so it starts a new generation: an
                 # open claim's late failure then changes nothing.
@@ -1160,7 +1159,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     first_deleted_at=func.now(),
                     claimable_at=None,
                     attempts_without_progress=0,
-                    claim_generation=IndexJobRow.claim_generation + 1,
+                    claim_generation=TombstoneRow.claim_generation + 1,
                 )
             )
 
@@ -1223,7 +1222,8 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
         purge_max_rows (int):
-            Maximum number of rows purged per call, counting every table
+            Maximum number of rows purged per call: derivatives, segments,
+            events, and tombstones. A segment's pending write goes with it
             (default: 10000).
         purge_max_partitions (int):
             Maximum number of queue entries a purge call processes.
@@ -1269,7 +1269,10 @@ class SQLAlchemySegmentStoreParams(BaseModel):
     purge_max_rows: int = Field(
         10_000,
         gt=0,
-        description="Maximum number of rows purged per call, counting every table",
+        description=(
+            "Maximum number of rows purged per call: derivatives, segments, "
+            "events, and tombstones. A segment's pending write goes with it"
+        ),
     )
     purge_max_partitions: int = Field(
         100,
@@ -1636,7 +1639,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                         PurgeQueueRow.derivatives_purged_through,
                         PurgeQueueRow.segments_purged_through,
                         PurgeQueueRow.events_purged_through,
-                        PurgeQueueRow.index_jobs_purged_through,
+                        PurgeQueueRow.tombstones_purged_through,
                     )
                     .order_by(PurgeQueueRow.enqueued_at)
                     .limit(1)
@@ -1650,21 +1653,22 @@ class SQLAlchemySegmentStore(SegmentStore):
                     "derivatives_purged_through": entry.derivatives_purged_through,
                     "segments_purged_through": entry.segments_purged_through,
                     "events_purged_through": entry.events_purged_through,
-                    "index_jobs_purged_through": entry.index_jobs_purged_through,
+                    "tombstones_purged_through": entry.tombstones_purged_through,
                 }
 
                 # Segments go before events, so the cascade from an event
-                # row never runs on the budgeted path. Each table draws on
-                # the same budget, and a full batch records how far it got
-                # and leaves the entry for the next call.
+                # row never runs on the budgeted path; a segment's pending
+                # write goes with it. Each table draws on the same budget,
+                # and a full batch records how far it got and leaves the
+                # entry for the next call.
                 for table, key, cursor in (
                     (DerivativeRow, DerivativeRow.uuid, "derivatives_purged_through"),
                     (SegmentRow, SegmentRow.uuid, "segments_purged_through"),
                     (EventRow, EventRow.uuid, "events_purged_through"),
                     (
-                        IndexJobRow,
-                        IndexJobRow.segment_uuid,
-                        "index_jobs_purged_through",
+                        TombstoneRow,
+                        TombstoneRow.segment_uuid,
+                        "tombstones_purged_through",
                     ),
                 ):
                     deleted, last = await SQLAlchemySegmentStore._purge_batch(
@@ -1700,7 +1704,7 @@ class SQLAlchemySegmentStore(SegmentStore):
     @staticmethod
     async def _purge_batch(
         connection: AsyncConnection,
-        table: type[DerivativeRow | SegmentRow | EventRow | IndexJobRow],
+        table: type[DerivativeRow | SegmentRow | EventRow | TombstoneRow],
         key: InstrumentedAttribute[UUID],
         incarnation: UUID,
         *,
@@ -1751,19 +1755,16 @@ class SQLAlchemySegmentStore(SegmentStore):
         lease_seconds: int,
     ) -> PendingWriteClaim | None:
         oldest_due = (
-            select(IndexJobRow.incarnation, IndexJobRow.segment_uuid)
-            .where(
-                IndexJobRow.forgotten_at.is_(None),
-                IndexJobRow.claimable_at <= func.now(),
-            )
-            .order_by(IndexJobRow.claimable_at)
+            select(PendingWriteRow.incarnation, PendingWriteRow.segment_uuid)
+            .where(PendingWriteRow.claimable_at <= func.now())
+            .order_by(PendingWriteRow.claimable_at)
         )
         async with (
             self._tracker("claim_pending_write"),
             write_session(self._create_session) as session,
         ):
-            claimed = await self._claim_oldest_due_index_job(
-                session, [oldest_due], lease_seconds=lease_seconds
+            claimed = await self._claim_oldest_due(
+                session, PendingWriteRow, [oldest_due], lease_seconds=lease_seconds
             )
             if claimed is None:
                 return None
@@ -1806,43 +1807,45 @@ class SQLAlchemySegmentStore(SegmentStore):
     async def renew_pending_write_claim(
         self, claim: PendingWriteClaim, *, lease_seconds: int
     ) -> bool:
+        _, claimed_record = _claimed_record(claim)
         async with (
             self._tracker("renew_pending_write_claim"),
             write_session(self._create_session) as session,
         ):
             # The update holds the record's row, as the claim did: a forget
-            # making the record a tombstone waits for this transaction, or
-            # this update finds no pending write.
+            # deleting the record waits for this transaction, or this
+            # update finds the record gone.
             renewed = (
                 await session.execute(
-                    update(IndexJobRow)
+                    update(PendingWriteRow)
                     .where(
-                        _claimed_index_job(claim),
+                        claimed_record,
                         select(PartitionRow.partition_key)
-                        .where(PartitionRow.incarnation == IndexJobRow.incarnation)
+                        .where(PartitionRow.incarnation == PendingWriteRow.incarnation)
                         .exists(),
                     )
                     .values(
                         claimable_at=_seconds_from_now(
                             lease_seconds
                             + self._claim_retry_backoff_seconds(
-                                IndexJobRow.attempts_without_progress
+                                PendingWriteRow.attempts_without_progress
                             ),
                             is_sqlite=self._is_sqlite,
                         )
                     )
-                    .returning(IndexJobRow.segment_uuid)
+                    .returning(PendingWriteRow.segment_uuid)
                 )
             ).one_or_none()
         return renewed is not None
 
     @override
     async def finish_pending_write_claim(self, claim: PendingWriteClaim) -> None:
+        _, claimed_record = _claimed_record(claim)
         async with (
             self._tracker("finish_pending_write_claim"),
             write_session(self._create_session) as session,
         ):
-            await session.execute(delete(IndexJobRow).where(_claimed_index_job(claim)))
+            await session.execute(delete(PendingWriteRow).where(claimed_record))
 
     @override
     async def fail_pending_write_claim(
@@ -1852,7 +1855,7 @@ class SQLAlchemySegmentStore(SegmentStore):
             self._tracker("fail_pending_write_claim"),
             write_session(self._create_session) as session,
         ):
-            ended = await self._fail_index_job_claim(session, claim)
+            ended = await self._schedule_after_failed_claim(session, claim)
         if ended and claim.attempt >= _MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS:
             logger.error(
                 "Pending write of segment %s in partition %r is no longer "
@@ -1862,7 +1865,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                 claim.partition_key,
                 claim.attempt,
                 error,
-                IndexJobRow.__tablename__,
+                PendingWriteRow.__tablename__,
             )
 
     @override
@@ -1871,49 +1874,45 @@ class SQLAlchemySegmentStore(SegmentStore):
             self._tracker("cancel_pending_write_claim"),
             write_session(self._create_session) as session,
         ):
-            await self._cancel_index_job_claim(session, claim)
+            await self._take_back_cancelled_claim(session, claim)
 
     @override
     async def claim_tombstone(self) -> TombstoneClaim | None:
         # The retention is its own condition, so no schedule written to
         # claimable_at brings a second delete forward.
         retention_passed = or_(
-            IndexJobRow.first_deleted_at.is_(None),
+            TombstoneRow.first_deleted_at.is_(None),
             self._has_elapsed(
                 self._tombstone_retention_seconds,
-                since=IndexJobRow.first_deleted_at,
+                since=TombstoneRow.first_deleted_at,
             ),
         )
         # Scheduled deletes first, earliest first: first deletes and
         # retries. Then second deletes, oldest first delete first. Each is
         # one range of the (claimable_at, first_deleted_at) index.
         scheduled_due = (
-            select(IndexJobRow.incarnation, IndexJobRow.segment_uuid)
-            .where(
-                IndexJobRow.forgotten_at.is_not(None),
-                IndexJobRow.claimable_at <= func.now(),
-                retention_passed,
-            )
-            .order_by(IndexJobRow.claimable_at)
+            select(TombstoneRow.incarnation, TombstoneRow.segment_uuid)
+            .where(TombstoneRow.claimable_at <= func.now(), retention_passed)
+            .order_by(TombstoneRow.claimable_at)
         )
         second_deletes_due = (
-            select(IndexJobRow.incarnation, IndexJobRow.segment_uuid)
+            select(TombstoneRow.incarnation, TombstoneRow.segment_uuid)
             .where(
-                IndexJobRow.forgotten_at.is_not(None),
-                IndexJobRow.claimable_at.is_(None),
+                TombstoneRow.claimable_at.is_(None),
                 self._has_elapsed(
                     self._tombstone_retention_seconds,
-                    since=IndexJobRow.first_deleted_at,
+                    since=TombstoneRow.first_deleted_at,
                 ),
             )
-            .order_by(IndexJobRow.first_deleted_at)
+            .order_by(TombstoneRow.first_deleted_at)
         )
         async with (
             self._tracker("claim_tombstone"),
             write_session(self._create_session) as session,
         ):
-            claimed = await self._claim_oldest_due_index_job(
+            claimed = await self._claim_oldest_due(
                 session,
+                TombstoneRow,
                 [scheduled_due, second_deletes_due],
                 lease_seconds=self._tombstone_lease_seconds,
             )
@@ -1964,20 +1963,18 @@ class SQLAlchemySegmentStore(SegmentStore):
                     )
                 )
                 await session.execute(
-                    delete(IndexJobRow).where(
-                        IndexJobRow.incarnation == claim.incarnation,
-                        IndexJobRow.segment_uuid == claim.tombstone.segment_uuid,
-                        IndexJobRow.forgotten_at.is_not(None),
+                    delete(TombstoneRow).where(
+                        TombstoneRow.incarnation == claim.incarnation,
+                        TombstoneRow.segment_uuid == claim.tombstone.segment_uuid,
                     )
                 )
                 return
             await session.execute(
-                update(IndexJobRow)
+                update(TombstoneRow)
                 .where(
-                    IndexJobRow.incarnation == claim.incarnation,
-                    IndexJobRow.segment_uuid == claim.tombstone.segment_uuid,
-                    IndexJobRow.forgotten_at.is_not(None),
-                    IndexJobRow.first_deleted_at.is_(None),
+                    TombstoneRow.incarnation == claim.incarnation,
+                    TombstoneRow.segment_uuid == claim.tombstone.segment_uuid,
+                    TombstoneRow.first_deleted_at.is_(None),
                 )
                 # Under any claim, so it starts a new generation: a later
                 # claim's late failure then changes nothing.
@@ -1985,7 +1982,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                     first_deleted_at=func.now(),
                     claimable_at=None,
                     attempts_without_progress=0,
-                    claim_generation=IndexJobRow.claim_generation + 1,
+                    claim_generation=TombstoneRow.claim_generation + 1,
                 )
             )
 
@@ -1997,7 +1994,7 @@ class SQLAlchemySegmentStore(SegmentStore):
             self._tracker("fail_tombstone_claim"),
             write_session(self._create_session) as session,
         ):
-            ended = await self._fail_index_job_claim(session, claim)
+            ended = await self._schedule_after_failed_claim(session, claim)
         if ended and claim.attempt >= _MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS:
             logger.error(
                 "Tombstone of segment %s in partition %r is no longer claimed "
@@ -2009,7 +2006,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                 claim.partition_key,
                 claim.attempt,
                 error,
-                IndexJobRow.__tablename__,
+                TombstoneRow.__tablename__,
             )
 
     @override
@@ -2018,29 +2015,31 @@ class SQLAlchemySegmentStore(SegmentStore):
             self._tracker("cancel_tombstone_claim"),
             write_session(self._create_session) as session,
         ):
-            await self._cancel_index_job_claim(session, claim)
+            await self._take_back_cancelled_claim(session, claim)
 
-    async def _claim_oldest_due_index_job(
+    async def _claim_oldest_due(
         self,
         session: AsyncSession,
+        table: type[PendingWriteRow] | type[TombstoneRow],
         due_queries: Iterable[Select[tuple[UUID, UUID]]],
         *,
         lease_seconds: int,
-    ) -> Row[tuple[UUID, UUID, datetime | None, int, int]] | None:
-        """Claim the first claimable job of the first of `due_queries` that has one.
+    ) -> Row | None:
+        """Claim the first claimable record of `table` that the first of `due_queries` with one yields.
 
-        Each query selects the keys of due jobs in the order they are
-        claimed. A due job is claimable unless its claims failed the
+        Each query selects the keys of due records in the order they are
+        claimed. A due record is claimable unless its claims failed the
         maximum number of times in a row, or its partition is deleted. The
-        claim holds the job for `lease_seconds` and then the backoff.
+        claim holds the record for `lease_seconds` and then the backoff, and
+        returns the record's row as the claim left it.
         """
         for due_query in due_queries:
             oldest_claimable = (
                 due_query.where(
-                    IndexJobRow.attempts_without_progress
+                    table.attempts_without_progress
                     < _MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS,
                     select(PartitionRow.partition_key)
-                    .where(PartitionRow.incarnation == IndexJobRow.incarnation)
+                    .where(PartitionRow.incarnation == table.incarnation)
                     .exists(),
                 )
                 .limit(1)
@@ -2050,66 +2049,58 @@ class SQLAlchemySegmentStore(SegmentStore):
             )
             claimed = (
                 await session.execute(
-                    update(IndexJobRow)
+                    update(table)
                     .where(
-                        tuple_(IndexJobRow.incarnation, IndexJobRow.segment_uuid).in_(
+                        tuple_(table.incarnation, table.segment_uuid).in_(
                             oldest_claimable
                         )
                     )
                     .values(
-                        attempts_without_progress=(
-                            IndexJobRow.attempts_without_progress + 1
-                        ),
+                        attempts_without_progress=table.attempts_without_progress + 1,
                         claimable_at=_seconds_from_now(
                             lease_seconds
                             + self._claim_retry_backoff_seconds(
-                                IndexJobRow.attempts_without_progress + 1
+                                table.attempts_without_progress + 1
                             ),
                             is_sqlite=self._is_sqlite,
                         ),
-                        claim_generation=IndexJobRow.claim_generation + 1,
+                        claim_generation=table.claim_generation + 1,
                     )
-                    .returning(
-                        IndexJobRow.incarnation,
-                        IndexJobRow.segment_uuid,
-                        IndexJobRow.first_deleted_at,
-                        IndexJobRow.claim_generation,
-                        IndexJobRow.attempts_without_progress,
-                    )
+                    .returning(*table.__table__.columns)
                 )
             ).one_or_none()
             if claimed is not None:
                 return claimed
         return None
 
-    async def _fail_index_job_claim(
+    async def _schedule_after_failed_claim(
         self, session: AsyncSession, claim: PendingWriteClaim | TombstoneClaim
     ) -> bool:
-        """Schedule the claimed job's next claim after the backoff, if the claim is the latest on it; whether it was."""
+        """Make the claimed record claimable after the backoff, if the claim is the latest on it; whether it was."""
+        table, claimed_record = _claimed_record(claim)
         ended = await (await session.connection()).execute(
-            update(IndexJobRow)
-            .where(_claimed_index_job(claim))
+            update(table)
+            .where(claimed_record)
             .values(
                 claimable_at=_seconds_from_now(
-                    self._claim_retry_backoff_seconds(
-                        IndexJobRow.attempts_without_progress
-                    ),
+                    self._claim_retry_backoff_seconds(table.attempts_without_progress),
                     is_sqlite=self._is_sqlite,
                 )
             )
         )
         return ended.rowcount == 1
 
-    async def _cancel_index_job_claim(
+    async def _take_back_cancelled_claim(
         self, session: AsyncSession, claim: PendingWriteClaim | TombstoneClaim
     ) -> None:
-        """Take back the claimed job's attempt and make it claimable at once, if the claim is the latest on it."""
+        """Take back the claimed record's attempt and make it claimable at once, if the claim is the latest on it."""
+        table, claimed_record = _claimed_record(claim)
         await session.execute(
-            update(IndexJobRow)
-            .where(_claimed_index_job(claim))
+            update(table)
+            .where(claimed_record)
             .values(
                 claimable_at=func.now(),
-                attempts_without_progress=IndexJobRow.attempts_without_progress - 1,
+                attempts_without_progress=table.attempts_without_progress - 1,
             )
         )
 
@@ -2225,27 +2216,18 @@ class SQLAlchemySegmentStore(SegmentStore):
             )
 
 
-def _claimed_index_job(
+def _claimed_record(
     claim: PendingWriteClaim | TombstoneClaim,
-) -> ColumnElement[bool]:
-    """The job `claim` took, while the claim is the latest on it.
-
-    A job is named by its key, its kind, and its generation: a tombstone
-    written after its segment's pending write was deleted starts its
-    generations over, so the generation alone does not tell a pending
-    write's claims from the tombstone's.
-    """
+) -> tuple[type[PendingWriteRow] | type[TombstoneRow], ColumnElement[bool]]:
+    """The table of the record `claim` took, and that record while the claim is the latest on it."""
     if isinstance(claim, PendingWriteClaim):
-        segment_uuid = claim.segment_uuid
-        kind = IndexJobRow.forgotten_at.is_(None)
+        table, segment_uuid = PendingWriteRow, claim.segment_uuid
     else:
-        segment_uuid = claim.tombstone.segment_uuid
-        kind = IndexJobRow.forgotten_at.is_not(None)
-    return and_(
-        IndexJobRow.incarnation == claim.incarnation,
-        IndexJobRow.segment_uuid == segment_uuid,
-        kind,
-        IndexJobRow.claim_generation == claim.generation,
+        table, segment_uuid = TombstoneRow, claim.tombstone.segment_uuid
+    return table, and_(
+        table.incarnation == claim.incarnation,
+        table.segment_uuid == segment_uuid,
+        table.claim_generation == claim.generation,
     )
 
 
