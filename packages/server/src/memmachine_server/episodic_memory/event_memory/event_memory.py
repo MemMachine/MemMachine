@@ -1158,8 +1158,8 @@ class EventMemoryPartition:
         When this returns, the events and their segments are gone from the
         segment store, and their derivatives' vectors are deleted from the
         vector store at once and again after the segment store's retention,
-        by the background work if not here; the derivatives go with the
-        second delete.
+        by the background work if not here; the second delete deletes the
+        derivatives.
 
         Args:
             event_uuids (Iterable[UUID]):

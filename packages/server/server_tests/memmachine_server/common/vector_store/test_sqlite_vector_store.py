@@ -1313,7 +1313,7 @@ class TestCancellation:
     async def test_a_cancelled_upsert_executes_no_statement_after_the_cancellation(
         self, store, partition
     ):
-        """Cancelled as its first statement goes out, the upsert executes no
+        """Cancelled as it sends its first statement, the upsert executes no
         further statement, and the partition stays usable."""
         records = [
             _make_record(vector=_normalize([1.0, float(i), 0.0])) for i in range(3)

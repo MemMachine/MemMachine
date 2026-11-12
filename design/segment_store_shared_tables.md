@@ -60,10 +60,10 @@ One physical schema on every dialect; the ORM models are the tables.
 The pending write table keeps its foreign key to the segment table, and
 the segment table its to the event table (`ON DELETE CASCADE`), both
 keyed by incarnation; derivatives outlive a forgotten segment until its
-tombstone goes, so they have none to it. The segment table has no
-foreign key to the registry: registry rows and data rows are decoupled so
-that registry deletion is O(1), and the rows left behind are exactly what
-the purge queue tracks.
+tombstone's second delete deletes them, so they have no foreign key to it.
+The segment table has no foreign key to the registry: registry rows and
+data rows are decoupled so that registry deletion is O(1), and the rows
+left behind are exactly what the purge queue tracks.
 
 An incarnation value cannot be reused while any trace of it remains. A
 collision with a live incarnation violates the registry's unique

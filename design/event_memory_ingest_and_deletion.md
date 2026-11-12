@@ -9,7 +9,7 @@ and a forget stays complete anyway.
 
 - **Deletion.** After a forget commits, the events and their segments are
   gone from SQL, and their derivatives' vectors are deleted at once and
-  again after a retention R; the derivatives go with the second delete.
+  again after a retention R, and the second delete deletes the derivatives.
 - **Adding again.** A forgotten event can be added again under its UUID as
   soon as the forget commits.
 - **Late writes.** A write to the vector store can be applied after its
@@ -102,7 +102,7 @@ dropped from the results, and its vector is deleted without the search
 waiting for it; if that delete fails, the next search that finds the hit
 deletes it again.
 
-**Partition deletion.** The segment store's partition goes first, so its
+**Partition deletion.** The segment store's partition is deleted first, so its
 text is gone at once and no write starts on it; the vector store's
 partition deletion then removes every vector, with its own retention for
 writes in flight. Partitions are created in the other order, so a segment
