@@ -1118,7 +1118,7 @@ class EventMemoryPartition:
         return QueryResult(scored_segment_contexts=scored_segment_contexts)
 
     async def _delete_unlinked_records(self, record_uuids: list[UUID]) -> None:
-        """Delete vector records whose derivatives name no stored segment, once, best effort.
+        """Delete vector records whose derivatives name no stored segment.
 
         A derivative is stored before its record, and its segment is
         deleted only by a forget, which deletes the record in the
