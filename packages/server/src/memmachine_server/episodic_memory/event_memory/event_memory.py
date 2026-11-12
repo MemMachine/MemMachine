@@ -300,7 +300,9 @@ class EventMemory:
                 worked = await self._finish_pending_write()
                 worked = await self._delete_tombstoned_derivatives() or worked
             except Exception:
-                logger.exception("Event memory background work failed; pausing")
+                logger.exception(
+                    "Failed to run the event memory background work; pausing"
+                )
                 worked = False
             if not worked:
                 await asyncio.sleep(self._params.background_idle_seconds)
@@ -316,7 +318,7 @@ class EventMemory:
             written = await self._write_pending_derivatives(claim)
         except Exception as error:
             logger.warning(
-                "Writing the derivatives of segment %s of partition %r failed "
+                "Failed to write the derivatives of segment %s of partition %r "
                 "on attempt %d",
                 claim.segment_uuid,
                 claim.partition_key,
@@ -386,8 +388,8 @@ class EventMemory:
                 )
         except Exception as error:
             logger.warning(
-                "Deleting the tombstoned derivatives of segment %s of partition "
-                "%r failed on attempt %d",
+                "Failed to delete the tombstoned derivatives of segment %s of "
+                "partition %r on attempt %d",
                 claim.tombstone.segment_uuid,
                 claim.partition_key,
                 claim.attempt,
@@ -419,7 +421,7 @@ class EventMemory:
             self._claim_endings.discard(task)
             if not task.cancelled() and task.exception() is not None:
                 logger.error(
-                    "Could not end the cancelled claim on %s; it ends with its lease",
+                    "Failed to end the cancelled claim on %s; it ends with its lease",
                     claimed,
                     exc_info=task.exception(),
                 )
@@ -868,8 +870,8 @@ class EventMemoryPartition:
             raise
         except Exception:
             logger.warning(
-                "Writing the derivatives of %d stored events failed; the "
-                "background work writes them",
+                "Failed to write the derivatives of %d encoded events; the "
+                "background work will write them later",
                 len(events),
                 exc_info=True,
             )
@@ -1128,7 +1130,7 @@ class EventMemoryPartition:
             await self._vector_store_partition.delete(record_uuids=record_uuids)
         except Exception:
             logger.warning(
-                "Deleting %d vector records whose segments are gone failed",
+                "Failed to delete %d vector records whose segments are gone",
                 len(record_uuids),
                 exc_info=True,
             )
@@ -1191,8 +1193,8 @@ class EventMemoryPartition:
             )
         except Exception:
             logger.warning(
-                "Deleting the vectors of forgotten derivatives failed; the "
-                "background work deletes them",
+                "Failed to delete the vectors of the forgotten events' "
+                "derivatives; the background work will delete them later",
                 exc_info=True,
             )
 
