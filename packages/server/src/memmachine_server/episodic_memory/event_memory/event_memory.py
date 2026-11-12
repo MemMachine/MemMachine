@@ -7,8 +7,7 @@ import json
 import logging
 import time
 from collections.abc import Coroutine, Iterable, Sequence
-from dataclasses import dataclass
-from typing import Final, Self, cast
+from typing import Final, cast
 from uuid import UUID
 
 from pydantic import BaseModel, Field, InstanceOf
@@ -351,7 +350,7 @@ class EventMemory:
         # after the vector store partition was opened under its key; since
         # a partition leaves the segment store first, that vector store
         # partition belongs to the claimed partition.
-        budget = _WriteBudget.start(self._params.write_budget_seconds)
+        budget = _WriteBudget(self._params.write_budget_seconds)
         if not await self._params.segment_store.renew_pending_write_claim(
             claim,
             lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
@@ -829,7 +828,7 @@ class EventMemoryPartition:
 
         # Started before the events are stored, so a forget of them either
         # finds nothing or stamps its tombstone after the start.
-        budget = _WriteBudget.start(self._write_budget_seconds)
+        budget = _WriteBudget(self._write_budget_seconds)
         await self._segment_store_partition.add_event_segments(
             {
                 event.uuid: segment_list
@@ -1269,33 +1268,26 @@ async def _upsert_within_budget(
         await vector_store_partition.upsert(records=records)
 
 
-@dataclass(frozen=True)
 class _WriteBudget:
     """
-    The time a writer of derivatives may keep sending, from its start.
+    The time a writer of derivatives may keep sending, from the budget's start.
 
     Elapsed time is the larger of the monotonic and the wall clock's, so a
-    process suspended mid-write counts the time it slept, and a wall clock
-    set back does not lengthen the budget.
+    check made after the machine slept counts the time it slept, and a wall
+    clock set back does not lengthen the budget. The upsert's own deadline
+    runs on the monotonic clock.
     """
 
-    seconds: float
-    started_monotonic: float
-    started_wall: float
-
-    @classmethod
-    def start(cls, seconds: float) -> Self:
+    def __init__(self, seconds: float) -> None:
         """Start a budget of `seconds` now."""
-        return cls(
-            seconds=seconds,
-            started_monotonic=time.monotonic(),
-            started_wall=time.time(),
-        )
+        self._seconds = seconds
+        self._started_monotonic = time.monotonic()
+        self._started_wall = time.time()
 
     def remaining_seconds(self) -> float:
         """Seconds left in the budget; zero or less once it has run out."""
         elapsed = max(
-            time.monotonic() - self.started_monotonic,
-            time.time() - self.started_wall,
+            time.monotonic() - self._started_monotonic,
+            time.time() - self._started_wall,
         )
-        return self.seconds - elapsed
+        return self._seconds - elapsed
