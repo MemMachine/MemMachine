@@ -36,7 +36,8 @@ class SegmentStorePartition(ABC):
     segments are immutable: a changed event is forgotten and added again.
     A forget deletes the events and their segments, and leaves a tombstone
     for each segment naming its derivatives, which stay until the
-    tombstone goes, so their derived index entries can still be deleted.
+    tombstone's second delete deletes them, so their derived index entries
+    can still be deleted.
     """
 
     @property
@@ -90,7 +91,7 @@ class SegmentStorePartition(ABC):
         """
         Delete the pending writes of the given segments. Idempotent.
 
-        The derivatives stay; only the segments' pending writes go. A
+        The derivatives stay; only the segments' pending writes are deleted. A
         segment forgotten since keeps its tombstone.
 
         Args:
@@ -168,7 +169,7 @@ class SegmentStorePartition(ABC):
         Delete events with their segments and pending writes, leaving a tombstone for each segment.
 
         All of it commits together or not at all. A tombstone names its
-        segment's derivatives, which stay until the tombstone goes. A
+        segment's derivatives, which stay until its second delete. A
         renewal of a claim on these events' pending writes either commits
         first or finds them gone. An event the partition does not hold is
         skipped. Idempotent.

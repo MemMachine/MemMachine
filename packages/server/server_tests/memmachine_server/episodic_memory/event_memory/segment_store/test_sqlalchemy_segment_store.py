@@ -1535,7 +1535,7 @@ async def test_a_segment_without_derivatives_has_the_lifecycle_of_any_other(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Its pending write is claimed with no derivatives, and its tombstone names none and goes after its second delete."""
+    """Its pending write is claimed with no derivatives, and its tombstone names none and is deleted by its second delete."""
     monkeypatch.setattr(store, "_tombstone_retention_seconds", 3600)
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
@@ -1583,7 +1583,7 @@ async def test_recording_a_first_delete_passes_over_segments_without_a_tombstone
 async def test_claim_on_a_pending_write_of_a_forgotten_event_ends_without_effect(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """The claim's record went with its event, and the tombstone names the claimed derivatives."""
+    """The forget deleted the claim's record by cascade, and the tombstone names the claimed derivatives."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
@@ -3039,7 +3039,7 @@ async def test_purge_reclaims_every_size_within_the_bound(
 async def test_purge_reclaims_every_row_of_a_deleted_partition(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Events, segments, derivatives, pending writes, and tombstones all go; a live partition keeps its own."""
+    """Events, segments, derivatives, pending writes, and tombstones are all deleted; a live partition keeps its own."""
     config = _plaintext_partition_config()
     doomed = await store.open_or_create_partition("doomed_rows", config)
     live = await store.open_or_create_partition("live_rows", config)
@@ -3087,7 +3087,8 @@ async def test_purge_continues_through_every_table_within_the_bound(
 
     The partition holds seven derivatives, five segments, three events, and
     two tombstones, so the bounds end calls inside each table and exactly
-    on each table's last row. A segment's pending write goes with it.
+    on each table's last row. Deleting a segment deletes its pending write
+    by cascade.
     """
     partition = await store.open_or_create_partition(
         "tables_p", _plaintext_partition_config()

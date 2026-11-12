@@ -246,8 +246,8 @@ class SegmentRow(BaseSegmentStore):
 class DerivativeRow(BaseSegmentStore):
     """A derivative of a segment: what its derived index is written from, and the segment a hit on it names.
 
-    It outlives a forgotten segment until the segment's tombstone goes, so
-    the tombstone's deletes can still read it.
+    It outlives a forgotten segment until the segment's tombstone's second
+    delete deletes it, so the tombstone's deletes can still read it.
     """
 
     __tablename__ = "segment_store_dv"
@@ -321,8 +321,8 @@ class TombstoneRow(BaseSegmentStore):
     """A forgotten segment's tombstone, for the derivatives the forget kept.
 
     Their derived index entries are deleted once at once, and once more
-    after the store's retention has passed since the first delete, when the
-    tombstone goes with the derivatives.
+    after the store's retention has passed since the first delete, which
+    then deletes the derivatives and the tombstone.
     """
 
     __tablename__ = "segment_store_tb"
@@ -1223,8 +1223,8 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             (default: None).
         purge_max_rows (int):
             Maximum number of rows purged per call: derivatives, segments,
-            events, and tombstones. A segment's pending write goes with it
-            (default: 10000).
+            events, and tombstones. Deleting a segment deletes its pending
+            write by cascade (default: 10000).
         purge_max_partitions (int):
             Maximum number of queue entries a purge call processes.
             Entries cost round trips rather than row deletions --
@@ -1271,7 +1271,8 @@ class SQLAlchemySegmentStoreParams(BaseModel):
         gt=0,
         description=(
             "Maximum number of rows purged per call: derivatives, segments, "
-            "events, and tombstones. A segment's pending write goes with it"
+            "events, and tombstones. Deleting a segment deletes its pending "
+            "write by cascade"
         ),
     )
     purge_max_partitions: int = Field(
@@ -1656,9 +1657,9 @@ class SQLAlchemySegmentStore(SegmentStore):
                     "tombstones_purged_through": entry.tombstones_purged_through,
                 }
 
-                # Segments go before events, so the cascade from an event
-                # row never runs on the budgeted path; a segment's pending
-                # write goes with it. Each table draws on the same budget,
+                # Segments are purged before events, so the cascade from an
+                # event row never runs on the budgeted path; deleting a
+                # segment deletes its pending write by cascade. Each table draws on the same budget,
                 # and a full batch records how far it got and leaves the
                 # entry for the next call.
                 for table, key, cursor in (
@@ -1934,8 +1935,8 @@ class SQLAlchemySegmentStore(SegmentStore):
                 ).scalars()
             )
         if partition_row is None:
-            # Deleted since the claim's read: the partition's index goes
-            # with it, and the purge reclaims the tombstone.
+            # Deleted since the claim's read: the partition's deletion
+            # deletes its vectors, and the purge deletes the tombstone.
             return None
         return TombstoneClaim(
             partition_key=partition_row.partition_key,
@@ -1955,7 +1956,7 @@ class SQLAlchemySegmentStore(SegmentStore):
             write_session(self._create_session) as session,
         ):
             if claim.second_delete:
-                # The derivatives go with the tombstone.
+                # Nothing reads the derivatives after the second delete.
                 await session.execute(
                     delete(DerivativeRow).where(
                         DerivativeRow.incarnation == claim.incarnation,
