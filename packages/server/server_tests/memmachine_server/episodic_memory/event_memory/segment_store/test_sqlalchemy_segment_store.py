@@ -57,6 +57,7 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartitionConfig,
     SegmentStorePartitionConfigMismatchError,
     SegmentStorePartitionHandleStaleError,
+    Tombstone,
     TombstoneClaim,
     sqlalchemy_segment_store,
 )
@@ -64,15 +65,13 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
     BaseSegmentStore,
     DerivativeRow,
     EventRow,
+    IndexJobRow,
     PartitionRow,
-    PendingWriteRow,
     PurgeQueueRow,
     SegmentRow,
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
     SQLAlchemySegmentStorePartition,
-    TombstoneDerivativeRow,
-    TombstoneRow,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
     validate_partition_key,
@@ -488,9 +487,7 @@ async def test_add_event_segments_rejects_a_batch_naming_a_held_event(
     assert exc_info.value.event_uuids == {segment.event_uuid for segment in held}
     assert await _row_counts(partition, partition._incarnation) == (2, 2)
     assert (
-        await _count_rows(
-            partition, PendingWriteRow.incarnation == partition._incarnation
-        )
+        await _count_rows(partition, IndexJobRow.incarnation == partition._incarnation)
         == 0
     )
     assert set(
@@ -558,9 +555,7 @@ async def test_add_event_segments_failing_partway_writes_nothing(
         == 1
     )
     assert (
-        await _count_rows(
-            partition, PendingWriteRow.incarnation == partition._incarnation
-        )
+        await _count_rows(partition, IndexJobRow.incarnation == partition._incarnation)
         == 0
     )
     assert (
@@ -598,9 +593,7 @@ async def test_concurrent_adds_of_one_event_store_it_once(
     assert await _row_counts(partition, partition._incarnation) == (3, 3)
     # One pending write for each of the winner's segments.
     assert (
-        await _count_rows(
-            partition, PendingWriteRow.incarnation == partition._incarnation
-        )
+        await _count_rows(partition, IndexJobRow.incarnation == partition._incarnation)
         == 3
     )
 
@@ -699,9 +692,7 @@ async def test_delete_pending_writes_removes_only_the_pending_record(
     assert await partition.get_segment_uuids_by_derivative_uuids(
         derivative.uuid for derivative in derivatives
     ) == {derivative.uuid: derivative.segment_uuid for derivative in derivatives}
-    assert (
-        await _count_rows(partition, PendingWriteRow.segment_uuid == finished.uuid) == 0
-    )
+    assert await _count_rows(partition, IndexJobRow.segment_uuid == finished.uuid) == 0
     claim = await store.claim_pending_write(lease_seconds=60)
     assert claim is not None
     assert claim.segment_uuid == unfinished.uuid
@@ -1298,7 +1289,7 @@ async def test_get_segment_uuids_by_derivative_uuids_after_delete_event_segments
 
 
 @pytest.mark.asyncio
-async def test_delete_event_segments_removes_segments_and_links(
+async def test_delete_event_segments_removes_segments_and_keeps_derivatives_for_the_tombstone(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
     seg = _seg()
@@ -1309,7 +1300,7 @@ async def test_delete_event_segments_removes_segments_and_links(
 
     assert await partition.get_segment_contexts([seg.uuid]) == {}
     assert await partition.get_segment_uuids_by_derivative_uuids([derivative]) == {}
-    assert await _row_counts(partition, partition._incarnation) == (0, 0)
+    assert await _row_counts(partition, partition._incarnation) == (0, 1)
     assert (
         await _count_rows(partition, EventRow.incarnation == partition._incarnation)
         == 0
@@ -1339,10 +1330,10 @@ async def test_delete_event_segments_leaves_other_events_intact(
 
 
 @pytest.mark.asyncio
-async def test_delete_event_segments_returns_a_tombstone_naming_the_unlinked_derivatives(
+async def test_delete_event_segments_returns_a_tombstone_per_forgotten_segment_naming_its_derivatives(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """Each forgotten segment with derivatives gets a tombstone naming them, and no other segment does."""
+    """Each forgotten segment gets a tombstone naming its derivatives, if any, and no other segment does."""
     forgotten = [uuid4(), uuid4()]
     links = {
         _seg(event_uuid=forgotten[0], index=0): [uuid4(), uuid4()],
@@ -1361,44 +1352,59 @@ async def test_delete_event_segments_returns_a_tombstone_naming_the_unlinked_der
     } == {
         segment.uuid: sorted(derivative_uuids)
         for segment, derivative_uuids in links.items()
-        if segment.event_uuid in forgotten and derivative_uuids
+        if segment.event_uuid in forgotten
     }
 
 
 @pytest.mark.asyncio
-async def test_delete_event_segments_deletes_pending_writes(
+async def test_delete_event_segments_makes_the_pending_write_a_tombstone_and_keeps_the_derivatives(
     store: SQLAlchemySegmentStore,
 ) -> None:
+    """The derivatives stay for the tombstone, and no longer name their segment."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
     segment = _seg()
     segments_by_event, derivatives = _events({segment: [uuid4(), uuid4()]})
     await partition.add_event_segments(segments_by_event, derivatives, lease_seconds=0)
+    derivative_uuids = [derivative.uuid for derivative in derivatives]
 
     [tombstone] = await partition.delete_event_segments([segment.event_uuid])
 
-    assert sorted(tombstone.derivative_uuids) == sorted(
-        derivative.uuid for derivative in derivatives
-    )
+    assert tombstone.segment_uuid == segment.uuid
+    assert sorted(tombstone.derivative_uuids) == sorted(derivative_uuids)
+    assert await _row_counts(partition, partition._incarnation) == (0, 2)
     assert (
-        await _count_rows(partition, PendingWriteRow.segment_uuid == segment.uuid) == 0
+        await _count_rows(
+            partition,
+            (IndexJobRow.segment_uuid == segment.uuid)
+            & IndexJobRow.forgotten_at.is_not(None),
+        )
+        == 1
     )
-    assert await _count_rows(partition, DerivativeRow.segment_uuid == segment.uuid) == 0
     assert await store.claim_pending_write(lease_seconds=60) is None
+    assert await partition.get_segment_uuids_by_derivative_uuids(derivative_uuids) == {}
+    claim = await store.claim_tombstone()
+    assert claim is not None
+    assert sorted(claim.tombstone.derivative_uuids) == sorted(derivative_uuids)
 
 
 @pytest.mark.asyncio
-async def test_delete_event_segments_without_derivatives_returns_no_tombstones(
+async def test_delete_event_segments_skips_unknown_events_and_forgets_events_without_derivatives(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
-    """Unknown events and events without derivatives leave no tombstone; the latter are still forgotten."""
+    """A segment without derivatives gets a tombstone naming none; an event without segments gets none."""
     bare = _seg()
     await _add_segments(partition, {bare: []})
+    empty_event_uuid = uuid4()
+    await partition.add_event_segments({empty_event_uuid: []}, [], lease_seconds=0)
 
     assert await partition.delete_event_segments([]) == []
     assert await partition.delete_event_segments([uuid4()]) == []
-    assert await partition.delete_event_segments([bare.event_uuid]) == []
+    assert await partition.delete_event_segments([bare.event_uuid]) == [
+        Tombstone(segment_uuid=bare.uuid, derivative_uuids=[])
+    ]
+    assert await partition.delete_event_segments([empty_event_uuid]) == []
 
     assert await partition.get_segment_contexts([bare.uuid]) == {}
     assert (
@@ -1406,8 +1412,12 @@ async def test_delete_event_segments_without_derivatives_returns_no_tombstones(
         == 0
     )
     assert (
-        await _count_rows(partition, TombstoneRow.incarnation == partition._incarnation)
-        == 0
+        await _count_rows(
+            partition,
+            (IndexJobRow.incarnation == partition._incarnation)
+            & IndexJobRow.forgotten_at.is_not(None),
+        )
+        == 1
     )
 
 
@@ -1421,7 +1431,7 @@ async def test_delete_event_segments_is_idempotent(
     assert await partition.delete_event_segments([segment.event_uuid]) != []
     assert await partition.delete_event_segments([segment.event_uuid]) == []
     assert (
-        await _count_rows(partition, TombstoneRow.incarnation == partition._incarnation)
+        await _count_rows(partition, IndexJobRow.incarnation == partition._incarnation)
         == 1
     )
 
@@ -1443,10 +1453,114 @@ async def test_forgotten_event_can_be_added_again(
 
 
 @pytest.mark.asyncio
+async def test_a_writers_own_pending_write_delete_leaves_the_tombstone_a_forget_made_since(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """The forget made the pending write a tombstone, which the writer's delete leaves to its deletes."""
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    segment = _seg()
+    segments_by_event, derivatives = _events(_links(segment))
+    await partition.add_event_segments(
+        segments_by_event, derivatives, lease_seconds=3600
+    )
+    await partition.delete_event_segments([segment.event_uuid])
+
+    await partition.delete_pending_writes([segment.uuid])
+
+    claim = await store.claim_tombstone()
+    assert claim is not None
+    assert claim.tombstone == Tombstone(
+        segment_uuid=segment.uuid, derivative_uuids=[derivatives[0].uuid]
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stale_pending_write_claim_leaves_a_tombstone_at_its_generation_alone(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """A tombstone written after its pending write was deleted starts its generations over, and a claim on the pending write still reaches none of it."""
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    segment = _seg()
+    await partition.add_event_segments(*_events(_links(segment)), lease_seconds=0)
+    stale = await store.claim_pending_write(lease_seconds=60)
+    assert stale is not None
+    await partition.delete_pending_writes([segment.uuid])
+    await partition.delete_event_segments([segment.event_uuid])
+    await partition.record_tombstone_first_delete([segment.uuid])
+
+    assert not await store.renew_pending_write_claim(stale, lease_seconds=60)
+    await store.fail_pending_write_claim(stale, RuntimeError("index unavailable"))
+    await store.cancel_pending_write_claim(stale)
+    await store.finish_pending_write_claim(stale)
+
+    await _backdate(store, IndexJobRow.first_deleted_at, timedelta(days=2))
+    second = await store.claim_tombstone()
+    assert second is not None
+    assert (second.tombstone.segment_uuid, second.second_delete, second.attempt) == (
+        segment.uuid,
+        True,
+        1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_segment_without_derivatives_has_the_lifecycle_of_any_other(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its pending write is claimed with no derivatives, and its tombstone names none and goes after its second delete."""
+    monkeypatch.setattr(store, "_tombstone_retention_seconds", 3600)
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    segment = _seg()
+    await partition.add_event_segments(*_events({segment: []}), lease_seconds=0)
+
+    pending = await store.claim_pending_write(lease_seconds=60)
+    assert pending is not None
+    assert (pending.segment_uuid, pending.derivatives) == (segment.uuid, [])
+
+    await partition.delete_event_segments([segment.event_uuid])
+    first = await store.claim_tombstone()
+    assert first is not None
+    assert first.tombstone == Tombstone(segment_uuid=segment.uuid, derivative_uuids=[])
+    await store.finish_tombstone_claim(first)
+    await _backdate(store, IndexJobRow.first_deleted_at, timedelta(hours=2))
+    second = await store.claim_tombstone()
+    assert second is not None
+    assert second.second_delete is True
+    await store.finish_tombstone_claim(second)
+
+    assert await _count_rows(store, IndexJobRow.segment_uuid == segment.uuid) == 0
+
+
+@pytest.mark.asyncio
+async def test_recording_a_first_delete_passes_over_segments_without_a_tombstone(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """A segment that was not forgotten keeps its pending write as it was."""
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    segment = _seg()
+    await partition.add_event_segments(*_events(_links(segment)), lease_seconds=0)
+
+    await partition.record_tombstone_first_delete([segment.uuid])
+
+    claim = await store.claim_pending_write(lease_seconds=60)
+    assert claim is not None
+    assert (claim.segment_uuid, claim.generation) == (segment.uuid, 1)
+
+
+@pytest.mark.asyncio
 async def test_claim_on_a_pending_write_of_a_forgotten_event_ends_without_effect(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """The claim's record went with its event, and the tombstone names the claimed derivatives."""
+    """The forget made the claim's record a tombstone, which names the claimed derivatives."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
@@ -1457,12 +1571,16 @@ async def test_claim_on_a_pending_write_of_a_forgotten_event_ends_without_effect
     assert claim is not None
 
     await partition.delete_event_segments([segment.event_uuid])
+    assert not await store.renew_pending_write_claim(claim, lease_seconds=60)
     await store.finish_pending_write_claim(claim)
     await store.fail_pending_write_claim(claim, RuntimeError("index unavailable"))
+    await store.cancel_pending_write_claim(claim)
 
     assert (
         await _count_rows(
-            partition, PendingWriteRow.incarnation == partition._incarnation
+            partition,
+            (IndexJobRow.incarnation == partition._incarnation)
+            & IndexJobRow.forgotten_at.is_(None),
         )
         == 0
     )
@@ -1502,8 +1620,7 @@ async def test_event_write_whose_commit_fails_changes_nothing(
     assert await _row_counts(store, partition._incarnation) == (1, 1)
     for table, count in (
         (EventRow, 1),
-        (PendingWriteRow, 0),
-        (TombstoneRow, 0),
+        (IndexJobRow, 0),
     ):
         assert (
             await _count_rows(store, table.incarnation == partition._incarnation)
@@ -1516,11 +1633,7 @@ async def test_event_write_whose_commit_fails_changes_nothing(
 # Claims
 # ===================================================================
 
-_CLAIMED_TABLES = pytest.mark.parametrize(
-    "table",
-    [PendingWriteRow, TombstoneRow],
-    ids=["pending_writes", "tombstone"],
-)
+_CLAIMED_KINDS = pytest.mark.parametrize("kind", ["pending_write", "tombstone"])
 
 
 @pytest.mark.asyncio
@@ -1536,59 +1649,58 @@ async def test_a_pending_write_is_claimable_once_its_writers_lease_has_passed(
     )
 
     assert await store.claim_pending_write(lease_seconds=60) is None
-    await _shift_earlier(store, PendingWriteRow.claimable_at, timedelta(minutes=50))
+    await _shift_earlier(store, IndexJobRow.claimable_at, timedelta(minutes=50))
     assert await store.claim_pending_write(lease_seconds=60) is None
-    await _shift_earlier(store, PendingWriteRow.claimable_at, timedelta(minutes=20))
+    await _shift_earlier(store, IndexJobRow.claimable_at, timedelta(minutes=20))
     claim = await store.claim_pending_write(lease_seconds=60)
     assert _claimed_record_uuid(claim) == derivatives[0].segment_uuid
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_claims_take_the_oldest_record_first(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    newer = await _add_claimable_record(partition, table)
-    older = await _add_claimable_record(partition, table)
+    newer = await _add_claimable_record(partition, kind)
+    older = await _add_claimable_record(partition, kind)
     await _backdate(
-        store, table.claimable_at, timedelta(minutes=5), table.segment_uuid == older
+        store,
+        IndexJobRow.claimable_at,
+        timedelta(minutes=5),
+        IndexJobRow.segment_uuid == older,
     )
 
-    claimed = [_claimed_record_uuid(await _claim(store, table)) for _ in range(2)]
+    claimed = [_claimed_record_uuid(await _claim(store, kind)) for _ in range(2)]
     assert claimed == [older, newer]
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_claim_holds_its_record_for_the_lease(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     """A record is claimed again only once its claim's lease is over, by a later generation."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    record_uuid = await _add_claimable_record(partition, table)
+    record_uuid = await _add_claimable_record(partition, kind)
 
-    first = await _claim(store, table)
+    first = await _claim(store, kind)
     assert first is not None
-    assert (_claimed_record_uuid(first), first.generation, first.attempt) == (
-        record_uuid,
-        1,
-        1,
-    )
-    assert await _claim(store, table) is None
+    assert (_claimed_record_uuid(first), first.attempt) == (record_uuid, 1)
+    assert await _claim(store, kind) is None
 
-    await _backdate(store, table.claimable_at, timedelta(days=1))
-    second = await _claim(store, table)
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
+    second = await _claim(store, kind)
     assert second is not None
     assert (_claimed_record_uuid(second), second.generation, second.attempt) == (
         record_uuid,
-        2,
+        first.generation + 1,
         2,
     )
 
@@ -1601,50 +1713,50 @@ async def test_finishing_a_pending_write_claim_deletes_the_record_only_for_the_l
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    pending_uuid = await _add_claimable_record(partition, PendingWriteRow)
+    pending_uuid = await _add_claimable_record(partition, "pending_write")
     superseded = await store.claim_pending_write(lease_seconds=60)
-    await _backdate(store, PendingWriteRow.claimable_at, timedelta(days=1))
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
     latest = await store.claim_pending_write(lease_seconds=60)
     assert superseded is not None
     assert latest is not None
 
     await store.finish_pending_write_claim(superseded)
-    assert await _count_rows(store, PendingWriteRow.segment_uuid == pending_uuid) == 1
+    assert await _count_rows(store, IndexJobRow.segment_uuid == pending_uuid) == 1
 
     await store.finish_pending_write_claim(latest)
-    assert await _count_rows(store, PendingWriteRow.segment_uuid == pending_uuid) == 0
+    assert await _count_rows(store, IndexJobRow.segment_uuid == pending_uuid) == 0
     # The segment's derivatives stay with it.
     assert await _count_rows(store, DerivativeRow.segment_uuid == pending_uuid) == 1
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_failing_a_superseded_claim_changes_nothing(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     """It neither ends the later claim nor starts a backoff."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    record_uuid = await _add_claimable_record(partition, table)
-    superseded = await _claim(store, table)
-    await _backdate(store, table.claimable_at, timedelta(days=1))
-    assert await _claim(store, table) is not None
+    record_uuid = await _add_claimable_record(partition, kind)
+    superseded = await _claim(store, kind)
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
+    assert await _claim(store, kind) is not None
     assert superseded is not None
-    scheduled = await _claimable_at(store, table, record_uuid)
+    scheduled = await _claimable_at(store, record_uuid)
 
     await _fail_claim(store, superseded)
 
-    assert await _claimable_at(store, table, record_uuid) == scheduled
+    assert await _claimable_at(store, record_uuid) == scheduled
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_failed_claim_backs_off_doubling_up_to_the_cap(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     """Each failed claim in a row doubles the wait before the next, up to the cap."""
     monkeypatch.setattr(store, "_base_claim_retry_backoff_seconds", 60)
@@ -1652,97 +1764,97 @@ async def test_failed_claim_backs_off_doubling_up_to_the_cap(
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    await _add_claimable_record(partition, table)
+    await _add_claimable_record(partition, kind)
 
     for attempt, backoff_seconds in enumerate([60, 120, 150], start=1):
-        claim = await _claim(store, table)
+        claim = await _claim(store, kind)
         assert claim is not None
         assert claim.attempt == attempt
         await _fail_claim(store, claim)
-        assert await _claim(store, table) is None
+        assert await _claim(store, kind) is None
         await _shift_earlier(
-            store, table.claimable_at, timedelta(seconds=backoff_seconds - 15)
+            store, IndexJobRow.claimable_at, timedelta(seconds=backoff_seconds - 15)
         )
-        assert await _claim(store, table) is None
-        await _shift_earlier(store, table.claimable_at, timedelta(seconds=30))
-    claim = await _claim(store, table)
+        assert await _claim(store, kind) is None
+        await _shift_earlier(store, IndexJobRow.claimable_at, timedelta(seconds=30))
+    claim = await _claim(store, kind)
     assert claim is not None
     assert claim.attempt == 4
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_a_cancelled_claim_takes_back_its_attempt(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     """A cancelled claim is not a failed one: its record is claimable at once, under the same attempt."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    record_uuid = await _add_claimable_record(partition, table)
-    cancelled = await _claim(store, table)
+    record_uuid = await _add_claimable_record(partition, kind)
+    cancelled = await _claim(store, kind)
     assert cancelled is not None
 
     await _cancel_claim(store, cancelled)
 
-    again = await _claim(store, table)
+    again = await _claim(store, kind)
     assert again is not None
     assert (_claimed_record_uuid(again), again.generation, again.attempt) == (
         record_uuid,
-        2,
+        cancelled.generation + 1,
         1,
     )
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_cancelling_a_superseded_claim_changes_nothing(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    record_uuid = await _add_claimable_record(partition, table)
-    superseded = await _claim(store, table)
+    record_uuid = await _add_claimable_record(partition, kind)
+    superseded = await _claim(store, kind)
     assert superseded is not None
-    await _backdate(store, table.claimable_at, timedelta(days=1))
-    assert await _claim(store, table) is not None
-    scheduled = await _claimable_at(store, table, record_uuid)
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
+    assert await _claim(store, kind) is not None
+    scheduled = await _claimable_at(store, record_uuid)
 
     await _cancel_claim(store, superseded)
 
-    assert await _claimable_at(store, table, record_uuid) == scheduled
-    await _backdate(store, table.claimable_at, timedelta(days=1))
-    third = await _claim(store, table)
+    assert await _claimable_at(store, record_uuid) == scheduled
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
+    third = await _claim(store, kind)
     assert third is not None
     assert third.attempt == 3
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_record_is_no_longer_claimed_after_the_maximum_failed_claims(
     store: SQLAlchemySegmentStore,
     caplog: pytest.LogCaptureFixture,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     """The store reports the record once its claims failed the maximum number of times in a row."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    await _add_claimable_record(partition, table)
+    await _add_claimable_record(partition, kind)
     maximum = sqlalchemy_segment_store._MAX_CLAIM_ATTEMPTS_WITHOUT_PROGRESS
 
     with caplog.at_level(logging.ERROR, logger=sqlalchemy_segment_store.__name__):
         for attempt in range(1, maximum + 1):
-            claim = await _claim(store, table)
+            claim = await _claim(store, kind)
             assert claim is not None
             assert claim.attempt == attempt
             await _fail_claim(store, claim)
-            await _backdate(store, table.claimable_at, timedelta(days=1))
+            await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
 
-    assert await _claim(store, table) is None
+    assert await _claim(store, kind) is None
     reports = [
         record for record in caplog.records if "no longer claimed" in record.message
     ]
@@ -1750,32 +1862,32 @@ async def test_record_is_no_longer_claimed_after_the_maximum_failed_claims(
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_claims_skip_deleted_partitions(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     """A deleted partition's records are passed over, however old."""
     config = _plaintext_partition_config()
     doomed = await store.open_or_create_partition("doomed_claims", config)
     live = await store.open_or_create_partition("live_claims", config)
-    live_uuid = await _add_claimable_record(live, table)
-    await _add_claimable_record(doomed, table)
+    live_uuid = await _add_claimable_record(live, kind)
+    await _add_claimable_record(doomed, kind)
     await _backdate(
         store,
-        table.claimable_at,
+        IndexJobRow.claimable_at,
         timedelta(minutes=5),
-        table.incarnation == doomed._incarnation,
+        IndexJobRow.incarnation == doomed._incarnation,
     )
     await store.delete_partition("doomed_claims")
 
-    claim = await _claim(store, table)
+    claim = await _claim(store, kind)
     assert claim is not None
     assert (claim.partition_key, _claimed_record_uuid(claim)) == (
         "live_claims",
         live_uuid,
     )
-    assert await _claim(store, table) is None
+    assert await _claim(store, kind) is None
 
 
 @pytest.mark.asyncio
@@ -1788,15 +1900,15 @@ async def test_renewing_a_claim_holds_its_record_for_another_lease(
     await partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
     claim = await store.claim_pending_write(lease_seconds=60)
     assert claim is not None
-    await _backdate(store, PendingWriteRow.claimable_at, timedelta(days=1))
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
 
     assert await store.renew_pending_write_claim(claim, lease_seconds=60)
 
     # The renewed lease holds the record again, and then the backoff.
     assert await store.claim_pending_write(lease_seconds=60) is None
-    await _shift_earlier(store, PendingWriteRow.claimable_at, timedelta(seconds=80))
+    await _shift_earlier(store, IndexJobRow.claimable_at, timedelta(seconds=80))
     assert await store.claim_pending_write(lease_seconds=60) is None
-    await _shift_earlier(store, PendingWriteRow.claimable_at, timedelta(seconds=20))
+    await _shift_earlier(store, IndexJobRow.claimable_at, timedelta(seconds=20))
     assert await store.claim_pending_write(lease_seconds=60) is not None
 
 
@@ -1810,7 +1922,7 @@ async def test_a_superseded_claim_is_not_renewed(
     await partition.add_event_segments(*_events(_links(_seg())), lease_seconds=0)
     superseded = await store.claim_pending_write(lease_seconds=60)
     assert superseded is not None
-    await _backdate(store, PendingWriteRow.claimable_at, timedelta(days=1))
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
     latest = await store.claim_pending_write(lease_seconds=60)
     assert latest is not None
 
@@ -1894,7 +2006,7 @@ async def test_tombstone_awaits_the_retention_after_its_first_delete(
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
+    tombstone_uuid = await _add_claimable_record(partition, "tombstone")
     if recorded_by == "partition":
         await partition.record_tombstone_first_delete([tombstone_uuid])
     else:
@@ -1903,9 +2015,9 @@ async def test_tombstone_awaits_the_retention_after_its_first_delete(
         await store.finish_tombstone_claim(first)
 
     for age in (timedelta(0), timedelta(minutes=50)):
-        await _backdate(store, TombstoneRow.first_deleted_at, age)
+        await _backdate(store, IndexJobRow.first_deleted_at, age)
         assert await store.claim_tombstone() is None
-    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=70))
+    await _backdate(store, IndexJobRow.first_deleted_at, timedelta(minutes=70))
     second = await store.claim_tombstone()
     assert second is not None
     assert (second.tombstone.segment_uuid, second.second_delete, second.attempt) == (
@@ -1927,20 +2039,18 @@ async def test_finishing_a_second_delete_claim_removes_the_tombstone(
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
+    tombstone_uuid = await _add_claimable_record(partition, "tombstone")
     await partition.record_tombstone_first_delete([tombstone_uuid])
-    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(hours=2))
+    await _backdate(store, IndexJobRow.first_deleted_at, timedelta(hours=2))
     claim = await store.claim_tombstone()
     assert claim is not None
     assert claim.second_delete is True
+    assert await _count_rows(store, DerivativeRow.segment_uuid == tombstone_uuid) == 1
 
     await store.finish_tombstone_claim(claim)
 
-    assert await _count_rows(store, TombstoneRow.segment_uuid == tombstone_uuid) == 0
-    assert (
-        await _count_rows(store, TombstoneDerivativeRow.segment_uuid == tombstone_uuid)
-        == 0
-    )
+    assert await _count_rows(store, IndexJobRow.segment_uuid == tombstone_uuid) == 0
+    assert await _count_rows(store, DerivativeRow.segment_uuid == tombstone_uuid) == 0
     assert await store.claim_tombstone() is None
 
 
@@ -1955,13 +2065,13 @@ async def test_no_schedule_brings_a_second_delete_before_the_retention(
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
+    tombstone_uuid = await _add_claimable_record(partition, "tombstone")
     await partition.record_tombstone_first_delete([tombstone_uuid])
-    await _backdate(store, TombstoneRow.claimable_at, timedelta(days=1))
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
 
-    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=50))
+    await _backdate(store, IndexJobRow.first_deleted_at, timedelta(minutes=50))
     assert await store.claim_tombstone() is None
-    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=70))
+    await _backdate(store, IndexJobRow.first_deleted_at, timedelta(minutes=70))
     second = await store.claim_tombstone()
     assert second is not None
     assert second.second_delete is True
@@ -1981,10 +2091,10 @@ async def test_recording_the_first_delete_ends_an_open_claim(
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
+    tombstone_uuid = await _add_claimable_record(partition, "tombstone")
     earlier = await store.claim_tombstone()
     assert earlier is not None
-    await _backdate(store, TombstoneRow.claimable_at, timedelta(days=1))
+    await _backdate(store, IndexJobRow.claimable_at, timedelta(days=1))
     open_claim = await store.claim_tombstone()
     assert open_claim is not None
     if recorded_by == "partition":
@@ -1994,30 +2104,30 @@ async def test_recording_the_first_delete_ends_an_open_claim(
 
     await _fail_claim(store, open_claim)
 
-    assert await _claimable_at(store, TombstoneRow, tombstone_uuid) is None
+    assert await _claimable_at(store, tombstone_uuid) is None
     assert await store.claim_tombstone() is None
 
 
 @pytest.mark.asyncio
-@_CLAIMED_TABLES
+@_CLAIMED_KINDS
 async def test_a_claim_that_never_ends_is_claimed_again_once_its_lease_and_the_backoff_pass(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> None:
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
-    await _add_claimable_record(partition, table)
+    await _add_claimable_record(partition, kind)
     lease = timedelta(
-        seconds=60 if table is PendingWriteRow else store._tombstone_lease_seconds
+        seconds=60 if kind == "pending_write" else store._tombstone_lease_seconds
     )
-    assert await _claim(store, table) is not None
+    assert await _claim(store, kind) is not None
 
     # Past the lease, but not the 30-second backoff after it.
-    await _shift_earlier(store, table.claimable_at, lease + timedelta(seconds=20))
-    assert await _claim(store, table) is None
-    await _shift_earlier(store, table.claimable_at, timedelta(seconds=20))
-    retry = await _claim(store, table)
+    await _shift_earlier(store, IndexJobRow.claimable_at, lease + timedelta(seconds=20))
+    assert await _claim(store, kind) is None
+    await _shift_earlier(store, IndexJobRow.claimable_at, timedelta(seconds=20))
+    retry = await _claim(store, kind)
     assert retry is not None
     assert retry.attempt == 2
 
@@ -2040,17 +2150,17 @@ async def test_claim_timings_come_from_params(
         partition = await store.open_or_create_partition(
             "timed_p", _plaintext_partition_config()
         )
-        await _add_claimable_record(partition, TombstoneRow)
+        await _add_claimable_record(partition, "tombstone")
         failed = await store.claim_tombstone()
         assert failed is not None
         await _fail_claim(store, failed)
         # Past the configured backoff, not the default's.
-        await _shift_earlier(store, TombstoneRow.claimable_at, timedelta(seconds=20))
+        await _shift_earlier(store, IndexJobRow.claimable_at, timedelta(seconds=20))
         first = await store.claim_tombstone()
         assert first is not None
         await store.finish_tombstone_claim(first)
 
-        await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=2))
+        await _backdate(store, IndexJobRow.first_deleted_at, timedelta(minutes=2))
         second = await store.claim_tombstone()
         assert second is not None
         assert second.second_delete is True
@@ -2061,9 +2171,9 @@ async def test_claim_timings_come_from_params(
 
 async def _add_claimable_record(
     partition: SQLAlchemySegmentStorePartition,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> UUID:
-    """Leave a claimable record of `table` in the partition, and return its segment's UUID.
+    """Leave a claimable record of `kind` in the partition, and return its segment's UUID.
 
     A pending write is an added segment's, left pending; a tombstone is a
     forgotten segment's.
@@ -2071,17 +2181,17 @@ async def _add_claimable_record(
     segment = _seg()
     segments_by_event, derivatives = _events(_links(segment))
     await partition.add_event_segments(segments_by_event, derivatives, lease_seconds=0)
-    if table is TombstoneRow:
+    if kind == "tombstone":
         assert await partition.delete_event_segments([segment.event_uuid]) != []
     return segment.uuid
 
 
 async def _claim(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
+    kind: str,
 ) -> PendingWriteClaim | TombstoneClaim | None:
-    """Claim a record of `table`, taking pending writes at any age."""
-    if table is PendingWriteRow:
+    """Claim a record of `kind`, taking pending writes at any age."""
+    if kind == "pending_write":
         return await store.claim_pending_write(lease_seconds=60)
     return await store.claim_tombstone()
 
@@ -2136,14 +2246,15 @@ async def _shift_earlier(
 
 async def _claimable_at(
     store: SQLAlchemySegmentStore,
-    table: type[PendingWriteRow | TombstoneRow],
     record_uuid: UUID,
 ) -> datetime | None:
     """When a claim may next take the record."""
     async with store._create_session() as session:
         return (
             await session.execute(
-                select(table.claimable_at).where(table.segment_uuid == record_uuid)
+                select(IndexJobRow.claimable_at).where(
+                    IndexJobRow.segment_uuid == record_uuid
+                )
             )
         ).scalar_one()
 
@@ -2376,7 +2487,7 @@ async def test_delete_partition_keeps_foreign_key_enforced(
     pg_store: SQLAlchemySegmentStore,
     sqlalchemy_pg_engine: AsyncEngine,
 ) -> None:
-    """Deleting one partition must not drop the derivative-link foreign key."""
+    """Deleting one partition must not drop the segments' foreign key to events."""
     keeper = await pg_store.open_or_create_partition(
         "keeper_fk", _plaintext_partition_config()
     )
@@ -2384,22 +2495,22 @@ async def test_delete_partition_keeps_foreign_key_enforced(
 
     await pg_store.delete_partition("doomed_fk")
 
-    # A derivative pointing at no segment must still be rejected in the
+    # A segment pointing at no event must still be rejected in the
     # partition that survived.
     with pytest.raises(IntegrityError, match="foreign key"):
         async with sqlalchemy_pg_engine.begin() as connection:
             await connection.execute(
                 text(
-                    "INSERT INTO segment_store_dv"
-                    " (incarnation, uuid, segment_uuid, timestamp,"
+                    "INSERT INTO segment_store_sg"
+                    ' (incarnation, uuid, event_uuid, "index", "offset", timestamp,'
                     " timestamp_timezone_offset, context, block, properties)"
-                    " VALUES (:incarnation, :uuid, :segment_uuid, now(), 0,"
+                    " VALUES (:incarnation, :uuid, :event_uuid, 0, 0, now(), 0,"
                     " :payload, :payload, '{}')"
                 ),
                 {
                     "incarnation": keeper._incarnation,
                     "uuid": uuid4(),
-                    "segment_uuid": uuid4(),
+                    "event_uuid": uuid4(),
                     "payload": b"{}",
                 },
             )
@@ -2409,7 +2520,7 @@ async def test_delete_partition_keeps_foreign_key_enforced(
 async def test_delete_partition_keeps_other_partitions_cascading(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Deleting one partition must not disable the derivative-link cascade."""
+    """Deleting one partition must not disable the cascade from events to segments."""
     keeper = await store.open_or_create_partition(
         "keeper",
         _plaintext_partition_config(),
@@ -2424,10 +2535,11 @@ async def test_delete_partition_keeps_other_partitions_cascading(
 
     await store.delete_partition("doomed")
 
-    # The foreign keys from segments to events and from derivative links to
-    # segments must still cascade for the partitions that were not deleted.
+    # The foreign key from segments to events must still cascade for the
+    # partitions that were not deleted; the derivative stays for its
+    # tombstone.
     await keeper.delete_event_segments([segment.event_uuid])
-    assert await _row_counts(keeper, keeper._incarnation) == (0, 0)
+    assert await _row_counts(keeper, keeper._incarnation) == (0, 1)
 
 
 @pytest.mark.asyncio
@@ -2901,7 +3013,7 @@ async def test_purge_reclaims_every_size_within_the_bound(
 async def test_purge_reclaims_every_row_of_a_deleted_partition(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Events, segments, links, pending writes, and tombstones all go; a live partition keeps its own."""
+    """Events, segments, derivatives, pending writes, and tombstones all go; a live partition keeps its own."""
     config = _plaintext_partition_config()
     doomed = await store.open_or_create_partition("doomed_rows", config)
     live = await store.open_or_create_partition("live_rows", config)
@@ -2925,31 +3037,33 @@ async def test_purge_reclaims_every_row_of_a_deleted_partition(
                 EventRow.incarnation == incarnation,
                 SegmentRow.incarnation == incarnation,
                 DerivativeRow.incarnation == incarnation,
-                PendingWriteRow.incarnation == incarnation,
-                TombstoneRow.incarnation == incarnation,
-                TombstoneDerivativeRow.incarnation == incarnation,
+                (IndexJobRow.incarnation == incarnation)
+                & IndexJobRow.forgotten_at.is_(None),
+                (IndexJobRow.incarnation == incarnation)
+                & IndexJobRow.forgotten_at.is_not(None),
             )
         ]
 
-    assert await row_counts(doomed._incarnation) == [0, 0, 0, 0, 0, 0]
-    assert await row_counts(live._incarnation) == [2, 2, 2, 1, 1, 1]
+    assert await row_counts(doomed._incarnation) == [0, 0, 0, 0, 0]
+    # The forgotten segment's derivative stays for its tombstone.
+    assert await row_counts(live._incarnation) == [2, 2, 3, 1, 1]
     assert (
         await _count_rows(store, PurgeQueueRow.incarnation == doomed._incarnation) == 0
     )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bound", [1, 3, 4, 5, 8, 10])
+@pytest.mark.parametrize("bound", [1, 3, 4, 5, 7, 8, 10])
 async def test_purge_continues_through_every_table_within_the_bound(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
     bound: int,
 ) -> None:
-    """Segments, events, and tombstones share each call's bound, and each table resumes where the last call left it.
+    """Derivatives, segments, events, and index jobs share each call's bound, and each table resumes where the last call left it.
 
-    The partition holds five segments, three events, and two tombstones, so
-    the bounds end calls inside each table and exactly on each table's last
-    row.
+    The partition holds seven derivatives, five segments, three events, and
+    three index jobs, so the bounds end calls inside each table and exactly
+    on each table's last row.
     """
     partition = await store.open_or_create_partition(
         "tables_p", _plaintext_partition_config()
@@ -2972,12 +3086,12 @@ async def test_purge_continues_through_every_table_within_the_bound(
         return sum(
             [
                 await _count_rows(store, table.incarnation == incarnation)
-                for table in (SegmentRow, EventRow, TombstoneRow)
+                for table in (DerivativeRow, SegmentRow, EventRow, IndexJobRow)
             ]
         )
 
     left = await budgeted_rows()
-    assert left == 10
+    assert left == 18
     for _ in range(20):
         more = await store.purge_deleted_partitions()
         now = await budgeted_rows()
@@ -2990,58 +3104,7 @@ async def test_purge_continues_through_every_table_within_the_bound(
         pytest.fail("the purge did not finish within 20 calls")
     assert left == 0
     assert await _row_counts(store, incarnation) == (0, 0)
-    assert await _count_rows(store, PendingWriteRow.incarnation == incarnation) == 0
-    assert await _count_rows(store, PurgeQueueRow.incarnation == incarnation) == 0
-
-
-@pytest.mark.asyncio
-async def test_purge_counts_a_tombstone_as_the_derivatives_it_names(
-    store: SQLAlchemySegmentStore,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A call purges tombstones naming up to the bound, or one tombstone alone that names more."""
-    partition = await store.open_or_create_partition(
-        "named_p", _plaintext_partition_config()
-    )
-    incarnation = partition._incarnation
-    for named in (2, 5, 1, 1, 3):
-        segment = _seg()
-        await _add_segments(partition, {segment: [uuid4() for _ in range(named)]})
-        await partition.delete_event_segments([segment.event_uuid])
-    await store.delete_partition("named_p")
-    monkeypatch.setattr(store, "_purge_max_rows", 3)
-
-    async def named_by_tombstone() -> dict[UUID, int]:
-        async with store._create_session() as session:
-            rows = await session.execute(
-                select(TombstoneRow.segment_uuid, func.count())
-                .join(
-                    TombstoneDerivativeRow,
-                    (TombstoneDerivativeRow.incarnation == TombstoneRow.incarnation)
-                    & (
-                        TombstoneDerivativeRow.segment_uuid == TombstoneRow.segment_uuid
-                    ),
-                )
-                .where(TombstoneRow.incarnation == incarnation)
-                .group_by(TombstoneRow.segment_uuid)
-            )
-            return dict(rows.tuples().all())
-
-    left = await named_by_tombstone()
-    assert sorted(left.values()) == [1, 1, 2, 3, 5]
-    for _ in range(10):
-        more = await store.purge_deleted_partitions()
-        now = await named_by_tombstone()
-        purged = [named for uuid, named in left.items() if uuid not in now]
-        assert purged or not more
-        assert sum(purged) <= 3 or len(purged) == 1
-        assert set(now) <= set(left)
-        left = now
-        if not more:
-            break
-    else:
-        pytest.fail("the purge did not finish within 10 calls")
-    assert left == {}
+    assert await _count_rows(store, IndexJobRow.incarnation == incarnation) == 0
     assert await _count_rows(store, PurgeQueueRow.incarnation == incarnation) == 0
 
 
@@ -3473,7 +3536,7 @@ async def test_purge_bound_comes_from_params(
         event_uuid = uuid4()
         await _add_segments(
             partition,
-            _links(*(_seg(event_uuid=event_uuid, index=index) for index in range(2))),
+            {_seg(event_uuid=event_uuid, index=index): [] for index in range(2)},
         )
         await store.delete_partition("bound_p")
 
@@ -3825,8 +3888,7 @@ async def test_empty_incarnations_do_not_consume_row_budget(
     )
     event_uuid = uuid4()
     await _add_segments(
-        rowful,
-        _links(*(_seg(event_uuid=event_uuid, index=index) for index in range(2))),
+        rowful, {_seg(event_uuid=event_uuid, index=index): [] for index in range(2)}
     )
     await store.delete_partition("rowful")
 
@@ -3854,7 +3916,7 @@ async def test_purge_reclaims_oldest_garbage_first(
             key, _plaintext_partition_config()
         )
         incarnations[key] = partition._incarnation
-        await _add_segments(partition, _links(_seg()))
+        await _add_segments(partition, {_seg(): []})
         await store.delete_partition(key)
 
     # Stamps come from the database clock, whose resolution need not
@@ -4181,7 +4243,16 @@ async def test_overlapping_forgets_do_not_deadlock(
             )
             == []
         )
-        assert await _row_counts(partition, partition._incarnation) == (0, 0)
+        derivative_uuids = [
+            derivative_uuid
+            for derivative_uuids in links.values()
+            for derivative_uuid in derivative_uuids
+        ]
+        assert (await _row_counts(partition, partition._incarnation))[0] == 0
+        # Kept for the tombstones.
+        assert (
+            await _count_rows(partition, DerivativeRow.uuid.in_(derivative_uuids)) == 24
+        )
         assert sorted(
             derivative_uuid
             for deleted in tombstones
@@ -4277,10 +4348,11 @@ async def test_random_operation_sequences_agree_with_a_model(
     """Random sequences of every data operation agree with an in-memory model.
 
     Adds, forgets, partition deletes and re-creates, and bounded purge
-    calls over a few keys. Each forget's tombstone names exactly the
+    calls over a few keys. Each forget's tombstones name exactly the
     derivatives it drops from the model, after every step each live key
     reads back exactly the model's segments and links, and once the purge
-    drains, the tables hold exactly the live rows.
+    drains, the tables hold exactly the live rows, and the live keys'
+    tombstones with the derivatives they name.
     """
     rng = random.Random(seed)
     monkeypatch.setattr(store, "_purge_max_rows", 3)
@@ -4290,6 +4362,7 @@ async def test_random_operation_sequences_agree_with_a_model(
     # Each live key's events, with each event's segments and their links.
     model: dict[str, dict[UUID, dict[UUID, set[UUID]]]] = {}
     tombstones: dict[str, int] = {}
+    tombstoned_derivatives: dict[str, int] = {}
 
     for step in range(120):
         key = rng.choice(keys)
@@ -4301,11 +4374,13 @@ async def test_random_operation_sequences_agree_with_a_model(
             handles.pop(key, None)
             model.pop(key, None)
             tombstones.pop(key, None)
+            tombstoned_derivatives.pop(key, None)
         else:
             if key not in handles:
                 handles[key] = await store.open_or_create_partition(key, config)
                 model[key] = {}
                 tombstones[key] = 0
+                tombstoned_derivatives[key] = 0
             if operation == "add":
                 segments = _random_model_events(rng, ts_offset_seconds=step * 10)
                 await _add_segments(handles[key], segments)
@@ -4320,13 +4395,13 @@ async def test_random_operation_sequences_agree_with_a_model(
                     segment_uuid: sorted(links)
                     for victim in victims
                     for segment_uuid, links in model[key].pop(victim).items()
-                    if links
                 }
                 assert {
                     tombstone.segment_uuid: sorted(tombstone.derivative_uuids)
                     for tombstone in deleted
                 } == unlinked
                 tombstones[key] += len(deleted)
+                tombstoned_derivatives[key] += sum(map(len, unlinked.values()))
 
         for live_key, handle in handles.items():
             await _assert_reads_agree_with_the_model(handle, model[live_key])
@@ -4339,19 +4414,13 @@ async def test_random_operation_sequences_agree_with_a_model(
             (
                 await session.execute(select(func.count()).select_from(table))
             ).scalar_one()
-            for table in (
-                EventRow,
-                SegmentRow,
-                DerivativeRow,
-                PendingWriteRow,
-                TombstoneRow,
-            )
+            for table in (EventRow, SegmentRow, DerivativeRow, IndexJobRow)
         ]
     assert row_counts == [
         len(events),
         sum(map(len, events)),
-        sum(len(links) for event in events for links in event.values()),
-        0,
+        sum(len(links) for event in events for links in event.values())
+        + sum(tombstoned_derivatives.values()),
         sum(tombstones.values()),
     ]
 
@@ -4412,7 +4481,7 @@ async def test_mixed_operation_churn_completes_and_strands_nothing(
     so no lock cycle stalls it; the only errors are the domain outcomes
     of churning shared keys; and after a final drain no row belongs to a
     dead incarnation, while each writer's partition holds exactly what it
-    left.
+    left, and the derivatives its forgets keep for their tombstones.
     """
     rng = random.Random(seed)
     monkeypatch.setattr(store, "_purge_max_rows", 3)
@@ -4426,6 +4495,9 @@ async def test_mixed_operation_churn_completes_and_strands_nothing(
     written: dict[UUID, dict[UUID, int]] = {
         partition._incarnation: {} for partition in live
     }
+    tombstoned_links: dict[UUID, int] = {
+        partition._incarnation: 0 for partition in live
+    }
     finished = asyncio.Event()
 
     async def purger() -> None:
@@ -4437,7 +4509,7 @@ async def test_mixed_operation_churn_completes_and_strands_nothing(
         await asyncio.gather(
             *(
                 _write_and_forget_own_events(
-                    partition, written[partition._incarnation], rng
+                    partition, written[partition._incarnation], tombstoned_links, rng
                 )
                 for partition in live
             ),
@@ -4452,32 +4524,27 @@ async def test_mixed_operation_churn_completes_and_strands_nothing(
     live_incarnations = select(PartitionRow.incarnation)
     stranded = [
         await _count_rows(store, table.incarnation.not_in(live_incarnations))
-        for table in (
-            EventRow,
-            SegmentRow,
-            DerivativeRow,
-            PendingWriteRow,
-            TombstoneRow,
-        )
+        for table in (EventRow, SegmentRow, DerivativeRow, IndexJobRow)
     ]
     async with store._create_session() as session:
         queue_depth = (
             await session.execute(select(func.count()).select_from(PurgeQueueRow))
         ).scalar_one()
-    assert (stranded, queue_depth) == ([0, 0, 0, 0, 0], 0)
+    assert (stranded, queue_depth) == ([0, 0, 0, 0], 0)
     for incarnation, events in written.items():
         assert await _row_counts(store, incarnation) == (
             len(events),
-            sum(events.values()),
+            sum(events.values()) + tombstoned_links[incarnation],
         )
 
 
 async def _write_and_forget_own_events(
     partition: SQLAlchemySegmentStorePartition,
     mine: dict[UUID, int],
+    tombstoned_links: dict[UUID, int],
     rng: random.Random,
 ) -> None:
-    """Add events, then forget some of this writer's own; `mine` tracks what is left."""
+    """Add events, then forget some of this writer's own; `mine` tracks what is left, and `tombstoned_links` the derivatives the forgets keep."""
     for round_index in range(12):
         segments = {
             _seg(ts_offset_seconds=round_index * 10 + offset): [
@@ -4492,7 +4559,7 @@ async def _write_and_forget_own_events(
         victims = rng.sample(sorted(mine), min(len(mine), rng.randint(0, 2)))
         await partition.delete_event_segments(victims)
         for victim in victims:
-            del mine[victim]
+            tombstoned_links[partition._incarnation] += mine.pop(victim)
 
 
 async def _churn_shared_keys(

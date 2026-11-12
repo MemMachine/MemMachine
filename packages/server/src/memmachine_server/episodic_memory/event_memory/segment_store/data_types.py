@@ -110,7 +110,7 @@ class Tombstone(BaseModel):
 
     segment_uuid: UUID = Field(..., description="UUID of the forgotten segment")
     derivative_uuids: list[UUID] = Field(
-        ..., description="UUIDs of the removed derivatives"
+        ..., description="UUIDs of the segment's derivatives"
     )
 
 
