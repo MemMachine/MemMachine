@@ -2,7 +2,8 @@
 Vector store backed by SQLite + sqlite-vec.
 
 Each life of a partition gets its own records table and vec0 virtual table,
-since sqlite-vec's ANN indexes may not support partition names.
+rather than a vec0 partition key column, which sqlite-vec's ANN indexes may
+not support.
 
 A partition's records table carries one typed, indexed column per declared
 property, and a filtered query hands the KNN an allowlist of the rows the
@@ -128,6 +129,8 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
                 record.properties, self._store_schema.indexed_properties
             )
             validate_dimensions(record.vector, self._store_schema.vector_dimensions)
+        if not records:
+            return
 
         column_names = property_column_names(self._store_schema.indexed_properties)
         insert_records = sqlite_insert(self._records_table)
@@ -142,8 +145,6 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
         ).returning(self._records_table.c.uuid, self._records_table.c.rowid)
 
         async with write_session(self._create_session) as session:
-            if not records:
-                return
             rows = (
                 await session.execute(
                     upsert_records,
@@ -300,10 +301,10 @@ class SQLiteVecVectorStorePartition(VectorStorePartition):
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         record_uuids = list(record_uuids)
+        if not record_uuids:
+            return
 
         async with write_session(self._create_session) as session:
-            if not record_uuids:
-                return
             rows = (
                 await session.execute(
                     select(self._records_table.c.rowid).where(

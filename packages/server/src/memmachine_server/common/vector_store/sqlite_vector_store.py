@@ -283,10 +283,10 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                 record.properties, self._store_schema.indexed_properties
             )
             validate_dimensions(record.vector, self._store_schema.vector_dimensions)
+        if not records:
+            return
 
         async with write_session(self._create_session) as session:
-            if not records:
-                return
             insert_records = sqlite_insert(self._records_table)
             upsert_records = insert_records.on_conflict_do_update(
                 index_elements=[self._records_table.c.uuid],
@@ -468,10 +468,10 @@ class SQLiteVectorStorePartition(VectorStorePartition):
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
         record_uuids = list(record_uuids)
+        if not record_uuids:
+            return
 
         async with write_session(self._create_session) as session:
-            if not record_uuids:
-                return
             rows = (
                 await session.execute(
                     select(self._records_table.c.row_id).where(
