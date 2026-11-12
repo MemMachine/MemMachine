@@ -1453,6 +1453,31 @@ async def test_forgotten_event_can_be_added_again(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "columns",
+    [
+        {"claimable_at": None},
+        {"claimable_at": BASE_TIME, "first_deleted_at": BASE_TIME},
+    ],
+    ids=["unscheduled", "first_deleted"],
+)
+async def test_a_pending_write_is_refused_unless_scheduled_and_without_a_first_delete(
+    store: SQLAlchemySegmentStore,
+    columns: dict[str, datetime | None],
+) -> None:
+    async with store._create_session() as session:
+        with pytest.raises(
+            IntegrityError, match="segment_store_jb__pending_write_scheduled"
+        ):
+            async with session.begin():
+                await session.execute(
+                    insert(IndexJobRow).values(
+                        incarnation=uuid4(), segment_uuid=uuid4(), **columns
+                    )
+                )
+
+
+@pytest.mark.asyncio
 async def test_a_writers_own_pending_write_delete_leaves_the_tombstone_a_forget_made_since(
     store: SQLAlchemySegmentStore,
 ) -> None:
