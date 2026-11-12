@@ -4,6 +4,7 @@ import datetime
 import json
 import random
 from datetime import UTC
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -27,6 +28,9 @@ from memmachine_server.common.vector_store import VectorStoreSchema
 from memmachine_server.common.vector_store.data_types import (
     Record,
 )
+from memmachine_server.episodic_memory.event_memory import (
+    event_memory as event_memory_module,
+)
 from memmachine_server.episodic_memory.event_memory.data_types import (
     Event,
     FormatOptions,
@@ -44,6 +48,7 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EVENT_TIMESTAMP_KEY,
     EventMemory,
     EventMemoryPartition,
+    _WriteBudget,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
     TextSegmenter,
@@ -1539,3 +1544,40 @@ class TestIngestFormatOptions:
 
         (segment,) = partition.segments.values()
         assert segment.block == TextBlock(text="hello world")
+
+
+def _hand_moved_clocks(monkeypatch: pytest.MonkeyPatch) -> dict[str, float]:
+    """Give the event memory module monotonic and wall clocks the test moves by hand."""
+    clocks = {"monotonic": 100.0, "wall": 1_700_000_000.0}
+    monkeypatch.setattr(
+        event_memory_module,
+        "time",
+        SimpleNamespace(
+            monotonic=lambda: clocks["monotonic"], time=lambda: clocks["wall"]
+        ),
+    )
+    return clocks
+
+
+def test_a_write_budget_counts_time_the_machine_slept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the wall clock moves while the machine sleeps, and the budget runs out by it."""
+    clocks = _hand_moved_clocks(monkeypatch)
+    budget = _WriteBudget(60)
+
+    clocks["wall"] += 61
+
+    assert budget.remaining_seconds() <= 0
+
+
+def test_a_write_budget_is_not_lengthened_by_a_wall_clock_set_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clocks = _hand_moved_clocks(monkeypatch)
+    budget = _WriteBudget(60)
+
+    clocks["monotonic"] += 61
+    clocks["wall"] -= 3600
+
+    assert budget.remaining_seconds() <= 0
