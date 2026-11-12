@@ -353,6 +353,19 @@ class TestUpsertAndQuery:
     async def test_upsert_empty_records(self, partition):
         await partition.upsert(records=[])
 
+    @pytest.mark.asyncio
+    async def test_empty_writes_return_while_another_connection_holds_the_write_lock(
+        self, partition, tmp_path
+    ):
+        holder = sqlite3.connect(tmp_path / "test.db", isolation_level=None)
+        holder.execute("BEGIN IMMEDIATE")
+        try:
+            await partition.upsert(records=[])
+            await partition.delete(record_uuids=[])
+        finally:
+            holder.execute("ROLLBACK")
+            holder.close()
+
 
 # ── Filters ──
 
