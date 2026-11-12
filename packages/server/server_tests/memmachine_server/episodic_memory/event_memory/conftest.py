@@ -102,11 +102,10 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 self.segment_order.append(segment.uuid)
                 self.event_to_segments[event_uuid].append(segment.uuid)
                 self.segment_to_derivatives[segment.uuid] = []
+                self.pending_writes[segment.uuid] = []
         for derivative in derivatives:
             self.segment_to_derivatives[derivative.segment_uuid].append(derivative.uuid)
-            self.pending_writes.setdefault(derivative.segment_uuid, []).append(
-                derivative
-            )
+            self.pending_writes[derivative.segment_uuid].append(derivative)
 
     @override
     async def delete_pending_writes(
@@ -207,14 +206,12 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 self.segments.pop(segment_uuid)
                 self.segment_order.remove(segment_uuid)
                 self.pending_writes.pop(segment_uuid, None)
-                derivative_uuids = self.segment_to_derivatives.pop(segment_uuid)
-                if derivative_uuids:
-                    tombstones.append(
-                        Tombstone(
-                            segment_uuid=segment_uuid,
-                            derivative_uuids=derivative_uuids,
-                        )
+                tombstones.append(
+                    Tombstone(
+                        segment_uuid=segment_uuid,
+                        derivative_uuids=self.segment_to_derivatives.pop(segment_uuid),
                     )
+                )
         for tombstone in tombstones:
             self.tombstones[tombstone.segment_uuid] = tombstone
         return tombstones

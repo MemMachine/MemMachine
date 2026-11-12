@@ -34,9 +34,9 @@ class SegmentStorePartition(ABC):
 
     The partition holds an event at most once, and its events and their
     segments are immutable: a changed event is forgotten and added again.
-    A derivative is stored with its segment until its event is forgotten,
-    and a forget leaves a tombstone for each segment with derivatives,
-    naming them, so their derived index entries can still be deleted.
+    A forget deletes the events and their segments, and leaves a tombstone
+    for each segment naming its derivatives, which stay until the
+    tombstone goes, so their derived index entries can still be deleted.
     """
 
     @property
@@ -54,7 +54,7 @@ class SegmentStorePartition(ABC):
         lease_seconds: int,
     ) -> None:
         """
-        Add events with their segments and derivatives, and a pending write for each segment with derivatives.
+        Add events with their segments and derivatives, and a pending write for each segment.
 
         All of it commits together or not at all. A batch naming an event
         the partition already holds is rejected whole, before anything is
@@ -90,7 +90,8 @@ class SegmentStorePartition(ABC):
         """
         Delete the pending writes of the given segments. Idempotent.
 
-        The derivatives stay; only the segments' pending writes go.
+        The derivatives stay; only the segments' pending writes go. A
+        segment forgotten since keeps its tombstone.
 
         Args:
             segment_uuids (Iterable[UUID]):
@@ -144,7 +145,8 @@ class SegmentStorePartition(ABC):
         """
         Get the segment each of the given derivatives belongs to.
 
-        A derivative belongs to exactly one segment.
+        A derivative belongs to exactly one segment. A forgotten segment's
+        derivatives name none.
 
         Args:
             derivative_uuids (Iterable[UUID]):
@@ -152,8 +154,8 @@ class SegmentStorePartition(ABC):
 
         Returns:
             dict[UUID, UUID]:
-                A mapping from each given derivative UUID the partition holds
-                to its segment's UUID.
+                A mapping from each given derivative UUID whose segment the
+                partition holds to its segment's UUID.
         """
         raise NotImplementedError
 
@@ -163,13 +165,13 @@ class SegmentStorePartition(ABC):
         event_uuids: Iterable[UUID],
     ) -> list[Tombstone]:
         """
-        Delete events, with their segments, derivatives, and pending writes.
+        Delete events with their segments, leaving a tombstone for each segment.
 
-        All of it commits together or not at all, with a tombstone for each
-        deleted segment that had derivatives, naming them. A renewal of a
-        claim on these events' pending writes either commits first or finds
-        them gone. An event the partition does not hold is skipped.
-        Idempotent.
+        All of it commits together or not at all. A segment's tombstone
+        takes the place of its pending write and names its derivatives,
+        which stay until the tombstone goes. A renewal of a claim on these
+        events' pending writes either commits first or finds the claim
+        ended. An event the partition does not hold is skipped. Idempotent.
 
         Args:
             event_uuids (Iterable[UUID]):
@@ -177,8 +179,8 @@ class SegmentStorePartition(ABC):
 
         Returns:
             list[Tombstone]:
-                The tombstones, each awaiting its first delete; none if the
-                forget deleted no derivative.
+                The tombstones, one per deleted segment, each awaiting its
+                first delete.
         """
         raise NotImplementedError
 
@@ -532,7 +534,8 @@ class SegmentStore(ABC):
 
         After its first delete, the tombstone awaits its second, due once
         the store's retention has passed since this record, and any other
-        open claim on it ends; after its second, it is removed.
+        open claim on it ends; after its second, it is removed with the
+        derivatives it names.
 
         Args:
             claim (TombstoneClaim):
