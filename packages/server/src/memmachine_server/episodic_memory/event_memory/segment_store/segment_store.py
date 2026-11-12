@@ -67,7 +67,7 @@ class SegmentStorePartition(ABC):
             segments_by_event (Mapping[UUID, Iterable[Segment]]):
                 A mapping from each event's UUID to its segments.
             derivatives (Iterable[Derivative]):
-                The derivatives, each stored with the segment it names.
+                The derivatives, each naming a segment in the batch.
             lease_seconds (int):
                 Seconds the caller holds the pending writes.
 

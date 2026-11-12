@@ -26,9 +26,9 @@ and a forget stays complete anyway.
 
 ## The protocol
 
-**State.** The segment store keeps each derivative with its segment, as
-derived: what its index is written from, and the segment a hit on it
-names. Besides those, it keeps
+**State.** The segment store keeps each segment's derivatives as derived,
+from the ingest until the segment's second delete: what its index is
+written from, and the segment a hit on one names. Besides those, it keeps
 a pending write for each segment, until the vector store has its
 derivatives, and a tombstone for each forgotten segment, until the second
 delete, in its own database and transactions. Both are a segment's, so
