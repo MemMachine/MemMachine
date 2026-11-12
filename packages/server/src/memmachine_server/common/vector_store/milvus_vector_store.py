@@ -284,12 +284,48 @@ class MilvusVectorStorePartition(VectorStorePartition):
                 )
             if not query_vectors:
                 return []
-            return await self._query(
-                query_vectors,
+
+            filter_expr = _partition_filter(self._partition_uuid)
+            if property_filter is not None:
+                property_expr = _filter_expression(
+                    property_filter, self._store_schema.indexed_properties
+                )
+                filter_expr = f"({filter_expr}) && ({property_expr})"
+
+            raw_results = await self._client.search(
+                collection_name=self._collection_name,
+                data=query_vectors,
+                filter=filter_expr,
                 limit=limit,
-                score_threshold=score_threshold,
-                property_filter=property_filter,
+                search_params={"params": {"refine_k": _SEARCH_REFINE_K}},
+                output_fields=[_RECORD_UUID_FIELD],
+                anns_field=_VECTOR_FIELD,
+                timeout=self._request_timeout_seconds,
             )
+
+            # Milvus returns each query's hits best first, and the square root
+            # taken of a Euclidean distance keeps their order.
+            results: list[QueryResult] = []
+            for raw_matches in raw_results:
+                matches: list[QueryMatch] = []
+                for raw_match in raw_matches:
+                    entity = cast(Mapping[str, Any], raw_match["entity"])
+                    score = self._score_from_distance(raw_match["distance"])
+                    if not self._passes_threshold(
+                        score, score_threshold, self._store_schema.similarity_metric
+                    ):
+                        continue
+
+                    matches.append(
+                        QueryMatch(
+                            score=score,
+                            record_uuid=UUID(str(entity[_RECORD_UUID_FIELD])),
+                        )
+                    )
+
+                results.append(QueryResult(matches=matches))
+
+            return results
 
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
@@ -363,56 +399,6 @@ class MilvusVectorStorePartition(VectorStorePartition):
             mid = len(entities) // 2
             await self._upsert_entities(entities[:mid])
             await self._upsert_entities(entities[mid:])
-
-    async def _query(
-        self,
-        query_vectors: list[list[float]],
-        *,
-        limit: int,
-        score_threshold: float | None,
-        property_filter: FilterExpr | None,
-    ) -> list[QueryResult]:
-        filter_expr = _partition_filter(self._partition_uuid)
-        if property_filter is not None:
-            property_expr = _filter_expression(
-                property_filter, self._store_schema.indexed_properties
-            )
-            filter_expr = f"({filter_expr}) && ({property_expr})"
-
-        raw_results = await self._client.search(
-            collection_name=self._collection_name,
-            data=query_vectors,
-            filter=filter_expr,
-            limit=limit,
-            search_params={"params": {"refine_k": _SEARCH_REFINE_K}},
-            output_fields=[_RECORD_UUID_FIELD],
-            anns_field=_VECTOR_FIELD,
-            timeout=self._request_timeout_seconds,
-        )
-
-        # Milvus returns each query's hits best first, and the square root
-        # taken of a Euclidean distance keeps their order.
-        results: list[QueryResult] = []
-        for raw_matches in raw_results:
-            matches: list[QueryMatch] = []
-            for raw_match in raw_matches:
-                entity = cast(Mapping[str, Any], raw_match["entity"])
-                score = self._score_from_distance(raw_match["distance"])
-                if not self._passes_threshold(
-                    score, score_threshold, self._store_schema.similarity_metric
-                ):
-                    continue
-
-                matches.append(
-                    QueryMatch(
-                        score=score,
-                        record_uuid=UUID(str(entity[_RECORD_UUID_FIELD])),
-                    )
-                )
-
-            results.append(QueryResult(matches=matches))
-
-        return results
 
 
 class MilvusVectorStoreParams(VectorStoreParams):
