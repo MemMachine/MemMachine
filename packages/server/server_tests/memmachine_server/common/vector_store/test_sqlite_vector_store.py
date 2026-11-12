@@ -161,7 +161,7 @@ async def _open(store: SQLiteVectorStore) -> SQLiteVectorStorePartition:
     """A handle on a freshly prepared partition."""
     partition_uuid = uuid4()
     await store.create_partition(partition_uuid)
-    return await store.open_partition(partition_uuid)
+    return await store.get_partition(partition_uuid)
 
 
 async def _purge_and_drop(store: SQLiteVectorStore, partition_uuid: UUID) -> None:
@@ -1152,8 +1152,8 @@ class TestConcurrentAsync:
         # A restarted store, whose first opens load the saved index.
         store, engine = await _fresh_store(db_path, tmp_path)
         first, second = await asyncio.gather(
-            store.open_partition(partition_uuid),
-            store.open_partition(partition_uuid),
+            store.get_partition(partition_uuid),
+            store.get_partition(partition_uuid),
         )
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await first.upsert(records=[record])
@@ -1239,7 +1239,7 @@ class TestCrashRecovery:
 
         # Restart with fresh in-memory engines.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition(partition._partition_uuid)
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1269,7 +1269,7 @@ class TestCrashRecovery:
 
         # Restart: replay should re-apply unapplied ops to the engine.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition(partition._partition_uuid)
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1316,7 +1316,7 @@ class TestCrashRecovery:
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition(partition._partition_uuid)
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1345,7 +1345,7 @@ class TestCrashRecovery:
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition(partition._partition_uuid)
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1411,7 +1411,7 @@ class TestCrashRecovery:
             await store.create_partition(uuid4())
 
         with pytest.raises(RuntimeError, match="startup"):
-            await store.open_partition(uuid4())
+            await store.get_partition(uuid4())
 
         with pytest.raises(RuntimeError, match="startup"):
             await store.drop_partition(uuid4())
@@ -1529,11 +1529,11 @@ class TestIndexFileDurability:
         assert len(idx_files) == 1
         idx_files[0].unlink()
 
-        # Restart: open_partition must surface the failure, not
+        # Restart: get_partition must surface the failure, not
         # return an engine silently rebuilt empty.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
         with pytest.raises(IndexLoadError) as exc_info:
-            await store2.open_partition(partition._partition_uuid)
+            await store2.get_partition(partition._partition_uuid)
         assert exc_info.value.vector_store_name == VECTOR_STORE_NAME
         assert exc_info.value.partition_uuid == partition._partition_uuid
         assert exc_info.value.__cause__ is not None
@@ -1561,7 +1561,7 @@ class TestIndexFileDurability:
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
         with pytest.raises(IndexLoadError) as exc_info:
-            await store2.open_partition(partition._partition_uuid)
+            await store2.get_partition(partition._partition_uuid)
         assert exc_info.value.vector_store_name == VECTOR_STORE_NAME
         assert exc_info.value.partition_uuid == partition._partition_uuid
         assert exc_info.value.__cause__ is not None
@@ -1590,7 +1590,7 @@ class TestIndexFileDurability:
         )
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition_2 = await store2.open_partition(partition._partition_uuid)
+        partition_2 = await store2.get_partition(partition._partition_uuid)
 
         results = await partition_2.query(
             query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=10
@@ -1645,8 +1645,8 @@ class TestPartitionResources:
         partition_uuid = uuid4()
         await store1.create_partition(partition_uuid)
         partitions = await asyncio.gather(
-            store1.open_partition(partition_uuid),
-            store1.open_partition(partition_uuid),
+            store1.get_partition(partition_uuid),
+            store1.get_partition(partition_uuid),
         )
         records = [
             _make_record(vector=_normalize([1.0, 0.0, 0.0])),
@@ -1658,7 +1658,7 @@ class TestPartitionResources:
         await engine1.dispose()
 
         store2, engine2 = await _fresh_store(db_path, tmp_path)
-        partition = await store2.open_partition(partition_uuid)
+        partition = await store2.get_partition(partition_uuid)
         [found] = await partition.query(query_vectors=[records[0].vector], limit=5)
         assert {match.record_uuid for match in found.matches} == {
             record.uuid for record in records
@@ -1709,7 +1709,7 @@ class TestPartitionResources:
         stores.append(store)
         await store.startup()
         await store.create_partition(partition_uuid)
-        partition = await store.open_partition(partition_uuid)
+        partition = await store.get_partition(partition_uuid)
 
         # Crossing the save threshold saves the index, and the drop commits
         # while the file is written.

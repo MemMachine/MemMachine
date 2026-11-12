@@ -82,7 +82,7 @@ async def long_term_memory_from_config(
                 config, resource_manager, reranker=reranker
             )
             return LongTermMemory(
-                await event_memory.open_or_create_partition(
+                await event_memory.get_or_create_partition(
                     partition_key_for_session(config.session_id)
                 ),
                 episode_storage=await resource_manager.get_episode_storage(),
@@ -101,7 +101,7 @@ async def delete_long_term_memory_storage(
     """
     Delete a session's long-term memory storage.
 
-    The event backend deletes the session's partitions by key, opening
+    The event backend deletes the session's partitions by key, getting
     neither, so storage the session never created stays uncreated.
     """
     match config:

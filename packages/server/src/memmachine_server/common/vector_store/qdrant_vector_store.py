@@ -595,7 +595,7 @@ class QdrantVectorStore(VectorStore):
         return
 
     @override
-    async def open_partition(self, partition_uuid: UUID) -> QdrantVectorStorePartition:
+    async def get_partition(self, partition_uuid: UUID) -> QdrantVectorStorePartition:
         return QdrantVectorStorePartition(
             client=self._client,
             vector_store_name=self._vector_store_name,

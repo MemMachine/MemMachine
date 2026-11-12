@@ -170,7 +170,7 @@ async def _open(store: MilvusVectorStore) -> MilvusVectorStorePartition:
     """A handle on a freshly prepared partition."""
     partition_uuid = uuid4()
     await store.create_partition(partition_uuid)
-    return await store.open_partition(partition_uuid)
+    return await store.get_partition(partition_uuid)
 
 
 async def _purge(store: MilvusVectorStore, partition_uuid: UUID) -> None:

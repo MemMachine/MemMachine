@@ -37,7 +37,7 @@ def _records(count: int) -> list[Record]:
 async def _prepared(store, partition_uuid: UUID):
     """A handle on a freshly created partition."""
     await store.create_partition(partition_uuid)
-    return await store.open_partition(partition_uuid)
+    return await store.get_partition(partition_uuid)
 
 
 async def _purge(store, partition_uuid: UUID) -> int:

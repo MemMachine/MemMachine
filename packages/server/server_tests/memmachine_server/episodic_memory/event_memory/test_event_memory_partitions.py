@@ -103,7 +103,7 @@ def vector_store() -> NonCallableMagicMock:
     )
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
-    vector_store.open_partition.side_effect = lambda partition_uuid: (
+    vector_store.get_partition.side_effect = lambda partition_uuid: (
         InMemoryVectorStorePartition(store_schema=store_schema)
     )
     vector_store.purge_partition.return_value = False
@@ -130,7 +130,7 @@ def event_memory(
 
 @pytest.fixture(autouse=True)
 def _no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(event_memory_module, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0)
+    monkeypatch.setattr(event_memory_module, "_GET_OR_CREATE_RETRY_DELAY_SECONDS", 0)
 
 
 async def _purge(event_memory: EventMemory) -> None:
@@ -157,20 +157,20 @@ def _partition_uuid(partition: EventMemoryPartition) -> UUID:
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_creates_a_partition_and_reopens_it(
+async def test_get_or_create_creates_a_partition_and_reopens_it(
     event_memory: EventMemory,
     segment_store: SQLAlchemySegmentStore,
     vector_store: NonCallableMagicMock,
 ) -> None:
-    created = await event_memory.open_or_create_partition(NAME)
+    created = await event_memory.get_or_create_partition(NAME)
     event = _event("remember the milk")
     await created.encode_events([event])
 
-    reopened = await event_memory.open_or_create_partition(NAME)
+    reopened = await event_memory.get_or_create_partition(NAME)
 
     assert _partition_uuid(reopened) == _partition_uuid(created)
     vector_store.create_partition.assert_awaited_once_with(_partition_uuid(created))
-    segments = await segment_store.open_partition(_partition_uuid(created))
+    segments = await segment_store.get_partition(_partition_uuid(created))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([event.uuid])
 
@@ -179,7 +179,7 @@ async def test_open_or_create_creates_a_partition_and_reopens_it(
 async def test_a_deleted_partitions_handle_refuses_every_operation(
     event_memory: EventMemory,
 ) -> None:
-    partition = await event_memory.open_or_create_partition(NAME)
+    partition = await event_memory.get_or_create_partition(NAME)
     event = _event("remember the milk")
     await partition.encode_events([event])
 
@@ -199,7 +199,7 @@ async def test_an_encode_that_outlives_its_partition_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The check after the writes reports a partition deleted during them."""
-    partition = await event_memory.open_or_create_partition(NAME)
+    partition = await event_memory.get_or_create_partition(NAME)
     add_segments = partition._segment_store_partition.add_segments
 
     async def deleted_meanwhile(segments_to_derivative_uuids) -> None:
@@ -219,15 +219,15 @@ async def test_a_name_created_again_names_a_new_partition_that_starts_empty(
     event_memory: EventMemory,
     segment_store: SQLAlchemySegmentStore,
 ) -> None:
-    old = await event_memory.open_or_create_partition(NAME)
+    old = await event_memory.get_or_create_partition(NAME)
     event = _event("remember the milk")
     await old.encode_events([event])
     await event_memory.delete_partition(NAME)
 
-    new = await event_memory.open_or_create_partition(NAME)
+    new = await event_memory.get_or_create_partition(NAME)
 
     assert _partition_uuid(new) != _partition_uuid(old)
-    segments = await segment_store.open_partition(_partition_uuid(new))
+    segments = await segment_store.get_partition(_partition_uuid(new))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([event.uuid]) == {}
 
@@ -238,19 +238,19 @@ async def test_the_purge_round_reclaims_a_deleted_partition_from_every_store(
     segment_store: SQLAlchemySegmentStore,
     vector_store: NonCallableMagicMock,
 ) -> None:
-    deleted = await event_memory.open_or_create_partition(NAME)
+    deleted = await event_memory.get_or_create_partition(NAME)
     await deleted.encode_events([_event("remember the milk")])
     await event_memory.delete_partition(NAME)
-    kept = await event_memory.open_or_create_partition(NAME)
+    kept = await event_memory.get_or_create_partition(NAME)
     kept_event = _event("buy bread")
     await kept.encode_events([kept_event])
 
     await _purge(event_memory)
 
-    assert await segment_store.open_partition(_partition_uuid(deleted)) is None
+    assert await segment_store.get_partition(_partition_uuid(deleted)) is None
     vector_store.purge_partition.assert_any_await(_partition_uuid(deleted))
     vector_store.drop_partition.assert_awaited_once_with(_partition_uuid(deleted))
-    segments = await segment_store.open_partition(_partition_uuid(kept))
+    segments = await segment_store.get_partition(_partition_uuid(kept))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([kept_event.uuid])
 
@@ -261,19 +261,17 @@ async def test_a_name_outside_the_rule_is_refused(
     event_memory: EventMemory, partition_name: str
 ) -> None:
     with pytest.raises(ValueError, match="Partition name"):
-        await event_memory.open_or_create_partition(partition_name)
+        await event_memory.get_or_create_partition(partition_name)
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_waits_for_a_pending_partition(
+async def test_get_or_create_waits_for_a_pending_partition(
     event_memory: EventMemory,
     partition_registry: SQLAlchemyPartitionRegistry,
     segment_store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        event_memory_module, "_OPEN_OR_CREATE_RETRY_DELAY_SECONDS", 0.05
-    )
+    monkeypatch.setattr(event_memory_module, "_GET_OR_CREATE_RETRY_DELAY_SECONDS", 0.05)
     pending = await partition_registry._reserve(NAME)
     await segment_store.create_partition(pending.partition_uuid)
     reserve = partition_registry._reserve
@@ -285,7 +283,7 @@ async def test_open_or_create_waits_for_a_pending_partition(
         return await reserve(partition_name)
 
     monkeypatch.setattr(partition_registry, "_reserve", counted)
-    opening = asyncio.create_task(event_memory.open_or_create_partition(NAME))
+    opening = asyncio.create_task(event_memory.get_or_create_partition(NAME))
     await asyncio.sleep(0.1)
     assert not opening.done()
     # It waits on the pending partition instead of trying to reserve it.
@@ -297,20 +295,20 @@ async def test_open_or_create_waits_for_a_pending_partition(
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_reports_a_partition_that_stays_pending(
+async def test_get_or_create_reports_a_partition_that_stays_pending(
     event_memory: EventMemory,
     partition_registry: SQLAlchemyPartitionRegistry,
 ) -> None:
     pending = await partition_registry._reserve(NAME)
 
     with pytest.raises(PartitionPendingError) as still_pending:
-        await event_memory.open_or_create_partition(NAME)
+        await event_memory.get_or_create_partition(NAME)
     assert still_pending.value.partition_name == NAME
     await pending.cancel()
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_gives_up_from_the_race_it_last_lost(
+async def test_get_or_create_gives_up_from_the_race_it_last_lost(
     event_memory: EventMemory,
     partition_registry: SQLAlchemyPartitionRegistry,
     monkeypatch: pytest.MonkeyPatch,
@@ -325,12 +323,12 @@ async def test_open_or_create_gives_up_from_the_race_it_last_lost(
     with pytest.raises(
         PartitionCreateAttemptsExhaustedError, match="no progress"
     ) as gave_up:
-        await event_memory.open_or_create_partition(NAME)
+        await event_memory.get_or_create_partition(NAME)
     assert gave_up.value.__cause__ is lost
 
 
 @pytest.mark.asyncio
-async def test_open_or_create_creates_again_after_a_deletion_during_creation(
+async def test_get_or_create_creates_again_after_a_deletion_during_creation(
     event_memory: EventMemory,
     partition_registry: SQLAlchemyPartitionRegistry,
     vector_store: NonCallableMagicMock,
@@ -343,7 +341,7 @@ async def test_open_or_create_creates_again_after_a_deletion_during_creation(
             await partition_registry.unregister(NAME)
 
     vector_store.create_partition.side_effect = deleted_the_first_time
-    opened = await event_memory.open_or_create_partition(NAME)
+    opened = await event_memory.get_or_create_partition(NAME)
 
     assert len(partition_uuids) == 2
     assert _partition_uuid(opened) == partition_uuids[1]

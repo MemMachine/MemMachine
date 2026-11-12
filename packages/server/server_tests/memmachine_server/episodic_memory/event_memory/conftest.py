@@ -233,10 +233,10 @@ async def open_event_memory_partition(
     partition_registry = create_autospec(PartitionRegistry, instance=True)
     partition_registry.resolve.return_value = registration
     segment_store = create_autospec(SegmentStore, instance=True)
-    segment_store.open_partition.return_value = segment_store_partition
+    segment_store.get_partition.return_value = segment_store_partition
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
-    vector_store.open_partition.return_value = vector_store_partition
+    vector_store.get_partition.return_value = vector_store_partition
     event_memory = EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,
@@ -249,7 +249,7 @@ async def open_event_memory_partition(
             metrics_factory=metrics_factory,
         )
     )
-    return await event_memory.open_or_create_partition("partition")
+    return await event_memory.get_or_create_partition("partition")
 
 
 # ---------------------------------------------------------------------------

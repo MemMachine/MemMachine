@@ -445,7 +445,7 @@ class SQLiteVecVectorStore(VectorStore):
             )
 
     @override
-    async def open_partition(
+    async def get_partition(
         self, partition_uuid: UUID
     ) -> SQLiteVecVectorStorePartition:
         return SQLiteVecVectorStorePartition(

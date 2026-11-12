@@ -154,7 +154,7 @@ record. `drop_partition` removes the storage the partition keeps for itself,
 with any records still in it, and is idempotent. A store that keeps a
 partition's records only in storage of its own finds nothing to purge and
 removes them when it drops the partition. Each store also opens a handle on a
-partition by its UUID, `open_partition`, typed for that store; the handle
+partition by its UUID, `get_partition`, typed for that store; the handle
 checks its inputs and nothing about whether the partition is live.
 
 Deletion is the registry's, and a store deletes a partition's storage only in
@@ -456,7 +456,7 @@ stores.
   records under the partition's UUID. The segment store keeps one row per
   partition, with its payload codec configuration and, during its purge, its
   cursor, and no name.
-- `open_or_create_partition` resolves the name and creates the partition
+- `get_or_create_partition` resolves the name and creates the partition
   through the registry when none holds it; `delete_partition` is
   `unregister`.
 - Event memory's deployment configuration (`episodic_memory.long_term_memory`)

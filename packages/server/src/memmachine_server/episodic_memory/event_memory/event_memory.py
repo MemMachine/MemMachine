@@ -80,11 +80,11 @@ EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
 
 _BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY})
 
-# Attempts open-or-create makes, _OPEN_OR_CREATE_RETRY_DELAY_SECONDS apart,
+# Attempts get-or-create makes, _GET_OR_CREATE_RETRY_DELAY_SECONDS apart,
 # before it gives up on a partition that stays pending or a name it keeps
 # losing.
-_MAX_OPEN_OR_CREATE_ATTEMPTS = 10
-_OPEN_OR_CREATE_RETRY_DELAY_SECONDS = 1
+_MAX_GET_OR_CREATE_ATTEMPTS = 10
+_GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
 
 class EventMemoryParams(BaseModel):
@@ -161,7 +161,7 @@ class EventMemory:
     Event memory owns its partition namespace: its registry names each
     partition and mints its UUID, and each store holds a partition's records
     under the UUID. A name deleted and created again names a new partition,
-    and a handle reads and writes the partition it was opened on only.
+    and a handle reads and writes the partition it is bound to only.
     """
 
     PARTITION_NAMESPACE: Final[str] = "event_memory"
@@ -206,11 +206,11 @@ class EventMemory:
 
         self._similarity_metric = store_schema.similarity_metric
 
-    async def open_or_create_partition(
+    async def get_or_create_partition(
         self, partition_name: str
     ) -> "EventMemoryPartition":
         """
-        Open the partition if it exists, or create it if it does not.
+        Get the partition if it exists, or create it if it does not.
 
         Creating goes through the registry, which creates the partition in
         every store before confirming it.
@@ -228,16 +228,16 @@ class EventMemory:
                 If the partition name breaks the registry's rule.
             PartitionPendingError:
                 If the partition's creation, by another caller, did not
-                complete within the attempts to open it.
+                complete within the attempts to get it.
             PartitionCreateAttemptsExhaustedError:
-                If every attempt to open or create the partition lost the
+                If every attempt to get or create the partition lost the
                 name to another creator or deleter.
             PartitionDeletedError:
                 If the partition was deleted before its handle was built.
         """
         validate_partition_name(partition_name)
-        registration = await self._open_or_create_registration(partition_name)
-        segment_store_partition = await self._params.segment_store.open_partition(
+        registration = await self._get_or_create_registration(partition_name)
+        segment_store_partition = await self._params.segment_store.get_partition(
             registration.partition_uuid
         )
         if segment_store_partition is None:
@@ -246,7 +246,7 @@ class EventMemory:
                 registration.partition_name,
                 registration.partition_uuid,
             )
-        vector_store_partition = await self._params.vector_store.open_partition(
+        vector_store_partition = await self._params.vector_store.get_partition(
             registration.partition_uuid
         )
         return EventMemoryPartition(
@@ -258,7 +258,7 @@ class EventMemory:
             similarity_metric=self._similarity_metric,
         )
 
-    async def _open_or_create_registration(self, partition_name: str) -> Registration:
+    async def _get_or_create_registration(self, partition_name: str) -> Registration:
         """
         Answer the registration of the live partition under a name, creating the partition if no partition holds the name.
 
@@ -272,9 +272,9 @@ class EventMemory:
         partition_registry = self._params.partition_registry
         pending_error: PartitionPendingError | None = None
         lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
-        for attempt in range(_MAX_OPEN_OR_CREATE_ATTEMPTS):
+        for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
             if attempt:
-                await asyncio.sleep(_OPEN_OR_CREATE_RETRY_DELAY_SECONDS)
+                await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
             try:
                 registration = await partition_registry.resolve(partition_name)
             except PartitionPendingError as err:
@@ -292,8 +292,8 @@ class EventMemory:
         if pending_error is not None:
             raise pending_error
         raise PartitionCreateAttemptsExhaustedError(
-            f"Opening or creating partition {partition_name!r} made no progress "
-            f"after {_MAX_OPEN_OR_CREATE_ATTEMPTS} attempts"
+            f"Getting or creating partition {partition_name!r} made no progress "
+            f"after {_MAX_GET_OR_CREATE_ATTEMPTS} attempts"
         ) from lost_race
 
     async def delete_partition(self, partition_name: str) -> None:
@@ -537,7 +537,7 @@ class EventMemoryPartition:
     operation by the partition's registration: an operation begun after the
     partition was deleted raises PartitionDeletedError, whether or
     not a partition was created again under the name since. Obtained from
-    `EventMemory.open_or_create_partition`.
+    `EventMemory.get_or_create_partition`.
     """
 
     def __init__(

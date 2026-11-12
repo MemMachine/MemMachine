@@ -154,7 +154,7 @@ async def _open(store: SQLiteVecVectorStore) -> SQLiteVecVectorStorePartition:
     """A handle on a freshly prepared partition."""
     partition_uuid = uuid4()
     await store.create_partition(partition_uuid)
-    return await store.open_partition(partition_uuid)
+    return await store.get_partition(partition_uuid)
 
 
 async def _purge_and_drop(store: SQLiteVecVectorStore, partition_uuid: UUID) -> None:
@@ -196,7 +196,7 @@ class TestPartitionLifecycle:
     @pytest.mark.asyncio
     async def test_handles_on_one_partition_share_its_records(self, store):
         first = await _open(store)
-        second = await store.open_partition(first._partition_uuid)
+        second = await store.get_partition(first._partition_uuid)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await first.upsert(records=[record])
 
@@ -1121,7 +1121,7 @@ class TestPartitionResources:
             store.create_partition(partition_uuid),
             store.create_partition(partition_uuid),
         )
-        partition = await store.open_partition(partition_uuid)
+        partition = await store.get_partition(partition_uuid)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
 
         await partition.upsert(records=[record])

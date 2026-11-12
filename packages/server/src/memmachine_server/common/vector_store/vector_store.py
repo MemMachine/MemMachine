@@ -25,7 +25,7 @@ class VectorStorePartition(ABC):
 
     All data operations are scoped to the partition: a record's UUID names it
     in this partition only, and the same UUID in another names another record. The handle owns nothing: a caller builds one with
-    `VectorStore.open_partition`, drops it, and builds another at
+    `VectorStore.get_partition`, drops it, and builds another at
     will. The handle checks its inputs, and nothing about whether the
     partition is still live: its owner fences each operation by the
     partition's registration.
@@ -169,9 +169,9 @@ class VectorStore(PartitionedStore):
         raise NotImplementedError
 
     @abstractmethod
-    async def open_partition(self, partition_uuid: UUID) -> VectorStorePartition:
+    async def get_partition(self, partition_uuid: UUID) -> VectorStorePartition:
         """
-        Open a handle on a created partition.
+        Get a handle on a created partition.
 
         Args:
             partition_uuid (UUID):

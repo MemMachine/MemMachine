@@ -97,7 +97,7 @@ async def _open(store: QdrantVectorStore) -> QdrantVectorStorePartition:
     """A handle on a freshly prepared partition."""
     partition_uuid = uuid4()
     await store.create_partition(partition_uuid)
-    return await store.open_partition(partition_uuid)
+    return await store.get_partition(partition_uuid)
 
 
 async def _purge(store: QdrantVectorStore, partition_uuid: UUID) -> None:
@@ -1243,7 +1243,7 @@ class TestPartitionIsolation:
         partition_uuid = uuid4()
         await store.create_partition(partition_uuid)
         await other.create_partition(partition_uuid)
-        writer = await store.open_partition(partition_uuid)
+        writer = await store.get_partition(partition_uuid)
         writer_before = await _count_stored(store)
         other_before = await _count_stored(other)
 
@@ -1580,7 +1580,7 @@ class TestMetrics:
 
         partition_uuid = uuid4()
         await store.create_partition(partition_uuid)
-        partition = await store.open_partition(partition_uuid)
+        partition = await store.get_partition(partition_uuid)
         mock_histogram.reset_mock()
 
         v1 = _normalize([1.0, 0.0, 0.0])
