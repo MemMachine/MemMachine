@@ -13,6 +13,8 @@ import pytest
 import pytest_asyncio
 from pydantic import ValidationError
 from sqlalchemy import (
+    Delete,
+    delete,
     event,
     func,
     select,
@@ -1604,6 +1606,50 @@ async def test_purge_finds_nothing_only_after_searching_from_the_first_key(
     finally:
         async with sqlalchemy_sqlite_engine.begin() as conn:
             await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+
+
+@pytest.mark.asyncio
+async def test_purge_finds_nothing_only_when_its_search_finds_nothing(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch another transaction deletes before the purge's delete leaves the purge answering that rows may remain."""
+    monkeypatch.setattr(store, "_purge_max_segments", 2)
+    partition = await _open(store)
+    segments = [_seg(ts_offset_seconds=index) for index in range(3)]
+    await partition.add_segments(_links(*segments))
+    batch = sorted(segment.uuid for segment in segments)[:2]
+
+    with _deleted_before_the_next_segment_delete(store._engine, batch):
+        assert await store.purge_partition(PARTITION_UUID) is True
+
+    while await store.purge_partition(PARTITION_UUID):
+        pass
+    assert await _row_counts(store, PARTITION_UUID) == (0, 0)
+
+
+@contextlib.contextmanager
+def _deleted_before_the_next_segment_delete(
+    engine: AsyncEngine, segment_uuids: list[UUID]
+) -> Generator[None, None, None]:
+    """Delete the given segments just before the engine's next delete of segment rows runs, as a concurrent delete would."""
+    deleted: list[bool] = []
+
+    def _delete_first(connection, clauseelement, *_args) -> None:
+        if deleted or not (
+            isinstance(clauseelement, Delete)
+            and clauseelement.table.name == SegmentRow.__tablename__
+        ):
+            return
+        deleted.append(True)
+        connection.execute(delete(SegmentRow).where(SegmentRow.uuid.in_(segment_uuids)))
+
+    event.listen(engine.sync_engine, "before_execute", _delete_first)
+    try:
+        yield
+    finally:
+        event.remove(engine.sync_engine, "before_execute", _delete_first)
+    assert deleted, "no segment delete ran"
 
 
 async def _purge_cursor(store: SQLAlchemySegmentStore) -> UUID | None:
