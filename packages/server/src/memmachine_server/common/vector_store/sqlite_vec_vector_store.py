@@ -403,6 +403,7 @@ class SQLiteVecVectorStore(VectorStore):
         """Initialize the vector store with the provided parameters."""
         SQLiteVecVectorStore._validate_metric(params.store_schema.similarity_metric)
         self._engine = params.engine
+        self._vector_store_name = params.vector_store_name
         self._store_schema = params.store_schema
         self._create_session = async_sessionmaker(self._engine, expire_on_commit=False)
         self._sa_metadata = MetaData()
@@ -473,7 +474,7 @@ class SQLiteVecVectorStore(VectorStore):
     # Helpers.
 
     def _partition_prefix(self, partition_uuid: UUID) -> str:
-        return f"vector_store_sqlite_vec_{partition_uuid.hex}"
+        return f"vector_store_sqlite_vec_{partition_uuid.hex}_{self._vector_store_name}"
 
     def _records_table_name(self, partition_uuid: UUID) -> str:
         return f"{self._partition_prefix(partition_uuid)}_rc"

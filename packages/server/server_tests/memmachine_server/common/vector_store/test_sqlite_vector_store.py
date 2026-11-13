@@ -807,6 +807,54 @@ class TestPartitionIsolation:
         await other.shutdown()
 
     @pytest.mark.asyncio
+    async def test_stores_of_two_names_keep_their_records_in_separate_storage(
+        self, tmp_path
+    ):
+        """Stores of two names share no storage, even on one engine and index
+        directory and under one partition UUID."""
+        index_directory = tmp_path / "indexes"
+        store, engine = await _fresh_store(
+            tmp_path / "test.db", tmp_path, save_threshold=1
+        )
+        other = SQLiteVectorStore(
+            _params(
+                engine,
+                vector_store_name="other_store",
+                index_directory=str(index_directory),
+                save_threshold=1,
+            )
+        )
+        await other.startup()
+        partition_uuid = uuid4()
+        await store.create_partition(partition_uuid)
+        await other.create_partition(partition_uuid)
+        mine = await store.get_partition(partition_uuid)
+        theirs = await other.get_partition(partition_uuid)
+        vector = _normalize([1.0, 0.0, 0.0])
+        my_record = _make_record(vector=vector)
+
+        await mine.upsert(records=[my_record])
+
+        assert await _stored(theirs) == {}
+        [result] = await theirs.query(query_vectors=[vector], limit=10)
+        assert result.matches == []
+
+        their_record = _make_record(vector=vector)
+        await theirs.upsert(records=[their_record])
+        assert len(list(index_directory.glob("*.idx"))) == 2
+
+        await _purge_and_drop(store, partition_uuid)
+
+        assert set(await _stored(theirs)) == {their_record.uuid}
+        [result] = await theirs.query(query_vectors=[vector], limit=10)
+        assert [match.record_uuid for match in result.matches] == [their_record.uuid]
+        assert len(list(index_directory.glob("*.idx"))) == 1
+
+        await other.shutdown()
+        await store.shutdown()
+        await engine.dispose()
+
+    @pytest.mark.asyncio
     async def test_dropping_a_partition_does_not_affect_sibling(self, store):
         """Dropping one partition doesn't break a sibling sharing the store's tables."""
         partition_a = await _created(store)
@@ -1208,13 +1256,9 @@ async def _unapplied_operation_counts(engine) -> dict[str, int]:
     async with session_factory() as session:
         rows = (
             await session.execute(
-                select(_PartitionRow.vector_store_name, func.count())
-                .join(
-                    _PendingOperationRow,
-                    _PendingOperationRow.partition_uuid == _PartitionRow.partition_uuid,
-                )
+                select(_PendingOperationRow.vector_store_name, func.count())
                 .where(_PendingOperationRow.applied.is_(False))
-                .group_by(_PartitionRow.vector_store_name)
+                .group_by(_PendingOperationRow.vector_store_name)
             )
         ).all()
     return {row[0]: row[1] for row in rows}
@@ -1425,12 +1469,13 @@ class TestCrashRecovery:
 
 
 async def _get_index_saved(engine, partition_uuid: UUID) -> bool | None:
-    """The partition's index_saved flag, or None if the partition UUID has no row."""
+    """The index_saved flag of the test store's partition, or None if it has no row."""
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
         return (
             await session.execute(
                 select(_PartitionRow.index_saved).where(
+                    _PartitionRow.vector_store_name == VECTOR_STORE_NAME,
                     _PartitionRow.partition_uuid == partition_uuid,
                 )
             )

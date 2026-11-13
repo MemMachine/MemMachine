@@ -93,14 +93,14 @@ class BaseSQLiteVectorStore(DeclarativeBase):
 
 
 class _PartitionRow(BaseSQLiteVectorStore):
-    """One row per created partition, with the vector store that holds it."""
+    """One row per created partition, keyed by its store's name and its UUID."""
 
     __tablename__ = "vector_store_sqlite_pt"
 
-    partition_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     vector_store_name: MappedColumn[str] = mapped_column(
-        String(_IDENTIFIER_MAX_BYTES), nullable=False
+        String(_IDENTIFIER_MAX_BYTES), primary_key=True
     )
+    partition_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     # Flips to True after the first successful index save.
     # Once True, the on-disk index file is part of the durable contract:
     # missing or corrupt is treated as an error rather than silently rebuilt empty.
@@ -113,7 +113,7 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     """
     Pending partition operations for crash recovery.
 
-    One row per (partition, record). New operations replace old
+    One row per (store, partition, record). New operations replace old
     ones. Lifecycle:
     1. Inserted in the same SQLite transaction as the records table change.
     2. Marked `applied=True` after the search engine processes the operation.
@@ -125,12 +125,18 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     __tablename__ = "vector_store_sqlite_pd_op"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["partition_uuid"],
-            [f"{_PartitionRow.__tablename__}.partition_uuid"],
+            ["vector_store_name", "partition_uuid"],
+            [
+                f"{_PartitionRow.__tablename__}.vector_store_name",
+                f"{_PartitionRow.__tablename__}.partition_uuid",
+            ],
             ondelete="CASCADE",
         ),
     )
 
+    vector_store_name: MappedColumn[str] = mapped_column(
+        String(_IDENTIFIER_MAX_BYTES), primary_key=True
+    )
     partition_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     record_row_id: MappedColumn[int] = mapped_column(Integer, primary_key=True)
     operation_type: MappedColumn[str] = mapped_column(
@@ -151,6 +157,7 @@ def _enable_sqlite_foreign_keys(
 async def _save_partition_index(
     *,
     create_session: async_sessionmaker[AsyncSession],
+    vector_store_name: str,
     partition_uuid: UUID,
     search_engine: VectorSearchEngine,
     path: str,
@@ -164,7 +171,10 @@ async def _save_partition_index(
         # this unlinks the file it wrote.
         saved = await (await session.connection()).execute(
             update(_PartitionRow)
-            .where(_PartitionRow.partition_uuid == partition_uuid)
+            .where(
+                _PartitionRow.vector_store_name == vector_store_name,
+                _PartitionRow.partition_uuid == partition_uuid,
+            )
             .values(index_saved=True)
         )
         if saved.rowcount == 0:
@@ -172,6 +182,7 @@ async def _save_partition_index(
             return
         await session.execute(
             delete(_PendingOperationRow).where(
+                _PendingOperationRow.vector_store_name == vector_store_name,
                 _PendingOperationRow.partition_uuid == partition_uuid,
                 _PendingOperationRow.applied.is_(True),
             )
@@ -235,6 +246,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         sync_sqlalchemy_engine: Engine,
         records_table: Table,
         search_engine: VectorSearchEngine,
+        vector_store_name: str,
         partition_uuid: UUID,
         store_schema: VectorStoreSchema,
         index_path: str | None,
@@ -246,6 +258,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         self._records_table = records_table
         self._search_engine = search_engine
 
+        self._vector_store_name = vector_store_name
         self._partition_uuid = partition_uuid
 
         self._store_schema = store_schema
@@ -262,6 +275,8 @@ class SQLiteVectorStorePartition(VectorStorePartition):
             count = (
                 await session.execute(
                     select(func.count()).where(
+                        _PendingOperationRow.vector_store_name
+                        == self._vector_store_name,
                         _PendingOperationRow.partition_uuid == self._partition_uuid,
                         _PendingOperationRow.applied.is_(True),
                     )
@@ -271,6 +286,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         if count >= self._save_threshold:
             await _save_partition_index(
                 create_session=self._create_session,
+                vector_store_name=self._vector_store_name,
                 partition_uuid=self._partition_uuid,
                 search_engine=self._search_engine,
                 path=self._index_path,
@@ -319,6 +335,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
             pending_operation_values = [
                 {
+                    "vector_store_name": self._vector_store_name,
                     "partition_uuid": self._partition_uuid,
                     "record_row_id": uuid_to_row_id[record.uuid],
                     "operation_type": "upsert",
@@ -331,7 +348,11 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                 upsert_pending_operation = sqlite_insert(_PendingOperationRow)
                 await session.execute(
                     upsert_pending_operation.on_conflict_do_update(
-                        index_elements=["partition_uuid", "record_row_id"],
+                        index_elements=[
+                            "vector_store_name",
+                            "partition_uuid",
+                            "record_row_id",
+                        ],
                         set_={
                             "operation_type": upsert_pending_operation.excluded.operation_type,
                             "vector": upsert_pending_operation.excluded.vector,
@@ -363,6 +384,8 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                 await session.execute(
                     update(_PendingOperationRow)
                     .where(
+                        _PendingOperationRow.vector_store_name
+                        == self._vector_store_name,
                         _PendingOperationRow.partition_uuid == self._partition_uuid,
                         _PendingOperationRow.record_row_id.in_(
                             list(engine_vectors.keys())
@@ -488,7 +511,11 @@ class SQLiteVectorStorePartition(VectorStorePartition):
             upsert_pending_operation = sqlite_insert(_PendingOperationRow)
             await session.execute(
                 upsert_pending_operation.on_conflict_do_update(
-                    index_elements=["partition_uuid", "record_row_id"],
+                    index_elements=[
+                        "vector_store_name",
+                        "partition_uuid",
+                        "record_row_id",
+                    ],
                     set_={
                         "operation_type": upsert_pending_operation.excluded.operation_type,
                         "applied": upsert_pending_operation.excluded.applied,
@@ -496,6 +523,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
                 ),
                 [
                     {
+                        "vector_store_name": self._vector_store_name,
                         "partition_uuid": self._partition_uuid,
                         "record_row_id": record_row_id,
                         "operation_type": "delete",
@@ -516,6 +544,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
             await session.execute(
                 update(_PendingOperationRow)
                 .where(
+                    _PendingOperationRow.vector_store_name == self._vector_store_name,
                     _PendingOperationRow.partition_uuid == self._partition_uuid,
                     _PendingOperationRow.record_row_id.in_(record_row_ids),
                     _PendingOperationRow.applied.is_(False),
@@ -662,14 +691,9 @@ class SQLiteVectorStore(VectorStore):
             operations = (
                 (
                     await session.execute(
-                        select(_PendingOperationRow)
-                        .join(
-                            _PartitionRow,
-                            _PartitionRow.partition_uuid
-                            == _PendingOperationRow.partition_uuid,
-                        )
-                        .where(
-                            _PartitionRow.vector_store_name == self._vector_store_name
+                        select(_PendingOperationRow).where(
+                            _PendingOperationRow.vector_store_name
+                            == self._vector_store_name
                         )
                     )
                 )
@@ -721,6 +745,7 @@ class SQLiteVectorStore(VectorStore):
             await session.execute(
                 update(_PendingOperationRow)
                 .where(
+                    _PendingOperationRow.vector_store_name == self._vector_store_name,
                     _PendingOperationRow.partition_uuid == partition_uuid,
                     _PendingOperationRow.record_row_id.in_(all_row_ids),
                 )
@@ -736,6 +761,7 @@ class SQLiteVectorStore(VectorStore):
                 assert path is not None
                 await _save_partition_index(
                     create_session=self._create_session,
+                    vector_store_name=self._vector_store_name,
                     partition_uuid=partition_uuid,
                     search_engine=search_engine,
                     path=str(path),
@@ -754,7 +780,12 @@ class SQLiteVectorStore(VectorStore):
                     partition_uuid=partition_uuid,
                     vector_store_name=self._vector_store_name,
                 )
-                .on_conflict_do_nothing(index_elements=[_PartitionRow.partition_uuid])
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        _PartitionRow.vector_store_name,
+                        _PartitionRow.partition_uuid,
+                    ]
+                )
             )
             connection = await session.connection()
             await connection.run_sync(
@@ -773,6 +804,7 @@ class SQLiteVectorStore(VectorStore):
             search_engine=await self._get_or_create_vector_search_engine(
                 partition_uuid
             ),
+            vector_store_name=self._vector_store_name,
             partition_uuid=partition_uuid,
             store_schema=self._store_schema,
             index_path=str(index_path) if index_path is not None else None,
@@ -794,7 +826,8 @@ class SQLiteVectorStore(VectorStore):
         async with write_session(self._create_session) as session:
             await session.execute(
                 delete(_PartitionRow).where(
-                    _PartitionRow.partition_uuid == partition_uuid
+                    _PartitionRow.vector_store_name == self._vector_store_name,
+                    _PartitionRow.partition_uuid == partition_uuid,
                 )
             )
             connection = await session.connection()
@@ -812,8 +845,14 @@ class SQLiteVectorStore(VectorStore):
     # Helpers.
 
     def _partition_prefix(self, partition_uuid: UUID) -> str:
-        """Unique prefix for a partition's native resources."""
-        return f"vector_store_sqlite_{partition_uuid.hex}"
+        """
+        Unique prefix for the native resources of the store's partition.
+
+        The fixed-length hex of the partition UUID precedes the store's name,
+        and no hex digit is the `v` of the sqlite-vec store's
+        `vector_store_sqlite_vec_`.
+        """
+        return f"vector_store_sqlite_{partition_uuid.hex}_{self._vector_store_name}"
 
     def _records_table(self, partition_uuid: UUID) -> Table:
         """The partition's records table, built once per partition."""
@@ -854,7 +893,8 @@ class SQLiteVectorStore(VectorStore):
                 saved = (
                     await session.execute(
                         select(_PartitionRow.index_saved).where(
-                            _PartitionRow.partition_uuid == partition_uuid
+                            _PartitionRow.vector_store_name == self._vector_store_name,
+                            _PartitionRow.partition_uuid == partition_uuid,
                         )
                     )
                 ).scalar_one_or_none()
