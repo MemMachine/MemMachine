@@ -299,7 +299,7 @@ async def test_create_or_open_episodic_memory_success(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("deleted", [False, True])
-async def test_get_or_create_handles_session_created_during_insert(
+async def test_open_or_create_handles_session_created_during_insert(
     manager: EpisodicMemoryManager,
     mock_session_storage: SessionDataManagerSQL,
     monkeypatch: pytest.MonkeyPatch,
@@ -628,7 +628,7 @@ async def test_deleting_an_event_session_creates_none_of_its_partitions(
     mock_session_storage,
     mock_resource_manager,
 ):
-    """A session with no open instance has its partitions deleted by name, never opened."""
+    """A session with no open instance has its partition deleted by name, without getting or creating it."""
     session_key = "event_session"
     mock_resource_manager.config = create_autospec(Configuration, instance=True)
     mock_resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(

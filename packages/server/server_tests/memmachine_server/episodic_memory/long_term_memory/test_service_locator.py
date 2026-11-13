@@ -152,14 +152,8 @@ _DEPLOYMENT = LongTermMemoryConfPartial(
 
 
 @pytest.mark.asyncio
-async def test_event_params_opens_the_session_partition_in_the_event_store():
-    """The session's partition is opened in the deployment's event store.
-
-    Opening creates the partition when it is absent; event memory's
-    registry arbitrates creation across processes, so a worker that loses
-    the race to another opens the winner's partition instead of failing
-    the request.
-    """
+async def test_event_params_get_the_session_partition_from_the_event_store():
+    """Event memory gets the session's partition from the registry over the deployment's event store."""
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
     config = EventLongTermMemoryConf(session_id="raced")
 
@@ -241,8 +235,8 @@ async def test_event_params_refuses_a_session_of_a_deployment_without_event_memo
 
 
 @pytest.mark.asyncio
-async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without_opening_them():
-    """A session's partitions are deleted by name, so deleting creates none."""
+async def test_deleting_an_event_sessions_storage_deletes_its_partition_without_getting_or_creating_it():
+    """A session's partition is deleted by name, without getting or creating it."""
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
     config = EventLongTermMemoryConf(session_id="s")
 
@@ -252,6 +246,7 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without
     vector_store = resource_manager.get_vector_store.return_value
     segment_store = resource_manager.get_segment_store.return_value
     partition_registry.delete_partition.assert_awaited_once_with("s")
+    partition_registry.get_partition.assert_not_awaited()
     partition_registry.create_partition.assert_not_awaited()
     vector_store.create_partition.assert_not_awaited()
     segment_store.create_partition.assert_not_awaited()

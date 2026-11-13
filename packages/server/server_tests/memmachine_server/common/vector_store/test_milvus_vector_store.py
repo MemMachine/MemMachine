@@ -166,8 +166,8 @@ async def _partition_uuid_records(
     return [UUID(row["record_uuid"]) for row in rows]
 
 
-async def _open(store: MilvusVectorStore) -> MilvusVectorStorePartition:
-    """A handle on a freshly prepared partition."""
+async def _created(store: MilvusVectorStore) -> MilvusVectorStorePartition:
+    """A handle on a freshly created partition."""
     partition_uuid = uuid4()
     await store.create_partition(partition_uuid)
     return await store.get_partition(partition_uuid)
@@ -353,7 +353,7 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
     # A collection of its own, so startup creates it through the spies.
     timed = MilvusVectorStore(_params(store._client, vector_store_name="timed"))
     await timed.startup()
-    partition = await _open(timed)
+    partition = await _created(timed)
     vector = _normalize([1.0, 0.0, 0.0])
     record, kept = (
         _make_record(vector=vector),
@@ -391,7 +391,7 @@ def test_a_setting_that_is_not_positive_is_refused(setting):
 
 @pytest_asyncio.fixture
 async def partition(store):
-    partition = await _open(store)
+    partition = await _created(store)
     yield partition
     await _purge(store, partition._partition_uuid)
 
@@ -420,7 +420,7 @@ class TestPartitionLifecycle:
                 await partial.startup()
 
         await partial.startup()
-        partition = await _open(partial)
+        partition = await _created(partial)
         vector = _normalize([1.0, 0.0, 0.0])
         record = _make_record(vector=vector, properties={"name": "alice"})
         await partition.upsert(records=[record])
@@ -445,7 +445,7 @@ class TestPartitionLifecycle:
             _params(store._client, vector_store_name="0_digit_first")
         )
         await digit_first.startup()
-        partition = await _open(digit_first)
+        partition = await _created(digit_first)
         await _purge(digit_first, partition._partition_uuid)
 
     @pytest.mark.asyncio
@@ -453,7 +453,7 @@ class TestPartitionLifecycle:
         """Every partition's records are entities in the store's one native collection."""
         records = {}
         for _ in range(2):
-            partition = await _open(store)
+            partition = await _created(store)
             record = _make_record(vector=[1.0, 0.0, 0.0])
             await partition.upsert(records=[record])
             records[partition._partition_uuid] = record
@@ -478,7 +478,7 @@ class TestPartitionLifecycle:
     async def test_native_collection_schema(self, store):
         """Each declared property is a typed, nullable, indexed field, a
         datetime with a field for its offset; the collection isolates tenants."""
-        partition = await _open(store)
+        partition = await _created(store)
         native = partition._collection_name
 
         schema = await store._client.describe_collection(partition._collection_name)
@@ -534,7 +534,7 @@ class TestPartitionLifecycle:
             vector_store_name="longest_key",
             store_schema=_schema(indexed_properties={key: datetime}),
         )
-        partition = await _open(longest)
+        partition = await _created(longest)
         written = datetime(2024, 6, 15, 12, 0, tzinfo=timezone(timedelta(hours=9)))
         record = _make_record(
             vector=_normalize([1.0, 0.0, 0.0]), properties={key: written}
@@ -620,13 +620,13 @@ class TestConcurrentPreparation:
             try:
                 await asyncio.wait_for(first_created.wait(), 60)
                 await second.startup()
-                await _require_usable(await _open(second))
+                await _require_usable(await _created(second))
             finally:
                 second_done.set()
 
         await asyncio.gather(first.startup(), start_second())
 
-        await _require_usable(await _open(first))
+        await _require_usable(await _created(first))
         assert set(await store._client.list_indexes(first._collection_name)) == {
             "vector",
             "_p_name",
@@ -651,7 +651,7 @@ class TestUpsertAndQuery:
             max_varchar_length=65535,
             request_timeout_seconds=120,
         )
-        partition = await _open(oversized)
+        partition = await _created(oversized)
         text = "x" * 60_000
         records = [
             _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"text": text})
@@ -1158,7 +1158,7 @@ class TestFilterModel:
             vector_store_name="filter_model",
             store_schema=_schema(indexed_properties=_MODEL_DECLARED),
         )
-        partition = await _open(modeled)
+        partition = await _created(modeled)
         records = [
             Record(
                 uuid=record_uuid,
@@ -1206,7 +1206,7 @@ class _ModelPartitions:
     async def recreate(self, partition_name: str) -> None:
         """Move the partition to a fresh partition UUID, leaving its current one dead."""
         self.dead_partition_uuids.append(self.handles[partition_name]._partition_uuid)
-        self.handles[partition_name] = await _open(self.store)
+        self.handles[partition_name] = await _created(self.store)
         self.records[partition_name] = {}
 
     async def purge(self) -> None:
@@ -1267,12 +1267,13 @@ class TestOperationModel:
             store_schema=_schema(indexed_properties=_MODEL_DECLARED),
         )
         partition_names = ("alpha", "beta")
-        # Few UUIDs, so each recurs in both partitions and across their lives.
+        # Few UUIDs, so each recurs under both names and across the partitions
+        # created under one name.
         pool = sorted(uuid4() for _ in range(12))
         model = _ModelPartitions(
             store=modeled,
             handles={
-                partition_name: await _open(modeled)
+                partition_name: await _created(modeled)
                 for partition_name in partition_names
             },
             records={partition_name: {} for partition_name in partition_names},
@@ -1339,7 +1340,7 @@ class TestScores:
             )
         )
         await scored.startup()
-        partition = await _open(scored)
+        partition = await _created(scored)
         record = _make_record(vector=[1.2, 1.6, 0.0])
         await partition.upsert(records=[record])
         await _settle(partition)
@@ -1385,7 +1386,7 @@ class TestScores:
             vector_store_name=f"threshold_{metric.value}",
             store_schema=_schema(similarity_metric=metric),
         )
-        partition = await _open(scored)
+        partition = await _created(scored)
         nearest, middle, farthest = (_make_record(vector=vector) for vector in vectors)
         await partition.upsert(records=[farthest, nearest, middle])
         await _settle(partition)
@@ -1416,7 +1417,7 @@ class TestScores:
             vector_store_name=f"edge_{metric.value}",
             store_schema=_schema(similarity_metric=metric),
         )
-        partition = await _open(scored)
+        partition = await _created(scored)
         # Vectors that each metric ranks in its own order, none tied.
         records = [
             _make_record(vector=vector)
@@ -1481,7 +1482,7 @@ class TestConsistency:
         # A name of its own, so the store creates the native collection.
         bounded = await _started_store(store._client, vector_store_name="bounded")
 
-        partition = await _open(bounded)
+        partition = await _created(bounded)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await partition.upsert(records=[record])
         await _settle(partition)
@@ -1655,8 +1656,8 @@ class TestPartitionIsolation:
     @pytest.mark.asyncio
     async def test_same_uuid_can_exist_in_different_partitions(self, store):
         """The same UUID in two partitions is two records, written and deleted apart."""
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         record_uuid = uuid4()
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -1702,7 +1703,7 @@ class TestPartitionIsolation:
         vector = _normalize([1.0, 0.0, 0.0])
         own_records = []
         for _ in range(2):
-            partition = await _open(isolated)
+            partition = await _created(isolated)
             records = [
                 _make_record(
                     vector=vector, properties={"name": "shared", "color": "red"}
@@ -1735,7 +1736,7 @@ class TestPurgeBatches:
     @pytest.mark.asyncio
     async def test_a_purge_round_reclaims_at_most_one_batch(self, store):
         store = MilvusVectorStore(_params(store._client, purge_batch_size=2))
-        partition = await _open(store)
+        partition = await _created(store)
         await partition.upsert(
             records=[
                 _make_record(vector=_normalize([1.0, float(i), 0.0])) for i in range(5)
@@ -1772,7 +1773,7 @@ class TestPurge:
         dropped = await _started_store(
             store._client, vector_store_name="dropped_native"
         )
-        partition = await _open(dropped)
+        partition = await _created(dropped)
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
@@ -1789,7 +1790,7 @@ class TestPurge:
         live partition's."""
         handles = []
         for _ in range(5):
-            handle = await _open(store)
+            handle = await _created(store)
             await handle.upsert(
                 records=[
                     _make_record(vector=_normalize([1.0, 0.1 * index, 0.0]))

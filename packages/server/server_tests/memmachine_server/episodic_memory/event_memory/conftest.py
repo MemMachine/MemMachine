@@ -219,7 +219,7 @@ class FakeReranker(Reranker):
         return [float(len(c)) for c in candidates]
 
 
-async def open_event_memory_partition(
+async def create_event_memory_partition(
     *,
     segment_store_partition: SegmentStorePartition,
     vector_store_partition: InMemoryVectorStorePartition,
@@ -298,7 +298,7 @@ async def event_memory_partition(
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return await open_event_memory_partition(
+    return await create_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
@@ -315,7 +315,7 @@ async def event_memory_partition_with_reranker(
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return await open_event_memory_partition(
+    return await create_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
@@ -333,7 +333,7 @@ async def event_memory_partition_with_sentences(
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return await open_event_memory_partition(
+    return await create_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
