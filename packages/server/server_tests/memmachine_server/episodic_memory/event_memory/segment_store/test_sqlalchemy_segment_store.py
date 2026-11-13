@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import functools
 import json
 import logging
 import operator
@@ -534,40 +535,6 @@ async def test_add_event_segments_rejects_mismatched_event_naming(
         await _count_rows(partition, EventRow.incarnation == partition._incarnation)
         == 0
     )
-
-
-@pytest.mark.asyncio
-async def test_add_event_segments_inserts_its_events_in_uuid_order(
-    store: SQLAlchemySegmentStore,
-) -> None:
-    """Two batches naming the same events then wait on each other's inserts in one order."""
-    partition = await store.open_or_create_partition(
-        PARTITION_KEY, _plaintext_partition_config()
-    )
-    segments = sorted(
-        (_seg() for _ in range(5)), key=lambda segment: segment.event_uuid, reverse=True
-    )
-    event_uuids = {segment.event_uuid for segment in segments}
-    inserted: list[UUID] = []
-
-    def _record(_conn, _cursor, statement, parameters, _context, _executemany):
-        if statement.lstrip().upper().startswith("INSERT INTO SEGMENT_STORE_EV "):
-            for value in parameters:
-                try:
-                    uuid = UUID(str(value))
-                except ValueError:
-                    continue
-                if uuid in event_uuids:
-                    inserted.append(uuid)
-
-    engine = store._engine.sync_engine
-    event.listen(engine, "before_cursor_execute", _record)
-    try:
-        await _add_segments(partition, _links(*segments))
-    finally:
-        event.remove(engine, "before_cursor_execute", _record)
-
-    assert inserted == sorted(event_uuids)
 
 
 @pytest.mark.asyncio
@@ -4412,10 +4379,11 @@ async def test_delete_partition_touches_only_registry_and_queue(
 #   all locks intact (create/delete DDL lock cycles through the shared
 #   parents) -- the deadlock-freedom they pin is a property of the
 #   shared-table layout.
-# The ordered event and segment row locks in delete_event_segments impose an
-# acquisition order no engine guarantees on its own;
-# test_overlapping_forgets_do_not_deadlock is the canary for a divergent
-# order, not a proof that the locks are needed.
+# Ingests and forgets of several events take turns on the partition's write
+# lock (FOR NO KEY UPDATE on the registry row), so none takes its event
+# locks in an order; one-event writes and the other pinned writes take
+# FOR KEY SHARE, which the write lock does not block, and deletion takes
+# FOR UPDATE, which blocks both.
 # ===================================================================
 
 
@@ -4477,17 +4445,202 @@ async def test_write_pin_blocks_partition_delete(
     assert await pg_store.open_partition("lk_write_pin") is None
 
 
+@contextlib.asynccontextmanager
+async def _registry_row_held(
+    partition: SQLAlchemySegmentStorePartition, *, exclusive: bool
+) -> AsyncIterator[None]:
+    """Hold the partition's registry row in another transaction, under the write lock if `exclusive`, else under a pin."""
+    async with partition._create_session() as session, session.begin():
+        await session.execute(
+            select(PartitionRow)
+            .where(PartitionRow.incarnation == partition._incarnation)
+            .with_for_update(read=not exclusive, key_share=True)
+        )
+        yield
+
+
+async def _ingest(
+    _store: SQLAlchemySegmentStore,
+    partition: SQLAlchemySegmentStorePartition,
+    events: int,
+):
+    """An operation that ingests `events` new events."""
+    batch = _events(_links(*(_seg() for _ in range(events))))
+    return lambda: partition.add_event_segments(*batch, lease_seconds=0)
+
+
+async def _forget(
+    _store: SQLAlchemySegmentStore,
+    partition: SQLAlchemySegmentStorePartition,
+    events: int,
+):
+    """An operation that forgets `events` events added now."""
+    segments = [_seg() for _ in range(events)]
+    await _add_segments(partition, _links(*segments))
+    return lambda: partition.delete_event_segments(
+        [segment.event_uuid for segment in segments]
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", [_ingest, _forget], ids=["ingest", "forget"])
+async def test_a_write_of_several_events_waits_for_the_partitions_write_lock(
+    pg_store: SQLAlchemySegmentStore,
+    sqlalchemy_pg_engine: AsyncEngine,
+    operation,
+) -> None:
+    """Writes of several events take turns, so none locks its events in an order."""
+    partition = await pg_store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    write = await operation(pg_store, partition, 2)
+
+    async with _registry_row_held(partition, exclusive=True):
+        task = asyncio.create_task(write())
+        assert await _wait_until_blocked_or_done(sqlalchemy_pg_engine, task) == (
+            "blocked"
+        )
+    await task
+
+
+async def _delete_pending_writes(
+    _store: SQLAlchemySegmentStore, partition: SQLAlchemySegmentStorePartition
+):
+    segment = _seg()
+    await partition.add_event_segments(*_events(_links(segment)), lease_seconds=0)
+    return lambda: partition.delete_pending_writes([segment.uuid])
+
+
+async def _record_first_delete(
+    _store: SQLAlchemySegmentStore, partition: SQLAlchemySegmentStorePartition
+):
+    tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
+    return lambda: partition.record_tombstone_first_delete([tombstone_uuid])
+
+
+async def _finish_second_delete(
+    store: SQLAlchemySegmentStore, partition: SQLAlchemySegmentStorePartition
+):
+    _, claim = await _claim_second_delete(store, partition)
+    return lambda: store.finish_tombstone_claim(claim)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    [
+        functools.partial(_ingest, events=1),
+        functools.partial(_forget, events=1),
+        _delete_pending_writes,
+        _record_first_delete,
+        _finish_second_delete,
+    ],
+    ids=[
+        "ingest_one",
+        "forget_one",
+        "delete_pending_writes",
+        "record_first_delete",
+        "second_delete",
+    ],
+)
+async def test_one_event_and_the_other_pinned_writes_do_not_wait_for_the_write_lock(
+    pg_store: SQLAlchemySegmentStore,
+    sqlalchemy_pg_engine: AsyncEngine,
+    operation,
+) -> None:
+    partition = await pg_store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    write = await operation(pg_store, partition)
+
+    async with _registry_row_held(partition, exclusive=True):
+        task = asyncio.create_task(write())
+        assert await _wait_until_blocked_or_done(sqlalchemy_pg_engine, task) == ("done")
+        await task
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exclusive", [True, False], ids=["write_lock", "pin"])
+async def test_deleting_a_partition_waits_for_its_write_lock_and_its_pins(
+    pg_store: SQLAlchemySegmentStore,
+    sqlalchemy_pg_engine: AsyncEngine,
+    exclusive: bool,
+) -> None:
+    partition = await pg_store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+
+    async with _registry_row_held(partition, exclusive=exclusive):
+        deletion = asyncio.create_task(pg_store.delete_partition(PARTITION_KEY))
+        assert await _wait_until_blocked_or_done(sqlalchemy_pg_engine, deletion) == (
+            "blocked"
+        )
+    await deletion
+
+
+@pytest.mark.asyncio
+async def test_batches_naming_the_same_events_in_opposite_orders_store_them_once(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """One stores the events and the other is refused whole, never a deadlock."""
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    for _ in range(10):
+        segments = [_seg() for _ in range(6)]
+        batches = [_links(*segments), _links(*reversed(segments))]
+
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(
+                *(
+                    partition.add_event_segments(*_events(batch), lease_seconds=0)
+                    for batch in batches
+                ),
+                return_exceptions=True,
+            ),
+            30,
+        )
+
+        [error] = [outcome for outcome in outcomes if outcome is not None]
+        assert isinstance(error, SegmentStoreEventAlreadyExistsError)
+        assert error.event_uuids == {segment.event_uuid for segment in segments}
+
+
+@pytest.mark.asyncio
+async def test_concurrent_forgets_of_one_event_tombstone_it_once(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """The forget that waits for the other's lock on the event finds it gone."""
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    for _ in range(10):
+        event_uuid = uuid4()
+        segments = [_seg(event_uuid=event_uuid, index=index) for index in range(3)]
+        await _add_segments(partition, _links(*segments))
+
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(
+                *(partition.delete_event_segments([event_uuid]) for _ in range(2))
+            ),
+            30,
+        )
+
+        assert sorted(map(len, outcomes)) == [0, 3]
+
+
 @pytest.mark.asyncio
 async def test_overlapping_forgets_do_not_deadlock(
     store: SQLAlchemySegmentStore,
 ) -> None:
     """Overlapping concurrent `delete_event_segments` stay deadlock-free.
 
-    Regression canary rather than a lock-necessity proof: the ordered
-    pre-locks impose an acquisition order that no database documents for
-    the deletes and their cascades, and this test catches the AB/BA cycle
-    wherever an engine or plan produces divergent orders. Each unlinked
-    derivative is named by exactly one of the racing forgets' tombstones.
+    The racing forgets of several events take turns on the partition's
+    write lock. Each unlinked derivative is named by exactly one of their
+    tombstones.
     """
     partition = await store.open_or_create_partition(
         "lk_row_order", _plaintext_partition_config()
