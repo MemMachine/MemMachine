@@ -161,7 +161,7 @@ async def _save_partition_index(
     async with write_session(create_session) as session:
         # The write lock holds a drop off until this commits, and the drop
         # then unlinks the file; no match means a drop committed first, so
-        # the file this wrote must go.
+        # this unlinks the file it wrote.
         saved = await (await session.connection()).execute(
             update(_PartitionRow)
             .where(_PartitionRow.partition_uuid == partition_uuid)
@@ -594,8 +594,8 @@ class SQLiteVectorStore(VectorStore):
 
     Each partition gets its own records table and engine
     instance. A declared property is a typed, indexed column of the records
-    table. The engine and its index file live in the process that opened
-    the partition, so one process at a time may use a partition.
+    table. The engine and its index file live in the process that got the
+    partition's handle, so one process at a time may use a partition.
     """
 
     def __init__(self, params: SQLiteVectorStoreParams) -> None:
@@ -787,8 +787,8 @@ class SQLiteVectorStore(VectorStore):
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
-        # The partition's pending operations go with its row by the foreign
-        # key's cascade.
+        # The partition's pending operations are deleted with its row by the
+        # foreign key's cascade.
         self._require_started()
         records_table = self._records_table(partition_uuid)
         async with write_session(self._create_session) as session:
@@ -869,6 +869,6 @@ class SQLiteVectorStore(VectorStore):
                         self._vector_store_name, partition_uuid, index_path
                     ) from e
 
-        # Every handle on a partition shares one engine: an open that
+        # Every handle on a partition shares one engine: a call that
         # awaited past another's keeps the engine cached first.
         return self._search_engines.setdefault(partition_uuid, search_engine)

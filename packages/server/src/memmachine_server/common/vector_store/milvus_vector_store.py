@@ -67,11 +67,7 @@ internals with a leading underscore, so the prefix begins with a letter.
 _ID_FIELD = "id"
 _RECORD_UUID_FIELD = "record_uuid"
 _PARTITION_KEY_FIELD = "partition_key"
-"""The native partition-key field, holding the partition UUID of the partition an entity belongs to.
-
-A partition created again under a deleted one's name gets a fresh
-partition UUID, so it holds only the entities written under that partition UUID.
-"""
+"""The native partition-key field, holding the partition UUID of the partition an entity belongs to."""
 _VECTOR_FIELD = "vector"
 _DECLARED_FIELD_PREFIX = "_p_"
 """The prefix of the typed field holding a declared property."""
@@ -404,7 +400,7 @@ class MilvusVectorStorePartition(VectorStorePartition):
         """The primary key of a record: the partition UUID and the record UUID.
 
         Primary keys are distinct across the partitions sharing the native
-        collection and across the partitions created under one name.
+        collection.
         """
         return f"{self._partition_uuid}:{record_uuid}"
 
@@ -467,7 +463,7 @@ class MilvusVectorStore(VectorStore):
     """Asynchronous Milvus-based implementation of VectorStore.
 
     The store is one native Milvus collection, named at construction, in
-    which a partition is the entities carrying it in the
+    which a partition is the entities carrying its partition UUID in the
     partition-key field.
 
     Reads run at Bounded, the consistency level the store creates its
@@ -632,8 +628,7 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup
-        # prepared.
+        # Every partition lives in the collection startup prepared.
         return
 
     @override

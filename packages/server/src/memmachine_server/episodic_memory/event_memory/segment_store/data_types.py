@@ -48,7 +48,7 @@ class SegmentStorePartitionConfig(BaseModel):
 
 
 class SegmentStorePartitionConfigMismatchError(Exception):
-    """Raised when creating a partition with a different configuration than it was created with."""
+    """Raised when creating a partition that exists with a different configuration."""
 
     def __init__(
         self,

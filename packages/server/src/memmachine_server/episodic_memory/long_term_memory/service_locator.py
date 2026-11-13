@@ -117,7 +117,7 @@ async def _get_or_create_event_memory_partition(
     answered; a pending one is another creator's, so the call waits for it;
     no partition means create; a creation that finds the name taken lost it
     to another creator meanwhile; and one that finds the partition deleted
-    lost it to a deleter while the stores created it, so the call creates
+    lost it to a deleter while the stores created it, so the call tries
     again.
 
     Raises:
@@ -125,8 +125,9 @@ async def _get_or_create_event_memory_partition(
             If the partition's creation, by another caller, did not complete
             within the attempts to get it.
         PartitionCreateAttemptsExhaustedError:
-            If every attempt to get or create the partition lost the name to
-            another creator or deleter.
+            If the attempts ran out with the last one losing the name to
+            another creator or deleter, or if the registry gave up after
+            repeated attempts to reserve the free name failed.
         PartitionDeletedError:
             If the partition was deleted, and its purge dropped it, before
             its handle was built.
@@ -165,8 +166,8 @@ async def delete_long_term_memory_storage(
     """
     Delete a session's long-term memory storage.
 
-    The event backend deletes the session's partitions by key, getting
-    neither, so storage the session never created stays uncreated.
+    The event backend deletes the session's partition by name, without
+    getting or creating it.
     """
     match config:
         case DeclarativeLongTermMemoryConf():

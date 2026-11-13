@@ -120,10 +120,10 @@ class PartitionRow(BaseSegmentStore):
     """One row per created partition.
 
     It holds the configuration every handle on the partition uses, and,
-    while the partition is purged, how far the purge got: every segment
-    row of the partition keyed at or below purged_through is deleted;
-    NULL until the purge's first full batch, and again once a walk from it
-    reaches the end. Dropping the partition deletes the row.
+    while the partition is purged, how far the purge got: its walk deleted
+    the partition's segment rows keyed at or below purged_through as it
+    passed them; NULL until the purge's first full batch, and again once a
+    walk from it reaches the end. Dropping the partition deletes the row.
     """
 
     __tablename__ = "segment_store_pt"
@@ -219,8 +219,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         tracker: OperationTracker,
     ) -> None:
         """Initialize with a partition and the store's session factory."""
-        # Data rows are keyed by the partition's UUID: rows of another partition
-        # of the partition are invisible to this one.
+        # Data rows are keyed by the partition's UUID: rows of another
+        # partition are invisible to this one.
         self._partition_uuid = partition_uuid
         self._config = config
         self._payload_codec = payload_codec
@@ -233,7 +233,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     def config(self) -> SegmentStorePartitionConfig:
         return self._config
 
-    # Registration
+    # Writes
 
     @override
     async def add_segments(
@@ -564,7 +564,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         it is the first `limit` matches among them, read without the filter,
         which the planner cannot estimate, so the plan stays an ordered index
         scan.
-        Returns nothing once the partition is deleted.
         """
         # Built from Core columns, the table's and the window's: building from
         # the mapped class adds ORM work to every column reference, and an
@@ -801,9 +800,10 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             (default: None).
         purge_max_segments (int):
             Maximum number of segment rows purged per call. Their
-            derivative links follow by cascade, so a call's transaction
-            also scales with the deployment's links per segment; size
-            the bound with that fan-out in mind (default: 10000).
+            derivative links are deleted by cascade, so a call's
+            transaction also scales with the deployment's links per
+            segment; size the bound with that fan-out in mind
+            (default: 10000).
         partition_config (SegmentStorePartitionConfig):
             The configuration of each partition the store creates, recorded
             with the partition (default: plaintext payloads).
@@ -830,9 +830,9 @@ class SQLAlchemySegmentStoreParams(BaseModel):
         gt=0,
         description=(
             "Maximum number of segment rows purged per call. Their "
-            "derivative links follow by cascade, so a call's transaction "
-            "also scales with the deployment's links per segment; size "
-            "the bound with that fan-out in mind"
+            "derivative links are deleted by cascade, so a call's "
+            "transaction also scales with the deployment's links per "
+            "segment; size the bound with that fan-out in mind"
         ),
     )
     partition_config: SegmentStorePartitionConfig = Field(
@@ -944,8 +944,7 @@ class SQLAlchemySegmentStore(SegmentStore):
         # raise rolls the whole call back, cursor included. Purgers of one
         # partition serialize on its row's lock, so each reads the cursor
         # its predecessor committed; on SQLite, which drops locking clauses,
-        # the call holds the write lock from BEGIN. Full rationale:
-        # design/segment_store_shared_tables.md.
+        # the call holds the write lock from BEGIN.
         async with (
             self._tracker("purge_partition"),
             write_connection(self._engine) as connection,
@@ -961,10 +960,11 @@ class SQLAlchemySegmentStore(SegmentStore):
                 None if partition_row is None else partition_row.purged_through
             )
 
-            # The batch continues after the cursor, so it never reads rows an
-            # earlier batch deleted: PostgreSQL keeps them in the table and
-            # its indexes until vacuum, and a batch starting from the
-            # partition's first key would step over all of them.
+            # The batch continues after the cursor, so it reads no row an
+            # earlier batch of its walk deleted: PostgreSQL keeps deleted rows
+            # in the table and its indexes until vacuum. A walk's first batch,
+            # from the partition's first key, steps over the rows earlier
+            # walks deleted.
             after_cursor = (
                 [] if purged_through is None else [SegmentRow.uuid > purged_through]
             )
@@ -987,7 +987,7 @@ class SQLAlchemySegmentStore(SegmentStore):
             ).one_or_none()
             if batch_end is not None:
                 last, found = batch_end
-                # The link-table cascade follows the deleted segments.
+                # The link-table cascade deletes these segments' links.
                 await connection.execute(
                     delete(SegmentRow).where(
                         SegmentRow.partition_uuid == partition_uuid,

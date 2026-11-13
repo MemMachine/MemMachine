@@ -164,8 +164,9 @@ class SegmentStore(PartitionedStore[SegmentStorePartition]):
     The store holds each partition's segments under the partition's UUID. Its
     `PartitionedStore` methods create, get, purge, and drop partitions, which
     its owner's partition registry drives. A partition keeps the configuration
-    it was created with, which every handle on it uses. A purge call commits
-    what it did or nothing.
+    it was created with, which every handle on it uses: creating it again
+    with another raises SegmentStorePartitionConfigMismatchError. A purge
+    call commits what it did or nothing.
     """
 
     @abstractmethod

@@ -27,9 +27,13 @@ class EventMemoryStore(PartitionedStore[EventMemoryStorePartition]):
     """
     Event memory's stores, as one partitioned store.
 
-    Each partition step runs on every store at once: every store finishes
-    before the first store's error is raised, so the stores that answer keep
-    their progress while another is down.
+    Creating, purging, and dropping a partition run on every store at once:
+    every store finishes, each error is logged, and the first failing
+    store's error is raised, so the stores that answer keep their progress
+    while another is down. A purge finds records when any store's purge
+    does. Getting a partition answers None when the segment store does, and
+    gets the vector store's handle only otherwise, since a vector store
+    answers a handle for any UUID.
     """
 
     def __init__(self, segment_store: SegmentStore, vector_store: VectorStore) -> None:

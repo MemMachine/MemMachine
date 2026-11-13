@@ -122,8 +122,8 @@ class PurgeQueueRow(BasePartitionRegistry):
         Integer, nullable=False, default=0
     )
     # When a claim may next take the tombstone: once the open claim's lease
-    # and the backoff pass, or the backoff after a raise; None when no claim
-    # or raise since the last progress set one.
+    # and the backoff pass, or the backoff after a raise; None until a claim
+    # sets it, and again after a round that found records or was cancelled.
     claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -158,12 +158,11 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
     Attributes:
         engine (AsyncEngine):
             Async SQLAlchemy engine, on PostgreSQL or SQLite. On SQLite, set
-            up by `enable_sqlite_explicit_begin` at its creation: the
+            up by enable_sqlite_explicit_begin at its creation: the
             registry's write transactions take SQLite's write lock at BEGIN.
         partition_namespace (str):
             The namespace the registry serves: registry objects with the same
-            namespace on the same database are one registry. It is non-empty,
-            at most `_PARTITION_NAMESPACE_MAX_BYTES` bytes, and free of NUL.
+            namespace on the same database are one registry.
         tombstone_retention_seconds (int):
             Seconds a deleted partition's records are kept before its purge
             starts, on the database clock. It must exceed, by orders of
@@ -183,7 +182,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         ...,
         description=(
             "Async SQLAlchemy engine, on PostgreSQL or SQLite. On SQLite, set "
-            "up by enable_sqlite_explicit_begin at its creation"
+            "up by enable_sqlite_explicit_begin at its creation: the "
+            "registry's write transactions take SQLite's write lock at BEGIN"
         ),
     )
     partition_namespace: str = Field(
@@ -256,8 +256,9 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
     The registry of one partition namespace, over the store that holds its partitions.
 
     Registries of different namespaces share the tables, keyed by namespace.
-    A purge claim holds its tombstone for the purge lease, or
-    until its round ends, and no transaction stays open during the round.
+    A purge claim holds its tombstone until its round ends, or, for a round
+    that never ends, until the purge lease and the backoff pass, and no
+    transaction stays open during the round.
     After `_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS` attempts without progress, a
     tombstone is dead-lettered: kept, its UUID reserved, and skipped by
     claims; a last attempt that raises is reported in an error log. Setting its
@@ -442,7 +443,7 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
         return True
 
     async def _claim_oldest_due_tombstone(self) -> _TombstoneClaim | None:
-        """Claim the oldest due tombstone in one committed write, counting the attempt; None when none is due.
+        """Claim the oldest due tombstone in one committed write, counting the attempt; None when no due tombstone is claimable.
 
         The round then runs with no transaction open. The lease only spreads
         the work, since rounds are safe to repeat. A claim whose round never
@@ -503,7 +504,7 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
     async def _end_tombstone_claim_after_failure(
         self, claim: _TombstoneClaim, error: Exception
     ) -> None:
-        """End a raised purge round's tombstone claim and date its failure, if the claim is the latest.
+        """End a raised purge round's tombstone claim, making the tombstone claimable once the backoff passes, if the claim is the latest.
 
         A raise on the last attempt is reported: claims skip the tombstone from
         then on.
@@ -545,7 +546,8 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
         """End a cancelled purge round's tombstone claim without counting the round.
 
         Shielded, so a second cancellation cannot cut it short. The task logs
-        its own failure; the claim then ends with its lease.
+        its own failure; the tombstone is then claimable once the claim's
+        lease and the backoff pass.
         """
         ending = asyncio.create_task(self._end_tombstone_claim(claim))
         self._tombstone_claim_endings.add(ending)
@@ -555,7 +557,8 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
             if not task.cancelled() and task.exception() is not None:
                 logger.error(
                     "Could not end the claim of a cancelled purge round on "
-                    "partition %s; it ends with its lease",
+                    "partition %s; its tombstone is claimable once the lease "
+                    "and the backoff pass",
                     claim.partition_uuid,
                     exc_info=task.exception(),
                 )
@@ -734,7 +737,7 @@ async def _unregister_where(
     """Delete the partition row in a namespace the conditions select, and queue its tombstone.
 
     One transaction, so the partition is unreachable once it commits. The
-    DELETE goes first and takes the row's write lock, so racing deleters
+    DELETE runs first and takes the row's write lock, so racing deleters
     serialize on it and the loser finds no row and returns.
     """
     async with write_connection(engine) as connection:

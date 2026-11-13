@@ -140,10 +140,11 @@ class EventMemory:
     """
     Event memory over a segment store and a vector store.
 
-    Event memory owns its partition namespace: its registry names each
-    partition and mints its UUID, and each store holds a partition's records
-    under the UUID. A name deleted and created again names a new partition,
-    and a handle reads and writes the partition it is bound to only.
+    Event memory owns its partition namespace: its registry registers each
+    partition under the name its caller gives and mints its UUID, and each
+    store holds a partition's records under the UUID. A name deleted and
+    created again names a new partition, and a handle reads and writes the
+    partition it is bound to only.
     """
 
     PARTITION_NAMESPACE: Final[str] = "event_memory"
@@ -262,7 +263,7 @@ class EventMemory:
 
     async def delete_partition(self, partition_name: str) -> None:
         """
-        Delete the partition. Idempotent.
+        Delete the partition registered under a name, pending or live. Idempotent.
 
         The partition is unreachable once its name is unregistered, and its
         records await the registry's purge rounds.

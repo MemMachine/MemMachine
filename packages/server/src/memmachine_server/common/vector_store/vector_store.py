@@ -24,11 +24,12 @@ class VectorStorePartition(ABC):
     A handle on one partition's records in a vector store.
 
     All data operations are scoped to the partition: a record's UUID names it
-    in this partition only, and the same UUID in another names another record. The handle owns nothing: a caller builds one with
-    `VectorStore.get_partition`, drops it, and builds another at
-    will. The handle checks its inputs, and nothing about whether the
-    partition is still live: its owner fences each operation by the
-    partition's registration.
+    in this partition only, and the same UUID in another partition names
+    another record. The handle owns nothing: a caller builds one with
+    `VectorStore.get_partition`, drops it, and builds another at will. The
+    handle checks its inputs, and nothing about whether the partition is
+    still live: its owner fences each operation by the partition's
+    registration.
 
     An `upsert` or `delete` is durable once it returns; queries may not
     reflect it right away. A store that guarantees more states it.

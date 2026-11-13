@@ -74,8 +74,8 @@ async def _run_purge_rounds_forever[PartitionT](
 ) -> None:
     """Run a partition namespace's purge rounds for as long as the task runs.
 
-    A call that ran a round is followed after a short pause, one that found
-    nothing due after the idle interval, and one that raised is logged and
+    A call that ran a round is followed after a short pause, one that ran
+    none after the idle interval, and one that raised is logged and
     retried a tick later. Sweepers in other processes may run the same
     namespace's purge rounds at the same time.
 
@@ -132,7 +132,6 @@ class ResourceManagerImpl:
         # started and purging.
         self._started_partition_namespaces: set[tuple[str, str]] = set()
         self._partition_registry_purge_tasks: list[asyncio.Task[None]] = []
-        # One sweeper per store, keyed by its vector store id and its name.
 
         self._session_data_manager_lock = Lock()
         self._sql_lock_service_lock = Lock()
