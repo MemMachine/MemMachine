@@ -71,10 +71,10 @@ passed since its deletion.
 ### The purge round
 
 `purge_partition(partition_uuid)` and `drop_partition(partition_uuid)` are
-part of every store's contract (`PartitionedStore`): a purge call deletes a
-bounded batch of a deleted partition's records from storage it shares with
-other partitions and returns whether it found any, and a drop removes the
-storage the partition keeps for itself. Qdrant and Milvus purge records (per
+part of every store's contract (`PartitionedStore`): a purge call deletes
+some or all of a deleted partition's records from storage it shares with
+other partitions and returns False only when none remains, and a drop
+removes the storage the partition keeps for itself. Qdrant and Milvus purge records (per
 backend, below) and have nothing to drop; both SQLite stores find nothing to
 purge and drop the partition's tables at once.
 

@@ -175,11 +175,9 @@ which reads and writes the partition's records alone and checks nothing
 about whether the partition is live; it answers `None` when the store finds
 nothing under the UUID, and a store that cannot tell, such as a vector
 store, answers a handle.
-`purge_partition` deletes a batch of a deleted partition's records from
+`purge_partition` deletes some or all of a deleted partition's records from
 storage it shares with other partitions, is safe to repeat and to run on two
-processes at once, and returns whether it found any; a call that returns
-False proves none remains there, by a search from the partition's first
-record. `drop_partition` removes the storage the partition keeps for itself,
+processes at once, and returns False only when none remains there. `drop_partition` removes the storage the partition keeps for itself,
 with any records still in it, and is idempotent. A store that keeps a
 partition's records only in storage of its own finds nothing to purge and
 removes them when it drops the partition.
@@ -566,8 +564,9 @@ queue, its idempotent deletion that queues a tombstone, and its claim under
   composite store's, which knows its stores; a new store is one more store in
   the composite, and the registry is unchanged.
 - **Purge and drop are separate steps.** A purge deletes records from
-  storage the partition shares with other partitions, in batches, until it
-  finds none; a drop removes the storage the partition keeps for itself, once.
+  storage the partition shares with other partitions, over one call or many,
+  until none remains; a drop removes the storage the partition keeps for
+  itself.
   The registry drops only after the store's purge finds nothing, and a
   composite store's purge finds nothing only when none of its stores' does,
   so a round that drops proves the partition gone from every store.
