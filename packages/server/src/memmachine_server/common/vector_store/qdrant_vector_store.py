@@ -200,67 +200,42 @@ class QdrantVectorStorePartition(VectorStorePartition):
             if not query_vectors:
                 return []
 
-            qdrant_filter = _partition_filter(self._partition_uuid)
-            if property_filter is not None:
-                qdrant_filter = models.Filter(
-                    must=[
-                        qdrant_filter,
-                        QdrantVectorStorePartition._build_qdrant_filter(
-                            property_filter, self._store_schema.indexed_properties
-                        ),
-                    ]
-                )
-
-            # Qdrant keeps only scores strictly better than its threshold,
-            # compared in single precision, so send the next single-precision
-            # value on the worse side; the check below applies the caller's
-            # threshold exactly.
-            higher_is_better = self._store_schema.similarity_metric.higher_is_better
-            qdrant_score_threshold = None
-            if score_threshold is not None:
-                worse = np.float32(-np.inf if higher_is_better else np.inf)
-                adjacent = float(np.nextafter(np.float32(score_threshold), worse))
-                if math.isfinite(adjacent):
-                    qdrant_score_threshold = adjacent
-            requests = [
-                models.QueryRequest(
-                    query=query_vector,
-                    filter=qdrant_filter,
-                    score_threshold=qdrant_score_threshold,
-                    limit=limit,
-                    with_vector=False,
-                    with_payload=models.PayloadSelectorInclude(
-                        include=[_PAYLOAD_RECORD_UUID]
-                    ),
-                )
-                for query_vector in query_vectors
-            ]
-
+            qdrant_filter = self._query_filter(property_filter)
+            qdrant_score_threshold = self._qdrant_score_threshold(score_threshold)
             batch_results = await self._client.query_batch_points(
                 collection_name=self._vector_store_name,
-                requests=requests,
+                requests=[
+                    models.QueryRequest(
+                        query=query_vector,
+                        filter=qdrant_filter,
+                        score_threshold=qdrant_score_threshold,
+                        limit=limit,
+                        with_vector=False,
+                        with_payload=models.PayloadSelectorInclude(
+                            include=[_PAYLOAD_RECORD_UUID]
+                        ),
+                    )
+                    for query_vector in query_vectors
+                ],
             )
-
             return [
-                QueryResult(
-                    matches=[
-                        QueryMatch(
-                            score=point.score,
-                            record_uuid=UUID(
-                                (point.payload or {})[_PAYLOAD_RECORD_UUID]
-                            ),
-                        )
-                        for point in batch.points
-                        if score_threshold is None
-                        or (
-                            point.score >= score_threshold
-                            if higher_is_better
-                            else point.score <= score_threshold
-                        )
-                    ]
-                )
+                QueryResult(matches=self._matches(batch.points, score_threshold))
                 for batch in batch_results
             ]
+
+    def _query_filter(self, property_filter: FilterExpr | None) -> models.Filter:
+        """The filter a query sends: the partition's points, narrowed by the property filter when one is given."""
+        qdrant_filter = _partition_filter(self._partition_uuid)
+        if property_filter is None:
+            return qdrant_filter
+        return models.Filter(
+            must=[
+                qdrant_filter,
+                QdrantVectorStorePartition._build_qdrant_filter(
+                    property_filter, self._store_schema.indexed_properties
+                ),
+            ]
+        )
 
     @staticmethod
     def _build_qdrant_filter(
@@ -417,6 +392,42 @@ class QdrantVectorStorePartition(VectorStorePartition):
         if negate:
             return models.Filter(must_not=[condition])
         return models.Filter(must=[condition])
+
+    def _qdrant_score_threshold(self, score_threshold: float | None) -> float | None:
+        """
+        The threshold a query sends for the caller's, keeping every point that meets the caller's.
+
+        Qdrant keeps only scores strictly better than its threshold, compared
+        in single precision, so the query sends the next single-precision
+        value on the worse side, or none when that value is not finite;
+        `_matches` applies the caller's threshold exactly.
+        """
+        if score_threshold is None:
+            return None
+        worse = np.float32(
+            -np.inf if self._store_schema.similarity_metric.higher_is_better else np.inf
+        )
+        adjacent = float(np.nextafter(np.float32(score_threshold), worse))
+        return adjacent if math.isfinite(adjacent) else None
+
+    def _matches(
+        self, points: list[models.ScoredPoint], score_threshold: float | None
+    ) -> list[QueryMatch]:
+        """The matches of one query's points, best first as Qdrant returns them, keeping only those whose score meets the caller's threshold."""
+        higher_is_better = self._store_schema.similarity_metric.higher_is_better
+        return [
+            QueryMatch(
+                score=point.score,
+                record_uuid=UUID((point.payload or {})[_PAYLOAD_RECORD_UUID]),
+            )
+            for point in points
+            if score_threshold is None
+            or (
+                point.score >= score_threshold
+                if higher_is_better
+                else point.score <= score_threshold
+            )
+        ]
 
     @override
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
