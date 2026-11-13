@@ -1018,7 +1018,9 @@ class SQLAlchemySegmentStore(SegmentStore):
                     .values(purged_through=None)
                 )
                 return True
-            return deleted > 0
+            # Answered by the search, not the delete: a batch another
+            # transaction deleted first may leave rows past it.
+            return last is not None
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
