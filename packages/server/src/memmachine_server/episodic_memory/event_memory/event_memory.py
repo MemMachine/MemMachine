@@ -205,8 +205,7 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If the partition name is empty, too long, or contains a NUL
-                character.
+                If the partition name is invalid.
             PartitionAlreadyExistsError:
                 If the name is taken, by a live or a pending partition.
             PartitionCreateAttemptsExhaustedError:
@@ -242,8 +241,7 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If the partition name is empty, too long, or contains a NUL
-                character.
+                If the partition name is invalid.
             PartitionPendingError:
                 If the partition registered under the name is pending.
             PartitionDeletedError:
@@ -275,8 +273,7 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If the partition name is empty, too long, or contains a NUL
-                character.
+                If the partition name is invalid.
         """
         await self._params.partition_registry.delete_partition(partition_name)
 

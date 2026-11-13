@@ -315,8 +315,8 @@ def partition_key_for_session(session_id: str) -> str:
     """
     Derive the name of a session's event memory partition.
 
-    A session id that `validate_partition_name` accepts is the name as it is,
-    which keeps debug paths legible. Any other is hashed to a stable hex
+    A session id that is a valid partition name is the name as it is, which
+    keeps debug paths legible. Any other is hashed to a stable hex
     digest, with a DEBUG log of the original-to-hashed mapping so operators
     can correlate partition names back to sessions during incident response.
     """

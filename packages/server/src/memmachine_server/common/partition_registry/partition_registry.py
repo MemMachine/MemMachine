@@ -165,8 +165,7 @@ class PartitionRegistry[PartitionT](ABC):
 
         Raises:
             ValueError:
-                If the partition name is empty, too long, or contains a NUL
-                character.
+                If the partition name is invalid.
             PartitionAlreadyExistsError:
                 If the name is taken, by a live or a pending partition.
             PartitionCreateAttemptsExhaustedError:
@@ -251,8 +250,7 @@ class PartitionRegistry[PartitionT](ABC):
 
         Raises:
             ValueError:
-                If the partition name is empty, too long, or contains a NUL
-                character.
+                If the partition name is invalid.
             PartitionPendingError:
                 If the partition registered under the name is pending.
             PartitionDeletedError:
@@ -309,8 +307,7 @@ class PartitionRegistry[PartitionT](ABC):
 
         Raises:
             ValueError:
-                If the partition name is empty, too long, or contains a NUL
-                character.
+                If the partition name is invalid.
         """
         validate_partition_name(partition_name)
         await self._unregister(partition_name)
