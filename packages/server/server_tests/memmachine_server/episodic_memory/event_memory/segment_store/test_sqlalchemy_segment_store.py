@@ -1628,6 +1628,25 @@ async def test_purge_finds_nothing_only_when_its_search_finds_nothing(
     assert await _row_counts(store, PARTITION_UUID) == (0, 0)
 
 
+@pytest.mark.asyncio
+async def test_purge_advances_its_cursor_past_a_full_batch_another_transaction_shrank(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A full batch is the search's: the cursor advances though another transaction deleted part of the batch first."""
+    monkeypatch.setattr(store, "_purge_max_segments", 2)
+    partition = await _open(store)
+    segments = [_seg(ts_offset_seconds=index) for index in range(5)]
+    await partition.add_segments(_links(*segments))
+    ordered = sorted(segment.uuid for segment in segments)
+
+    with _deleted_before_the_next_segment_delete(store._engine, ordered[:1]):
+        assert await store.purge_partition(PARTITION_UUID) is True
+
+    assert await _purge_cursor(store) == ordered[1]
+    assert await _row_counts(store, PARTITION_UUID) == (3, 3)
+
+
 @contextlib.contextmanager
 def _deleted_before_the_next_segment_delete(
     engine: AsyncEngine, segment_uuids: list[UUID]
