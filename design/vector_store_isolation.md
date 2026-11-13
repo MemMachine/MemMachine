@@ -9,13 +9,13 @@ replaces a whole record. On a backend where the partitions of a store share
 one id space, one partition's upsert of a UUID another partition already
 holds would replace that other partition's record. Qdrant is such a backend
 as MemMachine lays it out: a store's partitions share its native collection,
-and a point's id was its record's UUID. The contract guarded against it with a rule
-on callers, that a record's UUID is minted by the service and never a value a
-caller supplied, which held only as long as every ingestion path honored it.
-This document answers what keeps partitions apart, what happens when a UUID
-is reused (across partitions, across partitions created under one name, or by a caller
-that chose it), and what the contract can promise, given that every backend
-has to be able to keep the promise.
+and a point's id was its record's UUID. The contract guarded against it with
+a rule on callers, that a record's UUID is minted by the service and never a
+value a caller supplied, which held only as long as every ingestion path
+honored it. This document answers what keeps partitions apart, what happens
+when a UUID is reused (across partitions, across partitions created under
+one name, or by a caller that chose it), and what the contract can promise,
+given that every backend has to be able to keep the promise.
 
 ## Partitions under one name
 
@@ -30,11 +30,9 @@ has to be able to keep the promise.
 
 ## The guarantee
 
-`VectorStorePartition` states:
-
-> All data operations are scoped to the partition: a record's UUID names it
-> in this partition only, and the same UUID in another partition names
-> another record.
+`VectorStorePartition`'s contract scopes every data operation to the
+partition: a record's UUID names a record in that partition only, and the
+same UUID in another partition names another record.
 
 A record UUID may come from anywhere, a caller included: reusing one in
 another partition stores another record, and no operation on one partition

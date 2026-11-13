@@ -1,6 +1,7 @@
-# Vector store: tombstones and purge
+# Partition registry: tombstones and purge
 
-Part of [vector store horizontal scaling](vector_store_horizontal_scaling.md).
+Part of the [partition registry](partition_registry.md), for every store it
+drives.
 
 ## Problem
 
@@ -17,8 +18,8 @@ process serves a backend:
 
 ## Design
 
-Deletion is logical and immediate; reclamation is physical, deferred, bounded,
-and retried.
+Deletion is logical and immediate; reclamation is physical, deferred, and
+retried.
 
 ### Tombstones
 
@@ -29,8 +30,8 @@ when it commits. Its records stay in the backend until purge rounds reclaim
 them.
 
 A tombstone becomes *due* once `tombstone_retention_seconds` (the partition
-namespace's, in its owner's configuration: for event memory,
-`episodic_memory.long_term_memory`; 86,400, one day, unless configured) has
+namespace's: for event memory, in `episodic_memory.long_term_memory`, 86,400,
+one day, unless configured; for semantic memory, fixed in its code) has
 passed since its deletion.
 
 - **Why wait.** A write that passed its liveness check before the deletion
@@ -40,23 +41,26 @@ passed since its deletion.
 - **What a round sees.** A round lists the partition's records with the
   store's own reads, which may lag writes by a delay the store states (see
   [consistency](vector_store_consistency.md)): at most `common.gracefulTime`
-  (5 s by default) on Milvus at Bounded. The retention exceeds that delay too,
-  so a round that runs after it and finds nothing proves the partition empty. A round that lists
-  records an earlier round deleted, before the deletion is reflected, deletes
-  them again: a repeated round, never a wrong result.
-- **The retention decides nothing about validity.** A stale write is refused
-  by the handle's check after it; the retention only has to outlast any write
-  in flight. A write that lands after its tombstone is gone stays in a deleted
-  partition no handle reads: leaked storage, never a wrong result.
+  (5 s by default) on Milvus at Bounded. The retention exceeds that delay
+  too, so a round that runs after it and finds nothing proves the partition
+  empty. A round that lists records an earlier round deleted, before the
+  deletion is reflected, deletes them again: a repeated round, never a wrong
+  result.
+- **The retention decides nothing about validity.** A stale write is
+  reported by its owner's check after it; the retention only has to outlast
+  any write in flight. A write that lands after its tombstone is gone stays
+  in a deleted partition no handle reads: leaked storage, never a wrong
+  result.
 - **The configuration enforces a floor of 10 × the vector store's
   `request_timeout_seconds` + 300 s** on event memory's retention when its
-  vector store is Qdrant or Milvus. The request timeout is the only part of a write's time in flight
-  the store knows. Neither Qdrant nor Milvus bounds how long a received write
-  can wait before it is applied (their queues are bounded by count), both can
-  apply a write after its client has given up, and Milvus's read delay
-  (`common.gracefulTime`) is server configuration a client cannot read. These
-  take seconds to minutes when no process is paused; the default retention, a
-  day, also covers a process paused between its liveness check and its write.
+  vector store is Qdrant or Milvus. The request timeout is the only part of
+  a write's time in flight the store knows. Neither Qdrant nor Milvus bounds
+  how long a received write can wait before it is applied (their queues are
+  bounded by count), both can apply a write after its client has given up,
+  and Milvus's read delay (`common.gracefulTime`) is server configuration a
+  client cannot read. These take seconds to minutes when no process is
+  paused; the default retention, a day, also covers a process paused between
+  its liveness check and its write.
 - **Only the database's clock is used.** The queue stores the deletion's time,
   `enqueued_at`, written by the database's `now()`. The retention is applied
   by the database's own arithmetic when a claim is decided (`now() - interval`
@@ -74,14 +78,14 @@ passed since its deletion.
 part of every store's contract (`PartitionedStore`): a purge call deletes
 some or all of a deleted partition's records from storage it shares with
 other partitions and returns False only when none remains, and a drop
-removes the storage the partition keeps for itself. Qdrant and Milvus purge records (per
-backend, below) and have nothing to drop; both SQLite stores find nothing to
-purge and drop the partition's tables at once.
+removes the storage the partition keeps for itself. Qdrant and Milvus purge
+records (per backend, below) and have nothing to drop; both SQLite stores
+find nothing to purge and drop the partition's tables at once.
 
-`PartitionRegistry.run_purge_round()` does a bounded amount of work
-and returns whether it ran a round, `False` once nothing is due, so a caller
-drains the queue by calling it until `False`. A call is one round on the
-tombstone that came due first, and runs it in three steps:
+`PartitionRegistry.run_purge_round()` returns whether it ran a round,
+`False` once no due tombstone is claimable, so a caller drains the queue by
+calling it until `False`. A call is one round on the tombstone that came due
+first, and runs it in three steps:
 
 1. **Claim.** One `UPDATE ... RETURNING`, committed at once, takes the oldest
    due tombstone that is neither backing off, dead-lettered, nor held by another
@@ -200,24 +204,25 @@ holds nothing: the store's purge finds nothing there.
 
 The store never schedules its own purge. The resource manager starts one
 sweeper task per partition registry the first time it builds the registry,
-and `close()` cancels them. A sweeper calls
-`run_purge_round()` again after 1 s when it ran a round and after 60 s when
-nothing was due; a round that raises is logged and retried a tick later. Sweepers on other
-processes need no coordination: the claim arbitrates.
+and `close()` cancels them. A sweeper calls `run_purge_round()` again after
+1 s when it ran a round and after 60 s when it ran none; a round that raises
+is logged and retried a tick later. Sweepers on other processes need no
+coordination: the claim arbitrates.
 
 ### Measured cost of the claim
 
 Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 2 CPUs and SQLite in a file.
 
-- Backoff (the claim of #1734's commit 96a8b5bf6, which this registry ports;
-  PostgreSQL 18.6 and SQLite 3.50.4; 1,000,000 tombstones not yet due; median
-  of 50 calls): a call that claims nothing reads each due tombstone that is
-  backing off and none that is not yet due. It took 1.5 / 2.9 / 20 ms on
-  PostgreSQL and 1.0 / 4.5 / 40 ms on SQLite with 1k / 10k / 100k tombstones
-  backing off, and 1.3 ms on PostgreSQL and 0.7 ms on SQLite with none due.
-- Interference (the lease of #1734's commit 503687c35, whose rounds cost the
-  same database time as 96a8b5bf6's; 20,000 live registry rows and 20,000 due
+- Backoff (a claim computing the backoff from a recorded `last_failed_at`,
+  as an alternative below does; PostgreSQL 18.6 and SQLite 3.50.4; 1,000,000
+  tombstones not yet due; median of 50 calls): a call that claims nothing
+  reads each due tombstone that is backing off and none that is not yet due.
+  It took 1.5 / 2.9 / 20 ms on PostgreSQL and 1.0 / 4.5 / 40 ms on SQLite
+  with 1k / 10k / 100k tombstones backing off, and 1.3 ms on PostgreSQL and
+  0.7 ms on SQLite with none due.
+- Interference (rounds of the same claim, with its lease computed from a
+  recorded `claimed_at`; 20,000 live registry rows and 20,000 due
   tombstones; 16 interactive workers checking handles' liveness beside two
   sweepers, three phases each): on PostgreSQL 16, with rounds back to back
   (about 520 per second) or of 20 ms (about 70 per second), interactive
@@ -246,8 +251,9 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - **Count the backoff from when the tombstone came due**, with no new column.
   Measured: a tombstone due for days retries at once, its backoff spent before
   it first fails, so after an outage it fails as fast as before.
-- **An index on `(enqueued_at, attempts_without_progress)`.** It helps only
-  skipping dead-lettered tombstones, so the claim keeps `(enqueued_at)`.
+- **An index on `(partition_namespace, enqueued_at,
+  attempts_without_progress)`.** It helps only skipping dead-lettered
+  tombstones, so the claim keeps `(partition_namespace, enqueued_at)`.
 - **A separate dead-letter table.** A counter on the queue row does the same
   with no move between tables.
 - **Count a round that never ended when a later claim finds its lease
@@ -278,7 +284,8 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - **Fence the tombstone's removal too.** A partition found empty after the
   retention needs no more rounds, whoever found it, so the fence would only
   discard the finding and repeat the round.
-- **A progress cursor on the tombstone**, as the segment store's queue keeps.
+- **A progress cursor on the tombstone**, as the segment store keeps one in
+  its partition's row.
   Qdrant's round deletes the whole partition at once and leaves nothing to
   resume. Milvus lists the partition's keys by its field, and its rounds
   stayed flat to the end of a 1M purge, where the segment store's batches
@@ -302,8 +309,8 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - An operator watches for the dead-letter error log and for repeated retry
   warnings. A dead-lettered tombstone's records stay until someone resets its
   `attempts_without_progress`.
-- The purge loads the backend in bounded rounds from every process's sweeper,
-  and the rounds of different tombstones proceed in parallel.
+- The purge loads the backend in rounds from every process's sweeper, and
+  the rounds of different tombstones proceed in parallel.
 - A tombstone whose round died waits out the lease and the backoff, its
   attempt counted by its claim: a tombstone whose rounds keep killing their
   purger is dead-lettered like one whose rounds keep raising, without the
