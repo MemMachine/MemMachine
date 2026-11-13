@@ -1,6 +1,7 @@
 """Unit tests for service_locator helpers."""
 
-from unittest.mock import NonCallableMagicMock, create_autospec
+from datetime import UTC, datetime
+from unittest.mock import NonCallableMagicMock, create_autospec, sentinel
 from uuid import uuid4
 
 import pytest
@@ -17,6 +18,10 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ConfigurationError
 from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
+    PartitionDeletedError,
+    PartitionPendingError,
     PartitionRegistry,
     Registration,
     validate_partition_name,
@@ -33,6 +38,7 @@ from memmachine_server.episodic_memory.declarative_memory.data_types import (
     Episode as DeclarativeMemoryEpisode,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EventMemory,
     EventMemoryPartition,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory_store import (
@@ -301,3 +307,112 @@ async def test_deleting_a_declarative_sessions_storage_deletes_its_episodes(
     declarative_memory.get_matching_episodes.assert_awaited_once_with()
     (deleted,) = declarative_memory.delete_episodes.await_args.args
     assert list(deleted) == ["a", "b"]
+
+
+@pytest.fixture
+def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service_locator, "_GET_OR_CREATE_RETRY_DELAY_SECONDS", 0)
+
+
+def _event_memory() -> NonCallableMagicMock:
+    """An event memory in which no partition holds any name and every creation succeeds."""
+    event_memory = create_autospec(EventMemory, instance=True)
+    event_memory.get_partition.return_value = None
+    event_memory.create_partition.return_value = sentinel.created
+    return event_memory
+
+
+def _pending() -> PartitionPendingError:
+    return PartitionPendingError(
+        EventMemory.PARTITION_NAMESPACE, "p", datetime.now(UTC)
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_answers_a_live_partition_without_creating():
+    event_memory = _event_memory()
+    event_memory.get_partition.return_value = sentinel.live
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.live
+    event_memory.create_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_creates_the_partition_when_no_partition_holds_the_name():
+    event_memory = _event_memory()
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.created
+    event_memory.create_partition.assert_awaited_once_with("p")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_waits_for_a_pending_partition():
+    event_memory = _event_memory()
+    event_memory.get_partition.side_effect = [_pending(), _pending(), sentinel.live]
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.live
+    assert event_memory.get_partition.await_count == 3
+    event_memory.create_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_reports_a_partition_that_stays_pending():
+    event_memory = _event_memory()
+    pending = _pending()
+    event_memory.get_partition.side_effect = pending
+
+    with pytest.raises(PartitionPendingError) as still_pending:
+        await service_locator._get_or_create_event_memory_partition(event_memory, "p")
+
+    assert still_pending.value is pending
+    assert (
+        event_memory.get_partition.await_count
+        == service_locator._MAX_GET_OR_CREATE_ATTEMPTS
+    )
+    event_memory.create_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_creates_again_after_a_deletion_during_creation():
+    event_memory = _event_memory()
+    event_memory.create_partition.side_effect = [
+        PartitionDeletedError(EventMemory.PARTITION_NAMESPACE, "p", uuid4()),
+        sentinel.created,
+    ]
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.created
+    assert event_memory.create_partition.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_gives_up_from_the_race_it_last_lost():
+    event_memory = _event_memory()
+    lost = PartitionAlreadyExistsError(EventMemory.PARTITION_NAMESPACE, "p")
+    event_memory.create_partition.side_effect = lost
+
+    with pytest.raises(
+        PartitionCreateAttemptsExhaustedError, match="no progress"
+    ) as gave_up:
+        await service_locator._get_or_create_event_memory_partition(event_memory, "p")
+
+    assert gave_up.value.__cause__ is lost
