@@ -1090,17 +1090,14 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             derivative_uuids_by_segment: dict[UUID, list[UUID]] = {
                 segment_uuid: [] for segment_uuid in segment_uuids
             }
+            # By the segments locked above, which the derivatives' index
+            # leads on; a join from the events leaves SQLite free to scan
+            # the partition's derivatives instead.
             for derivative_uuid, segment_uuid in (
                 await session.execute(
-                    select(DerivativeRow.uuid, DerivativeRow.segment_uuid)
-                    .join(
-                        SegmentRow,
-                        (SegmentRow.incarnation == DerivativeRow.incarnation)
-                        & (SegmentRow.uuid == DerivativeRow.segment_uuid),
-                    )
-                    .where(
-                        SegmentRow.incarnation == self._incarnation,
-                        SegmentRow.event_uuid.in_(held_event_uuids),
+                    select(DerivativeRow.uuid, DerivativeRow.segment_uuid).where(
+                        DerivativeRow.incarnation == self._incarnation,
+                        DerivativeRow.segment_uuid.in_(segment_uuids),
                     )
                 )
             ).all():
