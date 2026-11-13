@@ -31,9 +31,8 @@ class EventMemoryStore(PartitionedStore[EventMemoryStorePartition]):
     every store finishes, each error is logged, and the first failing
     store's error is raised, so the stores that answer keep their progress
     while another is down. A purge finds records when any store's purge
-    does. Getting a partition answers None when the segment store does, and
-    gets the vector store's handle only otherwise, since a vector store
-    answers a handle for any UUID.
+    does. Getting a partition answers None when either store finds nothing
+    under its UUID.
     """
 
     def __init__(self, segment_store: SegmentStore, vector_store: VectorStore) -> None:
@@ -66,11 +65,12 @@ class EventMemoryStore(PartitionedStore[EventMemoryStorePartition]):
         )
         if segment_store_partition is None:
             return None
+        vector_store_partition = await self._vector_store.get_partition(partition_uuid)
+        if vector_store_partition is None:
+            return None
         return EventMemoryStorePartition(
             segment_store_partition=segment_store_partition,
-            vector_store_partition=await self._vector_store.get_partition(
-                partition_uuid
-            ),
+            vector_store_partition=vector_store_partition,
         )
 
     @override
