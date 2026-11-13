@@ -392,6 +392,25 @@ def test_a_deployment_without_event_memory_refuses_an_event_project(
         )
 
 
+def test_a_deployment_without_a_partition_registry_refuses_an_event_project(
+    minimal_conf_factory, patched_resource_manager
+):
+    """A session event memory cannot serve, or delete, is never created."""
+    conf = minimal_conf_factory()
+    conf.episodic_memory.long_term_memory = LongTermMemoryConfPartial(
+        backend="event",
+        vector_store="vs",
+        segment_store="ss",
+        embedder="default-embedder",
+    )
+    memmachine = MemMachine(conf, patched_resource_manager)
+
+    with pytest.raises(ConfigurationError, match="no event memory"):
+        memmachine._with_default_episodic_memory_conf(
+            session_key="s", user_conf=_EVENT_PROJECT
+        )
+
+
 @pytest.mark.asyncio
 async def test_create_session_passes_generated_config(
     minimal_conf, patched_resource_manager

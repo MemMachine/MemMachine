@@ -246,15 +246,12 @@ async def _event_memory_partition_registry(
     The registry of event memory's partition namespace, over event memory's stores, whose purge rounds run in the background.
 
     Raises:
-        ConfigurationError: If the deployment names no registry database
-            for event memory.
+        ConfigurationError: If the deployment configures no event memory.
 
     """
     deployment = resource_manager.config.episodic_memory.long_term_memory
     if deployment is None or deployment.partition_registry is None:
-        raise ConfigurationError(
-            "The deployment's event memory names no partition_registry database"
-        )
+        raise ConfigurationError("The deployment configures no event memory")
     return await resource_manager.get_partition_registry(
         deployment.partition_registry,
         partition_namespace=EventMemory.PARTITION_NAMESPACE,
@@ -267,10 +264,13 @@ def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str,
     """
     The deployment's event memory vector store, segment store, and embedder ids.
 
-    Every session's event memory uses them.
+    Every session's event memory uses them, with the deployment's
+    partition registry.
 
     Raises:
-        ConfigurationError: If the deployment configures no event memory.
+        ConfigurationError: If the deployment configures no event memory:
+            it names no vector store, segment store, partition registry,
+            or embedder.
 
     """
     deployment = configuration.episodic_memory.long_term_memory
@@ -278,6 +278,7 @@ def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str,
         deployment is None
         or deployment.vector_store is None
         or deployment.segment_store is None
+        or deployment.partition_registry is None
         or deployment.embedder is None
     ):
         raise ConfigurationError("The deployment configures no event memory")

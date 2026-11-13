@@ -267,7 +267,7 @@ async def test_event_memory_without_a_registry_database_is_refused():
     )
     config = EventLongTermMemoryConf(session_id="s")
 
-    with pytest.raises(ConfigurationError, match="partition_registry"):
+    with pytest.raises(ConfigurationError, match="no event memory"):
         await long_term_memory_from_config(config, resource_manager)
 
 
