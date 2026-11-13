@@ -251,7 +251,9 @@ registration.
 Callers address partitions by name, and only the registry holds names. A
 store addresses its partitions by UUID, so the segment store's 32-byte
 identifier rule gives way to the registry's own rule: a name is non-empty, at
-most 255 bytes, and free of NUL, which PostgreSQL's text type cannot store. A
+most 255 bytes, and free of NUL, which PostgreSQL's text type cannot store.
+The registry's by-name operations refuse a name that breaks the rule with
+`ValueError` before reading or writing anything, so no backend sees one. A
 caller's identifier, such as a session id, is the partition name as it is.
 
 Deletion is by name: `delete_partition` removes whichever partition holds the

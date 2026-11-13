@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
-from .data_types import PartitionDeletedError
+from .data_types import PartitionDeletedError, validate_partition_name
 from .partitioned_store import PartitionedStore
 
 logger = logging.getLogger(__name__)
@@ -164,6 +164,9 @@ class PartitionRegistry[PartitionT](ABC):
             Registration[PartitionT]: The new partition's registration.
 
         Raises:
+            ValueError:
+                If the partition name is empty, too long, or contains a NUL
+                character.
             PartitionAlreadyExistsError:
                 If the name is taken, by a live or a pending partition.
             PartitionCreateAttemptsExhaustedError:
@@ -174,6 +177,7 @@ class PartitionRegistry[PartitionT](ABC):
             Exception:
                 Whatever the store's `create_partition` raised.
         """
+        validate_partition_name(partition_name)
         reservation = await self._reserve(partition_name)
         try:
             await self._partitioned_store.create_partition(reservation.partition_uuid)
@@ -246,12 +250,16 @@ class PartitionRegistry[PartitionT](ABC):
                 holds the name.
 
         Raises:
+            ValueError:
+                If the partition name is empty, too long, or contains a NUL
+                character.
             PartitionPendingError:
                 If the partition registered under the name is pending.
             PartitionDeletedError:
                 If the store holds nothing of the partition: it was deleted
                 and its purge has dropped it.
         """
+        validate_partition_name(partition_name)
         partition_uuid = await self._resolve(partition_name)
         if partition_uuid is None:
             return None
@@ -298,7 +306,13 @@ class PartitionRegistry[PartitionT](ABC):
 
         Args:
             partition_name (str): The name of the partition.
+
+        Raises:
+            ValueError:
+                If the partition name is empty, too long, or contains a NUL
+                character.
         """
+        validate_partition_name(partition_name)
         await self._unregister(partition_name)
 
     @abstractmethod

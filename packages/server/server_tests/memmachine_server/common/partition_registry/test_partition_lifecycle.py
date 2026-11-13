@@ -117,6 +117,25 @@ async def test_a_partition_the_store_holds_nothing_of_is_deleted(registry, store
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "partition_name",
+    ["", "nul\x00", "x" * 256, "ü" * 128],
+    ids=["empty", "nul", "too_many_characters", "too_many_bytes"],
+)
+async def test_an_invalid_name_is_refused_by_every_by_name_operation(
+    registry, store, partition_name
+):
+    with pytest.raises(ValueError, match="Partition name"):
+        await registry.create_partition(partition_name)
+    with pytest.raises(ValueError, match="Partition name"):
+        await registry.get_partition(partition_name)
+    with pytest.raises(ValueError, match="Partition name"):
+        await registry.delete_partition(partition_name)
+    store.create_partition.assert_not_awaited()
+    assert await _queued(registry) == 0
+
+
+@pytest.mark.asyncio
 async def test_a_taken_name_is_refused_before_the_store_creates(registry, store):
     await registry.create_partition(NAME)
 

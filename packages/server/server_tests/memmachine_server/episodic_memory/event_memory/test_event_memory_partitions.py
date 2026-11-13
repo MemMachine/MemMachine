@@ -261,14 +261,3 @@ async def test_the_purge_round_reclaims_a_deleted_partition_from_every_store(
     segments = await segment_store.get_partition(_partition_uuid(kept))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([kept_event.uuid])
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("partition_name", ["", "nul\x00", "x" * 256])
-async def test_a_name_outside_the_rule_is_refused(
-    event_memory: EventMemory, partition_name: str
-) -> None:
-    with pytest.raises(ValueError, match="Partition name"):
-        await event_memory.create_partition(partition_name)
-    with pytest.raises(ValueError, match="Partition name"):
-        await event_memory.get_partition(partition_name)
