@@ -29,6 +29,7 @@ from sqlalchemy import (
     Uuid,
     bindparam,
     delete,
+    func,
     insert,
     select,
     true,
@@ -945,10 +946,6 @@ class SQLAlchemySegmentStore(SegmentStore):
         # its predecessor committed; on SQLite, which drops locking clauses,
         # the call holds the write lock from BEGIN. Full rationale:
         # design/segment_store_shared_tables.md.
-        #
-        # Pure Core DML on an engine connection: unlike Session.execute,
-        # AsyncConnection.execute is typed CursorResult, whose rowcount the
-        # batch needs.
         async with (
             self._tracker("purge_partition"),
             write_connection(self._engine) as connection,
@@ -978,27 +975,30 @@ class SQLAlchemySegmentStore(SegmentStore):
                 .limit(self._purge_max_segments)
                 .subquery()
             )
-            last = (
+            # Every decision below is the search's, not the delete's: another
+            # transaction may delete some of the batch first.
+            found, last = 0, None
+            batch_end = (
                 await connection.execute(
-                    select(batch.c.uuid).order_by(batch.c.uuid.desc()).limit(1)
+                    select(batch.c.uuid, func.count().over())
+                    .order_by(batch.c.uuid.desc())
+                    .limit(1)
                 )
-            ).scalar_one_or_none()
-            deleted = 0
-            if last is not None:
+            ).one_or_none()
+            if batch_end is not None:
+                last, found = batch_end
                 # The link-table cascade follows the deleted segments.
-                deleted = (
-                    await connection.execute(
-                        delete(SegmentRow).where(
-                            SegmentRow.partition_uuid == partition_uuid,
-                            *after_cursor,
-                            SegmentRow.uuid <= last,
-                        )
+                await connection.execute(
+                    delete(SegmentRow).where(
+                        SegmentRow.partition_uuid == partition_uuid,
+                        *after_cursor,
+                        SegmentRow.uuid <= last,
                     )
-                ).rowcount
+                )
 
-            if deleted >= self._purge_max_segments:
-                # The bound was consumed; the partition may have more rows,
-                # so record how far the purge got for the next call.
+            if found >= self._purge_max_segments:
+                # The search found a full batch; the partition may have more
+                # rows, so record how far the purge got for the next call.
                 if partition_row is not None:
                     await connection.execute(
                         update(PartitionRow)
@@ -1018,8 +1018,6 @@ class SQLAlchemySegmentStore(SegmentStore):
                     .values(purged_through=None)
                 )
                 return True
-            # Answered by the search, not the delete: a batch another
-            # transaction deleted first may leave rows past it.
             return last is not None
 
     @override
