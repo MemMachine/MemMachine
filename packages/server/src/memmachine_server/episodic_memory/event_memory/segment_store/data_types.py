@@ -99,7 +99,7 @@ class SegmentStorePartitionAlreadyExistsError(Exception):
 
 class Tombstone(BaseModel):
     """
-    A forgotten segment's derivatives, whose derived index entries remain to delete.
+    The derivatives of a forgotten segment, by UUID, whose derived index entries remain to delete.
 
     Attributes:
         segment_uuid (UUID):

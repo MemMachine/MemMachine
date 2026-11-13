@@ -7,9 +7,9 @@ and a forget stays complete anyway.
 
 ## Requirements
 
-- **Deletion.** After a forget commits, the events and their segments are
-  gone from SQL, and their derivatives' vectors are deleted at once and
-  again after a retention R, and the second delete deletes the derivatives.
+- **Deletion.** After a forget commits, the events, their segments, and
+  their derivatives are deleted from SQL, and the derivatives' vectors are
+  deleted at once and again after a retention R.
 - **Adding again.** A forgotten event can be added again under its UUID as
   soon as the forget commits.
 - **Late writes.** A write to the vector store can be applied after its
@@ -27,11 +27,11 @@ and a forget stays complete anyway.
 ## The protocol
 
 **State.** The segment store keeps each segment's derivatives as derived,
-from the ingest until the segment's second delete: what its index is
-written from, and the segment a hit on one names. Besides those, it keeps
-a pending write for each segment, until the vector store has its
-derivatives, and a tombstone for each forgotten segment, until the second
-delete, in its own database and transactions. Both are a segment's, so
+from the ingest until the forget: what its index is written from, and the
+segment a hit on one names. Besides those, it keeps a pending write for
+each segment, until the vector store has its derivatives, and a tombstone
+for each forgotten segment, holding its derivatives' UUIDs until the
+second delete, in its own database and transactions. Both are a segment's, so
 each holds a bounded amount of work when the segmenter bounds its
 segments, and neither holds a value the caller chose.
 
@@ -52,14 +52,13 @@ only spare the background work: a failure there is logged, and a failure
 or a stop after step 3 leaves the derivatives pending, for the background
 work to write.
 
-**Forget.** One transaction locks the events and their segments, reads
-the segments' derivatives, writes a tombstone for each segment, and
-deletes the events, which cascades to the segments and their pending
-writes. The derivatives stay for the tombstones, and a hit on one no
-longer names a segment. The
-vectors are then deleted once and the first delete recorded, and each
-tombstone awaits its second delete, due R after that record, which
-removes it with its derivatives. A failure here leaves the first delete to
+**Forget.** One transaction locks the events and their segments, writes a
+tombstone for each segment, copies the segment's derivative UUIDs into it,
+and deletes the events, which cascades to the segments and to their
+pending writes and derivatives. The vectors are then deleted once and the
+first delete recorded, and each tombstone awaits its second delete, due R
+after that record, which deletes the tombstone and, by cascade, its
+derivative UUIDs. A failure here leaves the first delete to
 the background work.
 
 **Background work.** Any process claims, from the segment store:
@@ -97,10 +96,10 @@ by what an ingest mints, never by the event's UUID, so the deletes of a
 forgotten event never reach the records of the event added again under
 its UUID.
 
-**Search.** A vector hit whose derivative names no stored segment is
-dropped from the results, and its vector is deleted without the search
-waiting for it; if that delete fails, the next search that finds the hit
-deletes it again.
+**Search.** A vector hit whose derivative is no longer stored is dropped
+from the results, and its vector is deleted without the search waiting
+for it; if that delete fails, the next search that finds the hit deletes
+it again.
 
 **Partition deletion.** The segment store's partition is deleted first, so its
 text is gone at once and no write starts on it; the vector store's
@@ -167,10 +166,11 @@ erasure. Removing any one piece above breaks one of them.
   between leaves vectors whose links the delete removed.
 - **One delete.** A write admitted before it can land after it, as
   measured.
-- **Delete the derivatives at the forget, the tombstone keeping their
-  UUIDs.** The forget then deletes every derivative row while the caller
-  waits, the tombstone holds a list, and a delete reads only keys where a
-  write read the whole derivative.
+- **Keep the derivatives until the second delete**, the tombstone reading
+  their UUIDs from them. It spares the forget a copy and a delete per
+  derivative, but leaves the forgotten text in SQL for R, leaves the
+  derivatives without a foreign key to their segment, and makes every
+  read of derivatives by UUID join the segments to skip forgotten ones.
 - **Keep the forgotten segments too, until the second delete.** Every read
   of segments would then have to skip forgotten ones.
 - **One table for pending writes and tombstones.** The forget would turn a
@@ -201,13 +201,14 @@ erasure. Removing any one piece above breaks one of them.
   do. An ingest's success means its events are stored; when they are
   searchable is each derived index's delay, which no check reports.
 - Forgotten vectors stay physically in the vector store until their
-  deletes run; the events and segments are gone from SQL when the forget
-  commits, and the derivatives once the second delete runs.
+  deletes run; the events, segments, and derivatives are deleted from SQL
+  when the forget commits, and a tombstone keeps only its derivatives'
+  UUIDs until the second delete.
 - A deployment's sessions share its vector store, segment store, and
   embedder. Pointing the deployment at other stores moves no data.
 - Recovery needs the embedder and the vector store, and waits out their
   outages in its backoff. A record or tombstone that keeps failing is
-  reported and kept, with a tombstone's derivatives, and needs an operator
-  to retry it.
+  reported and kept, with a tombstone's derivative UUIDs, and needs an
+  operator to retry it.
 - A process paused for about R or longer after its budget starts, and a
   restore of SQL from a backup, are outside this design.

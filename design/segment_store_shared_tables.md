@@ -52,15 +52,16 @@ One physical schema on every dialect; the ORM models are the tables.
   verbatim.
 - `segment_store_pw`, pending writes, and `segment_store_tb`, tombstones,
   each a segment's: the work a derived index of the derivatives leaves
-  behind (`event_memory_ingest_and_deletion.md`).
+  behind (`event_memory_ingest_and_deletion.md`). `segment_store_tb_dv`
+  holds a tombstone's derivative UUIDs.
 - `segment_store_gc`, the purge queue: one row per dead incarnation, with a
   cursor per table the purge reclaims, the last key purged. An entry holds
   only what the purge reads.
 
-The pending write table keeps its foreign key to the segment table, and
-the segment table its to the event table (`ON DELETE CASCADE`), both
-keyed by incarnation; derivatives outlive a forgotten segment until its
-tombstone's second delete deletes them, so they have no foreign key to it.
+The derivative and pending write tables keep their foreign keys to the
+segment table, the segment table its to the event table, and the
+tombstone derivative UUIDs theirs to the tombstone table, all
+`ON DELETE CASCADE` and keyed by incarnation.
 The segment table has no foreign key to the registry: registry rows and
 data rows are decoupled so that registry deletion is O(1), and the rows
 left behind are exactly what the purge queue tracks.
@@ -111,20 +112,20 @@ on random-UUID collision resistance.
     committed progress survives interruption.
   - Rows are deleted in batches of up to
     `SQLAlchemySegmentStoreParams.purge_max_rows` per call, shared by
-    the derivative, segment, event and tombstone tables in that order,
-    a segment's pending write following it by cascade. A batch
-    continues from its table's cursor: it reads the next keys after the
-    cursor in primary-key order, deletes that key range, and records its
-    last key in the same transaction. No batch reads a row an
+    the derivative, segment, event, tombstone derivative UUID and
+    tombstone tables in that order, each before the table its rows cascade
+    from, so the only cascade a batch runs deletes a segment's one pending
+    write. A batch continues from its table's cursor: it reads the next
+    keys after the cursor in primary-key order, deletes that key range, and
+    records its last key in the same transaction. No batch reads a row an
     earlier batch deleted; PostgreSQL keeps deleted rows in the table and
     its indexes until vacuum, and a batch that started from the
     incarnation's first key would step over all of them, making each
     batch, and the call that finds the incarnation empty, cost in
     proportion to what was already purged. The cursor relies on no row
     being written into an incarnation once it is enqueued, which the write
-    fence guarantees (below). Derivatives are batched like the rest: they
-    outlive forgotten segments, so no cascade reaches them, and the bound
-    counts every row a call deletes.
+    fence guarantees (below). The bound counts every row a call deletes
+    but those pending writes.
   - Queue entries carry their own bound,
     `SQLAlchemySegmentStoreParams.purge_max_partitions`, because their cost
     is round trips rather than rows: empty partitions are cheap to create

@@ -34,10 +34,9 @@ class SegmentStorePartition(ABC):
 
     The partition holds an event at most once, and its events and their
     segments are immutable: a changed event is forgotten and added again.
-    A forget deletes the events and their segments, and leaves a tombstone
-    for each segment naming its derivatives, which stay until the
-    tombstone's second delete deletes them, so their derived index entries
-    can still be deleted.
+    A forget deletes the events with their segments and derivatives, and
+    leaves a tombstone for each segment holding its derivatives' UUIDs, so
+    their derived index entries can still be deleted.
     """
 
     @property
@@ -91,8 +90,8 @@ class SegmentStorePartition(ABC):
         """
         Delete the pending writes of the given segments. Idempotent.
 
-        The derivatives stay; only the segments' pending writes are deleted. A
-        segment forgotten since keeps its tombstone.
+        Only the segments' pending writes are deleted. A segment forgotten
+        since keeps its tombstone.
 
         Args:
             segment_uuids (Iterable[UUID]):
@@ -146,8 +145,8 @@ class SegmentStorePartition(ABC):
         """
         Get the segment each of the given derivatives belongs to.
 
-        A derivative belongs to exactly one segment. A forgotten segment's
-        derivatives name none.
+        A derivative belongs to exactly one segment, and is deleted with it,
+        so a forgotten segment's derivatives are left out.
 
         Args:
             derivative_uuids (Iterable[UUID]):
@@ -166,13 +165,13 @@ class SegmentStorePartition(ABC):
         event_uuids: Iterable[UUID],
     ) -> list[Tombstone]:
         """
-        Delete events with their segments and pending writes, leaving a tombstone for each segment.
+        Delete events with their segments, derivatives, and pending writes, leaving a tombstone for each segment.
 
-        All of it commits together or not at all. A tombstone names its
-        segment's derivatives, which stay until its second delete. A
-        renewal of a claim on these events' pending writes either commits
-        first or finds them gone. An event the partition does not hold is
-        skipped. Idempotent.
+        All of it commits together or not at all. A tombstone holds its
+        segment's derivative UUIDs until its second delete. A renewal of a
+        claim on these events' pending writes either commits first or finds
+        them gone. An event the partition does not hold is skipped.
+        Idempotent.
 
         Args:
             event_uuids (Iterable[UUID]):
@@ -535,8 +534,8 @@ class SegmentStore(ABC):
 
         After its first delete, the tombstone awaits its second, due once
         the store's retention has passed since this record, and any other
-        open claim on it ends; after its second, it is removed with the
-        derivatives it names.
+        open claim on it ends; after its second, it is deleted with the
+        derivative UUIDs it holds.
 
         Args:
             claim (TombstoneClaim):

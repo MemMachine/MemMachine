@@ -72,6 +72,7 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
     SQLAlchemySegmentStorePartition,
+    TombstoneDerivativeRow,
     TombstoneRow,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
@@ -1298,7 +1299,7 @@ async def test_get_segment_uuids_by_derivative_uuids_after_delete_event_segments
 
 
 @pytest.mark.asyncio
-async def test_delete_event_segments_removes_segments_and_keeps_derivatives_for_the_tombstone(
+async def test_delete_event_segments_removes_segments_and_derivatives(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
     seg = _seg()
@@ -1309,7 +1310,7 @@ async def test_delete_event_segments_removes_segments_and_keeps_derivatives_for_
 
     assert await partition.get_segment_contexts([seg.uuid]) == {}
     assert await partition.get_segment_uuids_by_derivative_uuids([derivative]) == {}
-    assert await _row_counts(partition, partition._incarnation) == (0, 1)
+    assert await _row_counts(partition, partition._incarnation) == (0, 0)
     assert (
         await _count_rows(partition, EventRow.incarnation == partition._incarnation)
         == 0
@@ -1366,10 +1367,10 @@ async def test_delete_event_segments_returns_a_tombstone_per_forgotten_segment_n
 
 
 @pytest.mark.asyncio
-async def test_delete_event_segments_replaces_the_pending_write_with_a_tombstone_and_keeps_the_derivatives(
+async def test_delete_event_segments_replaces_the_pending_write_with_a_tombstone_holding_the_derivative_uuids(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """The derivatives stay for the tombstone, and no longer name their segment."""
+    """The derivatives are deleted with their segment, and its tombstone holds their UUIDs."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
@@ -1382,13 +1383,20 @@ async def test_delete_event_segments_replaces_the_pending_write_with_a_tombstone
 
     assert tombstone.segment_uuid == segment.uuid
     assert sorted(tombstone.derivative_uuids) == sorted(derivative_uuids)
-    assert await _row_counts(partition, partition._incarnation) == (0, 2)
+    assert await _row_counts(partition, partition._incarnation) == (0, 0)
     assert (
         await _count_rows(
             partition,
             TombstoneRow.segment_uuid == segment.uuid,
         )
         == 1
+    )
+    assert (
+        await _count_rows(
+            partition,
+            TombstoneDerivativeRow.segment_uuid == segment.uuid,
+        )
+        == 2
     )
     assert await store.claim_pending_write(lease_seconds=60) is None
     assert await partition.get_segment_uuids_by_derivative_uuids(derivative_uuids) == {}
@@ -2071,12 +2079,13 @@ async def test_finishing_a_second_delete_claim_removes_the_tombstone(
     claim = await store.claim_tombstone()
     assert claim is not None
     assert claim.second_delete is True
-    assert await _count_rows(store, DerivativeRow.segment_uuid == tombstone_uuid) == 1
+    holds = TombstoneDerivativeRow.segment_uuid == tombstone_uuid
+    assert await _count_rows(store, holds) == 1
 
     await store.finish_tombstone_claim(claim)
 
     assert await _count_rows(store, TombstoneRow.segment_uuid == tombstone_uuid) == 0
-    assert await _count_rows(store, DerivativeRow.segment_uuid == tombstone_uuid) == 0
+    assert await _count_rows(store, holds) == 0
     assert await store.claim_tombstone() is None
 
 
@@ -2560,11 +2569,10 @@ async def test_delete_partition_keeps_other_partitions_cascading(
 
     await store.delete_partition("doomed")
 
-    # The foreign key from segments to events must still cascade for the
-    # partitions that were not deleted; the derivative stays for its
-    # tombstone.
+    # The foreign keys from segments to events and from derivatives to
+    # segments must still cascade for the partitions that were not deleted.
     await keeper.delete_event_segments([segment.event_uuid])
-    assert await _row_counts(keeper, keeper._incarnation) == (0, 1)
+    assert await _row_counts(keeper, keeper._incarnation) == (0, 0)
 
 
 @pytest.mark.asyncio
@@ -3038,7 +3046,7 @@ async def test_purge_reclaims_every_size_within_the_bound(
 async def test_purge_reclaims_every_row_of_a_deleted_partition(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """Events, segments, derivatives, pending writes, and tombstones are all deleted; a live partition keeps its own."""
+    """Events, segments, derivatives, pending writes, tombstones, and their derivative UUIDs are all deleted; a live partition keeps its own."""
     config = _plaintext_partition_config()
     doomed = await store.open_or_create_partition("doomed_rows", config)
     live = await store.open_or_create_partition("live_rows", config)
@@ -3064,30 +3072,31 @@ async def test_purge_reclaims_every_row_of_a_deleted_partition(
                 DerivativeRow.incarnation == incarnation,
                 PendingWriteRow.incarnation == incarnation,
                 TombstoneRow.incarnation == incarnation,
+                TombstoneDerivativeRow.incarnation == incarnation,
             )
         ]
 
-    assert await row_counts(doomed._incarnation) == [0, 0, 0, 0, 0]
-    # The forgotten segment's derivative stays for its tombstone.
-    assert await row_counts(live._incarnation) == [2, 2, 3, 1, 1]
+    assert await row_counts(doomed._incarnation) == [0, 0, 0, 0, 0, 0]
+    # The forgotten segment's tombstone holds its derivative's UUID.
+    assert await row_counts(live._incarnation) == [2, 2, 2, 1, 1, 1]
     assert (
         await _count_rows(store, PurgeQueueRow.incarnation == doomed._incarnation) == 0
     )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bound", [1, 3, 4, 5, 7, 8, 10])
+@pytest.mark.parametrize("bound", [1, 2, 3, 4, 5, 7, 13])
 async def test_purge_continues_through_every_table_within_the_bound(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
     bound: int,
 ) -> None:
-    """Derivatives, segments, events, and tombstones share each call's bound, and each table resumes where the last call left it.
+    """Derivatives, segments, events, tombstones' derivative UUIDs, and tombstones share each call's bound, and each table resumes where the last call left it.
 
-    The partition holds seven derivatives, five segments, three events, and
-    two tombstones, so the bounds end calls inside each table and exactly
-    on each table's last row. Deleting a segment deletes its pending write
-    by cascade.
+    The partition holds five derivatives, five segments, three events, and
+    two tombstones holding a derivative UUID each, so the bounds end calls
+    inside each table and exactly on each table's last row. Deleting a
+    segment deletes its pending write by cascade.
     """
     partition = await store.open_or_create_partition(
         "tables_p", _plaintext_partition_config()
@@ -3110,7 +3119,13 @@ async def test_purge_continues_through_every_table_within_the_bound(
         return sum(
             [
                 await _count_rows(store, table.incarnation == incarnation)
-                for table in (DerivativeRow, SegmentRow, EventRow, TombstoneRow)
+                for table in (
+                    DerivativeRow,
+                    SegmentRow,
+                    EventRow,
+                    TombstoneDerivativeRow,
+                    TombstoneRow,
+                )
             ]
         )
 
@@ -4272,10 +4287,13 @@ async def test_overlapping_forgets_do_not_deadlock(
             for derivative_uuids in links.values()
             for derivative_uuid in derivative_uuids
         ]
-        assert (await _row_counts(partition, partition._incarnation))[0] == 0
-        # Kept for the tombstones.
+        assert await _row_counts(partition, partition._incarnation) == (0, 0)
+        # Held by the tombstones.
         assert (
-            await _count_rows(partition, DerivativeRow.uuid.in_(derivative_uuids)) == 24
+            await _count_rows(
+                partition, TombstoneDerivativeRow.uuid.in_(derivative_uuids)
+            )
+            == 24
         )
         assert sorted(
             derivative_uuid
@@ -4444,15 +4462,16 @@ async def test_random_operation_sequences_agree_with_a_model(
                 DerivativeRow,
                 PendingWriteRow,
                 TombstoneRow,
+                TombstoneDerivativeRow,
             )
         ]
     assert row_counts == [
         len(events),
         sum(map(len, events)),
-        sum(len(links) for event in events for links in event.values())
-        + sum(tombstoned_derivatives.values()),
+        sum(len(links) for event in events for links in event.values()),
         0,
         sum(tombstones.values()),
+        sum(tombstoned_derivatives.values()),
     ]
 
 
@@ -4512,7 +4531,7 @@ async def test_mixed_operation_churn_completes_and_strands_nothing(
     so no lock cycle stalls it; the only errors are the domain outcomes
     of churning shared keys; and after a final drain no row belongs to a
     dead incarnation, while each writer's partition holds exactly what it
-    left, and the derivatives its forgets keep for their tombstones.
+    left, and the derivative UUIDs its forgets' tombstones hold.
     """
     rng = random.Random(seed)
     monkeypatch.setattr(store, "_purge_max_rows", 3)
@@ -4561,17 +4580,22 @@ async def test_mixed_operation_churn_completes_and_strands_nothing(
             DerivativeRow,
             PendingWriteRow,
             TombstoneRow,
+            TombstoneDerivativeRow,
         )
     ]
     async with store._create_session() as session:
         queue_depth = (
             await session.execute(select(func.count()).select_from(PurgeQueueRow))
         ).scalar_one()
-    assert (stranded, queue_depth) == ([0, 0, 0, 0, 0], 0)
+    assert (stranded, queue_depth) == ([0, 0, 0, 0, 0, 0], 0)
     for incarnation, events in written.items():
         assert await _row_counts(store, incarnation) == (
             len(events),
-            sum(events.values()) + tombstoned_links[incarnation],
+            sum(events.values()),
+        )
+        assert (
+            await _count_rows(store, TombstoneDerivativeRow.incarnation == incarnation)
+            == tombstoned_links[incarnation]
         )
 
 
@@ -4581,7 +4605,7 @@ async def _write_and_forget_own_events(
     tombstoned_links: dict[UUID, int],
     rng: random.Random,
 ) -> None:
-    """Add events, then forget some of this writer's own; `mine` tracks what is left, and `tombstoned_links` the derivatives the forgets keep."""
+    """Add events, then forget some of this writer's own; `mine` tracks what is left, and `tombstoned_links` the derivative UUIDs the forgets' tombstones hold."""
     for round_index in range(12):
         segments = {
             _seg(ts_offset_seconds=round_index * 10 + offset): [
