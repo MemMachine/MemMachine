@@ -176,8 +176,8 @@ keeps for itself, raises when it cannot, and is safe to repeat.
 `get_partition` answers a handle on the partition, typed for the store,
 which reads and writes the partition's records alone and checks nothing
 about whether the partition is live; it answers `None` when the store finds
-nothing under the UUID, and a store that cannot tell, such as a vector
-store, answers a handle.
+nothing under the UUID, and a store that cannot tell, such as one that keeps
+nothing for a partition beyond its records, answers a handle.
 `purge_partition` deletes some or all of a deleted partition's records from
 storage it shares with other partitions, is safe to repeat and to run on two
 processes at once, and returns False only when none remains there.
@@ -493,9 +493,8 @@ retention is fixed in its code.
   the caller sees a store's own exception, and the stores that answer keep
   purging while another is down. Its purge finds records while either
   store's does. Its handle on a partition pairs the segment store's handle
-  with the vector store's. It gets the segment store's handle first and
-  answers `None` when the segment store finds nothing under the UUID, since
-  a vector store answers a handle for any UUID.
+  with the vector store's, and it answers `None` when either store finds
+  nothing under the UUID.
 - Event memory's `create_partition`, `get_partition`, and `delete_partition`
   address its partitions by name through the registry, and the first two
   answer event memory's handle on the partition. The service locator gets a

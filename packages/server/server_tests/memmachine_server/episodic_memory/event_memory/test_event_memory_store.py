@@ -92,6 +92,15 @@ async def test_a_partition_the_segment_store_holds_nothing_of_is_none(
 
 
 @pytest.mark.asyncio
+async def test_a_partition_the_vector_store_holds_nothing_of_is_none(
+    event_memory_store, vector_store
+):
+    vector_store.get_partition.return_value = None
+
+    assert await event_memory_store.get_partition(PARTITION_UUID) is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("in_segment_store", "in_vector_store"),
     [(False, False), (True, False), (False, True), (True, True)],

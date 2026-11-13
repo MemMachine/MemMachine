@@ -169,23 +169,6 @@ class VectorStore(PartitionedStore[VectorStorePartition]):
         """Shutdown."""
         raise NotImplementedError
 
-    @abstractmethod
-    async def get_partition(self, partition_uuid: UUID) -> VectorStorePartition:
-        """
-        Get a handle on a created partition.
-
-        A vector store answers a handle for any UUID.
-
-        Args:
-            partition_uuid (UUID):
-                The partition's UUID.
-
-        Returns:
-            VectorStorePartition:
-                A handle bound to the partition.
-        """
-        raise NotImplementedError
-
 
 class VectorStoreParams(BaseModel):
     """
