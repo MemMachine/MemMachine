@@ -34,7 +34,7 @@ def _records(count: int) -> list[Record]:
     ]
 
 
-async def _prepared(store, partition_uuid: UUID):
+async def _created(store, partition_uuid: UUID):
     """A handle on a freshly created partition."""
     await store.create_partition(partition_uuid)
     return await store.get_partition(partition_uuid)
@@ -71,7 +71,7 @@ class PartitionLifecycleContract:
 
     @pytest.mark.asyncio
     async def test_a_created_partition_holds_its_records(self, store):
-        partition = await _prepared(store, uuid4())
+        partition = await _created(store, uuid4())
         records = _records(3)
 
         await partition.upsert(records=records)
@@ -82,7 +82,7 @@ class PartitionLifecycleContract:
     @pytest.mark.asyncio
     async def test_creating_a_partition_again_changes_nothing(self, store):
         partition_uuid = uuid4()
-        partition = await _prepared(store, partition_uuid)
+        partition = await _created(store, partition_uuid)
         records = _records(2)
         await partition.upsert(records=records)
 
@@ -93,8 +93,8 @@ class PartitionLifecycleContract:
 
     @pytest.mark.asyncio
     async def test_partitions_are_isolated_from_one_another(self, store):
-        first = await _prepared(store, uuid4())
-        second = await _prepared(store, uuid4())
+        first = await _created(store, uuid4())
+        second = await _created(store, uuid4())
         shared = _records(1)[0]
         only_first = _records(1)[0]
 
@@ -113,7 +113,7 @@ class PartitionLifecycleContract:
     @pytest.mark.asyncio
     async def test_purge_removes_a_partitions_records(self, store):
         partition_uuid = uuid4()
-        partition = await _prepared(store, partition_uuid)
+        partition = await _created(store, partition_uuid)
         baseline = await self.count_stored(store)
         await partition.upsert(records=_records(5))
         await self.settle(partition)
@@ -128,8 +128,8 @@ class PartitionLifecycleContract:
     async def test_purge_leaves_other_partitions_alone(self, store):
         kept_partition_uuid = uuid4()
         purged_partition_uuid = uuid4()
-        kept = await _prepared(store, kept_partition_uuid)
-        purged = await _prepared(store, purged_partition_uuid)
+        kept = await _created(store, kept_partition_uuid)
+        purged = await _created(store, purged_partition_uuid)
         kept_records = _records(3)
         await kept.upsert(records=kept_records)
         await purged.upsert(records=_records(3))
@@ -147,7 +147,7 @@ class PartitionLifecycleContract:
     @pytest.mark.asyncio
     async def test_a_purged_partition_drops_and_holds_nothing(self, store):
         partition_uuid = uuid4()
-        partition = await _prepared(store, partition_uuid)
+        partition = await _created(store, partition_uuid)
         baseline = await self.count_stored(store)
         await partition.upsert(records=_records(3))
         await self.settle(partition)
@@ -161,9 +161,9 @@ class PartitionLifecycleContract:
 
     @pytest.mark.asyncio
     async def test_dropping_a_partition_leaves_other_partitions_alone(self, store):
-        kept = await _prepared(store, uuid4())
+        kept = await _created(store, uuid4())
         dropped_partition_uuid = uuid4()
-        await _prepared(store, dropped_partition_uuid)
+        await _created(store, dropped_partition_uuid)
         kept_records = _records(2)
         await kept.upsert(records=kept_records)
         await self.settle(kept)
@@ -176,7 +176,7 @@ class PartitionLifecycleContract:
     @pytest.mark.asyncio
     async def test_a_write_landing_after_a_purge_is_reclaimed_by_the_next(self, store):
         partition_uuid = uuid4()
-        partition = await _prepared(store, partition_uuid)
+        partition = await _created(store, partition_uuid)
         baseline = await self.count_stored(store)
         await _purge(store, partition_uuid)
 

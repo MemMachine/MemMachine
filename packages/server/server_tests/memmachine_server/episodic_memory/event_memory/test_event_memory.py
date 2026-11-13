@@ -62,7 +62,7 @@ from server_tests.memmachine_server.common.vector_store.in_memory_vector_store_p
 from .conftest import (
     InMemorySegmentStorePartition,
     InMemoryVectorStorePartition,
-    open_event_memory_partition,
+    create_event_memory_partition,
 )
 
 _async = pytest.mark.asyncio
@@ -261,7 +261,7 @@ class TestEncodeEvents:
         )
         vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
         partition = InMemorySegmentStorePartition()
-        em = await open_event_memory_partition(
+        em = await create_event_memory_partition(
             segment_store_partition=partition,
             vector_store_partition=vector_store_partition,
             store_schema=store_schema,
@@ -319,7 +319,7 @@ class TestEncodeEvents:
             ValueError,
             match="Vector store schema missing fields required by EventMemory",
         ):
-            await open_event_memory_partition(
+            await create_event_memory_partition(
                 vector_store_partition=vector_store_partition,
                 store_schema=store_schema,
                 segment_store_partition=partition,
@@ -965,7 +965,7 @@ class TestQueryWithFilter:
             },
         )
         vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
-        event_memory_partition = await open_event_memory_partition(
+        event_memory_partition = await create_event_memory_partition(
             segment_store_partition=fake_segment_store_partition,
             vector_store_partition=vector_store_partition,
             store_schema=store_schema,
@@ -1201,7 +1201,7 @@ async def declaring_event_memory_partition(
         },
     )
     vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
-    return await open_event_memory_partition(
+    return await create_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=vector_store_partition,
         store_schema=store_schema,
@@ -1345,7 +1345,7 @@ class TestQueryWithAConditionOnAnUndeclaredField:
         fake_segment_store_partition: InMemorySegmentStorePartition,
     ):
         """A seed the search ranks below the limit is not found, unless the condition is on a declared field."""
-        event_memory_partition = await open_event_memory_partition(
+        event_memory_partition = await create_event_memory_partition(
             segment_store_partition=fake_segment_store_partition,
             vector_store_partition=fake_vector_store_partition,
             store_schema=fake_store_schema,
@@ -1486,7 +1486,7 @@ class TestIngestFormatOptions:
             indexed_properties=EventMemory.expected_vector_store_indexed_properties(),
         )
         vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
-        return await open_event_memory_partition(
+        return await create_event_memory_partition(
             segment_store_partition=InMemorySegmentStorePartition(),
             vector_store_partition=vector_store_partition,
             store_schema=store_schema,
@@ -1526,7 +1526,7 @@ class TestIngestFormatOptions:
             indexed_properties=EventMemory.expected_vector_store_indexed_properties(),
         )
         vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
-        event_memory_partition = await open_event_memory_partition(
+        event_memory_partition = await create_event_memory_partition(
             segment_store_partition=partition,
             vector_store_partition=vector_store_partition,
             store_schema=store_schema,

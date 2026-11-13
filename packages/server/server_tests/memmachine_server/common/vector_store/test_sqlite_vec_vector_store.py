@@ -150,8 +150,8 @@ async def _store_with(
     return other
 
 
-async def _open(store: SQLiteVecVectorStore) -> SQLiteVecVectorStorePartition:
-    """A handle on a freshly prepared partition."""
+async def _created(store: SQLiteVecVectorStore) -> SQLiteVecVectorStorePartition:
+    """A handle on a freshly created partition."""
     partition_uuid = uuid4()
     await store.create_partition(partition_uuid)
     return await store.get_partition(partition_uuid)
@@ -166,7 +166,7 @@ async def _purge_and_drop(store: SQLiteVecVectorStore, partition_uuid: UUID) -> 
 
 @pytest_asyncio.fixture
 async def partition(store):
-    return await _open(store)
+    return await _created(store)
 
 
 # ── Partition lifecycle ──
@@ -174,8 +174,8 @@ async def partition(store):
 
 class TestPartitionLifecycle:
     @pytest.mark.asyncio
-    async def test_a_created_partition_opens_and_holds_its_records(self, store):
-        partition = await _open(store)
+    async def test_a_created_partition_holds_its_records(self, store):
+        partition = await _created(store)
         assert isinstance(partition, SQLiteVecVectorStorePartition)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
 
@@ -185,7 +185,7 @@ class TestPartitionLifecycle:
 
     @pytest.mark.asyncio
     async def test_creating_a_partition_again_changes_nothing(self, store):
-        partition = await _open(store)
+        partition = await _created(store)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await partition.upsert(records=[record])
 
@@ -195,7 +195,7 @@ class TestPartitionLifecycle:
 
     @pytest.mark.asyncio
     async def test_handles_on_one_partition_share_its_records(self, store):
-        first = await _open(store)
+        first = await _created(store)
         second = await store.get_partition(first._partition_uuid)
         record = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         await first.upsert(records=[record])
@@ -205,8 +205,8 @@ class TestPartitionLifecycle:
 
     @pytest.mark.asyncio
     async def test_partitions_are_isolated_from_one_another(self, store):
-        first = await _open(store)
-        second = await _open(store)
+        first = await _created(store)
+        second = await _created(store)
         shared = _make_record(vector=_normalize([1.0, 0.0, 0.0]))
         only_first = _make_record(vector=_normalize([1.0, 0.1, 0.0]))
         [empty] = await second.query(query_vectors=[shared.vector], limit=5)
@@ -225,7 +225,7 @@ class TestPartitionLifecycle:
 
     @pytest.mark.asyncio
     async def test_drop_removes_a_partitions_tables_and_records(self, store):
-        partition = await _open(store)
+        partition = await _created(store)
         partition_uuid = partition._partition_uuid
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
@@ -242,7 +242,7 @@ class TestPartitionLifecycle:
         await store.drop_partition(partition_uuid)
 
     @pytest.mark.asyncio
-    async def test_purging_or_dropping_an_unknown_partition_finds_nothing(self, store):
+    async def test_an_unknown_partition_purges_nothing_and_drops(self, store):
         assert await store.purge_partition(uuid4()) is False
         await store.drop_partition(uuid4())
 
@@ -703,8 +703,8 @@ class TestDelete:
 class TestPartitionIsolation:
     @pytest.mark.asyncio
     async def test_query_only_returns_own_partition(self, store):
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -723,8 +723,8 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_a_query_returns_only_its_own_partitions_records(self, store):
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -738,8 +738,8 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_delete_only_affects_own_partition(self, store):
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -756,8 +756,8 @@ class TestPartitionIsolation:
     async def test_stores_on_one_engine_are_isolated(self, store):
         """Two stores over one engine, each with its own partition UUID, never see each other's rows."""
         other = await _store_with(store, "other_store")
-        partition_a = await _open(store)
-        partition_b = await _open(other)
+        partition_a = await _created(store)
+        partition_b = await _created(other)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -776,8 +776,8 @@ class TestPartitionIsolation:
     @pytest.mark.asyncio
     async def test_dropping_a_partition_does_not_affect_sibling(self, store):
         """Dropping one partition leaves a sibling's records searchable."""
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -805,7 +805,7 @@ class TestEuclideanMetric:
             similarity_metric=SimilarityMetric.EUCLIDEAN,
             indexed_properties={},
         )
-        partition = await _open(euclidean)
+        partition = await _created(euclidean)
         r1 = _make_record(vector=[0.0, 0.0])
         r2 = _make_record(vector=[3.0, 4.0])
         await partition.upsert(records=[r1, r2])
@@ -825,7 +825,7 @@ class TestNoProperties:
         bare = await _store_with(
             store, "no_props", vector_dimensions=2, indexed_properties={}
         )
-        partition = await _open(bare)
+        partition = await _created(bare)
         r1 = _make_record(vector=[1.0, 0.0])
         await partition.upsert(records=[r1])
 
@@ -937,7 +937,7 @@ class TestScoreSemantics:
             similarity_metric=SimilarityMetric.EUCLIDEAN,
             indexed_properties={},
         )
-        partition = await _open(euclidean)
+        partition = await _created(euclidean)
         r1 = _make_record(vector=[0.0, 0.0])
         r2 = _make_record(vector=[3.0, 4.0])
         await partition.upsert(records=[r1, r2])
@@ -976,7 +976,7 @@ class TestScoreThreshold:
         edged = await _store_with(
             store, name, vector_dimensions=VECTOR_DIM, similarity_metric=metric
         )
-        partition = await _open(edged)
+        partition = await _created(edged)
         records = [_make_record(vector=vector) for vector in _THRESHOLD_VECTORS]
         await partition.upsert(records=records)
         [ranked] = await partition.query(
@@ -1073,14 +1073,14 @@ async def _table_names(engine) -> set[str]:
 
 
 class TestPartitionResources:
-    """A partition's tables exist from its preparation until its purge."""
+    """A partition's tables exist from its creation until its drop."""
 
     @pytest.mark.asyncio
     async def test_creating_a_partition_creates_only_its_tables(self, store):
         engine = store._engine
         baseline = await _table_names(engine)
 
-        partition = await _open(store)
+        partition = await _created(store)
 
         created = await _table_names(engine) - baseline
         assert {
@@ -1093,7 +1093,7 @@ class TestPartitionResources:
     async def test_dropping_a_partition_leaves_none_of_its_tables(self, store):
         engine = store._engine
         baseline = await _table_names(engine)
-        partition = await _open(store)
+        partition = await _created(store)
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
@@ -1106,9 +1106,9 @@ class TestPartitionResources:
     @pytest.mark.asyncio
     async def test_dropping_a_partition_leaves_other_partitions_tables(self, store):
         engine = store._engine
-        await _open(store)
+        await _created(store)
         baseline = await _table_names(engine)
-        purged = await _open(store)
+        purged = await _created(store)
 
         await _purge_and_drop(store, purged._partition_uuid)
 

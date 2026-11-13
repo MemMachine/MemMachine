@@ -93,8 +93,8 @@ async def _count_stored(store: QdrantVectorStore) -> int:
 _MAX_PURGE_CALLS = 1000
 
 
-async def _open(store: QdrantVectorStore) -> QdrantVectorStorePartition:
-    """A handle on a freshly prepared partition."""
+async def _created(store: QdrantVectorStore) -> QdrantVectorStorePartition:
+    """A handle on a freshly created partition."""
     partition_uuid = uuid4()
     await store.create_partition(partition_uuid)
     return await store.get_partition(partition_uuid)
@@ -150,7 +150,7 @@ async def store(any_qdrant_client):
 
 @pytest_asyncio.fixture
 async def partition(store):
-    partition = await _open(store)
+    partition = await _created(store)
     yield partition
     await _purge(store, partition._partition_uuid)
 
@@ -289,7 +289,7 @@ class TestSimilarityMetrics:
             )
         )
         await store.startup()
-        partition = await _open(store)
+        partition = await _created(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
         await partition.upsert(records=records)
 
@@ -338,7 +338,7 @@ class TestSimilarityMetrics:
             )
         )
         await store.startup()
-        partition = await _open(store)
+        partition = await _created(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
         await partition.upsert(records=records)
         [ranked] = await partition.query(
@@ -1120,7 +1120,7 @@ class TestPartitionIsolation:
     async def test_partitions_share_the_store_collection(self, store):
         """Every partition's records are points in the store's one native collection."""
         stored_before = await _count_stored(store)
-        partitions = [await _open(store) for _ in range(2)]
+        partitions = [await _created(store) for _ in range(2)]
         for partition in partitions:
             await partition.upsert(
                 records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
@@ -1133,8 +1133,8 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_query_only_returns_own_partition(self, store):
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1, properties={})
@@ -1156,8 +1156,8 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_a_query_returns_only_its_own_partitions_records(self, store):
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -1190,8 +1190,8 @@ class TestPartitionIsolation:
             )
         )
         await store.startup()
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         vector = _normalize([1.0, 0.0, 0.0])
         properties: dict[str, PropertyValue] = {
@@ -1262,8 +1262,8 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_the_same_uuid_in_two_partitions_is_two_records(self, store):
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         record_uuid = uuid4()
         v1 = _normalize([1.0, 0.0, 0.0])
@@ -1292,8 +1292,8 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_delete_only_affects_own_partition(self, store):
-        partition_a = await _open(store)
-        partition_b = await _open(store)
+        partition_a = await _created(store)
+        partition_b = await _created(store)
 
         v1 = _normalize([1.0, 0.0, 0.0])
         r1 = _make_record(vector=v1)
@@ -1326,7 +1326,7 @@ class TestPurge:
             _params(any_qdrant_client, vector_store_name="dropped_native")
         )
         await dropped.startup()
-        partition = await _open(dropped)
+        partition = await _created(dropped)
         await partition.upsert(
             records=[_make_record(vector=_normalize([1.0, 0.0, 0.0]))]
         )
@@ -1454,7 +1454,7 @@ class _ModelRun:
         self.baseline = 0
 
     async def create(self, key: str) -> None:
-        self.handles[key] = await _open(self.store)
+        self.handles[key] = await _created(self.store)
         self.model[key] = {}
 
     async def upsert(self, key: str) -> None:
@@ -1667,7 +1667,7 @@ class TestCollectionProvisioningAcrossWorkers:
     ):
         """Two workers start stores of one name at once, so both prepare the
         native collection they share at the same moment. Both startups
-        succeed, and a partition each worker opens holds its own
+        succeed, and a partition each worker creates holds its own
         records."""
         client_a = new_qdrant_client(prefer_grpc=prefer_grpc)
         client_b = new_qdrant_client(prefer_grpc=prefer_grpc)
@@ -1680,8 +1680,8 @@ class TestCollectionProvisioningAcrossWorkers:
         try:
             async with asyncio.timeout(60):
                 await asyncio.gather(store_a.startup(), store_b.startup())
-            first = await _open(store_a)
-            second = await _open(store_b)
+            first = await _created(store_a)
+            second = await _created(store_b)
             records = {
                 partition: _make_record(vector=_normalize([1.0, 0.0, 0.0]))
                 for partition in (first, second)
@@ -1731,7 +1731,7 @@ class TestStrictMode:
         """The store answers a mistyped leaf itself; the server would refuse it."""
         store = QdrantVectorStore(_params(qdrant_client))
         await store.startup()
-        partition = await _open(store)
+        partition = await _created(store)
         held = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"age": 5})
         await partition.upsert(records=[held])
 

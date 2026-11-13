@@ -277,7 +277,7 @@ async def _round(
 
 
 @pytest.mark.asyncio
-async def test_a_reservation_mints_a_fresh_partition_uuid(
+async def test_a_confirmed_reservations_partition_is_gotten_by_its_name(
     sqlalchemy_engine, partition_namespace
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
@@ -315,7 +315,7 @@ async def test_only_the_reserved_partition_is_confirmed(
     sqlalchemy_engine, partition_namespace
 ):
     """A creation whose partition was deleted while its storage was
-    prepared cannot confirm a partition reserved under the name since."""
+    created cannot confirm a partition reserved under the name since."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     deleted = await registry._reserve("c")
     await registry.delete_partition("c")
@@ -391,16 +391,18 @@ async def test_a_registration_is_current_until_its_partition_is_deleted(
 
 
 @pytest.mark.asyncio
-async def test_a_taken_name_is_already_exists(sqlalchemy_engine, partition_namespace):
+async def test_reserving_a_taken_name_raises_already_exists(
+    sqlalchemy_engine, partition_namespace
+):
     """Taken by a pending partition, then by a live one."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
-    registration = await registry._reserve("c")
+    reservation = await registry._reserve("c")
 
     for pending in (True, False):
         with pytest.raises(PartitionAlreadyExistsError):
             await registry._reserve("c")
         if pending:
-            await registration.confirm()
+            await reservation.confirm()
 
 
 @pytest.mark.asyncio
@@ -606,7 +608,7 @@ async def test_a_tombstone_is_not_due_before_the_retention(
 
 
 @pytest.mark.asyncio
-async def test_due_tombstones_go_oldest_deletion_first_until_a_round_finds_nothing(
+async def test_due_tombstones_are_claimed_oldest_deletion_first_until_a_round_finds_nothing(
     sqlalchemy_engine, partition_namespace, monkeypatch
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
@@ -625,7 +627,7 @@ async def test_due_tombstones_go_oldest_deletion_first_until_a_round_finds_nothi
     await _age_deletion(registry, second, extra=timedelta(minutes=1))
 
     assert await _round(registry, any_records_found=True) == second
-    # Found points: still due, and still the oldest deletion.
+    # Found records: still due, and still the oldest deletion.
     assert await _round(registry, any_records_found=False) == second
     assert await _queued(registry) == [first]
     assert await _round(registry, any_records_found=False) == first
@@ -821,7 +823,7 @@ async def test_resetting_a_dead_lettered_tombstones_attempts_returns_it_to_the_p
 
 
 @pytest.mark.asyncio
-async def test_a_round_that_finds_points_resets_the_attempts_without_progress(
+async def test_a_round_that_finds_records_resets_the_attempts_without_progress(
     sqlalchemy_engine, partition_namespace
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
@@ -1648,7 +1650,7 @@ async def test_a_reservation_whose_queue_check_fails_leaves_the_name_free(
 
 
 @pytest.mark.asyncio
-async def test_a_round_whose_outcome_cannot_be_written_is_retried_once_its_lease_passes(
+async def test_a_round_whose_outcome_cannot_be_written_is_retried_once_its_lease_and_the_backoff_pass(
     sqlalchemy_engine, partition_namespace
 ):
     """A round whose outcome is lost is, to the registry, a round that never
@@ -1731,7 +1733,6 @@ class _OverlapWatch:
 _REFUSALS = (
     PartitionAlreadyExistsError,
     PartitionPendingError,
-    PartitionDeletedError,
     PartitionDeletedError,
 )
 

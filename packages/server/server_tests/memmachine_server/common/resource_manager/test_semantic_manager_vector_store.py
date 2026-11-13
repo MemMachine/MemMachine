@@ -114,15 +114,13 @@ def _no_retry_delay(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_semantic_memory_creates_its_partition_once_and_reopens_it(
+async def test_semantic_memory_creates_its_partition_once_and_then_gets_it(
     partition_registry, partitioned_vector_store
 ):
     created = await SemanticResourceManager._get_or_create_partition(partition_registry)
-    reopened = await SemanticResourceManager._get_or_create_partition(
-        partition_registry
-    )
+    gotten = await SemanticResourceManager._get_or_create_partition(partition_registry)
 
-    assert reopened.partition_uuid == created.partition_uuid
+    assert gotten.partition_uuid == created.partition_uuid
     partitioned_vector_store.create_partition.assert_awaited_once_with(
         created.partition_uuid
     )
@@ -135,14 +133,14 @@ async def test_semantic_memory_waits_for_another_process_creating_its_partition(
     monkeypatch.setattr(semantic_manager, "_GET_OR_CREATE_RETRY_DELAY_SECONDS", 0.05)
     pending = await partition_registry._reserve("semantic_memory")
 
-    opening = asyncio.create_task(
+    waiting = asyncio.create_task(
         SemanticResourceManager._get_or_create_partition(partition_registry)
     )
     await asyncio.sleep(0.1)
-    assert not opening.done()
+    assert not waiting.done()
 
     await pending.confirm()
-    assert (await opening).partition_uuid == pending.partition_uuid
+    assert (await waiting).partition_uuid == pending.partition_uuid
     partitioned_vector_store.create_partition.assert_not_awaited()
 
 

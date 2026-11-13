@@ -3,7 +3,8 @@
 Builds a LongTermMemory over an EventMemoryPartition using:
 - the in-memory vector store partition from event_memory tests
 - the in-memory segment_store partition from event_memory tests
-- an EventMemory whose store stand-ins hand out those two partitions
+- an EventMemory whose partition registry stand-in returns a registration
+  carrying those two partitions
 - a fake embedder
 - a fake EpisodeStorage that satisfies the get_episode(uid) lookup used during
   query hydration.
@@ -176,7 +177,7 @@ def store_schema(fake_embedder) -> VectorStoreSchema:
 
 @pytest.fixture
 def vector_store(store_schema):
-    """Stand-in for the parent VectorStore: it answers `store_schema`, and only partition lifecycle is invoked."""
+    """Stand-in for the parent VectorStore: it answers `store_schema`."""
     store = create_autospec(VectorStore, instance=True)
     store.store_schema = store_schema
     return store
@@ -189,10 +190,8 @@ def vector_store_partition(store_schema):
 
 @pytest.fixture
 def segment_store():
-    """Stand-in for the parent SegmentStore lifecycle methods."""
-    store = create_autospec(SegmentStore, instance=True)
-    store.purge_partition.return_value = False
-    return store
+    """Stand-in for the parent SegmentStore."""
+    return create_autospec(SegmentStore, instance=True)
 
 
 @pytest.fixture

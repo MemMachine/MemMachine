@@ -92,7 +92,7 @@ async def segment_store(
 
 @pytest.fixture
 def vector_store() -> NonCallableMagicMock:
-    """A vector store whose handles hold records in memory; tests set what its preparation does."""
+    """A vector store whose handles hold records in memory."""
     embedder = FakeEmbedder()
     store_schema = VectorStoreSchema(
         vector_dimensions=embedder.dimensions,

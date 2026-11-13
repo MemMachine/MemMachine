@@ -120,7 +120,7 @@ async def test_a_partition_the_store_holds_nothing_of_is_deleted(registry, store
 @pytest.mark.parametrize(
     "partition_name",
     ["", "nul\x00", "x" * 256, "ü" * 128],
-    ids=["empty", "nul", "too_many_characters", "too_many_bytes"],
+    ids=["empty", "nul", "too_long", "too_many_bytes"],
 )
 async def test_an_invalid_name_is_refused_by_every_by_name_operation(
     registry, store, partition_name
@@ -407,7 +407,8 @@ async def test_a_purge_round_purges_the_store_and_drops_once_it_finds_no_records
     store.purge_partition.assert_awaited_once_with(partition_uuid)
     store.drop_partition.assert_not_awaited()
 
-    # The store finds none: it drops the partition, and the tombstone goes.
+    # The store finds none: the round drops the partition and then deletes
+    # the tombstone.
     assert await registry.run_purge_round() is True
     assert store.purge_partition.await_count == 2
     store.drop_partition.assert_awaited_once_with(partition_uuid)
