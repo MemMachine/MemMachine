@@ -46,10 +46,6 @@ from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import
     Neo4jVectorGraphStoreParams,
 )
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
-from memmachine_server.common.vector_store.partition_registry.sqlalchemy_partition_registry import (
-    SQLAlchemyVectorStorePartitionRegistry,
-    SQLAlchemyVectorStorePartitionRegistryParams,
-)
 from memmachine_server.common.vector_store.vector_search_engine import (
     VectorSearchEngine,
 )
@@ -700,14 +696,6 @@ class DatabaseManager:
         vector_store_name: str,
         store_schema: VectorStoreSchema,
     ) -> VectorStore:
-        partition_registry = SQLAlchemyVectorStorePartitionRegistry(
-            SQLAlchemyVectorStorePartitionRegistryParams(
-                engine=await self.async_get_sql_engine(conf.partition_registry),
-                vector_store_name=vector_store_name,
-                tombstone_retention_seconds=conf.tombstone_retention_seconds,
-            )
-        )
-        await partition_registry.startup()
         client = await self.async_get_qdrant_client(vector_store_id, validate=True)
 
         from memmachine_server.common.vector_store.qdrant_vector_store import (
@@ -718,7 +706,6 @@ class DatabaseManager:
         return QdrantVectorStore(
             QdrantVectorStoreParams(
                 client=client,
-                partition_registry=partition_registry,
                 vector_store_name=vector_store_name,
                 store_schema=store_schema,
                 metrics_factory=conf.get_metrics_factory(),
@@ -801,14 +788,6 @@ class DatabaseManager:
         vector_store_name: str,
         store_schema: VectorStoreSchema,
     ) -> VectorStore:
-        partition_registry = SQLAlchemyVectorStorePartitionRegistry(
-            SQLAlchemyVectorStorePartitionRegistryParams(
-                engine=await self.async_get_sql_engine(conf.partition_registry),
-                vector_store_name=vector_store_name,
-                tombstone_retention_seconds=conf.tombstone_retention_seconds,
-            )
-        )
-        await partition_registry.startup()
         client = await self.async_get_milvus_client(vector_store_id, validate=True)
 
         from memmachine_server.common.vector_store.milvus_vector_store import (
@@ -819,7 +798,6 @@ class DatabaseManager:
         return MilvusVectorStore(
             MilvusVectorStoreParams(
                 client=client,
-                partition_registry=partition_registry,
                 vector_store_name=vector_store_name,
                 store_schema=store_schema,
                 request_timeout_seconds=conf.request_timeout_seconds,

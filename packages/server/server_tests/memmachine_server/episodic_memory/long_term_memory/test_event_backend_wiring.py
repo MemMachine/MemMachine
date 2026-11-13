@@ -3,7 +3,8 @@
 Builds a LongTermMemory over an EventMemoryPartition using:
 - the in-memory vector store partition from event_memory tests
 - the in-memory segment_store partition from event_memory tests
-- an EventMemory whose store stand-ins hand out those two partitions
+- an EventMemory whose partition registry stand-in returns a registration
+  carrying those two partitions
 - a fake embedder
 - a fake EpisodeStorage that satisfies the get_episode(uid) lookup used during
   query hydration.
@@ -18,7 +19,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, override
 from unittest.mock import NonCallableMagicMock, create_autospec
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import pytest
 import pytest_asyncio
@@ -33,6 +34,7 @@ from memmachine_server.common.episode_store import (
 from memmachine_server.common.filter.filter_parser import (
     Comparison as FilterComparison,
 )
+from memmachine_server.common.partition_registry import PartitionRegistry, Registration
 from memmachine_server.common.property_keys import reserved_property_key
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
@@ -41,6 +43,10 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
+)
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
@@ -171,7 +177,7 @@ def store_schema(fake_embedder) -> VectorStoreSchema:
 
 @pytest.fixture
 def vector_store(store_schema):
-    """Stand-in for the parent VectorStore: it answers `store_schema`, and only partition lifecycle is invoked."""
+    """Stand-in for the parent VectorStore: it answers `store_schema`."""
     store = create_autospec(VectorStore, instance=True)
     store.store_schema = store_schema
     return store
@@ -184,10 +190,8 @@ def vector_store_partition(store_schema):
 
 @pytest.fixture
 def segment_store():
-    """Stand-in for the parent SegmentStore lifecycle methods."""
-    store = create_autospec(SegmentStore, instance=True)
-    store.purge_deleted_partitions.return_value = False
-    return store
+    """Stand-in for the parent SegmentStore."""
+    return create_autospec(SegmentStore, instance=True)
 
 
 @pytest.fixture
@@ -205,20 +209,29 @@ async def _event_long_term_memory(
     embedder: Embedder,
     segmenter: Segmenter,
 ) -> LongTermMemory:
-    """A LongTermMemory on session `sess1`'s partition, which the given stores hand out."""
-    vector_store.open_or_create_partition.return_value = vector_store_partition
-    segment_store.open_or_create_partition.return_value = segment_store_partition
+    """A LongTermMemory on session `sess1`'s partition, whose registration carries the given partitions."""
+    registration = create_autospec(Registration, instance=True)
+    registration.partition_name = "sess1"
+    registration.partition_uuid = uuid4()
+    registration.partition = EventMemoryStorePartition(
+        segment_store_partition=segment_store_partition,
+        vector_store_partition=vector_store_partition,
+    )
+    partition_registry = create_autospec(PartitionRegistry, instance=True)
+    partition_registry.create_partition.return_value = registration
     event_memory = EventMemory(
         EventMemoryParams(
-            segment_store=segment_store,
-            vector_store=vector_store,
+            partition_registry=partition_registry,
+            event_memory_store=EventMemoryStore(
+                segment_store=segment_store, vector_store=vector_store
+            ),
             segmenter=segmenter,
             deriver=WholeTextDeriver(),
             embedder=embedder,
         )
     )
     return LongTermMemory(
-        await event_memory.open_or_create_partition("sess1"),
+        await event_memory.create_partition("sess1"),
         episode_storage=episode_storage,
     )
 

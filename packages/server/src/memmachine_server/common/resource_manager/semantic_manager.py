@@ -14,8 +14,19 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ResourceNotReadyError
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
+    PartitionDeletedError,
+    PartitionPendingError,
+    PartitionRegistry,
+    Registration,
+)
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreSchema
+from memmachine_server.common.vector_store import (
+    VectorStorePartition,
+    VectorStoreSchema,
+)
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -52,7 +63,18 @@ _VECTOR_STORE_NAME = "semantic_memory"
 
 Fixed, because the name locates the store's data.
 """
-_VECTOR_STORE_PARTITION_KEY = "semantic_memory"
+_PARTITION_NAMESPACE = "semantic_memory"
+"""The partition namespace semantic memory owns, the same in every deployment."""
+_PARTITION_NAME = "semantic_memory"
+"""Semantic memory's one partition, which it never deletes."""
+_TOMBSTONE_RETENTION_SECONDS = 86400
+"""The retention of semantic memory's namespace, whose tombstones are only those of creations that failed."""
+
+# Attempts getting or creating the partition makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
+# partition that stays pending or a name it keeps losing.
+_MAX_GET_OR_CREATE_ATTEMPTS = 10
+_GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
 
 class SemanticResourceManager:
@@ -174,13 +196,59 @@ class SemanticResourceManager:
         )
 
         # The manager owns this partition and provisions it when the storage is
-        # built.
-        vector_partition = await vector_store.open_or_create_partition(
-            _VECTOR_STORE_PARTITION_KEY
+        # built, through a registry in the database the storage already uses.
+        partition_registry = await self._resource_manager.get_partition_registry(
+            feature_store_name,
+            partition_namespace=_PARTITION_NAMESPACE,
+            tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
+            partitioned_store=vector_store,
         )
-        storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
+        registration = await SemanticResourceManager._get_or_create_partition(
+            partition_registry
+        )
+        storage = VectorStoreSemanticStorage(sql_engine, registration.partition)
         await storage.startup()
         return storage
+
+    @staticmethod
+    async def _get_or_create_partition(
+        partition_registry: PartitionRegistry[VectorStorePartition],
+    ) -> Registration[VectorStorePartition]:
+        """
+        Answer the registration of semantic memory's partition, creating it if no partition holds its name.
+
+        Read-then-create, retried a bounded number of times: a live partition
+        is answered; a pending one is another process's creation, so the call
+        waits for it; no partition means create; a creation that finds the
+        name taken lost it to another process meanwhile; and one that finds
+        the partition deleted lost it while the store created it, so the call
+        tries again.
+        """
+        pending_error: PartitionPendingError | None = None
+        lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
+        for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
+            try:
+                registration = await partition_registry.get_partition(_PARTITION_NAME)
+            except PartitionPendingError as err:
+                pending_error = err
+                continue
+            pending_error = None
+            if registration is not None:
+                return registration
+            try:
+                return await partition_registry.create_partition(_PARTITION_NAME)
+            except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
+                lost_race = err
+                continue
+        # The last lookup found the partition pending.
+        if pending_error is not None:
+            raise pending_error
+        raise PartitionCreateAttemptsExhaustedError(
+            f"Getting or creating semantic memory's partition made no progress "
+            f"after {_MAX_GET_OR_CREATE_ATTEMPTS} attempts"
+        ) from lost_race
 
     async def get_semantic_config_storage(self) -> SemanticConfigStorage:
         database = self._conf.config_database

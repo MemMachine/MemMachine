@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 from memmachine_server.common.filter.filter_parser import (
     FilterExpr,
 )
+from memmachine_server.common.partition_registry import PartitionedStore
 
 from .data_types import (
     QueryResult,
@@ -20,17 +21,15 @@ from .data_types import (
 
 class VectorStorePartition(ABC):
     """
-    One partition of a vector store, bound to its key.
+    A handle on one partition's records in a vector store.
 
-    All data operations are scoped to the partition: a record's UUID names
-    it in this partition only, and the same UUID in another partition names
+    All data operations are scoped to the partition: a record's UUID names it
+    in this partition only, and the same UUID in another partition names
     another record. The handle owns nothing: a caller builds one with
-    `VectorStore.open_partition`, drops it, and builds another at will.
-
-    A partition created again under a deleted one's key starts empty. An
-    operation through a handle begun after its partition was deleted raises
-    VectorStorePartitionHandleStaleError, whether or not a partition was
-    created again under the key since.
+    `VectorStore.get_partition`, drops it, and builds another at will. The
+    handle checks its inputs, and nothing about whether the partition is
+    still live: its owner fences each operation by the partition's
+    registration.
 
     An `upsert` or `delete` is durable once it returns; queries may not
     reflect it right away. A store that guarantees more states it.
@@ -133,28 +132,25 @@ class VectorStorePartition(ABC):
         raise NotImplementedError
 
 
-class VectorStore(ABC):
+class VectorStore(PartitionedStore[VectorStorePartition]):
     """
     Abstract base class for a vector store.
 
     A store is constructed with a name and a schema: a dimensionality, a
     similarity metric, and declared properties. Every record it holds has a
     vector of that dimensionality, and any declared property it carries has
-    its declared type. Stores of different names hold separate partitions.
+    its declared type. Stores of different names hold separate records.
     The schema is fixed for the life of the store's data: changing it is a
     migration.
 
-    A partition is identified by its key. A partition deleted and created
-    again under the same key starts empty, and reclaiming the deleted one's
-    storage leaves it untouched. Each store states which processes may share
-    its partitions.
+    The store holds each partition's records under the partition's UUID. Its
+    `PartitionedStore` methods create, get, purge, and drop partitions, which
+    its owner's partition registry drives.
 
     Naming constraints:
         - Vector store names and property keys must match `[a-z0-9_]+`
           (lowercase alphanumeric and underscores only) and be at most 32
           bytes. Every such name works on every backend.
-        - Partition keys are non-empty strings of at most 255 bytes, free of
-          NUL characters. Every such key works on every backend.
     """
 
     @property
@@ -171,102 +167,6 @@ class VectorStore(ABC):
     @abstractmethod
     async def shutdown(self) -> None:
         """Shutdown."""
-        raise NotImplementedError
-
-    @abstractmethod
-    async def create_partition(self, partition_key: str) -> None:
-        """
-        Create a partition.
-
-        Args:
-            partition_key (str):
-                The key of the partition.
-
-        Raises:
-            VectorStoreAttemptsExhaustedError: If the store gave up creating the
-                partition after repeated attempts that made no progress.
-            VectorStorePartitionAlreadyExistsError: If the partition already exists,
-                or is being created.
-            VectorStorePartitionDeletedError: If the partition was deleted
-                before its creation completed.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def open_or_create_partition(
-        self, partition_key: str
-    ) -> VectorStorePartition:
-        """
-        Get a handle for the partition, creating the partition if it does not exist.
-
-        Args:
-            partition_key (str):
-                The key of the partition.
-
-        Returns:
-            VectorStorePartition:
-                A handle bound to the partition's current life.
-
-        Raises:
-            VectorStoreAttemptsExhaustedError: If the store gave up opening or
-                creating the partition after repeated attempts that made no
-                progress.
-            VectorStorePartitionPendingError: If the partition's creation, by
-                another caller, did not complete within the store's attempts
-                to open it.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def open_partition(self, partition_key: str) -> VectorStorePartition | None:
-        """
-        Get a handle for an existing partition.
-
-        Args:
-            partition_key (str):
-                The key of the partition.
-
-        Returns:
-            VectorStorePartition | None:
-                A handle bound to the partition, or None if the partition
-                does not exist.
-
-        Raises:
-            VectorStorePartitionPendingError: If the partition's creation
-                has not completed.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def delete_partition(self, partition_key: str) -> None:
-        """
-        Delete a partition and all of its records.
-
-        When this returns, the partition is unreachable. A store that
-        reclaims storage later leaves the partition's data for
-        `purge_deleted_partitions`. Idempotent.
-
-        Args:
-            partition_key (str):
-                The key of the partition to delete.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def purge_deleted_partitions(self) -> bool:
-        """
-        Reclaim some of the storage of deleted partitions.
-
-        Each call does a bounded amount of work. Call it until it returns
-        False, and again from time to time: a deleted partition's storage
-        may become reclaimable some time after the deletion. A store that
-        reclaims storage in `delete_partition` returns False. Safe to call
-        from several processes at once.
-
-        Returns:
-            bool:
-                Whether the call ran a round; False when nothing was due.
-        """
         raise NotImplementedError
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -40,10 +41,14 @@ def _manager(conf: SemanticMemoryConf, resources: MagicMock) -> SemanticResource
 
 def _resources_without_models(engine: AsyncEngine) -> MagicMock:
     vector_store = MagicMock()
-    vector_store.open_or_create_partition = AsyncMock(return_value=MagicMock())
+    registration = MagicMock()
+    registration.partition_uuid = uuid4()
+    partition_registry = MagicMock()
+    partition_registry.get_partition = AsyncMock(return_value=registration)
     resources = MagicMock()
     resources.get_sql_engine = AsyncMock(return_value=engine)
     resources.get_vector_store = AsyncMock(return_value=vector_store)
+    resources.get_partition_registry = AsyncMock(return_value=partition_registry)
     resources.get_embedder = AsyncMock(
         side_effect=AssertionError("storage must not resolve an embedder")
     )

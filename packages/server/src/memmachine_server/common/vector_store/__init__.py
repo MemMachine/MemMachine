@@ -5,11 +5,6 @@ from .data_types import (
     QueryResult,
     Record,
     UndeclaredPropertyKeyError,
-    VectorStoreAttemptsExhaustedError,
-    VectorStorePartitionAlreadyExistsError,
-    VectorStorePartitionDeletedError,
-    VectorStorePartitionHandleStaleError,
-    VectorStorePartitionPendingError,
     VectorStoreSchema,
 )
 from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
@@ -20,12 +15,7 @@ __all__ = [
     "Record",
     "UndeclaredPropertyKeyError",
     "VectorStore",
-    "VectorStoreAttemptsExhaustedError",
     "VectorStoreParams",
     "VectorStorePartition",
-    "VectorStorePartitionAlreadyExistsError",
-    "VectorStorePartitionDeletedError",
-    "VectorStorePartitionHandleStaleError",
-    "VectorStorePartitionPendingError",
     "VectorStoreSchema",
 ]

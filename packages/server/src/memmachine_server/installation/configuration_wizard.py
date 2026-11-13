@@ -180,6 +180,7 @@ class ConfigurationWizard:
             reranker=self.RERANKER_NAME,
             vector_store=self.vector_store_id,
             segment_store=self.SQLITE_DB_ID,
+            partition_registry=self.SQLITE_DB_ID,
         )
 
     def _available_vector_store_choices(self) -> tuple[set[str], str, bool, bool]:
@@ -494,19 +495,11 @@ class ConfigurationWizard:
             case self.QDRANT_VECTOR_STORE_ID:
                 # Localhost defaults assume `docker run -p 6333:6333 qdrant/qdrant`
                 # or similar; user can edit cfg.yml to point at a remote Qdrant.
-                databases.qdrant_confs = {
-                    self.QDRANT_VECTOR_STORE_ID: QdrantConf(
-                        partition_registry=self.SQLITE_DB_ID,
-                    )
-                }
+                databases.qdrant_confs = {self.QDRANT_VECTOR_STORE_ID: QdrantConf()}
             case self.MILVUS_VECTOR_STORE_ID:
                 # MilvusConf's default URI points at a local Milvus server; the
                 # user edits cfg.yml to point at another Milvus or Zilliz Cloud.
-                databases.milvus_confs = {
-                    self.MILVUS_VECTOR_STORE_ID: MilvusConf(
-                        partition_registry=self.SQLITE_DB_ID,
-                    )
-                }
+                databases.milvus_confs = {self.MILVUS_VECTOR_STORE_ID: MilvusConf()}
             case self.SQLITE_VECTOR_STORE_ID:
                 databases.sqlite_vector_store_confs = {
                     self.SQLITE_VECTOR_STORE_ID: SQLiteVectorStoreConf(

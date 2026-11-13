@@ -1,24 +1,24 @@
 # Milvus vector store
 
 How the Milvus store meets the shared contracts: [partition
-registry](vector_store_partition_registry.md),
+registry](partition_registry.md),
 [purge](vector_store_purge.md), [consistency](vector_store_consistency.md),
 [isolation](vector_store_isolation.md).
 
 ## Layout
 
 - **One native collection per store**, named `sys_` followed by the vector
-  store name. It holds every partition of the store, one incarnation each.
+  store name. It holds every partition of the store, one partition UUID each.
   Creating a partition creates nothing in Milvus.
-- **Fields:** `id` (VARCHAR primary key, `"{incarnation}:{record_uuid}"`),
-  `record_uuid` (VARCHAR), `partition_key` (VARCHAR, the incarnation,
+- **Fields:** `id` (VARCHAR primary key, `"{partition_uuid}:{record_uuid}"`),
+  `record_uuid` (VARCHAR), `partition_key` (VARCHAR, the partition UUID,
   `is_partition_key`), `vector` (FLOAT_VECTOR), and one nullable typed field
   per declared property, `_p_<name>`. Dynamic fields are off, and a record or
   a filter naming an undeclared key is refused, so every property is a typed
   field.
 - **Tenancy:** partition-key multi-tenancy with `partitionkey.isolation`: each
   segment builds its vector index per group of tenants, so a search filtered
-  on one incarnation searches only its group. Milvus documents isolation for
+  on one partition UUID searches only its group. Milvus documents isolation for
   HNSW indexes; the store's HNSW_SQ is one.
 - **Vector index:** HNSW_SQ, 4-bit codes with FP16 refinement, M=18,
   efConstruction=240: what AUTOINDEX builds on CPU from Milvus 2.6.10
@@ -138,7 +138,7 @@ throughput unchanged.
 
 ## The composite key
 
-The incarnation is in the primary key because Milvus's upsert deletes by
+The partition UUID is in the primary key because Milvus's upsert deletes by
 primary key in every partition (`AllPartitionsID`) before inserting: with the
 bare record UUID as the key, one partition's upsert would delete another
 partition's record of the same UUID. With the composite key, two partitions'
@@ -148,7 +148,7 @@ record UUID is also kept in its own field, which reads return. Measured
 against bare keys (Milvus 2.6.24, 4 CPUs / 5 GB; 1.3M rows: 1,000 tenants of
 1,000 and 3 dead tenants of 100,000; one run):
 
-| p50 | Composite key | Bare key | Bare, filtered on incarnation |
+| p50 | Composite key | Bare key | Bare, filtered on partition UUID |
 |---|---|---|---|
 | Get 10 ids | 1.29 ms | 0.87 ms | 1.22 ms |
 | Delete 1 id | 1.10 ms | 1.10 ms | 200 ms (a delete by filter queries first) |
@@ -162,25 +162,25 @@ variation.
 
 ## Purge
 
-Bounded batches. A round lists up to `purge_batch_size` of the incarnation's
-primary keys, by a query on the incarnation field at the store's read level,
+Bounded batches. A round lists up to `purge_batch_size` of the partition's
+primary keys, by a query on the partition UUID field at the store's read level,
 and deletes them by key. Measured (Milvus 3.0.2; 2.11M points in this layout,
-dead incarnations of 10k to 1M among live tenants under search, upsert, and
+deleted partitions of 10k to 1M among live tenants under search, upsert, and
 scroll traffic; 2 CPUs / 4 GB): rounds stayed flat at about 100 ms to the end
 of a 1M purge, with at most a 0.3 s stall for other tenants; one filter-delete
 of 1M points instead stalled every tenant's reads and writes for 2.7-9 s at
-Session consistency. Listing by the incarnation field took 57-63 ms per round
+Session consistency. Listing by the partition UUID field took 57-63 ms per round
 of 10,000 against 70-75 ms by primary-key range (1.4M rows, Milvus 2.6.24).
 
 The listing reads at Bounded, as every other read does, and is correct there:
 a Bounded read is at most `common.gracefulTime` (5 s by default) behind and
 waits rather than read staler, far inside the tombstone retention, so a round
-that lists nothing has found the incarnation empty. When the query node keeps
+that lists nothing has found the partition empty. When the query node keeps
 up, a Bounded read waits for nothing, so a round can list entities the
 previous round deleted but the node has not applied yet, and delete them
 again. At the resource manager's one-second pause after a busy round this does
 not happen. Measured (Milvus
-2.6.24, 4 CPUs / 5 GB; one dead incarnation of 200,000 entities among 50 live
+2.6.24, 4 CPUs / 5 GB; one deleted partition of 200,000 entities among 50 live
 tenants of 2,000, 128 dimensions; rounds of 10,000 on the async client while 4
 tasks search live tenants; two runs each):
 
@@ -194,7 +194,7 @@ tasks search live tenants; two runs each):
 | Strong | none | 20 | 0 | 2.2-2.4 s | 7.6-12.9 ms |
 
 At 1M the pattern held (Milvus 3.0.2, the conditions of the first
-measurement above, one dead incarnation of 1M, rounds of 10,000): at the
+measurement above, one deleted partition of 1M, rounds of 10,000): at the
 one-second pause Bounded took 114.4 and 114.9 s over 101-102 rounds against
 Session's 120.8 and 121.2 s over 101, every entity purged each time; with no
 pause Bounded took 118.9 s over 379 rounds against Session's 25.0 s over 101.

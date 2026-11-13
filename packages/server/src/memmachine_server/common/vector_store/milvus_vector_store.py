@@ -2,7 +2,7 @@
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, ClassVar, cast, override
 from uuid import UUID
@@ -38,7 +38,7 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.filter.filter_parser import (
     Or as FilterOr,
 )
-from memmachine_server.common.metrics_factory import OperationTracker
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.utils import ensure_tz_aware
 
 from .data_types import (
@@ -47,12 +47,15 @@ from .data_types import (
     Record,
     VectorStoreSchema,
 )
-from .partition_registry import Registration
-from .registry_backed_vector_store import (
-    RegistryBackedVectorStore,
-    RegistryBackedVectorStoreParams,
-    RegistryBackedVectorStorePartition,
+from .utils import (
+    validate_declared_properties,
+    validate_dimensions,
+    validate_limit,
+    validate_query_vector,
+    validate_score_threshold,
+    validate_supported_filter,
 )
+from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 
 _COLLECTION_NAME_PREFIX = "sys_"
 """The prefix of the native collection's name, before the vector store name.
@@ -64,11 +67,7 @@ internals with a leading underscore, so the prefix begins with a letter.
 _ID_FIELD = "id"
 _RECORD_UUID_FIELD = "record_uuid"
 _PARTITION_KEY_FIELD = "partition_key"
-"""The native partition-key field, holding the incarnation of the partition an entity belongs to.
-
-A partition created again under a deleted one's key gets a fresh
-incarnation, so it holds only the entities written under that incarnation.
-"""
+"""The native partition-key field, holding the partition UUID of the partition an entity belongs to."""
 _VECTOR_FIELD = "vector"
 _DECLARED_FIELD_PREFIX = "_p_"
 """The prefix of the typed field holding a declared property."""
@@ -76,7 +75,7 @@ _DECLARED_FIELD_PREFIX = "_p_"
 _UUID_LENGTH = 36
 """The length of a UUID's hyphenated text form (RFC 9562), the form stored."""
 _PRIMARY_ID_LENGTH = 2 * _UUID_LENGTH + 1
-"""The length of a primary key, `"{incarnation}:{record_uuid}"`."""
+"""The length of a primary key, `"{partition_uuid}:{record_uuid}"`."""
 _FALSE_EXPR = f"{_ID_FIELD} in []"
 """A Milvus expression no entity satisfies; Milvus refuses a bare `false`."""
 
@@ -203,90 +202,48 @@ def _validate_every_key_accepted(result: Mapping[str, int], sent: int) -> None:
         )
 
 
-def _incarnation_filter(incarnation: UUID) -> str:
-    """A Milvus expression matching the entities of one partition incarnation."""
-    return f"{_PARTITION_KEY_FIELD} == {_expression_string_literal(str(incarnation))}"
+def _partition_filter(partition_uuid: UUID) -> str:
+    """A Milvus expression matching the entities of one partition."""
+    return (
+        f"{_PARTITION_KEY_FIELD} == {_expression_string_literal(str(partition_uuid))}"
+    )
 
 
-class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
-    """A partition backed by Milvus."""
-
-    @staticmethod
-    def _passes_threshold(
-        score: float,
-        threshold: float | None,
-        similarity_metric: SimilarityMetric,
-    ) -> bool:
-        if threshold is None:
-            return True
-        if similarity_metric.higher_is_better:
-            return score >= threshold
-        return score <= threshold
+class MilvusVectorStorePartition(VectorStorePartition):
+    """A partition's entities in the store's Milvus collection."""
 
     def __init__(
         self,
         *,
         client: AsyncMilvusClient,
         collection_name: str,
-        vector_store_name: str,
-        registration: Registration,
+        partition_uuid: UUID,
         store_schema: VectorStoreSchema,
         tracker: OperationTracker,
         request_timeout_seconds: int,
     ) -> None:
-        """Initialize with a Milvus client and the registration the handle is bound to."""
-        super().__init__(
-            vector_store_name=vector_store_name,
-            registration=registration,
-            store_schema=store_schema,
-            tracker=tracker,
-        )
+        """Initialize with a Milvus client and the partition the handle is bound to."""
         self._client = client
         self._collection_name = collection_name
+        self._partition_uuid = partition_uuid
+        self._store_schema = store_schema
+        self._tracker = tracker
         self._request_timeout_seconds = request_timeout_seconds
 
-    def _primary_id(self, record_uuid: UUID) -> str:
-        """The primary key of a record: the incarnation and the record UUID.
-
-        Primary keys are distinct across the partitions sharing the native
-        collection and across a key's incarnations.
-        """
-        return f"{self._incarnation}:{record_uuid}"
-
-    def _build_entity(self, record: Record) -> dict[str, Any]:
-        """Build a Milvus entity from a vector store record."""
-        declared = self._store_schema.indexed_properties
-        entity: dict[str, Any] = {
-            _ID_FIELD: self._primary_id(record.uuid),
-            _RECORD_UUID_FIELD: str(record.uuid),
-            _PARTITION_KEY_FIELD: str(self._incarnation),
-            _VECTOR_FIELD: record.vector,
-        }
-        for key in declared:
-            value = record.properties.get(key)
-            if isinstance(value, datetime):
-                # The instant in UTC, which is all a filter compares: Milvus
-                # refuses an offset with a seconds component.
-                entity[f"{_DECLARED_FIELD_PREFIX}{key}"] = (
-                    ensure_tz_aware(value).astimezone(UTC).isoformat()
-                )
-            else:
-                entity[f"{_DECLARED_FIELD_PREFIX}{key}"] = value
-        return entity
-
-    def _score_from_distance(self, distance: float) -> float:
-        """The store's score for a distance Milvus returned.
-
-        Milvus returns cosine similarity and inner product as they are, and
-        the squared Euclidean distance.
-        """
-        if self._store_schema.similarity_metric is SimilarityMetric.EUCLIDEAN:
-            return math.sqrt(max(distance, 0.0))
-        return distance
-
     @override
-    async def _upsert(self, records: list[Record]) -> None:
-        await self._upsert_entities([self._build_entity(record) for record in records])
+    async def upsert(self, *, records: Iterable[Record]) -> None:
+        async with self._tracker("upsert"):
+            records = list(records)
+            for record in records:
+                validate_declared_properties(
+                    record.properties, self._store_schema.indexed_properties
+                )
+                validate_dimensions(record.vector, self._store_schema.vector_dimensions)
+            if not records:
+                return
+            await self._upsert_entities(
+                [self._build_entity(record) for record in records]
+            )
 
     async def _upsert_entities(self, entities: list[dict[str, Any]]) -> None:
         """Upsert entities, halving a batch refused as too large.
@@ -309,69 +266,146 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
             await self._upsert_entities(entities[:mid])
             await self._upsert_entities(entities[mid:])
 
-    @override
-    async def _query(
-        self,
-        query_vectors: list[list[float]],
-        *,
-        limit: int,
-        score_threshold: float | None,
-        property_filter: FilterExpr | None,
-    ) -> list[QueryResult]:
-        filter_expr = _incarnation_filter(self._incarnation)
-        if property_filter is not None:
-            property_expr = _filter_expression(
-                property_filter, self._store_schema.indexed_properties
-            )
-            filter_expr = f"({filter_expr}) && ({property_expr})"
-
-        raw_results = await self._client.search(
-            collection_name=self._collection_name,
-            data=query_vectors,
-            filter=filter_expr,
-            limit=limit,
-            search_params={"params": {"refine_k": _SEARCH_REFINE_K}},
-            output_fields=[_RECORD_UUID_FIELD],
-            anns_field=_VECTOR_FIELD,
-            timeout=self._request_timeout_seconds,
-        )
-
-        # Milvus returns each query's hits best first, and the square root
-        # taken of a Euclidean distance keeps their order.
-        results: list[QueryResult] = []
-        for raw_matches in raw_results:
-            matches: list[QueryMatch] = []
-            for raw_match in raw_matches:
-                entity = cast(Mapping[str, Any], raw_match["entity"])
-                score = self._score_from_distance(raw_match["distance"])
-                if not self._passes_threshold(
-                    score, score_threshold, self._store_schema.similarity_metric
-                ):
-                    continue
-
-                matches.append(
-                    QueryMatch(
-                        score=score,
-                        record_uuid=UUID(str(entity[_RECORD_UUID_FIELD])),
-                    )
+    def _build_entity(self, record: Record) -> dict[str, Any]:
+        """Build a Milvus entity from a vector store record."""
+        declared = self._store_schema.indexed_properties
+        entity: dict[str, Any] = {
+            _ID_FIELD: self._primary_id(record.uuid),
+            _RECORD_UUID_FIELD: str(record.uuid),
+            _PARTITION_KEY_FIELD: str(self._partition_uuid),
+            _VECTOR_FIELD: record.vector,
+        }
+        for key in declared:
+            value = record.properties.get(key)
+            if isinstance(value, datetime):
+                # The instant in UTC, which is all a filter compares: Milvus
+                # refuses an offset with a seconds component.
+                entity[f"{_DECLARED_FIELD_PREFIX}{key}"] = (
+                    ensure_tz_aware(value).astimezone(UTC).isoformat()
                 )
-
-            results.append(QueryResult(matches=matches))
-
-        return results
+            else:
+                entity[f"{_DECLARED_FIELD_PREFIX}{key}"] = value
+        return entity
 
     @override
-    async def _delete(self, record_uuids: list[UUID]) -> None:
-        primary_ids = [self._primary_id(uuid) for uuid in record_uuids]
-        result = await self._client.delete(
-            collection_name=self._collection_name,
-            ids=primary_ids,
-            timeout=self._request_timeout_seconds,
+    async def query(
+        self,
+        *,
+        query_vectors: Iterable[Sequence[float]],
+        limit: int,
+        score_threshold: float | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> list[QueryResult]:
+        async with self._tracker("query"):
+            query_vectors = [list(query_vector) for query_vector in query_vectors]
+            for query_vector in query_vectors:
+                validate_query_vector(
+                    query_vector, self._store_schema.vector_dimensions
+                )
+            validate_score_threshold(score_threshold)
+            validate_limit(limit)
+            if property_filter is not None:
+                validate_supported_filter(
+                    property_filter, self._store_schema.indexed_properties
+                )
+            if not query_vectors:
+                return []
+
+            raw_results = await self._client.search(
+                collection_name=self._collection_name,
+                data=query_vectors,
+                filter=self._query_filter(property_filter),
+                limit=limit,
+                search_params={"params": {"refine_k": _SEARCH_REFINE_K}},
+                output_fields=[_RECORD_UUID_FIELD],
+                anns_field=_VECTOR_FIELD,
+                timeout=self._request_timeout_seconds,
+            )
+            return [
+                QueryResult(matches=self._matches(raw_matches, score_threshold))
+                for raw_matches in raw_results
+            ]
+
+    def _query_filter(self, property_filter: FilterExpr | None) -> str:
+        """The filter expression a query sends: the partition's entities, narrowed by the property filter when one is given."""
+        filter_expr = _partition_filter(self._partition_uuid)
+        if property_filter is None:
+            return filter_expr
+        property_expr = _filter_expression(
+            property_filter, self._store_schema.indexed_properties
         )
-        _validate_every_key_accepted(result, len(primary_ids))
+        return f"({filter_expr}) && ({property_expr})"
+
+    def _matches(
+        self, raw_matches: list[dict], score_threshold: float | None
+    ) -> list[QueryMatch]:
+        """
+        The matches of one query's hits, best first, keeping only those whose score meets the caller's threshold.
+
+        Milvus returns a query's hits best first, and the square root taken
+        of a Euclidean distance keeps their order.
+        """
+        matches: list[QueryMatch] = []
+        for raw_match in raw_matches:
+            entity = cast(Mapping[str, Any], raw_match["entity"])
+            score = self._score_from_distance(raw_match["distance"])
+            if not self._passes_threshold(
+                score, score_threshold, self._store_schema.similarity_metric
+            ):
+                continue
+            matches.append(
+                QueryMatch(
+                    score=score,
+                    record_uuid=UUID(str(entity[_RECORD_UUID_FIELD])),
+                )
+            )
+        return matches
+
+    def _score_from_distance(self, distance: float) -> float:
+        """The store's score for a distance Milvus returned.
+
+        Milvus returns cosine similarity and inner product as they are, and
+        the squared Euclidean distance.
+        """
+        if self._store_schema.similarity_metric is SimilarityMetric.EUCLIDEAN:
+            return math.sqrt(max(distance, 0.0))
+        return distance
+
+    @staticmethod
+    def _passes_threshold(
+        score: float,
+        threshold: float | None,
+        similarity_metric: SimilarityMetric,
+    ) -> bool:
+        if threshold is None:
+            return True
+        if similarity_metric.higher_is_better:
+            return score >= threshold
+        return score <= threshold
+
+    @override
+    async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
+        async with self._tracker("delete"):
+            primary_ids = [self._primary_id(uuid) for uuid in record_uuids]
+            if not primary_ids:
+                return
+            result = await self._client.delete(
+                collection_name=self._collection_name,
+                ids=primary_ids,
+                timeout=self._request_timeout_seconds,
+            )
+            _validate_every_key_accepted(result, len(primary_ids))
+
+    def _primary_id(self, record_uuid: UUID) -> str:
+        """The primary key of a record: the partition UUID and the record UUID.
+
+        Primary keys are distinct across the partitions sharing the native
+        collection.
+        """
+        return f"{self._partition_uuid}:{record_uuid}"
 
 
-class MilvusVectorStoreParams(RegistryBackedVectorStoreParams):
+class MilvusVectorStoreParams(VectorStoreParams):
     """
     Parameters for MilvusVectorStore.
 
@@ -391,6 +425,9 @@ class MilvusVectorStoreParams(RegistryBackedVectorStoreParams):
             The most entities one purge round lists and deletes, at most the
             server's quotaAndLimits.limits.maxQueryResultWindow (default:
             10000).
+        metrics_factory (MetricsFactory | None):
+            An instance of MetricsFactory for collecting usage metrics
+            (default: None).
     """
 
     client: InstanceOf[AsyncMilvusClient] = Field(
@@ -416,13 +453,17 @@ class MilvusVectorStoreParams(RegistryBackedVectorStoreParams):
             "server's quotaAndLimits.limits.maxQueryResultWindow"
         ),
     )
+    metrics_factory: InstanceOf[MetricsFactory] | None = Field(
+        None,
+        description="An instance of MetricsFactory for collecting usage metrics",
+    )
 
 
-class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
+class MilvusVectorStore(VectorStore):
     """Asynchronous Milvus-based implementation of VectorStore.
 
     The store is one native Milvus collection, named at construction, in
-    which a partition is the entities carrying its incarnation in the
+    which a partition is the entities carrying its partition UUID in the
     partition-key field.
 
     Reads run at Bounded, the consistency level the store creates its
@@ -435,6 +476,19 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
         SimilarityMetric.DOT: "IP",
         SimilarityMetric.EUCLIDEAN: "L2",
     }
+
+    def __init__(self, params: MilvusVectorStoreParams) -> None:
+        """Initialize the vector store with the provided parameters."""
+        MilvusVectorStore._validate_metric(params.store_schema.similarity_metric)
+        self._store_schema = params.store_schema
+        self._tracker = OperationTracker(
+            params.metrics_factory, prefix="vector_store_milvus"
+        )
+        self._client = params.client
+        self._collection_name = f"{_COLLECTION_NAME_PREFIX}{params.vector_store_name}"
+        self._request_timeout_seconds = params.request_timeout_seconds
+        self._max_varchar_length = params.max_varchar_length
+        self._purge_batch_size = params.purge_batch_size
 
     @staticmethod
     def _validate_metric(similarity_metric: SimilarityMetric) -> None:
@@ -451,18 +505,18 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
                 f"got {similarity_metric.value!r}"
             )
 
-    def __init__(self, params: MilvusVectorStoreParams) -> None:
-        """Initialize the vector store with the provided parameters."""
-        MilvusVectorStore._validate_metric(params.store_schema.similarity_metric)
-        super().__init__(params, metrics_prefix="vector_store_milvus")
-        self._client = params.client
-        self._collection_name = f"{_COLLECTION_NAME_PREFIX}{params.vector_store_name}"
-        self._request_timeout_seconds = params.request_timeout_seconds
-        self._max_varchar_length = params.max_varchar_length
-        self._purge_batch_size = params.purge_batch_size
+    @property
+    @override
+    def store_schema(self) -> VectorStoreSchema:
+        return self._store_schema
 
     @override
+    async def startup(self) -> None:
+        async with self._tracker("startup"):
+            await self._prepare_storage()
+
     async def _prepare_storage(self) -> None:
+        """Prepare the collection every partition lives in, its indexes, and its load, each step idempotent."""
         # Each step runs when it is missing, and the collection is loaded, so
         # the next startup completes one that failed part way.
         index_params = self._client.prepare_index_params()
@@ -568,29 +622,33 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
         )
 
     @override
-    async def _prepare_partition_storage(
-        self, partition_key: str, incarnation: UUID
-    ) -> None:
-        # Every partition lives in the native collection startup prepared.
+    async def shutdown(self) -> None:
+        # The caller owns the client's lifecycle.
         pass
 
     @override
-    def _partition_handle(
-        self, registration: Registration
-    ) -> MilvusVectorStorePartition:
+    async def create_partition(self, partition_uuid: UUID) -> None:
+        # Every partition lives in the collection startup prepared.
+        return
+
+    @override
+    async def get_partition(self, partition_uuid: UUID) -> MilvusVectorStorePartition:
         return MilvusVectorStorePartition(
             client=self._client,
             collection_name=self._collection_name,
-            vector_store_name=self._vector_store_name,
-            registration=registration,
+            partition_uuid=partition_uuid,
             store_schema=self._store_schema,
             tracker=self._tracker,
             request_timeout_seconds=self._request_timeout_seconds,
         )
 
     @override
-    async def _purge_round(self, incarnation: UUID) -> bool:
-        # Deletes the incarnation's entities by primary key, one listed batch
+    async def purge_partition(self, partition_uuid: UUID) -> bool:
+        async with self._tracker("purge_partition"):
+            return await self._purge_partition(partition_uuid)
+
+    async def _purge_partition(self, partition_uuid: UUID) -> bool:
+        # Deletes the partition's entities by primary key, one listed batch
         # per round, keeping each delete short for every tenant of the native
         # collection.
         if not await self._client.has_collection(
@@ -601,7 +659,7 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
             return False
         listed = await self._client.query(
             collection_name=self._collection_name,
-            filter=_incarnation_filter(incarnation),
+            filter=_partition_filter(partition_uuid),
             output_fields=[_ID_FIELD],
             limit=self._purge_batch_size,
             timeout=self._request_timeout_seconds,
@@ -615,3 +673,8 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
             )
             _validate_every_key_accepted(result, len(primary_ids))
         return bool(primary_ids)
+
+    @override
+    async def drop_partition(self, partition_uuid: UUID) -> None:
+        # Every partition lives in the collection startup prepared.
+        return

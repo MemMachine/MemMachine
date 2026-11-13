@@ -11,21 +11,6 @@ from memmachine_server.common.filter.filter_parser import (
 
 from .data_types import PropertyTypeMismatchError, UndeclaredPropertyKeyError
 
-_PARTITION_KEY_MAX_BYTES = 255
-
-
-def validate_partition_key(partition_key: str) -> None:
-    """Raise ValueError unless the partition key is non-empty, at most `_PARTITION_KEY_MAX_BYTES` bytes, and free of NUL."""
-    if (
-        not partition_key
-        or "\x00" in partition_key
-        or len(partition_key.encode()) > _PARTITION_KEY_MAX_BYTES
-    ):
-        raise ValueError(
-            f"Partition key {partition_key!r} must be non-empty, at most "
-            f"{_PARTITION_KEY_MAX_BYTES} bytes, and free of NUL characters"
-        )
-
 
 def validate_declared_properties(
     properties: Mapping[str, PropertyValue],

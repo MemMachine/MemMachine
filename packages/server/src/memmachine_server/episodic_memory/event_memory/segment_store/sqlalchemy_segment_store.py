@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime, timedelta, timezone
 from typing import override
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -25,7 +25,6 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     Select,
-    String,
     Tuple,
     Uuid,
     bindparam,
@@ -92,18 +91,12 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
     encode_context,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
-    SegmentStoreAttemptsExhaustedError,
-    SegmentStorePartitionAlreadyExistsError,
     SegmentStorePartitionConfig,
     SegmentStorePartitionConfigMismatchError,
-    SegmentStorePartitionHandleStaleError,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.segment_store import (
     SegmentStore,
     SegmentStorePartition,
-)
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
-    validate_partition_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,26 +104,9 @@ logger = logging.getLogger(__name__)
 _JSON_AUTO = JSON().with_variant(JSONB, "postgresql")
 
 
-# Consecutive failed mint attempts before the store concludes it
-# is re-attempting a persistent database error rather than losing races: a real
-# uuid collision is a once-in-the-universe event and each race retry
-# requires another actor to have changed the registry in a ~millisecond
-# window, so consecutive failures at this depth mean the IntegrityError
-# has some other, permanent cause.
-_MAX_MINT_ATTEMPTS = 10
-
 # A context read takes its context from at most this many segments on each
 # side of a seed, matching or not.
 _MAX_CONTEXT_DISTANCE = 1_000
-
-
-class _RegistryInsertRejectedError(Exception):
-    """A registry insert was rejected although its key is free.
-
-    Raised when the insert fails with an integrity error but no row
-    exists under the key, or when the minted incarnation still has
-    garbage awaiting purge.
-    """
 
 
 # ORM models
@@ -141,16 +117,23 @@ class BaseSegmentStore(DeclarativeBase):
 
 
 class PartitionRow(BaseSegmentStore):
-    """The tenant registry: one row per live partition incarnation."""
+    """One row per created partition.
+
+    It holds the configuration every handle on the partition uses, and,
+    while the partition is purged, how far the purge got: its walk deleted
+    the partition's segment rows keyed at or below purged_through as it
+    passed them; NULL until the purge's first full batch, and again once a
+    walk from it reaches the end. Dropping the partition deletes the row.
+    """
 
     __tablename__ = "segment_store_pt"
 
-    partition_key: MappedColumn[str] = mapped_column(String(255), primary_key=True)
-    incarnation: MappedColumn[UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    partition_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     payload_codec_config: MappedColumn[dict[str, JsonValue]] = mapped_column(
         _JSON_AUTO,
         nullable=False,
     )
+    purged_through: MappedColumn[UUID | None] = mapped_column(Uuid, nullable=True)
 
 
 class SegmentRow(BaseSegmentStore):
@@ -158,7 +141,7 @@ class SegmentRow(BaseSegmentStore):
 
     __tablename__ = "segment_store_sg"
 
-    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    partition_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     event_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
@@ -176,18 +159,18 @@ class SegmentRow(BaseSegmentStore):
         _JSON_AUTO, nullable=False, default=dict
     )
 
-    # No foreign key to the registry: registry rows and data rows are
-    # deliberately decoupled so that partition deletion is a registry write
-    # (O(1)) and the purge queue reclaims data rows asynchronously.
+    # No foreign key to the partition's row: the purge deletes a partition's
+    # segments in bounded batches, and the drop deletes its row once the
+    # purge finds none.
     __table_args__ = (
         Index(
-            "segment_store_sg__in_ev",
-            "incarnation",
+            "segment_store_sg__pu_ev",
+            "partition_uuid",
             "event_uuid",
         ),
         Index(
-            "segment_store_sg__in_ts_ev_ix_of",
-            "incarnation",
+            "segment_store_sg__pu_ts_ev_ix_of",
+            "partition_uuid",
             "timestamp",
             "event_uuid",
             "index",
@@ -201,48 +184,26 @@ class DerivativeLinkRow(BaseSegmentStore):
 
     __tablename__ = "segment_store_dv_ln"
 
-    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    partition_uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
 
     uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
     segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["incarnation", "segment_uuid"],
+            ["partition_uuid", "segment_uuid"],
             [
-                "segment_store_sg.incarnation",
+                "segment_store_sg.partition_uuid",
                 "segment_store_sg.uuid",
             ],
             ondelete="CASCADE",
         ),
         Index(
-            "segment_store_dv_ln__in_su",
-            "incarnation",
+            "segment_store_dv_ln__pu_su",
+            "partition_uuid",
             "segment_uuid",
         ),
     )
-
-
-class PurgeQueueRow(BaseSegmentStore):
-    """The purge queue: one row per dead partition incarnation.
-
-    Claimed oldest-first by the enqueue stamp, which is the database clock,
-    so entries from every server order on one clock; entries stamped in the
-    same tick are unordered among themselves. The incarnation identifies
-    the rows to reclaim. Every segment row of the incarnation keyed at or
-    below purged_through is deleted; NULL until the first full batch. An
-    entry holds only what the purge reads.
-    """
-
-    __tablename__ = "segment_store_gc"
-
-    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
-    enqueued_at: MappedColumn[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    purged_through: MappedColumn[UUID | None] = mapped_column(Uuid, nullable=True)
-
-    __table_args__ = (Index("segment_store_gc__ea", "enqueued_at"),)
 
 
 class SQLAlchemySegmentStorePartition(SegmentStorePartition):
@@ -250,22 +211,17 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
     def __init__(
         self,
-        partition_key: str,
-        incarnation: UUID,
+        partition_uuid: UUID,
         create_session: async_sessionmaker[AsyncSession],
         is_sqlite: bool,
         config: SegmentStorePartitionConfig,
         payload_codec: PayloadCodec,
         tracker: OperationTracker,
     ) -> None:
-        """Initialize with a partition key, its incarnation, and the store's session factory."""
-        self._partition_key = partition_key
-        # Data rows are keyed by the incarnation alone: rows of a
-        # deleted-and-recreated partition under the same logical key are
-        # invisible to the new incarnation while the purge queue reclaims
-        # them, and a data query cannot even be built without resolving
-        # the registry first.
-        self._incarnation = incarnation
+        """Initialize with a partition and the store's session factory."""
+        # Data rows are keyed by the partition's UUID: rows of another
+        # partition are invisible to this one.
+        self._partition_uuid = partition_uuid
         self._config = config
         self._payload_codec = payload_codec
         self._tracker = tracker
@@ -277,38 +233,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     def config(self) -> SegmentStorePartitionConfig:
         return self._config
 
-    def _registry_row_query(self) -> Select[tuple[str]]:
-        """This incarnation's registry row: absent once the handle is stale.
-
-        Reads conjoin its EXISTS to their data statements, so one statement
-        (one snapshot) both checks liveness and reads: a stale handle reads
-        nothing, at no extra round trip.
-        """
-        return select(PartitionRow.partition_key).where(
-            PartitionRow.incarnation == self._incarnation
-        )
-
-    async def _ensure_partition_live(
-        self, session: AsyncSession, *, pin: bool = False
-    ) -> None:
-        """Raise if this handle's incarnation is no longer registered.
-
-        With `pin`, the row is read under a shared lock that blocks
-        deletion, which takes the exclusive row lock, for the rest of the
-        transaction. SQLite drops the locking clause; there a write
-        transaction holds the database's write lock from `BEGIN`, which
-        deletion waits on just the same. Reads call this without the lock,
-        and only when their data statement returned no rows: it tells an
-        empty partition from a stale handle.
-        """
-        query = self._registry_row_query()
-        if pin:
-            query = query.with_for_update(read=True)
-        row = (await session.execute(query)).scalar_one_or_none()
-        if row is None:
-            raise SegmentStorePartitionHandleStaleError(self._partition_key)
-
-    # Registration
+    # Writes
 
     @override
     async def add_segments(
@@ -322,7 +247,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("add_segments"),
             write_session(self._create_session) as session,
         ):
-            await self._ensure_partition_live(session, pin=True)
             await self._insert_segments(session, segments_to_derivative_uuids.keys())
             await self._insert_derivative_links(session, segments_to_derivative_uuids)
 
@@ -335,7 +259,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         segment_row_values = [
             {
                 "uuid": segment.uuid,
-                "incarnation": self._incarnation,
+                "partition_uuid": self._partition_uuid,
                 "event_uuid": segment.event_uuid,
                 "index": segment.index,
                 "offset": segment.offset,
@@ -365,7 +289,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         derivative_row_values = [
             {
                 "uuid": derivative_uuid,
-                "incarnation": self._incarnation,
+                "partition_uuid": self._partition_uuid,
                 "segment_uuid": segment.uuid,
             }
             for segment, derivative_uuids in segments_to_derivative_uuids.items()
@@ -395,8 +319,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         ):
             seed_segments_query = select(SegmentRow).where(
                 SegmentRow.uuid.in_(seed_segment_uuids),
-                SegmentRow.incarnation == self._incarnation,
-                self._registry_row_query().exists(),
+                SegmentRow.partition_uuid == self._partition_uuid,
             )
             if property_filter is not None:
                 seed_segments_query = seed_segments_query.where(
@@ -417,7 +340,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 row.uuid: row for row in seed_segment_rows
             }
             if not seed_segment_rows_by_uuid:
-                await self._ensure_partition_live(session)
                 return {}
 
             # Short-circuit: no context needed.
@@ -448,13 +370,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     max_forward_segments,
                     property_filter,
                 )
-
-            # Each statement above took its own snapshot (READ COMMITTED):
-            # a deletion committing between the seeds statement and the
-            # context statements would leave the seeds with silently
-            # empty context. One registry read after the last statement
-            # turns that window into the contractual stale-handle error.
-            await self._ensure_partition_live(session)
 
             # Assemble results: [backward (reversed) + seed + forward].
             segments_by_seed: dict[UUID, list[Segment]] = {}
@@ -487,7 +402,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 SegmentRow.offset.label("seed_offset"),
             )
             .where(
-                SegmentRow.incarnation == self._incarnation,
+                SegmentRow.partition_uuid == self._partition_uuid,
                 SegmentRow.uuid.in_(seed_rows_by_uuid.keys()),
             )
             .subquery("seeds")
@@ -649,7 +564,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         it is the first `limit` matches among them, read without the filter,
         which the planner cannot estimate, so the plan stays an ordered index
         scan.
-        Returns nothing once the partition is deleted.
         """
         # Built from Core columns, the table's and the window's: building from
         # the mapped class adds ORM work to every column reference, and an
@@ -664,11 +578,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         walk = (
             select(SegmentRow.__table__)
             .where(
-                segments.incarnation == self._incarnation,
+                segments.partition_uuid == self._partition_uuid,
                 segment_ordering_columns < seed_ordering_values
                 if backward
                 else segment_ordering_columns > seed_ordering_values,
-                self._registry_row_query().exists(),
             )
             .order_by(
                 *SQLAlchemySegmentStorePartition._chronological_order(
@@ -729,13 +642,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._create_session() as session,
         ):
             query = select(SegmentRow.event_uuid, SegmentRow.uuid).where(
-                SegmentRow.incarnation == self._incarnation,
+                SegmentRow.partition_uuid == self._partition_uuid,
                 SegmentRow.event_uuid.in_(event_uuids),
-                self._registry_row_query().exists(),
             )
             rows = (await session.execute(query)).all()
-            if not rows:
-                await self._ensure_partition_live(session)
 
         result: defaultdict[UUID, list[UUID]] = defaultdict(list)
         for event_uuid, segment_uuid in rows:
@@ -758,13 +668,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             query = select(
                 DerivativeLinkRow.segment_uuid, DerivativeLinkRow.uuid
             ).where(
-                DerivativeLinkRow.incarnation == self._incarnation,
+                DerivativeLinkRow.partition_uuid == self._partition_uuid,
                 DerivativeLinkRow.segment_uuid.in_(segment_uuids),
-                self._registry_row_query().exists(),
             )
             rows = (await session.execute(query)).all()
-            if not rows:
-                await self._ensure_partition_live(session)
 
         result: defaultdict[UUID, list[UUID]] = defaultdict(list)
         for segment_uuid, derivative_uuid in rows:
@@ -789,13 +696,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             query = select(
                 DerivativeLinkRow.uuid, DerivativeLinkRow.segment_uuid
             ).where(
-                DerivativeLinkRow.incarnation == self._incarnation,
+                DerivativeLinkRow.partition_uuid == self._partition_uuid,
                 DerivativeLinkRow.uuid.in_(derivative_uuids),
-                self._registry_row_query().exists(),
             )
             rows = (await session.execute(query)).all()
-            if not rows:
-                await self._ensure_partition_live(session)
 
         return {row.uuid: row.segment_uuid for row in rows}
 
@@ -814,7 +718,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("delete_segments"),
             write_session(self._create_session) as session,
         ):
-            await self._ensure_partition_live(session, pin=True)
             if not self._is_sqlite:
                 # Lock rows in deterministic order to prevent deadlocks
                 # from concurrent deletions with overlapping UUID sets.
@@ -822,7 +725,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 await session.execute(
                     select(SegmentRow.uuid)
                     .where(
-                        SegmentRow.incarnation == self._incarnation,
+                        SegmentRow.partition_uuid == self._partition_uuid,
                         SegmentRow.uuid.in_(segment_uuids),
                     )
                     .order_by(SegmentRow.uuid)
@@ -832,7 +735,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             # CASCADE deletes derivatives via FK.
             await session.execute(
                 delete(SegmentRow).where(
-                    SegmentRow.incarnation == self._incarnation,
+                    SegmentRow.partition_uuid == self._partition_uuid,
                     SegmentRow.uuid.in_(segment_uuids),
                 )
             )
@@ -897,17 +800,13 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             (default: None).
         purge_max_segments (int):
             Maximum number of segment rows purged per call. Their
-            derivative links follow by cascade, so a call's transaction
-            also scales with the deployment's links per segment; size
-            the bound with that fan-out in mind (default: 10000).
-        purge_max_partitions (int):
-            Maximum number of queue entries a purge call processes.
-            Entries cost round trips rather than row deletions --
-            orders of magnitude more per unit than segment rows -- so
-            they carry their own bound, sized so a full-entry call and
-            a full-row call hold transactions of the same order of
-            duration; a backlog of empty partitions cannot turn one
-            bounded call into an unbounded transaction (default: 100).
+            derivative links are deleted by cascade, so a call's
+            transaction also scales with the deployment's links per
+            segment; size the bound with that fan-out in mind
+            (default: 10000).
+        partition_config (SegmentStorePartitionConfig):
+            The configuration of each partition the store creates, recorded
+            with the partition (default: plaintext payloads).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(
@@ -931,22 +830,16 @@ class SQLAlchemySegmentStoreParams(BaseModel):
         gt=0,
         description=(
             "Maximum number of segment rows purged per call. Their "
-            "derivative links follow by cascade, so a call's transaction "
-            "also scales with the deployment's links per segment; size "
-            "the bound with that fan-out in mind"
+            "derivative links are deleted by cascade, so a call's "
+            "transaction also scales with the deployment's links per "
+            "segment; size the bound with that fan-out in mind"
         ),
     )
-    purge_max_partitions: int = Field(
-        100,
-        gt=0,
+    partition_config: SegmentStorePartitionConfig = Field(
+        default_factory=SegmentStorePartitionConfig,
         description=(
-            "Maximum number of queue entries a purge call processes. "
-            "Entries cost round trips rather than row deletions -- orders "
-            "of magnitude more per unit than segment rows -- so they "
-            "carry their own bound, sized so a full-entry call and a "
-            "full-row call hold transactions of the same order of "
-            "duration; a backlog of empty partitions cannot turn one "
-            "bounded call into an unbounded transaction"
+            "The configuration of each partition the store creates, recorded "
+            "with the partition"
         ),
     )
 
@@ -979,7 +872,7 @@ class SQLAlchemySegmentStore(SegmentStore):
         )
 
         self._purge_max_segments = params.purge_max_segments
-        self._purge_max_partitions = params.purge_max_partitions
+        self._partition_config = params.partition_config
 
         self._is_sqlite = self._engine.dialect.name == "sqlite"
 
@@ -994,331 +887,150 @@ class SQLAlchemySegmentStore(SegmentStore):
     async def shutdown(self) -> None:
         pass
 
-    # Partition management
+    # Partitions
 
     @override
-    async def create_partition(
-        self,
-        partition_key: str,
-        config: SegmentStorePartitionConfig,
-    ) -> None:
-        validate_partition_key(partition_key)
+    async def create_partition(self, partition_uuid: UUID) -> None:
+        config = self._partition_config
         async with self._tracker("create_partition"):
             # Materialized before the insert so an unloadable codec config
-            # fails without committing a registry row for a partition that
-            # could never be opened.
+            # fails without writing a row no handle could use.
             await self._load_payload_codec(config)
-            attempts = 0
-            while True:
-                try:
-                    await self._insert_partition_row(partition_key, uuid4(), config)
-                except _RegistryInsertRejectedError as err:
-                    logger.warning(
-                        "Creating partition %r was rejected: %s; minting another "
-                        "incarnation",
-                        partition_key,
-                        err,
-                    )
-                    attempts += 1
-                    if attempts >= _MAX_MINT_ATTEMPTS:
-                        raise SegmentStoreAttemptsExhaustedError(
-                            f"Creating partition {partition_key!r} made no "
-                            f"progress after {_MAX_MINT_ATTEMPTS} attempts"
-                        ) from err
-                    continue
-                return
-
-    async def _insert_partition_row(
-        self,
-        partition_key: str,
-        incarnation: UUID,
-        config: SegmentStorePartitionConfig,
-    ) -> None:
-        """Insert a registry row for a freshly minted incarnation.
-
-        The registry's unique constraint rejects an incarnation colliding
-        with a live one; the in-transaction queue re-check rejects one
-        whose garbage is still awaiting purge, so data rows can never be
-        adopted by (or reclaimed out from under) a new partition. The
-        check runs after the insert so that a concurrent deletion moving a
-        colliding row to the queue -- our insert waited on its uncommitted
-        registry delete -- is already visible; after the check, no new
-        queue entry for this incarnation can appear before we commit,
-        because the only registry row carrying it is ours, uncommitted.
-        The locking read sees latest-committed state even on dialects
-        whose plain reads serve transaction-start snapshots.
-
-        Raises:
-            SegmentStorePartitionAlreadyExistsError:
-                The partition key is taken; open or delete the existing
-                partition instead.
-            _RegistryInsertRejectedError:
-                The insert cannot be kept, for a reason other than the
-                key being taken.
-        """
-        try:
-            async with write_session(self._create_session) as session:
-                await session.execute(
-                    insert(PartitionRow).values(
-                        partition_key=partition_key,
-                        incarnation=incarnation,
-                        payload_codec_config=encode_payload_codec_config(
-                            config.payload_codec_config
-                        ),
-                    )
-                )
-                garbage_row = (
+            try:
+                async with write_session(self._create_session) as session:
                     await session.execute(
-                        select(PurgeQueueRow.incarnation)
-                        .where(PurgeQueueRow.incarnation == incarnation)
-                        .with_for_update(read=True)
+                        insert(PartitionRow).values(
+                            partition_uuid=partition_uuid,
+                            payload_codec_config=encode_payload_codec_config(
+                                config.payload_codec_config
+                            ),
+                        )
                     )
-                ).scalar_one_or_none()
-                if garbage_row is not None:
-                    raise _RegistryInsertRejectedError(
-                        f"incarnation {incarnation} awaits purge"
-                    )
-        except IntegrityError as err:
-            # If a committed row exists under this key, the key is taken.
-            async with self._create_session() as session:
-                partition_row = await SQLAlchemySegmentStore._get_partition_row(
-                    session, partition_key
-                )
-            if partition_row is not None:
-                raise SegmentStorePartitionAlreadyExistsError(partition_key) from err
-            raise _RegistryInsertRejectedError(
-                f"the insert of incarnation {incarnation} failed and no row "
-                "exists under the key"
-            ) from err
-
-    @override
-    async def open_partition(
-        self, partition_key: str
-    ) -> SQLAlchemySegmentStorePartition | None:
-        validate_partition_key(partition_key)
-        async with self._tracker("open_partition"):
-            async with self._create_session() as session:
-                partition_row = await SQLAlchemySegmentStore._get_partition_row(
-                    session, partition_key
-                )
-            if partition_row is None:
-                return None
-
-            return await self._partition_from_partition_row(partition_row)
-
-    @override
-    async def open_or_create_partition(
-        self,
-        partition_key: str,
-        config: SegmentStorePartitionConfig,
-    ) -> SQLAlchemySegmentStorePartition:
-        validate_partition_key(partition_key)
-        async with self._tracker("open_or_create_partition"):
-            return await self._open_or_create_partition(partition_key, config)
-
-    async def _open_or_create_partition(
-        self,
-        partition_key: str,
-        config: SegmentStorePartitionConfig,
-    ) -> SQLAlchemySegmentStorePartition:
-        attempts = 0
-        # Read-then-insert, retried: losing the insert race means a
-        # concurrent creator won (reopen its row), and finding no row
-        # after losing means a concurrent delete removed the winner --
-        # every retry requires another actor to have changed the state
-        # (or, vanishingly, a minted incarnation to have collided).
-        while True:
-            async with self._create_session() as session:
-                partition_row = await SQLAlchemySegmentStore._get_partition_row(
-                    session, partition_key
-                )
-
-            if partition_row is not None:
+            except IntegrityError:
+                # Created before: the same configuration makes this a repeat.
+                partition_row = await self._get_partition_row(partition_uuid)
+                if partition_row is None:
+                    raise
                 SQLAlchemySegmentStore._raise_if_partition_config_mismatch(
                     partition_row, config
                 )
-                return await self._partition_from_partition_row(partition_row)
 
-            # Materialized before the insert so an unloadable codec
-            # config fails without committing a registry row for a
-            # partition that could never be opened; the open path above
-            # loads its codec from the committed row instead.
-            payload_codec = await self._load_payload_codec(config)
-            incarnation = uuid4()
-            try:
-                await self._insert_partition_row(partition_key, incarnation, config)
-            except (
-                SegmentStorePartitionAlreadyExistsError,
-                _RegistryInsertRejectedError,
-            ) as err:
-                if isinstance(err, _RegistryInsertRejectedError):
-                    logger.warning(
-                        "Creating partition %r was rejected: %s; minting "
-                        "another incarnation",
-                        partition_key,
-                        err,
-                    )
-                attempts += 1
-                if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise SegmentStoreAttemptsExhaustedError(
-                        f"Opening or creating partition {partition_key!r} "
-                        f"made no progress after {_MAX_MINT_ATTEMPTS} "
-                        f"attempts"
-                    ) from err
-                # Lost the creation race (reopen the winner's row next
-                # iteration) or minted a colliding incarnation (mint a
-                # fresh one).
-                continue
-
+    @override
+    async def get_partition(
+        self, partition_uuid: UUID
+    ) -> SQLAlchemySegmentStorePartition | None:
+        async with self._tracker("get_partition"):
+            partition_row = await self._get_partition_row(partition_uuid)
+            if partition_row is None:
+                return None
+            config = SegmentStorePartitionConfig(
+                payload_codec_config=decode_payload_codec_config(
+                    partition_row.payload_codec_config
+                )
+            )
             return SQLAlchemySegmentStorePartition(
-                partition_key=partition_key,
-                incarnation=incarnation,
+                partition_uuid=partition_uuid,
                 create_session=self._create_session,
                 is_sqlite=self._is_sqlite,
                 config=config,
-                payload_codec=payload_codec,
+                payload_codec=await self._load_payload_codec(config),
                 tracker=self._tracker,
             )
 
     @override
-    async def close_partition(
-        self, segment_store_partition: SegmentStorePartition
-    ) -> None:
-        pass
-
-    @override
-    async def delete_partition(self, partition_key: str) -> None:
-        # O(1) regardless of partition size: the exclusive row lock waits
-        # out in-flight writers (which hold shared pins on the row), the
-        # incarnation goes onto the purge queue, and the registry row is
-        # deleted. Data rows become unreachable immediately -- every
-        # operation resolves the registry first.
-        validate_partition_key(partition_key)
+    async def purge_partition(self, partition_uuid: UUID) -> bool:
+        # One transaction per call: purge up to the bound and commit, or
+        # nothing, so a call that fails on contention is safe to repeat: a
+        # raise rolls the whole call back, cursor included. Purgers of one
+        # partition serialize on its row's lock, so each reads the cursor
+        # its predecessor committed; on SQLite, which drops locking clauses,
+        # the call holds the write lock from BEGIN.
         async with (
-            self._tracker("delete_partition"),
-            write_session(self._create_session) as session,
-        ):
-            # Racing deletions serialize on the exclusive row lock, or on
-            # SQLite, which drops locking clauses, on the write lock the
-            # transaction holds from BEGIN; no row is the idempotent no-op
-            # case.
-            incarnation = (
-                await session.execute(
-                    select(PartitionRow.incarnation)
-                    .where(PartitionRow.partition_key == partition_key)
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
-            if incarnation is None:
-                return
-
-            await session.execute(
-                insert(PurgeQueueRow).values(
-                    incarnation=incarnation,
-                    # The database clock: transaction start on PostgreSQL,
-                    # and one deletion per transaction, so one stamp per
-                    # entry.
-                    enqueued_at=func.now(),
-                )
-            )
-            await session.execute(
-                delete(PartitionRow).where(PartitionRow.partition_key == partition_key)
-            )
-
-    @override
-    async def purge_deleted_partitions(self) -> bool:
-        # Reclaim dead incarnations oldest-first, within the per-call bounds.
-        #
-        # One transaction per call: reclaim up to the configured bounds and
-        # commit, or nothing. That is what makes a call that fails on
-        # contention safe to repeat, as the ABC promises: a raise rolls the
-        # whole call back, cursor included. Entries are claimed one at a
-        # time, so only the claiming call touches a dead incarnation's rows;
-        # on SQLite, which drops locking clauses, the call holds the write
-        # lock from BEGIN, so purgers serialize and each reads the cursor
-        # its predecessor committed. Full rationale:
-        # design/segment_store_shared_tables.md.
-        remaining = self._purge_max_segments
-        entries = 0
-        # Pure Core DML on an engine connection: unlike Session.execute,
-        # AsyncConnection.execute is typed CursorResult, whose rowcount
-        # the batch loop needs.
-        async with (
-            self._tracker("purge_deleted_partitions"),
+            self._tracker("purge_partition"),
             write_connection(self._engine) as connection,
         ):
-            while True:
-                # Skips only OTHER transactions' locks; entries this call has
-                # already claimed cannot come back, each being deleted before
-                # the next claim. SQLite drops the locking clause; there the
-                # write lock the call holds keeps other purgers out.
-                claim = (
-                    select(PurgeQueueRow.incarnation, PurgeQueueRow.purged_through)
-                    .order_by(PurgeQueueRow.enqueued_at)
-                    .limit(1)
-                    .with_for_update(skip_locked=True)
+            partition_row = (
+                await connection.execute(
+                    select(PartitionRow.purged_through)
+                    .where(PartitionRow.partition_uuid == partition_uuid)
+                    .with_for_update()
                 )
-                entry = (await connection.execute(claim)).one_or_none()
-                if entry is None:
-                    return False
-                incarnation, purged_through = entry
+            ).one_or_none()
+            purged_through = (
+                None if partition_row is None else partition_row.purged_through
+            )
 
-                # The batch continues after the cursor, so it never reads
-                # rows an earlier batch deleted: PostgreSQL keeps them in
-                # the table and its indexes until vacuum, and a batch
-                # starting from the incarnation's first key would step over
-                # all of them.
-                after_cursor = (
-                    [] if purged_through is None else [SegmentRow.uuid > purged_through]
+            # The batch continues after the cursor, so it reads no row an
+            # earlier batch of its walk deleted: PostgreSQL keeps deleted rows
+            # in the table and its indexes until vacuum. A walk's first batch,
+            # from the partition's first key, steps over the rows earlier
+            # walks deleted.
+            after_cursor = (
+                [] if purged_through is None else [SegmentRow.uuid > purged_through]
+            )
+            batch = (
+                select(SegmentRow.uuid)
+                .where(SegmentRow.partition_uuid == partition_uuid, *after_cursor)
+                .order_by(SegmentRow.uuid)
+                .limit(self._purge_max_segments)
+                .subquery()
+            )
+            # Every decision below is the search's, not the delete's: another
+            # transaction may delete some of the batch first.
+            found, last = 0, None
+            batch_end = (
+                await connection.execute(
+                    select(batch.c.uuid, func.count().over())
+                    .order_by(batch.c.uuid.desc())
+                    .limit(1)
                 )
-                batch = (
-                    select(SegmentRow.uuid)
-                    .where(SegmentRow.incarnation == incarnation, *after_cursor)
-                    .order_by(SegmentRow.uuid)
-                    .limit(remaining)
-                    .subquery()
-                )
-                last = (
-                    await connection.execute(
-                        select(batch.c.uuid).order_by(batch.c.uuid.desc()).limit(1)
+            ).one_or_none()
+            if batch_end is not None:
+                last, found = batch_end
+                # The link-table cascade deletes these segments' links.
+                await connection.execute(
+                    delete(SegmentRow).where(
+                        SegmentRow.partition_uuid == partition_uuid,
+                        *after_cursor,
+                        SegmentRow.uuid <= last,
                     )
-                ).scalar_one_or_none()
-                deleted = 0
-                if last is not None:
-                    # The link-table cascade follows the deleted segments.
-                    deleted = (
-                        await connection.execute(
-                            delete(SegmentRow).where(
-                                SegmentRow.incarnation == incarnation,
-                                *after_cursor,
-                                SegmentRow.uuid <= last,
-                            )
-                        )
-                    ).rowcount
-                if deleted >= remaining:
-                    # The bound was consumed; this incarnation may have more
-                    # rows, so record how far it got and leave its queue
-                    # entry for the next call.
+                )
+
+            if found >= self._purge_max_segments:
+                # The search found a full batch; the partition may have more
+                # rows, so record how far the purge got for the next call.
+                if partition_row is not None:
                     await connection.execute(
-                        update(PurgeQueueRow)
-                        .where(PurgeQueueRow.incarnation == incarnation)
+                        update(PartitionRow)
+                        .where(PartitionRow.partition_uuid == partition_uuid)
                         .values(purged_through=last)
                     )
-                    return True
+                return True
 
-                remaining -= deleted
+            if purged_through is not None:
+                # The walk from the cursor reached the end. The next call
+                # searches from the partition's first key, so a write that
+                # landed behind the cursor is found before the purge answers
+                # that nothing remains.
                 await connection.execute(
-                    delete(PurgeQueueRow).where(
-                        PurgeQueueRow.incarnation == incarnation
-                    )
+                    update(PartitionRow)
+                    .where(PartitionRow.partition_uuid == partition_uuid)
+                    .values(purged_through=None)
                 )
-                # Entries cost round trips, not row deletions, so they
-                # carry their own bound: a backlog of empty partitions
-                # consumes no segment budget yet must not turn one
-                # bounded call into an unbounded transaction.
-                entries += 1
-                if entries >= self._purge_max_partitions:
-                    return True
+                return True
+            return last is not None
+
+    @override
+    async def drop_partition(self, partition_uuid: UUID) -> None:
+        async with (
+            self._tracker("drop_partition"),
+            write_connection(self._engine) as connection,
+        ):
+            await connection.execute(
+                delete(PartitionRow).where(
+                    PartitionRow.partition_uuid == partition_uuid
+                )
+            )
 
     # Helpers
 
@@ -1336,45 +1048,23 @@ class SQLAlchemySegmentStore(SegmentStore):
                     f"{type(config.payload_codec_config).__name__}"
                 )
 
-    async def _partition_from_partition_row(
-        self,
-        partition_row: PartitionRow,
-    ) -> SQLAlchemySegmentStorePartition:
-        """Materialize a partition handle from a registry row."""
-        config = SegmentStorePartitionConfig(
-            payload_codec_config=decode_payload_codec_config(
-                partition_row.payload_codec_config
-            )
-        )
-        payload_codec = await self._load_payload_codec(config)
-        return SQLAlchemySegmentStorePartition(
-            partition_key=partition_row.partition_key,
-            incarnation=partition_row.incarnation,
-            create_session=self._create_session,
-            is_sqlite=self._is_sqlite,
-            config=config,
-            payload_codec=payload_codec,
-            tracker=self._tracker,
-        )
-
-    @staticmethod
-    async def _get_partition_row(
-        session: AsyncSession,
-        partition_key: str,
-    ) -> PartitionRow | None:
-        """Fetch a partition row by key."""
-        return (
-            await session.execute(
-                select(PartitionRow).where(PartitionRow.partition_key == partition_key)
-            )
-        ).scalar_one_or_none()
+    async def _get_partition_row(self, partition_uuid: UUID) -> PartitionRow | None:
+        """Fetch a partition's row."""
+        async with self._create_session() as session:
+            return (
+                await session.execute(
+                    select(PartitionRow).where(
+                        PartitionRow.partition_uuid == partition_uuid
+                    )
+                )
+            ).scalar_one_or_none()
 
     @staticmethod
     def _raise_if_partition_config_mismatch(
         partition_row: PartitionRow,
         config: SegmentStorePartitionConfig,
     ) -> None:
-        """Raise if an existing partition row does not match the requested config."""
+        """Raise if a created partition's configuration differs from the requested one."""
         existing_config = SegmentStorePartitionConfig(
             payload_codec_config=decode_payload_codec_config(
                 partition_row.payload_codec_config
@@ -1382,7 +1072,7 @@ class SQLAlchemySegmentStore(SegmentStore):
         )
         if existing_config != config:
             raise SegmentStorePartitionConfigMismatchError(
-                partition_row.partition_key,
+                partition_row.partition_uuid,
                 existing_config,
                 config,
             )

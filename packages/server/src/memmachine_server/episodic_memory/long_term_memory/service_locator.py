@@ -1,5 +1,6 @@
 """Helpers for building long-term memory from configuration."""
 
+import asyncio
 import hashlib
 import logging
 
@@ -19,6 +20,14 @@ from memmachine_server.common.configuration.episodic_config import (
 )
 from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.errors import ConfigurationError
+from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
+    PartitionDeletedError,
+    PartitionPendingError,
+    PartitionRegistry,
+    validate_partition_name,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
@@ -34,10 +43,11 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
+    EventMemoryPartition,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
-    PARTITION_KEY_MAX_BYTES,
-    validate_partition_key,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
@@ -60,6 +70,12 @@ _EVENT_MEMORY_VECTOR_STORE_NAME = "event_memory"
 Fixed, because the name locates the store's data.
 """
 
+# Attempts getting or creating a session's partition makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
+# partition that stays pending or a name it keeps losing.
+_MAX_GET_OR_CREATE_ATTEMPTS = 10
+_GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
+
 
 async def long_term_memory_from_config(
     config: LongTermMemoryConf,
@@ -79,8 +95,8 @@ async def long_term_memory_from_config(
                 config, resource_manager, reranker=reranker
             )
             return LongTermMemory(
-                await event_memory.open_or_create_partition(
-                    partition_key_for_session(config.session_id)
+                await _get_or_create_event_memory_partition(
+                    event_memory, partition_name_for_session(config.session_id)
                 ),
                 episode_storage=await resource_manager.get_episode_storage(),
                 reranker=reranker,
@@ -91,6 +107,55 @@ async def long_term_memory_from_config(
             )
 
 
+async def _get_or_create_event_memory_partition(
+    event_memory: EventMemory, partition_name: str
+) -> EventMemoryPartition:
+    """
+    Get the live event memory partition under a name, creating it if no partition holds the name.
+
+    Read-then-create, retried a bounded number of times: a live partition is
+    answered; a pending one is another creator's, so the call waits for it;
+    no partition means create; a creation that finds the name taken lost it
+    to another creator meanwhile; and one that finds the partition deleted
+    lost it to a deleter while the stores created it, so the call tries
+    again.
+
+    Raises:
+        PartitionPendingError:
+            If the partition's creation, by another caller, did not complete
+            within the attempts to get it.
+        PartitionCreateAttemptsExhaustedError:
+            If the attempts ran out with the last one losing the name to
+            another creator or deleter, or if the registry gave up after
+            repeated attempts to reserve the free name failed.
+    """
+    pending_error: PartitionPendingError | None = None
+    lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
+    for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
+        if attempt:
+            await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
+        try:
+            partition = await event_memory.get_partition(partition_name)
+        except PartitionPendingError as err:
+            pending_error = err
+            continue
+        pending_error = None
+        if partition is not None:
+            return partition
+        try:
+            return await event_memory.create_partition(partition_name)
+        except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
+            lost_race = err
+            continue
+    # The last lookup found the partition pending.
+    if pending_error is not None:
+        raise pending_error
+    raise PartitionCreateAttemptsExhaustedError(
+        f"Getting or creating partition {partition_name!r} made no progress "
+        f"after {_MAX_GET_OR_CREATE_ATTEMPTS} attempts"
+    ) from lost_race
+
+
 async def delete_long_term_memory_storage(
     config: LongTermMemoryConf,
     resource_manager: InstanceOf[CommonResourceManager],
@@ -98,8 +163,8 @@ async def delete_long_term_memory_storage(
     """
     Delete a session's long-term memory storage.
 
-    The event backend deletes the session's partitions by key, opening
-    neither, so storage the session never created stays uncreated.
+    The event backend deletes the session's partition by name, without
+    getting or creating it.
     """
     match config:
         case DeclarativeLongTermMemoryConf():
@@ -112,7 +177,7 @@ async def delete_long_term_memory_storage(
             # Deleting a partition uses no reranker.
             event_memory = await _event_memory(config, resource_manager, reranker=None)
             await event_memory.delete_partition(
-                partition_key_for_session(config.session_id)
+                partition_name_for_session(config.session_id)
             )
         case _:
             raise NotImplementedError(
@@ -152,10 +217,16 @@ async def _event_memory(
         resource_manager.config
     )
     embedder = await resource_manager.get_embedder(embedder_id, validate=True)
+    event_memory_store = EventMemoryStore(
+        segment_store=await resource_manager.get_segment_store(segment_store_id),
+        vector_store=await event_backend_vector_store(resource_manager),
+    )
     return EventMemory(
         EventMemoryParams(
-            segment_store=await resource_manager.get_segment_store(segment_store_id),
-            vector_store=await event_backend_vector_store(resource_manager),
+            partition_registry=await _event_memory_partition_registry(
+                resource_manager, event_memory_store
+            ),
+            event_memory_store=event_memory_store,
             segmenter=_build_segmenter(config.segmenter),
             deriver=_build_deriver(config.deriver),
             embedder=embedder,
@@ -165,14 +236,39 @@ async def _event_memory(
     )
 
 
+async def _event_memory_partition_registry(
+    resource_manager: InstanceOf[CommonResourceManager],
+    event_memory_store: EventMemoryStore,
+) -> PartitionRegistry[EventMemoryStorePartition]:
+    """
+    The registry of event memory's partition namespace, over event memory's stores, whose purge rounds run in the background.
+
+    Raises:
+        ConfigurationError: If the deployment configures no event memory.
+
+    """
+    deployment = resource_manager.config.episodic_memory.long_term_memory
+    if deployment is None or deployment.partition_registry is None:
+        raise ConfigurationError("The deployment configures no event memory")
+    return await resource_manager.get_partition_registry(
+        deployment.partition_registry,
+        partition_namespace=EventMemory.PARTITION_NAMESPACE,
+        tombstone_retention_seconds=deployment.tombstone_retention_seconds,
+        partitioned_store=event_memory_store,
+    )
+
+
 def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str, str]:
     """
     The deployment's event memory vector store, segment store, and embedder ids.
 
-    Every session's event memory uses them.
+    Every session's event memory uses them, with the deployment's
+    partition registry.
 
     Raises:
-        ConfigurationError: If the deployment configures no event memory.
+        ConfigurationError: If the deployment configures no event memory:
+            it names no vector store, segment store, partition registry,
+            or embedder.
 
     """
     deployment = configuration.episodic_memory.long_term_memory
@@ -180,6 +276,7 @@ def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str,
         deployment is None
         or deployment.vector_store is None
         or deployment.segment_store is None
+        or deployment.partition_registry is None
         or deployment.embedder is None
     ):
         raise ConfigurationError("The deployment configures no event memory")
@@ -213,31 +310,28 @@ def event_backend_indexed_properties() -> dict[str, PropertyType]:
     }
 
 
-def partition_key_for_session(session_id: str) -> str:
+def partition_name_for_session(session_id: str) -> str:
     """
-    Derive a partition key satisfying the segment store's contract.
+    Derive the name of a session's event memory partition.
 
-    If the session_id already satisfies it (checked by the store's own
-    validator, so the two can never disagree), use it directly to keep
-    debug paths legible. Otherwise hash to a stable 32-char hex digest and
-    emit a DEBUG log of the original→hashed mapping so operators can
-    correlate partition keys back to sessions during incident response.
+    A session id that is a valid partition name is the name as it is, which
+    keeps debug paths legible. Any other is hashed to a stable hex
+    digest, with a DEBUG log of the original-to-hashed mapping so operators
+    can correlate partition names back to sessions during incident response.
     """
     try:
-        validate_partition_key(session_id)
+        validate_partition_name(session_id)
     except ValueError:
         pass
     else:
         return session_id
-    partition_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[
-        :PARTITION_KEY_MAX_BYTES
-    ]
+    partition_name = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
     logger.debug(
-        "partition_key_for_session: hashed session_id %r -> partition_key %r",
+        "partition_name_for_session: hashed session_id %r -> partition name %r",
         session_id,
-        partition_key,
+        partition_name,
     )
-    return partition_key
+    return partition_name
 
 
 def _build_segmenter(conf: SegmenterConf) -> Segmenter:

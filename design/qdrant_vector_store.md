@@ -1,21 +1,21 @@
 # Qdrant vector store
 
 How the Qdrant store meets the shared contracts: [partition
-registry](vector_store_partition_registry.md),
+registry](partition_registry.md),
 [purge](vector_store_purge.md), [consistency](vector_store_consistency.md),
 [isolation](vector_store_isolation.md).
 
 ## Layout
 
 - **One native collection per store**, named by the vector store name. It
-  holds every partition of the store, one incarnation each. Creating a
+  holds every partition of the store, one partition UUID each. Creating a
   partition creates nothing in Qdrant.
 - **Vectors:** one unnamed dense vector, the store's dimensions and metric.
 - **Graphs per tenant, not per store:** HNSW `m=0`, `payload_m=16`. No
   collection-wide graph is built; each value of an indexed payload field gets
   its own graph once it has enough points in a segment, so a search filtered
   on one tenant walks that tenant's graph.
-- **The incarnation:** payload field `sys-incarnation`, a keyword index with
+- **The partition UUID:** payload field `sys-partition_uuid`, a keyword index with
   `is_tenant=true`, which also has Qdrant keep a tenant's points together.
   A handle's searches filter on it, as do the purge's scrolls and deletes. A
   handle's deletes name its points' ids instead (see [Point ids](#point-ids)).
@@ -25,7 +25,7 @@ registry](vector_store_partition_registry.md),
 - **Strict mode:** the collection is created with filtering on unindexed
   fields off, for reads and updates alike, so the server refuses a filter on
   a field it has not indexed instead of scanning for it. Every key a filter
-  may name is indexed: the declared keys and the incarnation, so a missing
+  may name is indexed: the declared keys and the partition UUID, so a missing
   index fails a search rather than slowing it. A condition
   whose value is of another type than its key declares matches nothing; the
   store answers it with a filter no point satisfies, since the server would
@@ -49,7 +49,7 @@ registry](vector_store_partition_registry.md),
 
 ## Point ids
 
-A point's id is `uuid5(incarnation, record UUID)`, and the record UUID is kept
+A point's id is `uuid5(partition UUID, record UUID)`, and the record UUID is kept
 in the payload, `sys-record_uuid`. A search returns that one payload field to
 answer each match's record UUID; a delete names the derived ids directly;
 someone inspecting a collection finds a record by filtering on the field.
@@ -58,11 +58,11 @@ The id space is the native collection's, shared by the store's partitions,
 and Qdrant's upsert replaces a whole point, vectors and payload alike
 (`lib/shard/src/update/points/upsert.rs` at v1.19.1). With the record UUID as
 the point id, an upsert of a UUID another partition's point held replaced
-that point and moved it to the writer's incarnation. Derived ids differ
+that point and moved it to the writer's partition UUID. Derived ids differ
 between partitions whatever record UUIDs they carry, so the store keeps the
 [isolation](vector_store_isolation.md) guarantee without a rule on callers,
-and a partition created again under a key writes ids its dead predecessor's
-points, awaiting purge, cannot collide with.
+and a partition created again under the same name writes ids its deleted
+predecessor's points, awaiting purge, cannot collide with.
 
 Measured on Qdrant 1.19.1 (4 CPUs / 4 GB, gRPC; 300 tenants x 1,000 points of
 128 dimensions in this layout; searches filtered on a tenant, top 10; one idle
@@ -94,20 +94,20 @@ a UUIDv5 cannot be inverted, and that is also what makes it safe. An attacker
 who writes through the API into one partition, and wants to hide a record of
 another partition sharing the native collection, needs a record UUID whose
 point id equals the target's. With UUIDv5 that is a second preimage of SHA-1
-on 122 bits, about 2^122 work, even for someone who knows both incarnations
+on 122 bits, about 2^122 work, even for someone who knows both partition UUIDs
 and the target's record UUID; known SHA-1 attacks need control of both inputs.
 Isolation then holds as long as the attacker cannot write to Qdrant or the
 registry directly, where isolation is moot anyway.
 
 **Why not reversible ids.** A point id the store can invert, such as the
-record UUID XOR the incarnation, would let a search recover the record UUID
+record UUID XOR the partition UUID, would let a search recover the record UUID
 from the point id and return no payload. But whatever lets the store invert
-the mapping lets anyone holding the incarnations aim it: with the target's
-incarnation, their own, and the target's record UUID, an attacker computes the
-colliding UUID directly (`record ^ incarnation_A ^ incarnation_B`), and a
+the mapping lets anyone holding the partition UUIDs aim it: with the target's
+partition UUID, their own, and the target's record UUID, an attacker computes the
+colliding UUID directly (`record ^ partition_uuid_A ^ partition_uuid_B`), and a
 write of it through an ingestion path that passes a caller's UUID through
 replaces the target's point, which then disappears from its partition.
-Incarnations are not guarded as secrets: the registry logs them in its
+Partition UUIDs are not guarded as secrets: the registry logs them in its
 warnings and dead-letter errors, and they are in its tables and any backup, as
 record UUIDs are in any Qdrant snapshot. So a read-level leak plus an ordinary
 tenant account would become targeted deletion of other tenants' records, where
@@ -118,8 +118,8 @@ UUIDv8 fixes 6 of its 128 bits, leaving 122 free, too few to hold an arbitrary
 record UUID's 122 random bits and 4 version bits reversibly.
 
 **Why not a conditional upsert.** Qdrant 1.16 added `update_filter`
-(qdrant/qdrant#7006): an upsert filtered on the writer's incarnation leaves a
-point under another incarnation as it is and skips the writer's point without
+(qdrant/qdrant#7006): an upsert filtered on the writer's partition UUID leaves a
+point under another partition UUID as it is and skips the writer's point without
 an error. It kept bare ids, but a reused UUID's record was silently dropped,
 callers still needed a uniqueness rule, and its cost stayed with the writer
 (Qdrant 1.19.1, same setup):
@@ -150,14 +150,14 @@ shipped: it has no graphless layout or exact-search workaround.
 
 ## Purge
 
-One filter-delete of the whole incarnation per round: the round scrolls for
-one point under the incarnation and, when it finds one, deletes by filter.
+One filter-delete of the whole partition per round: the round scrolls for
+one point of the partition and, when it finds one, deletes by filter.
 Measured (Qdrant 1.18.3, 1.19.0 and 1.19.1; 2.11M points in this layout, dead
-incarnations of 10k to 1M among live tenants under search, upsert, and scroll
+partition UUIDs of 10k to 1M among live tenants under search, upsert, and scroll
 traffic; 2 CPUs / 4 GB): the delete stalls writes and scrolls on the shard,
 never searches, for its duration, about 1.3 s per 1M points on 1.19.1 at 3
 segments per shard (7.3 s at 101), with no errors. Deleting in batches instead
-collapsed once a vacuum rebuilt the incarnation's segments mid-purge: every
+collapsed once a vacuum rebuilt the partition's segments mid-purge: every
 batched 1M purge (7 of 7 runs, on all three versions) slowed to minutes-long
 deletes and 60-120 s stalls for every tenant.
 

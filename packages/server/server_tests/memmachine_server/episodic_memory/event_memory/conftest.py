@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from typing import override
 from unittest.mock import create_autospec
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -17,6 +17,10 @@ from memmachine_server.common.filter.filter_parser import (
     normalize_filter_field,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.partition_registry import (
+    PartitionRegistry,
+    Registration,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.event_memory.data_types import Segment
@@ -29,6 +33,10 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
     EventMemoryPartition,
+)
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
@@ -211,7 +219,7 @@ class FakeReranker(Reranker):
         return [float(len(c)) for c in candidates]
 
 
-async def open_event_memory_partition(
+async def create_event_memory_partition(
     *,
     segment_store_partition: SegmentStorePartition,
     vector_store_partition: InMemoryVectorStorePartition,
@@ -222,16 +230,25 @@ async def open_event_memory_partition(
     reranker: Reranker | None = None,
     metrics_factory: MetricsFactory | None = None,
 ) -> EventMemoryPartition:
-    """Open a partition of an EventMemory whose stores hand out the given partitions, and whose vector store has `store_schema`."""
-    segment_store = create_autospec(SegmentStore, instance=True)
-    segment_store.open_or_create_partition.return_value = segment_store_partition
+    """Create a partition of an EventMemory whose registration carries the given partitions, and whose vector store has `store_schema`."""
+    registration = create_autospec(Registration, instance=True)
+    registration.partition_name = "partition"
+    registration.partition_uuid = uuid4()
+    registration.partition = EventMemoryStorePartition(
+        segment_store_partition=segment_store_partition,
+        vector_store_partition=vector_store_partition,
+    )
+    partition_registry = create_autospec(PartitionRegistry, instance=True)
+    partition_registry.create_partition.return_value = registration
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
-    vector_store.open_or_create_partition.return_value = vector_store_partition
     event_memory = EventMemory(
         EventMemoryParams(
-            segment_store=segment_store,
-            vector_store=vector_store,
+            partition_registry=partition_registry,
+            event_memory_store=EventMemoryStore(
+                segment_store=create_autospec(SegmentStore, instance=True),
+                vector_store=vector_store,
+            ),
             segmenter=segmenter,
             deriver=deriver,
             embedder=embedder,
@@ -239,7 +256,7 @@ async def open_event_memory_partition(
             metrics_factory=metrics_factory,
         )
     )
-    return await event_memory.open_or_create_partition("partition")
+    return await event_memory.create_partition("partition")
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +298,7 @@ async def event_memory_partition(
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return await open_event_memory_partition(
+    return await create_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
@@ -298,7 +315,7 @@ async def event_memory_partition_with_reranker(
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return await open_event_memory_partition(
+    return await create_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
@@ -316,7 +333,7 @@ async def event_memory_partition_with_sentences(
     fake_segment_store_partition,
     fake_embedder,
 ):
-    return await open_event_memory_partition(
+    return await create_event_memory_partition(
         segment_store_partition=fake_segment_store_partition,
         vector_store_partition=fake_vector_store_partition,
         store_schema=fake_store_schema,
