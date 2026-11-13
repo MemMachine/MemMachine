@@ -1,8 +1,5 @@
 # Segment store: shared tables keyed by partition UUID
 
-Status: accepted 2026-08-31. Supersedes the per-tenant partitioned layout of
-the SQLAlchemy segment store on all dialects.
-
 ## Problem
 
 On PostgreSQL, every partition (tenant) had its own pair of child tables
@@ -39,10 +36,9 @@ tenant may hold tens of thousands to tens of millions of rows.
 One physical schema on every dialect; the ORM models are the tables.
 
 The store holds no tenant names. Its owner's [partition
-registry](partition_registry.md) names each tenant's partition, mints its
-`partition_uuid` (a random UUID), mints a new one each time the name is
-created again, and never mints one again while any trace of it remains; the
-store addresses everything by partition UUID.
+registry](partition_registry.md) names each tenant's partition and mints its
+`partition_uuid` (a random UUID), a new one each time the name is created
+again; the store addresses everything by partition UUID.
 
 - `segment_store_pt`: one row per created partition, holding its payload
   codec config and, while the partition is purged, the purge's cursor, the
@@ -69,9 +65,8 @@ with a new UUID.
 ### Tenant lifecycle
 
 - **Create**: insert the partition's row with the store's codec config. No
-  DDL, no lock beyond the row, microseconds. Creating again with the same
-  config changes nothing; a different config raises the config-mismatch
-  error.
+  DDL, no lock beyond the row. Creating again with the same config changes
+  nothing; a different config raises the config-mismatch error.
 - **Get**: read the partition's row. The handle captures the
   partition's UUID and the codec.
 - **Delete** is the owner's: deleting the tenant's name in its
@@ -84,10 +79,10 @@ with a new UUID.
   `drop_partition(partition_uuid)`, the `PartitionedStore` steps. The
   registry's purge rounds call the purge for a deleted partition once the
   retention has passed, until it returns False, and then the drop, which
-  deletes the partition's row; how much one call does is implementation
-  policy. The caller is promised only that a call does not noticeably
-  degrade concurrent request serving, and every bound below exists to keep
-  that promise. The deletion contract is "unreachable immediately, erased
+  deletes the partition's row; how much one call does is the store's
+  choice. This store bounds each call so that it does not noticeably
+  degrade concurrent request serving, and every bound below exists for
+  that. The deletion contract is "unreachable immediately, erased
   asynchronously".
 
   - One transaction per call, committing its progress or nothing, so
@@ -95,47 +90,43 @@ with a new UUID.
   - Segment rows are deleted in batches of up to
     `SQLAlchemySegmentStoreParams.purge_max_segments` per call. A batch
     continues from the partition's cursor: it reads the next keys after
-    `purged_through` in primary-key order, deletes that key range, and
-    records its last key in the same transaction. No batch reads a row an
-    earlier batch deleted; PostgreSQL keeps deleted rows in the table and
-    its indexes until vacuum, and a batch that started from the
-    partition's first key would step over all of them, making each
-    batch, and the call that finds the partition empty, cost in
-    proportion to what was already purged. The cursor relies on no row
-    being written into a partition once its purge starts, which the
-    retention guarantees: every write finishes within a bound well under
-    it. A row that lands anyway, behind the cursor, is still found: a
-    walk from the cursor that reaches the end clears it, and only a call
-    that searches from the partition's first key answers that nothing
-    remains. The link table follows by cascade, measured faster than
-    deleting link rows manually at one and at four links per segment.
-    Cascade deletion saturates around 3M link rows/s as density grows
-    (380k segments/s at one link per segment, 46k at 64), so heavily
-    linked partitions still purge in sub-second calls. Link fan-out is set
-    by the deriver, not something the store can reject after derivation.
+    `purged_through` in primary-key order, deletes that key range, and,
+    when it found a full batch, records its last key in the same
+    transaction. PostgreSQL keeps deleted rows in the table and its
+    indexes until vacuum, and a batch that started from the partition's
+    first key would step over all of them, making each batch cost in
+    proportion to what was already purged; a batch that continues from
+    the cursor reads no row an earlier batch deleted. A walk from the
+    cursor that reaches the end clears it, and only a call that searches
+    from the partition's first key answers that nothing remains, so a row
+    that lands behind the cursor is still found. A search from the first
+    key steps over the deleted rows vacuum has not yet removed, so the
+    call that finds the partition empty costs in proportion to them. Link
+    rows are deleted by cascade from their segments, measured faster than
+    deleting them manually at one and at four links per segment. A call's
+    transaction therefore also scales with the links per segment, which
+    the deriver sets and the store cannot reject after derivation.
   - A call returns False only when it searched from the partition's first
     key and found nothing, so a call that returns False proves the
-    partition's segments gone from the store. Link rows go with their segments by the foreign key's cascade and
-    nothing else: the store requires foreign-key enforcement of its engine
-    (on SQLite, per connection) and does not verify it, so an engine
-    without enforcement leaves link rows behind.
+    partition's segments gone from the store. Link rows are deleted with
+    their segments by the foreign key's cascade and by nothing else: the
+    store requires foreign-key enforcement of its engine (on SQLite, per
+    connection) and does not verify it, so an engine without enforcement
+    leaves link rows behind.
   - Purgers of one partition, from any process, serialize on its row's
-    lock (`FOR UPDATE`), so each reads the cursor its predecessor
-    committed. On SQLite, which drops locking clauses, the call holds the
-    database's write lock from BEGIN instead. With a cursor read before the
-    lock is taken, a second purger could plan its batch from a cursor the
-    first has since advanced and skip rows.
-  - The store never schedules purging; the owner's registry does, through
-    its purge rounds, and the server's resource manager runs them: bounded
-    rounds a short pause apart while one ran, a full tick apart otherwise;
-    failures are logged and retried next tick, and the task is cancelled
-    on close.
+    lock (`FOR UPDATE`) while the row exists, so each reads the cursor its
+    predecessor committed. On SQLite, which drops locking clauses, the call
+    holds the database's write lock from BEGIN instead. With a cursor read
+    before the lock is taken, a second purger could plan its batch from a
+    cursor the first has since advanced and read again the rows the first
+    deleted.
+  - The store never schedules purging; the owner's registry's purge rounds
+    call it, and the server's resource manager runs those rounds (see
+    [the sweeper](vector_store_purge.md#the-sweeper)).
   - Pacing, not deletion speed, bounds how fast a backlog drains: a call
     deletes at most `purge_max_segments` segment rows and the resource
     manager pauses between busy rounds, so one process drains fewer than
-    `purge_max_segments` rows per pause (under 10,000 rows per second at
-    the defaults, so upwards of 17 minutes for a ten-million-row tenant).
-    Deletion itself measured about 147k rows/s on the benchmark box.
+    `purge_max_segments` rows per pause.
 
 ### Fencing
 
@@ -149,14 +140,14 @@ reclaimed by the purge, which starts only after the retention.
 
 Row locks only. Writers lock nothing beyond the rows they write;
 `delete_segments` locks its segment rows in key order on PostgreSQL; the
-purge takes `FOR UPDATE` on its partition's row, which only purgers of
-the same partition contend for. No table-level lock, no DDL, and no lock
-upgrade anywhere in the store, which removes the measured deadlock classes
-at the root: reclamation touches only rows of a partition no request can
-reach. On SQLite, which drops locking clauses, every write transaction of
-the store takes the database's write lock at BEGIN (`BEGIN IMMEDIATE`,
-through the `enable_sqlite_explicit_begin` setup the store requires of its
-engine), which stands in for all of them.
+purge takes `FOR UPDATE` on its partition's row, which only the purgers and
+the drop of the same partition contend for. No table-level lock, no DDL,
+and no lock upgrade anywhere in the store, which removes the measured
+deadlock classes at the root: reclamation touches only rows of a partition
+no request can reach. On SQLite, which drops locking clauses, every write
+transaction of the store takes the database's write lock at BEGIN
+(`BEGIN IMMEDIATE`, through the `enable_sqlite_explicit_begin` setup the
+store requires of its engine), which stands in for all of them.
 
 ## Alternatives considered
 
@@ -205,15 +196,14 @@ requirement excludes.
   the purge relies on the same cascade.
 - Replication and sharding: three ordinary tables. Logical replication
   covers new tenants automatically (they are rows, not relations), and
-  moving a tenant between nodes is an indexed row copy plus the owner's
-  registry creating a new partition under the name, whose fresh UUID
-  fences all stale handles.
+  moving a tenant's rows between nodes is an indexed row copy: they keep
+  the partition UUID its registry holds.
 - Tenant deletion is O(rows) physically, in the background: a deleted
   partition is unreachable at once, and its rows are reclaimed by the
   registry's purge rounds, at the pace their bounds and pause set. A
   deployment must run the purge rounds.
-- No migration from the partitioned layout is provided (the event backend
-  is opt-in and pre-GA); existing databases recreate their schema.
+- No schema migration is provided (the event backend is opt-in and
+  pre-GA); existing databases recreate their schema.
 - Datetime convention: filter nodes normalize datetime values to UTC-aware
   instants at construction (`FilterExpr`'s contract), so every consumer
   sees instants. The Neo4j compiler's `datetime.timestamp()` used to read

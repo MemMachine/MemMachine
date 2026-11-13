@@ -61,8 +61,8 @@ the point id, an upsert of a UUID another partition's point held replaced
 that point and moved it to the writer's partition UUID. Derived ids differ
 between partitions whatever record UUIDs they carry, so the store keeps the
 [isolation](vector_store_isolation.md) guarantee without a rule on callers,
-and a partition created again under a key writes ids its dead predecessor's
-points, awaiting purge, cannot collide with.
+and a partition created again under the same name writes ids its deleted
+predecessor's points, awaiting purge, cannot collide with.
 
 Measured on Qdrant 1.19.1 (4 CPUs / 4 GB, gRPC; 300 tenants x 1,000 points of
 128 dimensions in this layout; searches filtered on a tenant, top 10; one idle
