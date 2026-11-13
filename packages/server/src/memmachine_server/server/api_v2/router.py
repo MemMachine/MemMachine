@@ -84,6 +84,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
@@ -244,6 +245,8 @@ async def get_episode_count(
     )
     try:
         count = await memmachine.episodes_count(session_data=session_data)
+    except SessionDeletedError as e:
+        raise RestError(code=404, message="Project has been deleted", ex=e) from e
     except Exception as e:
         raise RestError(code=500, message="Internal server error", ex=e) from e
     return EpisodeCountResponse(count=count)
@@ -341,9 +344,12 @@ async def list_memories(
 ) -> ListResult:
     """List memories in a project."""
     target_memories = [spec.type] if spec.type is not None else ALL_MEMORY_TYPES
-    return await _list_target_memories(
-        target_memories=target_memories, spec=spec, memmachine=memmachine
-    )
+    try:
+        return await _list_target_memories(
+            target_memories=target_memories, spec=spec, memmachine=memmachine
+        )
+    except SessionDeletedError as e:
+        raise RestError(code=404, message="Project has been deleted", ex=e) from e
 
 
 @router.post(

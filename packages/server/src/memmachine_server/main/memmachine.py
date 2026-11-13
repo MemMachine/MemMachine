@@ -29,6 +29,7 @@ from memmachine_server.common.errors import (
     ConfigurationError,
     ResourceNotFoundError,
     ResourceNotReadyError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.common.filter.filter_parser import (
@@ -793,7 +794,11 @@ class MemMachine:
         Returns:
             IDs of the created episodes.
 
+        Raises:
+            SessionDeletedError: If the session is marked deleted.
+
         """
+        await self._raise_if_session_deleted(session_data.session_key)
         episode_storage = await self._resources.get_episode_storage()
         if not episode_entries:
             return []
@@ -1113,7 +1118,11 @@ class MemMachine:
         Returns:
             Aggregated search results across memory types.
 
+        Raises:
+            SessionDeletedError: If the session is marked deleted.
+
         """
+        await self._raise_if_session_deleted(session_data.session_key)
         episodic_task: Task | None = None
         semantic_task: Task | None = None
 
@@ -1184,7 +1193,11 @@ class MemMachine:
         Returns:
             Aggregated list results across memory types.
 
+        Raises:
+            SessionDeletedError: If the session is marked deleted.
+
         """
+        await self._raise_if_session_deleted(session_data.session_key)
         search_filter_expr = parse_filter(search_filter) if search_filter else None
 
         episodic_task: Task | None = None
@@ -1250,7 +1263,11 @@ class MemMachine:
         Returns:
             Number of episodes matching the filter.
 
+        Raises:
+            SessionDeletedError: If the session is marked deleted.
+
         """
+        await self._raise_if_session_deleted(session_data.session_key)
         episode_storage = await self._resources.get_episode_storage()
 
         session_filter = FilterComparison(
@@ -1265,6 +1282,27 @@ class MemMachine:
         return await episode_storage.get_episode_messages_count(
             filter_expr=combined_filter,
         )
+
+    async def _raise_if_session_deleted(self, session_key: str) -> None:
+        """
+        Raise if the session's row is marked deleted.
+
+        The row is read from the session store on every call, so a request
+        that starts after `delete_session` returns is refused on every server,
+        whatever instances of the session are cached. A session with no row
+        passes.
+
+        Raises:
+            SessionDeletedError: If the session is marked deleted.
+
+        """
+        session_data_manager = await self._resources.get_session_data_manager()
+        session_info = await session_data_manager.get_session_info(session_key)
+        if (
+            session_info is not None
+            and session_info.status != SessionDataManager.SessionStatus.Active
+        ):
+            raise SessionDeletedError(session_key)
 
     async def delete_episodes(
         self,

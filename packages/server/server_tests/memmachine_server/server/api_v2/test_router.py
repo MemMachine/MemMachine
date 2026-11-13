@@ -17,6 +17,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
@@ -294,6 +295,20 @@ def test_get_episode_count(client, mock_memmachine):
     assert response.json()["detail"]["message"] == "Internal server error"
 
 
+def test_get_episode_count_of_deleted_project(client, mock_memmachine):
+    mock_memmachine.episodes_count.side_effect = SessionDeletedError(
+        "test_org/test_proj"
+    )
+
+    response = client.post(
+        "/api/v2/projects/episode_count/get",
+        json={"org_id": "test_org", "project_id": "test_proj"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["message"] == "Project has been deleted"
+
+
 def test_list_projects(client, mock_memmachine):
     mock_memmachine.search_sessions.return_value = [
         "org1/proj1",
@@ -553,6 +568,18 @@ def test_list_memories(client, mock_memmachine):
     assert "semantic_memory" not in data["content"]
 
     mock_memmachine.list_search.assert_awaited_once()
+
+
+def test_list_memories_of_deleted_project(client, mock_memmachine):
+    mock_memmachine.list_search.side_effect = SessionDeletedError("test_org/test_proj")
+
+    response = client.post(
+        "/api/v2/memories/list",
+        json={"org_id": "test_org", "project_id": "test_proj"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"]["message"] == "Project has been deleted"
 
 
 def test_list_memories_with_set_metadata(client, mock_memmachine):
