@@ -2090,6 +2090,9 @@ class SQLAlchemySegmentStore(SegmentStore):
         returns the record's row as the claim left it.
         """
         for due_query in due_queries:
+            # A materialized CTE is evaluated once per statement, so the
+            # update takes exactly the one record it locked, and the claim
+            # holds no other lock.
             oldest_claimable = (
                 due_query.where(
                     table.attempts_without_progress
@@ -2102,14 +2105,15 @@ class SQLAlchemySegmentStore(SegmentStore):
                 # SQLite drops this; there the write transaction serializes
                 # claims.
                 .with_for_update(skip_locked=True)
+                .cte("oldest_claimable")
+                .prefix_with("MATERIALIZED")
             )
             claimed = (
                 await session.execute(
                     update(table)
                     .where(
-                        tuple_(table.incarnation, table.segment_uuid).in_(
-                            oldest_claimable
-                        )
+                        table.incarnation == oldest_claimable.c.incarnation,
+                        table.segment_uuid == oldest_claimable.c.segment_uuid,
                     )
                     .values(
                         attempts_without_progress=table.attempts_without_progress + 1,
