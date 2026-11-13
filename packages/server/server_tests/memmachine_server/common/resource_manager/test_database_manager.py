@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import SecretStr
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from memmachine_server.common.configuration.database_conf import (
@@ -129,6 +130,36 @@ async def test_build_and_validate_sqlite():
     assert "sqlite1" in builder.sql_engines
     await builder.close()
     assert "sqlite1" not in builder.sql_engines
+
+
+async def _sqlite_pragmas(engine: AsyncEngine) -> tuple[str, int, int]:
+    async with engine.connect() as conn:
+        journal_mode = (await conn.execute(text("PRAGMA journal_mode"))).scalar()
+        busy_timeout = (await conn.execute(text("PRAGMA busy_timeout"))).scalar()
+        synchronous = (await conn.execute(text("PRAGMA synchronous"))).scalar()
+    return journal_mode, busy_timeout, synchronous
+
+
+@pytest.mark.asyncio
+async def test_sqlite_sql_engine_runs_in_wal_mode(tmp_path):
+    conf = MagicMock(spec=DatabasesConf)
+    conf.neo4j_confs = {}
+    conf.nebula_graph_confs = {}
+    _empty_vector_store_confs(conf)
+    conf.relational_db_confs = {
+        "sqlite1": SqlAlchemyConf(
+            dialect="sqlite",
+            driver="aiosqlite",
+            path=str(tmp_path / "relational.db"),
+        )
+    }
+    builder = DatabaseManager(conf)
+    engine = await builder.async_get_sql_engine("sqlite1")
+    try:
+        # synchronous stays FULL (2) for relational stores.
+        assert await _sqlite_pragmas(engine) == ("wal", 30000, 2)
+    finally:
+        await builder.close()
 
 
 @pytest.mark.asyncio
@@ -1012,3 +1043,25 @@ async def test_close_disposes_vector_store_engines_and_shuts_down_stores():
     assert builder.vector_store_sql_engines == {}
     mock_store_cls.return_value.shutdown.assert_awaited_once()
     mock_engine.dispose.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_vector_store_engines_run_in_wal_mode(tmp_path):
+    conf = _sqlite_vector_store_only_conf(
+        sqlite_vector_store_confs={
+            "vs1": SQLiteVectorStoreConf(path=str(tmp_path / "vs.db")),
+        },
+        sqlite_vec_vector_store_confs={
+            "vec1": SQLiteVecVectorStoreConf(path=str(tmp_path / "vec.db")),
+        },
+    )
+    builder = DatabaseManager(conf)
+    await builder.async_get_sqlite_vector_store("vs1")
+    await builder.async_get_sqlite_vec_vector_store("vec1")
+    try:
+        # Vector stores hold rebuildable data, so synchronous is NORMAL (1).
+        for name in ("vs1", "vec1"):
+            engine = builder.vector_store_sql_engines[name]
+            assert await _sqlite_pragmas(engine) == ("wal", 30000, 1)
+    finally:
+        await builder.close()

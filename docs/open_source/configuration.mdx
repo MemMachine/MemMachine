@@ -401,6 +401,11 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
       | `my_storage_id` | The specific configuration for the system's internal graph store.  | *Required*  |
       | `sqlite_test` | The configuration for the SQLite database used for testing.          | *Required*  |
 
+      SQLite databases (`sqlite`, `sqlite_vector_store` and
+      `sqlite_vec_vector_store`) run in WAL mode, so each database file at
+      `path` has `-wal` and `-shm` files next to it. Back up or mount the
+      directory, not only the `.db` file.
+
 
   ### Embedders
       Defines various embedding models, which can be used to generate vector representations of text.
