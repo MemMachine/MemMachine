@@ -221,21 +221,23 @@ class MemMachine:
                 except Exception:
                     ltm.reranker = None
 
-            # vector_store + segment_store are required to materialize an
-            # event-backed long-term memory. If either is missing, disable.
+            # vector_store, segment_store, and partition_registry are required
+            # to materialize an event-backed long-term memory. If any is
+            # missing, disable.
             missing = [
                 name
                 for name, value in (
                     ("vector_store", ltm.vector_store),
                     ("segment_store", ltm.segment_store),
+                    ("partition_registry", ltm.partition_registry),
                 )
                 if value is None
             ]
             if missing:
                 self._disable_long_term_memory(
-                    "Event-backed long-term memory requires both vector_store "
-                    f"and segment_store; missing: {', '.join(missing)}. "
-                    "Disabling long-term episodic memory."
+                    "Event-backed long-term memory requires vector_store, "
+                    f"segment_store, and partition_registry; missing: "
+                    f"{', '.join(missing)}. Disabling long-term episodic memory."
                 )
 
     def _disable_long_term_memory(self, warning_message: str) -> None:
