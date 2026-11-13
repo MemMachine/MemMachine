@@ -3085,6 +3085,59 @@ async def test_purge_reclaims_every_row_of_a_deleted_partition(
 
 
 @pytest.mark.asyncio
+async def test_purge_ends_a_table_only_when_its_search_finds_fewer_than_the_bound(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch another transaction deletes before the purge's delete leaves the entry for the next call, not rows behind it."""
+    partition = await store.open_or_create_partition(
+        "raced_p", _plaintext_partition_config()
+    )
+    incarnation = partition._incarnation
+    forgotten = [_seg() for _ in range(3)]
+    for segment in forgotten:
+        await _add_segments(partition, {segment: []})
+        await partition.delete_event_segments([segment.event_uuid])
+    await store.delete_partition("raced_p")
+    monkeypatch.setattr(store, "_purge_max_rows", 2)
+    batch = sorted(segment.uuid for segment in forgotten)[:2]
+
+    with _deleted_before_the_next_tombstone_delete(store._engine, batch):
+        assert await store.purge_deleted_partitions() is True
+
+    while await store.purge_deleted_partitions():
+        pass
+    assert await _count_rows(store, TombstoneRow.incarnation == incarnation) == 0
+    assert await _count_rows(store, PurgeQueueRow.incarnation == incarnation) == 0
+
+
+@contextlib.contextmanager
+def _deleted_before_the_next_tombstone_delete(
+    engine: AsyncEngine, segment_uuids: list[UUID]
+) -> Generator[None, None, None]:
+    """Delete the given tombstones just before the engine's next delete of tombstone rows runs, as a concurrent delete would."""
+    deleted: list[bool] = []
+
+    def _delete_first(connection, clauseelement, *_args) -> None:
+        if deleted or not (
+            isinstance(clauseelement, Delete)
+            and clauseelement.table.name == TombstoneRow.__tablename__
+        ):
+            return
+        deleted.append(True)
+        connection.execute(
+            delete(TombstoneRow).where(TombstoneRow.segment_uuid.in_(segment_uuids))
+        )
+
+    event.listen(engine.sync_engine, "before_execute", _delete_first)
+    try:
+        yield
+    finally:
+        event.remove(engine.sync_engine, "before_execute", _delete_first)
+    assert deleted, "no tombstone delete ran"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bound", [1, 2, 3, 4, 5, 7, 13])
 async def test_purge_continues_through_every_table_within_the_bound(
     store: SQLAlchemySegmentStore,

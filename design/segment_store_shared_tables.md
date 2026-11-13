@@ -117,7 +117,9 @@ on random-UUID collision resistance.
     from, so the only cascade a batch runs deletes a segment's one pending
     write. A batch continues from its table's cursor: it reads the next
     keys after the cursor in primary-key order, deletes that key range, and
-    records its last key in the same transaction. No batch reads a row an
+    records its last key in the same transaction. A table is done when a
+    batch's search finds fewer keys than its bound, so rows another
+    transaction deletes from the batch meanwhile never end it early. No batch reads a row an
     earlier batch deleted; PostgreSQL keeps deleted rows in the table and
     its indexes until vacuum, and a batch that started from the
     incarnation's first key would step over all of them, making each
