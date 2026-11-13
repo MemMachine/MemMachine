@@ -1664,9 +1664,7 @@ class SQLAlchemySegmentStore(SegmentStore):
         # design/segment_store_shared_tables.md.
         remaining = self._purge_max_rows
         entries = 0
-        # Pure Core DML on an engine connection: unlike Session.execute,
-        # AsyncConnection.execute is typed CursorResult, whose rowcount
-        # the batch loop needs.
+        # Pure Core DML on an engine connection.
         async with (
             self._tracker("purge_deleted_partitions"),
             write_connection(self._engine) as connection,
@@ -1723,7 +1721,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                         "tombstones_purged_through",
                     ),
                 ):
-                    deleted, last = await SQLAlchemySegmentStore._purge_batch(
+                    found, last = await SQLAlchemySegmentStore._purge_batch(
                         connection,
                         table,
                         key,
@@ -1731,14 +1729,14 @@ class SQLAlchemySegmentStore(SegmentStore):
                         after=cursors[cursor],
                         limit=remaining,
                     )
-                    if deleted >= remaining:
+                    if found >= remaining:
                         await connection.execute(
                             update(PurgeQueueRow)
                             .where(PurgeQueueRow.incarnation == incarnation)
                             .values({cursor: last})
                         )
                         return True
-                    remaining -= deleted
+                    remaining -= found
 
                 await connection.execute(
                     delete(PurgeQueueRow).where(
@@ -1772,7 +1770,9 @@ class SQLAlchemySegmentStore(SegmentStore):
         """Delete up to `limit` of a dead incarnation's rows of `table` in `key` order after `after`.
 
         `key` is the column of the table's primary key after the
-        incarnation. Returns how many were deleted and the last key deleted.
+        incarnation. Returns how many rows the batch's search found and the
+        last key it found: a table is done when a search finds fewer than
+        `limit`, whatever another transaction deleted from the batch since.
         The batch continues after the cursor, so it never reads rows an
         earlier batch deleted: PostgreSQL keeps them in the table and its
         indexes until vacuum, and a batch starting from the incarnation's
@@ -1786,23 +1786,25 @@ class SQLAlchemySegmentStore(SegmentStore):
             .limit(limit)
             .subquery()
         )
-        last = (
+        # The batch's size and its last key, in one statement.
+        row = (
             await connection.execute(
-                select(batch.c[key.key]).order_by(batch.c[key.key].desc()).limit(1)
+                select(batch.c[key.key], func.count().over())
+                .order_by(batch.c[key.key].desc())
+                .limit(1)
             )
-        ).scalar_one_or_none()
-        if last is None:
+        ).one_or_none()
+        if row is None:
             return 0, None
-        deleted = (
-            await connection.execute(
-                delete(table).where(
-                    table.incarnation == incarnation,
-                    *after_cursor,
-                    key <= last,
-                )
+        last, found = row
+        await connection.execute(
+            delete(table).where(
+                table.incarnation == incarnation,
+                *after_cursor,
+                key <= last,
             )
-        ).rowcount
-        return deleted, last
+        )
+        return found, last
 
     # Claims
 
