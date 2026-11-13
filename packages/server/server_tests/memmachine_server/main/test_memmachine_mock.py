@@ -345,6 +345,7 @@ def test_an_event_project_takes_the_deployments_event_memory(
         backend="event",
         vector_store="vs",
         segment_store="ss",
+        partition_registry="pr",
         embedder="default-embedder",
         reranker="default-reranker",
     )
@@ -356,6 +357,28 @@ def test_an_event_project_takes_the_deployments_event_memory(
 
     assert isinstance(merged.long_term_memory, EventLongTermMemoryConf)
     assert merged.long_term_memory.reranker == "default-reranker"
+
+
+@pytest.mark.parametrize(
+    "missing", ["vector_store", "segment_store", "partition_registry"]
+)
+def test_an_event_deployment_missing_a_store_or_registry_disables_long_term_memory(
+    minimal_conf_factory, patched_resource_manager, missing
+):
+    conf = minimal_conf_factory()
+    long_term_memory = LongTermMemoryConfPartial(
+        backend="event",
+        embedder="default-embedder",
+        vector_store="vs",
+        segment_store="ss",
+        partition_registry="pr",
+    )
+    setattr(long_term_memory, missing, None)
+    conf.episodic_memory.long_term_memory = long_term_memory
+
+    MemMachine(conf, patched_resource_manager)
+
+    assert conf.episodic_memory.long_term_memory_enabled is False
 
 
 def test_a_deployment_without_event_memory_refuses_an_event_project(
