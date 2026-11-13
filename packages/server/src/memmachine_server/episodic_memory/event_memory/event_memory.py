@@ -31,7 +31,6 @@ from memmachine_server.common.metrics_factory import (
 from memmachine_server.common.partition_registry import (
     PartitionRegistry,
     Registration,
-    validate_partition_name,
 )
 from memmachine_server.common.property_keys import (
     is_reserved_property_key,
@@ -206,7 +205,8 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If the partition name breaks the registry's rule.
+                If the partition name is empty, too long, or contains a NUL
+                character.
             PartitionAlreadyExistsError:
                 If the name is taken, by a live or a pending partition.
             PartitionCreateAttemptsExhaustedError:
@@ -217,7 +217,6 @@ class EventMemory:
             Exception:
                 Whatever a store raised while creating the partition.
         """
-        validate_partition_name(partition_name)
         registration = await self._params.partition_registry.create_partition(
             partition_name
         )
@@ -243,14 +242,14 @@ class EventMemory:
 
         Raises:
             ValueError:
-                If the partition name breaks the registry's rule.
+                If the partition name is empty, too long, or contains a NUL
+                character.
             PartitionPendingError:
                 If the partition registered under the name is pending.
             PartitionDeletedError:
                 If the partition was deleted, and its purge dropped it,
                 before its handle was built.
         """
-        validate_partition_name(partition_name)
         registration = await self._params.partition_registry.get_partition(
             partition_name
         )
@@ -273,6 +272,11 @@ class EventMemory:
         Args:
             partition_name (str):
                 The name of the partition to delete.
+
+        Raises:
+            ValueError:
+                If the partition name is empty, too long, or contains a NUL
+                character.
         """
         await self._params.partition_registry.delete_partition(partition_name)
 
