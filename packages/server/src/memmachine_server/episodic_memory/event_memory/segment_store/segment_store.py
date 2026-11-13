@@ -464,10 +464,10 @@ class SegmentStore(ABC):
     @abstractmethod
     async def finish_pending_write_claim(self, claim: PendingWriteClaim) -> None:
         """
-        Delete a claimed pending write, if the claim is the latest on it.
+        Delete a claimed pending write, once the claim has written its derivatives.
 
-        A claim that outlasted its lease leaves the record to the later
-        claim.
+        A claim that outlasted its lease deletes the record too: the
+        derivatives are written, whichever claim wrote them.
 
         Args:
             claim (PendingWriteClaim):

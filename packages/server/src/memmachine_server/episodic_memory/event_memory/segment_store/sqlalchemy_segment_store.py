@@ -1841,12 +1841,16 @@ class SQLAlchemySegmentStore(SegmentStore):
 
     @override
     async def finish_pending_write_claim(self, claim: PendingWriteClaim) -> None:
-        _, claimed_record = _claimed_record(claim)
         async with (
             self._tracker("finish_pending_write_claim"),
             write_session(self._create_session) as session,
         ):
-            await session.execute(delete(PendingWriteRow).where(claimed_record))
+            await session.execute(
+                delete(PendingWriteRow).where(
+                    PendingWriteRow.incarnation == claim.incarnation,
+                    PendingWriteRow.segment_uuid == claim.segment_uuid,
+                )
+            )
 
     @override
     async def fail_pending_write_claim(
