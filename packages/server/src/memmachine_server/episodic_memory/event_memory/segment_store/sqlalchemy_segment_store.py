@@ -532,7 +532,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             write_session(self._create_session) as session,
         ):
             await self._ensure_partition_live(session, pin=True)
-            stored = await self._insert_event_rows(session, segments_by_event.keys())
+            # In UUID order, so two batches naming the same events wait on
+            # each other's inserts in one order.
+            stored = await self._insert_event_rows(session, sorted(segments_by_event))
             already_stored = segments_by_event.keys() - stored
             if already_stored:
                 raise SegmentStoreEventAlreadyExistsError(already_stored)
@@ -696,10 +698,22 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             write_session(self._create_session) as session,
         ):
             await self._ensure_partition_live(session, pin=True)
-            await session.execute(
-                delete(PendingWriteRow).where(
+            # Skips the records another transaction holds, so this never
+            # waits: a forget deletes them, and one a claim's statement holds
+            # is left for the background work to write again.
+            unheld = (
+                select(PendingWriteRow.incarnation, PendingWriteRow.segment_uuid)
+                .where(
                     PendingWriteRow.incarnation == self._incarnation,
                     PendingWriteRow.segment_uuid.in_(segment_uuids),
+                )
+                .with_for_update(skip_locked=True)
+            )
+            await session.execute(
+                delete(PendingWriteRow).where(
+                    tuple_(
+                        PendingWriteRow.incarnation, PendingWriteRow.segment_uuid
+                    ).in_(unheld)
                 )
             )
 
@@ -1188,12 +1202,23 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             write_session(self._create_session) as session,
         ):
             await self._ensure_partition_live(session, pin=True)
-            await session.execute(
-                update(TombstoneRow)
+            # Skips the tombstones a claim's statement holds, so this never
+            # waits; their claims record the first delete instead.
+            unheld = (
+                select(TombstoneRow.incarnation, TombstoneRow.segment_uuid)
                 .where(
                     TombstoneRow.incarnation == self._incarnation,
                     TombstoneRow.segment_uuid.in_(segment_uuids),
                     TombstoneRow.first_deleted_at.is_(None),
+                )
+                .with_for_update(skip_locked=True)
+            )
+            await session.execute(
+                update(TombstoneRow)
+                .where(
+                    tuple_(TombstoneRow.incarnation, TombstoneRow.segment_uuid).in_(
+                        unheld
+                    )
                 )
                 # Made without a claim, so it starts a new generation: an
                 # open claim's late failure then changes nothing.
@@ -2019,6 +2044,19 @@ class SQLAlchemySegmentStore(SegmentStore):
             write_session(self._create_session) as session,
         ):
             if claim.second_delete:
+                # Pinned as a partition's writes are, so a deletion of the
+                # partition waits for this transaction and the purge, which
+                # follows the deletion, never runs beside it. A partition
+                # already deleted leaves its tombstones to the purge.
+                pinned = (
+                    await session.execute(
+                        select(PartitionRow.incarnation)
+                        .where(PartitionRow.incarnation == claim.incarnation)
+                        .with_for_update(read=True)
+                    )
+                ).scalar_one_or_none()
+                if pinned is None:
+                    return
                 # The cascade deletes the tombstone's derivative UUIDs.
                 await session.execute(
                     delete(TombstoneRow).where(

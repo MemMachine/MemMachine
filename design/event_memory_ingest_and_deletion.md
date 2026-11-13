@@ -148,6 +148,52 @@ partition first, the vector store partition it opened belongs to the same
 life. Embedding before the budget starts lets a recovery take as long to
 embed as an ingest does.
 
+No transactions on PostgreSQL can wait on each other in a cycle, since
+each is one of four kinds:
+
+- **One row.** It locks one row at most: a claim, whose update takes the
+  record it locked from a materialized CTE, which PostgreSQL evaluates
+  once; a renewal, fail or cancel; a pending write's finish; and a first
+  delete's finish. It never holds a lock while it waits for another.
+- **Never waits.** It takes every lock it could wait for with `SKIP
+  LOCKED`: the writer's delete of its pending writes, and the request's
+  record of a first delete. A row it skips is a forget's, which deletes
+  it, or a one-row statement's, whose work the background work completes.
+- **In order.** It waits only for locks it takes in one order. The forget
+  locks its events, then their segments, each in UUID order, and reaches
+  their pending writes and derivatives only through them. An ingest
+  inserts its events in UUID order, and waits only on a transaction adding
+  or deleting the same event; a forget never waits on an ingest, whose
+  rows it cannot see before they commit. The second delete deletes its
+  tombstone before the tombstone's derivative UUIDs.
+- **Fenced.** A transaction that locks more than one row of a partition
+  holds a shared lock on the partition's registry row; the partition's
+  deletion takes that row exclusively, and the purge reclaims only
+  partitions whose deletion committed, so the purge meets only one-row
+  statements, and other purges only at the queue, which it claims with
+  `SKIP LOCKED`.
+
+A wait cycle needs two transactions that each hold a lock while waiting
+for another. Neither a one-row nor a never-waiting transaction is one, the
+purge meets only those, and the rest wait in one order. Each pair of
+operations that can lock the same rows:
+
+| Operations | Rows both lock | Why neither waits on the other in a cycle |
+|---|---|---|
+| Two forgets of the same events | events, segments | Both lock them in UUID order |
+| An ingest and a forget of the same event | the event | The forget never waits on the ingest |
+| Two ingests naming the same events | the events | Both insert them in UUID order |
+| A forget and the writer's delete of its pending writes | pending writes | The delete never waits |
+| A forget and a claim, renewal, fail, cancel or finish of a pending write | a pending write | The background statement locks one row |
+| The request's first-delete record and a tombstone's claim, fail, cancel or first-delete finish | a tombstone | The record never waits |
+| Two second deletes of a tombstone | the tombstone, its UUIDs | Both delete the tombstone first |
+| A partition's deletion and a transaction locking several of its rows | the registry row | The deletion waits for the shared lock |
+| A purge and a one-row background statement | a deleted partition's row | The background statement locks one row |
+| Two purges | a queue entry | The claim never waits |
+
+SQLite serializes write transactions, each taking the write lock at its
+`BEGIN`, so no cycle forms there.
+
 The protocol was model-checked on small instances (an event encoded once,
 with one or two recovery workers and a crash and a timeout at any step, or
 encoded, forgotten and encoded again; a forget at any moment) for
