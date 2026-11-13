@@ -345,12 +345,12 @@ class EventMemory:
         embeddings = await self._params.embedder.ingest_embed(
             _derivative_texts(derivatives)
         )
-        # Started before the renewal, which a forget of these derivatives
-        # follows. The renewal also checks that the partition still exists
-        # after the vector store partition was opened under its key; since
-        # a partition leaves the segment store first, that vector store
-        # partition belongs to the claimed partition.
-        budget = _WriteBudget(self._params.write_budget_seconds)
+        # The budget starts before the renewal, which a forget of these
+        # derivatives follows. The renewal also checks that the partition
+        # still exists after the vector store partition was opened under its
+        # key; since a partition leaves the segment store first, that vector
+        # store partition belongs to the claimed partition.
+        deadline = asyncio.get_running_loop().time() + self._params.write_budget_seconds
         if not await self._params.segment_store.renew_pending_write_claim(
             claim,
             lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
@@ -366,7 +366,7 @@ class EventMemory:
                 _build_derivative_record(derivative, embedding, self._schema_fields)
                 for derivative, embedding in zip(derivatives, embeddings, strict=True)
             ],
-            budget,
+            deadline,
         )
         return True
 
@@ -826,9 +826,9 @@ class EventMemoryPartition:
         )
         t_embedding = time.monotonic()
 
-        # Started before the events are stored, so a forget of them either
-        # finds nothing or stamps its tombstone after the start.
-        budget = _WriteBudget(self._write_budget_seconds)
+        # The budget starts before the events are stored, so a forget of them
+        # either finds nothing or stamps its tombstone after the start.
+        deadline = asyncio.get_running_loop().time() + self._write_budget_seconds
         await self._segment_store_partition.add_event_segments(
             {
                 event.uuid: segment_list
@@ -855,7 +855,7 @@ class EventMemoryPartition:
         try:
             if derivative_records:
                 await _upsert_within_budget(
-                    self._vector_store_partition, derivative_records, budget
+                    self._vector_store_partition, derivative_records, deadline
                 )
             t_vector_store = time.monotonic()
 
@@ -1250,44 +1250,21 @@ def _build_derivative_record(
 async def _upsert_within_budget(
     vector_store_partition: VectorStorePartition,
     records: list[Record],
-    budget: "_WriteBudget",
+    deadline: float,
 ) -> None:
     """
-    Upsert records, sending nothing once the budget has run out.
+    Upsert records, sending nothing once the write budget's deadline has passed.
 
-    The upsert is cancelled when the budget runs out, which stops it from
-    sending further requests; a request already sent may still be applied.
+    The deadline is on the event loop's clock. The upsert is cancelled at
+    the deadline, which stops it from sending further requests; a request
+    already sent may still be applied.
 
     Raises:
-        TimeoutError: If the budget ran out before the upsert finished.
+        TimeoutError: If the deadline passed before the upsert finished.
     """
-    remaining = budget.remaining_seconds()
-    if remaining <= 0:
+    # A deadline already passed would cancel the upsert only at its first
+    # wait, after it may have sent a request.
+    if asyncio.get_running_loop().time() >= deadline:
         raise TimeoutError("The write budget ran out before the upsert started")
-    async with asyncio.timeout(remaining):
+    async with asyncio.timeout_at(deadline):
         await vector_store_partition.upsert(records=records)
-
-
-class _WriteBudget:
-    """
-    The time a writer of derivatives may keep sending, from the budget's start.
-
-    Elapsed time is the larger of the monotonic and the wall clock's, so a
-    check made after the machine slept counts the time it slept, and a wall
-    clock set back does not lengthen the budget. The upsert's own deadline
-    runs on the monotonic clock.
-    """
-
-    def __init__(self, seconds: float) -> None:
-        """Start a budget of `seconds` now."""
-        self._seconds = seconds
-        self._started_monotonic = time.monotonic()
-        self._started_wall = time.time()
-
-    def remaining_seconds(self) -> float:
-        """Seconds left in the budget; zero or less once it has run out."""
-        elapsed = max(
-            time.monotonic() - self._started_monotonic,
-            time.time() - self._started_wall,
-        )
-        return self._seconds - elapsed

@@ -209,5 +209,5 @@ erasure. Removing any one piece above breaks one of them.
   outages in its backoff. A record or tombstone that keeps failing is
   reported and kept, with a tombstone's derivatives, and needs an operator
   to retry it.
-- A process paused longer than R between its budget check and a send, and
-  a restore of SQL from a backup, are outside this design.
+- A process paused for about R or longer after its budget starts, and a
+  restore of SQL from a backup, are outside this design.
