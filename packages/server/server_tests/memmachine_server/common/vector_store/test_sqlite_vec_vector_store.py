@@ -774,6 +774,36 @@ class TestPartitionIsolation:
         await other.shutdown()
 
     @pytest.mark.asyncio
+    async def test_stores_of_two_names_keep_their_records_in_separate_storage(
+        self, store
+    ):
+        """Stores of two names share no storage, even on one engine and under
+        one partition UUID."""
+        other = await _store_with(store, "other_store")
+        partition_uuid = uuid4()
+        await store.create_partition(partition_uuid)
+        await other.create_partition(partition_uuid)
+        mine = await store.get_partition(partition_uuid)
+        theirs = await other.get_partition(partition_uuid)
+        vector = _normalize([1.0, 0.0, 0.0])
+        my_record = _make_record(vector=vector)
+
+        await mine.upsert(records=[my_record])
+
+        assert await _stored(theirs) == {}
+        [result] = await theirs.query(query_vectors=[vector], limit=10)
+        assert result.matches == []
+
+        their_record = _make_record(vector=vector)
+        await theirs.upsert(records=[their_record])
+        await _purge_and_drop(store, partition_uuid)
+
+        assert set(await _stored(theirs)) == {their_record.uuid}
+        [result] = await theirs.query(query_vectors=[vector], limit=10)
+        assert [match.record_uuid for match in result.matches] == [their_record.uuid]
+        await other.shutdown()
+
+    @pytest.mark.asyncio
     async def test_dropping_a_partition_does_not_affect_sibling(self, store):
         """Dropping one partition leaves a sibling's records searchable."""
         partition_a = await _created(store)
