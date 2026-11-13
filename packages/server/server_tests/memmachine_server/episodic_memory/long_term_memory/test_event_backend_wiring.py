@@ -219,7 +219,7 @@ async def _event_long_term_memory(
         vector_store_partition=vector_store_partition,
     )
     partition_registry = create_autospec(PartitionRegistry, instance=True)
-    partition_registry.get_partition.return_value = registration
+    partition_registry.create_partition.return_value = registration
     event_memory = EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,
@@ -232,7 +232,7 @@ async def _event_long_term_memory(
         )
     )
     return LongTermMemory(
-        await event_memory.get_or_create_partition("sess1"),
+        await event_memory.create_partition("sess1"),
         episode_storage=episode_storage,
     )
 

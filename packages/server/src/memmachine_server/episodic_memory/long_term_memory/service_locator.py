@@ -1,5 +1,6 @@
 """Helpers for building long-term memory from configuration."""
 
+import asyncio
 import hashlib
 import logging
 
@@ -20,6 +21,10 @@ from memmachine_server.common.configuration.episodic_config import (
 from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.errors import ConfigurationError
 from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
+    PartitionDeletedError,
+    PartitionPendingError,
     PartitionRegistry,
     validate_partition_name,
 )
@@ -38,6 +43,7 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
+    EventMemoryPartition,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory_store import (
     EventMemoryStore,
@@ -64,6 +70,12 @@ _EVENT_MEMORY_VECTOR_STORE_NAME = "event_memory"
 Fixed, because the name locates the store's data.
 """
 
+# Attempts getting or creating a session's partition makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
+# partition that stays pending or a name it keeps losing.
+_MAX_GET_OR_CREATE_ATTEMPTS = 10
+_GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
+
 
 async def long_term_memory_from_config(
     config: LongTermMemoryConf,
@@ -83,8 +95,8 @@ async def long_term_memory_from_config(
                 config, resource_manager, reranker=reranker
             )
             return LongTermMemory(
-                await event_memory.get_or_create_partition(
-                    partition_key_for_session(config.session_id)
+                await _get_or_create_event_memory_partition(
+                    event_memory, partition_key_for_session(config.session_id)
                 ),
                 episode_storage=await resource_manager.get_episode_storage(),
                 reranker=reranker,
@@ -93,6 +105,57 @@ async def long_term_memory_from_config(
             raise NotImplementedError(
                 f"Unsupported long-term memory backend: {type(config).__name__}"
             )
+
+
+async def _get_or_create_event_memory_partition(
+    event_memory: EventMemory, partition_name: str
+) -> EventMemoryPartition:
+    """
+    Get the live event memory partition under a name, creating it if no partition holds the name.
+
+    Read-then-create, retried a bounded number of times: a live partition is
+    answered; a pending one is another creator's, so the call waits for it;
+    no partition means create; a creation that finds the name taken lost it
+    to another creator meanwhile; and one that finds the partition deleted
+    lost it to a deleter while the stores created it, so the call creates
+    again.
+
+    Raises:
+        PartitionPendingError:
+            If the partition's creation, by another caller, did not complete
+            within the attempts to get it.
+        PartitionCreateAttemptsExhaustedError:
+            If every attempt to get or create the partition lost the name to
+            another creator or deleter.
+        PartitionDeletedError:
+            If the partition was deleted, and its purge dropped it, before
+            its handle was built.
+    """
+    pending_error: PartitionPendingError | None = None
+    lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
+    for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
+        if attempt:
+            await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
+        try:
+            partition = await event_memory.get_partition(partition_name)
+        except PartitionPendingError as err:
+            pending_error = err
+            continue
+        pending_error = None
+        if partition is not None:
+            return partition
+        try:
+            return await event_memory.create_partition(partition_name)
+        except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
+            lost_race = err
+            continue
+    # The last lookup found the partition pending.
+    if pending_error is not None:
+        raise pending_error
+    raise PartitionCreateAttemptsExhaustedError(
+        f"Getting or creating partition {partition_name!r} made no progress "
+        f"after {_MAX_GET_OR_CREATE_ATTEMPTS} attempts"
+    ) from lost_race
 
 
 async def delete_long_term_memory_storage(

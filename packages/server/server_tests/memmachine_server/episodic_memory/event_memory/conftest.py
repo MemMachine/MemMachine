@@ -230,7 +230,7 @@ async def open_event_memory_partition(
     reranker: Reranker | None = None,
     metrics_factory: MetricsFactory | None = None,
 ) -> EventMemoryPartition:
-    """Open a partition of an EventMemory whose registration carries the given partitions, and whose vector store has `store_schema`."""
+    """Create a partition of an EventMemory whose registration carries the given partitions, and whose vector store has `store_schema`."""
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = "partition"
     registration.partition_uuid = uuid4()
@@ -239,7 +239,7 @@ async def open_event_memory_partition(
         vector_store_partition=vector_store_partition,
     )
     partition_registry = create_autospec(PartitionRegistry, instance=True)
-    partition_registry.get_partition.return_value = registration
+    partition_registry.create_partition.return_value = registration
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
     event_memory = EventMemory(
@@ -256,7 +256,7 @@ async def open_event_memory_partition(
             metrics_factory=metrics_factory,
         )
     )
-    return await event_memory.get_or_create_partition("partition")
+    return await event_memory.create_partition("partition")
 
 
 # ---------------------------------------------------------------------------
