@@ -772,6 +772,8 @@ class RouterDoc:
     instead of being ignored.
     The set_metadata field scopes semantic memories to matching semantic sets.
     The type field allows specifying which memory type to list.
+
+    If the project has been deleted, a not-found error is returned.
     """
 
     DELETE_EPISODIC_MEMORY = """
