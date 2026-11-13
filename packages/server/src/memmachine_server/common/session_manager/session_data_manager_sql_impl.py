@@ -37,6 +37,7 @@ from memmachine_server.common.configuration.episodic_config import EpisodicMemor
 from memmachine_server.common.data_types import PropertyValue
 from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.common.metrics_factory import (
@@ -275,6 +276,8 @@ class SessionDataManagerSQL(SessionDataManager):
                         # The conflicting row was deleted before our re-read.
                         continue
 
+                if session.status != SessionDataManager.SessionStatus.Active:
+                    raise SessionDeletedError(session_key)
                 if (
                     session.configuration == configuration
                     and session.param_data == param_data

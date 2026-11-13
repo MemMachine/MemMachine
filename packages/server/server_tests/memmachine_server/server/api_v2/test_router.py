@@ -17,6 +17,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES, MemoryType
@@ -103,6 +104,16 @@ def test_create_project(client, mock_memmachine):
     assert response.status_code == 409
     response_detail = response.json()["detail"]
     assert "already exists" in response_detail["message"]
+    assert response_detail["trace"] == ""
+
+    mock_memmachine.create_session.reset_mock()
+    mock_memmachine.create_session.side_effect = SessionDeletedError(
+        "test_org/test_proj"
+    )
+    response = client.post("/api/v2/projects", json=payload)
+    assert response.status_code == 409
+    response_detail = response.json()["detail"]
+    assert response_detail["message"] == "Project is still being deleted"
     assert response_detail["trace"] == ""
 
 

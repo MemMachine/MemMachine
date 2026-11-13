@@ -14,6 +14,7 @@ from memmachine_server.common.configuration.episodic_config import (
 )
 from memmachine_server.common.errors import (
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.common.metrics_factory import MetricsFactory
@@ -295,6 +296,37 @@ async def test_create_or_validate_existing_session_with_conflicting_data_raises_
         await session_manager.create_or_validate_session(
             session_key, config, param, "", metadata
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed_field", [None, "metadata"])
+async def test_create_or_validate_session_marked_deleted_raises_error(
+    session_manager: SessionDataManager,
+    episodic_memory_conf: EpisodicMemoryConf,
+    changed_field: str | None,
+):
+    """A session marked deleted is refused, whether or not its data matches."""
+    session_key = "session1"
+    await session_manager.create_or_validate_session(
+        session_key, {}, episodic_memory_conf, "", {}
+    )
+    await session_manager.update_session_status(
+        session_key, SessionDataManager.SessionStatus.Deleted
+    )
+    metadata: dict[str, JsonValue] = (
+        {"different": True} if changed_field == "metadata" else {}
+    )
+
+    with pytest.raises(
+        SessionDeletedError, match=f"Session '{session_key}' has been deleted"
+    ):
+        await session_manager.create_or_validate_session(
+            session_key, {}, episodic_memory_conf, "", metadata
+        )
+
+    info = await session_manager.get_session_info(session_key)
+    assert info is not None
+    assert info.status == SessionDataManager.SessionStatus.Deleted
 
 
 @pytest.mark.asyncio

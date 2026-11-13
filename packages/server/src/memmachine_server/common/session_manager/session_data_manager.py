@@ -36,7 +36,17 @@ class SessionDataManager(ABC):
         description: str,
         metadata: dict[str, JsonValue],
     ) -> None:
-        """Create a session, or accept an existing one with matching data."""
+        """
+        Create a session, or accept an existing one with matching data.
+
+        Raises:
+            SessionDeletedError:
+                If the session under the key is marked deleted, whatever its
+                data.
+            SessionAlreadyExistsError:
+                If an active session under the key has different data.
+
+        """
         raise NotImplementedError
 
     @abstractmethod
