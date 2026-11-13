@@ -47,9 +47,8 @@ class PartitionedStore[PartitionT](ABC):
         """
         Get a handle on a created partition.
 
-        The handle reads and writes the partition's records alone, and checks
-        nothing about whether the partition is live: its owner fences each
-        operation by the partition's registration.
+        The handle reads and writes the partition's records alone, whether
+        or not the partition is still live.
 
         Args:
             partition_uuid (UUID):

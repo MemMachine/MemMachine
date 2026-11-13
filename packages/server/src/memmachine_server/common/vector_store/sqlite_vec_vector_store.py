@@ -2,8 +2,7 @@
 Vector store backed by SQLite + sqlite-vec.
 
 Each partition gets its own records table and vec0 virtual table,
-rather than a vec0 partition key column, which sqlite-vec's ANN indexes may
-not support.
+since sqlite-vec's ANN indexes may not support partition keys.
 
 A partition's records table carries one typed, indexed column per declared
 property, and a filtered query hands the KNN an allowlist of the rows the
@@ -415,8 +414,8 @@ class SQLiteVecVectorStore(VectorStore):
 
     @override
     async def startup(self) -> None:
-        # Each partition's tables are created when it is
-        # prepared; nothing is shared.
+        # Each partition's tables are created by create_partition; nothing
+        # is shared.
         pass
 
     @override

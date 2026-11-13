@@ -64,11 +64,7 @@ from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 # contain (Record requires identifiers), so the two never collide.
 _SYSTEM_KEY_PREFIX = "sys-"
 _PAYLOAD_PARTITION_UUID = f"{_SYSTEM_KEY_PREFIX}partition_uuid"
-"""The payload key holding the partition UUID of the partition a point belongs to.
-
-A partition created again under a deleted one's name gets a fresh
-partition UUID, so it holds only the points written under that partition UUID.
-"""
+"""The payload key holding the partition UUID of the partition a point belongs to."""
 _PAYLOAD_RECORD_UUID = f"{_SYSTEM_KEY_PREFIX}record_uuid"
 """The payload key holding a point's record UUID.
 
@@ -446,8 +442,7 @@ class QdrantVectorStorePartition(VectorStorePartition):
     def _point_id(self, record_uuid: UUID) -> UUID:
         """The point id of a record: a UUIDv5 of the record UUID under the partition UUID.
 
-        Point ids are distinct across the partitions of the store's collection
-        and across the partitions created under one name.
+        Point ids are distinct across the partitions of the store's collection.
         """
         return uuid5(self._partition_uuid, str(record_uuid))
 
@@ -479,7 +474,7 @@ class QdrantVectorStore(VectorStore):
     """Asynchronous Qdrant-based implementation of VectorStore.
 
     The store is one native Qdrant collection, named at construction, in
-    which a partition is the points carrying it in their
+    which a partition is the points carrying its partition UUID in their
     payload.
     """
 
@@ -493,9 +488,9 @@ class QdrantVectorStore(VectorStore):
     }
 
     # The store filters only on indexed keys (the declared keys and the
-    # partition UUID). Strict mode makes the server refuse a filter on any other
-    # key instead of scanning for it, so a missing index fails a search
-    # rather than slowing it.
+    # partition UUID). Strict mode makes the server refuse a filter on any
+    # other key instead of scanning for it, so a missing index fails a
+    # search rather than slowing it.
     _STRICT_MODE: ClassVar[models.StrictModeConfig] = models.StrictModeConfig(
         enabled=True,
         unindexed_filtering_retrieve=False,
@@ -601,8 +596,7 @@ class QdrantVectorStore(VectorStore):
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection startup
-        # prepared.
+        # Every partition lives in the collection startup prepared.
         return
 
     @override
@@ -621,8 +615,8 @@ class QdrantVectorStore(VectorStore):
             return await self._purge_partition(partition_uuid)
 
     async def _purge_partition(self, partition_uuid: UUID) -> bool:
-        # If a point of the partition remains, one filter-delete removes
-        # them all.
+        # If a point of the partition remains, one filter-delete removes them
+        # all.
         try:
             points, _ = await self._client.scroll(
                 collection_name=self._vector_store_name,

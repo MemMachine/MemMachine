@@ -222,7 +222,7 @@ class SemanticResourceManager:
         waits for it; no partition means create; a creation that finds the
         name taken lost it to another process meanwhile; and one that finds
         the partition deleted lost it while the store created it, so the call
-        creates again.
+        tries again.
         """
         pending_error: PartitionPendingError | None = None
         lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
