@@ -55,28 +55,30 @@ from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     event_backend_indexed_properties,
     event_backend_vector_store,
     long_term_memory_from_config,
-    partition_key_for_session,
+    partition_name_for_session,
 )
 
 
 def test_a_session_id_the_name_rule_accepts_is_the_partition_name():
     for session_id in ("abc_123", "Session-Mixed-Case-123", "org/project", "日本語"):
-        assert partition_key_for_session(session_id) == session_id
+        assert partition_name_for_session(session_id) == session_id
 
 
 @pytest.mark.parametrize(
     "session_id", ["", "nul\x00", "a" * 256], ids=["empty", "nul", "too_long"]
 )
 def test_a_session_id_the_name_rule_refuses_is_hashed(session_id: str):
-    name = partition_key_for_session(session_id)
+    name = partition_name_for_session(session_id)
 
     assert name != session_id
     validate_partition_name(name)
-    assert partition_key_for_session(session_id) == name
+    assert partition_name_for_session(session_id) == name
 
 
 def test_distinct_hashed_session_ids_name_distinct_partitions():
-    assert partition_key_for_session("a" * 256) != partition_key_for_session("b" * 256)
+    assert partition_name_for_session("a" * 256) != partition_name_for_session(
+        "b" * 256
+    )
 
 
 @pytest.mark.asyncio

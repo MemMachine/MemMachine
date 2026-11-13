@@ -96,7 +96,7 @@ async def long_term_memory_from_config(
             )
             return LongTermMemory(
                 await _get_or_create_event_memory_partition(
-                    event_memory, partition_key_for_session(config.session_id)
+                    event_memory, partition_name_for_session(config.session_id)
                 ),
                 episode_storage=await resource_manager.get_episode_storage(),
                 reranker=reranker,
@@ -179,7 +179,7 @@ async def delete_long_term_memory_storage(
             # Deleting a partition uses no reranker.
             event_memory = await _event_memory(config, resource_manager, reranker=None)
             await event_memory.delete_partition(
-                partition_key_for_session(config.session_id)
+                partition_name_for_session(config.session_id)
             )
         case _:
             raise NotImplementedError(
@@ -311,7 +311,7 @@ def event_backend_indexed_properties() -> dict[str, PropertyType]:
     }
 
 
-def partition_key_for_session(session_id: str) -> str:
+def partition_name_for_session(session_id: str) -> str:
     """
     Derive the name of a session's event memory partition.
 
@@ -328,7 +328,7 @@ def partition_key_for_session(session_id: str) -> str:
         return session_id
     partition_name = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
     logger.debug(
-        "partition_key_for_session: hashed session_id %r -> partition name %r",
+        "partition_name_for_session: hashed session_id %r -> partition name %r",
         session_id,
         partition_name,
     )
