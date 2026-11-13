@@ -36,6 +36,9 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemoryParams,
     EventMemoryPartition,
 )
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
@@ -66,16 +69,15 @@ def _event(text: str) -> Event:
 @pytest_asyncio.fixture
 async def partition_registry(
     sqlalchemy_sqlite_engine: AsyncEngine,
-    segment_store: SQLAlchemySegmentStore,
-    vector_store: NonCallableMagicMock,
+    event_memory_store: EventMemoryStore,
 ) -> SQLAlchemyPartitionRegistry:
     registry = SQLAlchemyPartitionRegistry(
         SQLAlchemyPartitionRegistryParams(
             engine=sqlalchemy_sqlite_engine,
             partition_namespace=EventMemory.PARTITION_NAMESPACE,
-            partitioned_stores=[segment_store, vector_store],
             tombstone_retention_seconds=0,
-        )
+        ),
+        partitioned_store=event_memory_store,
     )
     await registry.startup()
     return registry
@@ -111,16 +113,22 @@ def vector_store() -> NonCallableMagicMock:
 
 
 @pytest.fixture
-def event_memory(
-    partition_registry: SQLAlchemyPartitionRegistry,
+def event_memory_store(
     segment_store: SQLAlchemySegmentStore,
     vector_store: NonCallableMagicMock,
+) -> EventMemoryStore:
+    return EventMemoryStore(segment_store=segment_store, vector_store=vector_store)
+
+
+@pytest.fixture
+def event_memory(
+    partition_registry: SQLAlchemyPartitionRegistry,
+    event_memory_store: EventMemoryStore,
 ) -> EventMemory:
     return EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,
-            segment_store=segment_store,
-            vector_store=vector_store,
+            event_memory_store=event_memory_store,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=FakeEmbedder(),
@@ -338,7 +346,7 @@ async def test_get_or_create_creates_again_after_a_deletion_during_creation(
     async def deleted_the_first_time(partition_uuid: UUID) -> None:
         partition_uuids.append(partition_uuid)
         if len(partition_uuids) == 1:
-            await partition_registry.unregister(NAME)
+            await partition_registry.delete_partition(NAME)
 
     vector_store.create_partition.side_effect = deleted_the_first_time
     opened = await event_memory.get_or_create_partition(NAME)

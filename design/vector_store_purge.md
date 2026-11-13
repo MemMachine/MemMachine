@@ -22,7 +22,7 @@ and retried.
 
 ### Tombstones
 
-`unregister` removes the partition's row and queues the partition's
+`delete_partition` removes the partition's row and queues the partition's
 *tombstone* in one transaction (see [partition
 registry](partition_registry.md)). The partition is unreachable
 when it commits. Its records stay in the backend until purge rounds reclaim
@@ -93,9 +93,9 @@ tombstone that came due first, and runs it in three steps:
    claim is taking and purgers on every process split a backlog without
    coordinating. SQLite drops the locking clause; there the claim's write
    serializes claims, for one statement.
-2. **Round.** With no transaction open, the registry runs every store's
-   `purge_partition` on the tombstone's partition, and once none finds
-   anything, every store's `drop_partition`. The round answers whether any
+2. **Round.** With no transaction open, the registry runs its store's
+   `purge_partition` on the tombstone's partition, and once that finds
+   nothing, the store's `drop_partition`. The round answers whether any
    purge found records (see [partition
    registry](partition_registry.md#deletion-and-purge)).
 3. **Record.** In a short transaction: a round that found nothing removes the

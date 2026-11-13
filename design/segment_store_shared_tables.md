@@ -74,7 +74,7 @@ with a new UUID.
   error.
 - **Get**: read the partition's row. The handle captures the
   partition's UUID and the codec.
-- **Delete** is the owner's: unregistering the tenant's name in its
+- **Delete** is the owner's: deleting the tenant's name in its
   registry is O(1) regardless of tenant size, and the tenant is unreachable
   at once. The store is not called.
 - **Re-create**: the owner's registry creates a new partition under the

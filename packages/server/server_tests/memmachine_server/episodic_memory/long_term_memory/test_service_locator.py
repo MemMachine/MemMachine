@@ -35,6 +35,10 @@ from memmachine_server.episodic_memory.declarative_memory.data_types import (
 from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemoryPartition,
 )
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
     SegmentStorePartition,
@@ -94,15 +98,12 @@ async def test_every_backend_and_embedder_name_the_one_event_store():
 def _deployment_resource_manager(
     deployment: LongTermMemoryConfPartial | None,
 ) -> NonCallableMagicMock:
-    """A resource manager whose deployment configures `deployment` and whose stores open autospec partitions."""
+    """A resource manager whose deployment configures `deployment` and whose registry gets autospec partitions."""
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = VectorStoreSchema(
         vector_dimensions=3,
         similarity_metric=SimilarityMetric.COSINE,
         indexed_properties=event_backend_indexed_properties(),
-    )
-    vector_store.get_partition.return_value = create_autospec(
-        VectorStorePartition, instance=True
     )
     embedder = create_autospec(Embedder, instance=True)
     embedder.dimensions = 3
@@ -116,13 +117,14 @@ def _deployment_resource_manager(
     resource_manager.get_segment_store.return_value = create_autospec(
         SegmentStore, instance=True
     )
-    resource_manager.get_segment_store.return_value.get_partition.return_value = (
-        create_autospec(SegmentStorePartition, instance=True)
-    )
     registration = create_autospec(Registration, instance=True)
     registration.partition_uuid = uuid4()
+    registration.partition = EventMemoryStorePartition(
+        segment_store_partition=create_autospec(SegmentStorePartition, instance=True),
+        vector_store_partition=create_autospec(VectorStorePartition, instance=True),
+    )
     partition_registry = create_autospec(PartitionRegistry, instance=True)
-    partition_registry.resolve.return_value = registration
+    partition_registry.get_partition.return_value = registration
     resource_manager.get_partition_registry.return_value = partition_registry
     resource_manager.get_embedder.return_value = embedder
     resource_manager.get_episode_storage.return_value = create_autospec(
@@ -160,14 +162,19 @@ async def test_event_params_opens_the_session_partition_in_the_event_store():
     assert isinstance(partition, EventMemoryPartition)
     assert partition.similarity_metric is SimilarityMetric.COSINE
     partition_registry = resource_manager.get_partition_registry.return_value
-    partition_registry.resolve.assert_awaited_once_with("raced")
-    vector_store.get_partition.assert_awaited_once_with(
-        partition_registry.resolve.return_value.partition_uuid
+    partition_registry.get_partition.assert_awaited_once_with("raced")
+    store_partition = partition_registry.get_partition.return_value.partition
+    assert partition._segment_store_partition is (
+        store_partition.segment_store_partition
     )
+    assert partition._vector_store_partition is store_partition.vector_store_partition
     registry_call = resource_manager.get_partition_registry.await_args
     assert registry_call.args == ("pr",)
     assert registry_call.kwargs["partition_namespace"] == "event_memory"
     assert registry_call.kwargs["tombstone_retention_seconds"] == 86400
+    event_memory_store = registry_call.kwargs["partitioned_store"]
+    assert isinstance(event_memory_store, EventMemoryStore)
+    assert event_memory_store.vector_store is vector_store
     resource_manager.get_vector_store.assert_awaited_once_with(
         "vs",
         vector_store_name="event_memory",
@@ -236,7 +243,7 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without
     partition_registry = resource_manager.get_partition_registry.return_value
     vector_store = resource_manager.get_vector_store.return_value
     segment_store = resource_manager.get_segment_store.return_value
-    partition_registry.unregister.assert_awaited_once_with("s")
+    partition_registry.delete_partition.assert_awaited_once_with("s")
     partition_registry.create_partition.assert_not_awaited()
     vector_store.create_partition.assert_not_awaited()
     segment_store.create_partition.assert_not_awaited()

@@ -131,7 +131,7 @@ class VectorStorePartition(ABC):
         raise NotImplementedError
 
 
-class VectorStore(PartitionedStore):
+class VectorStore(PartitionedStore[VectorStorePartition]):
     """
     Abstract base class for a vector store.
 
@@ -142,9 +142,9 @@ class VectorStore(PartitionedStore):
     The schema is fixed for the life of the store's data: changing it is a
     migration.
 
-    The store holds each partition's records under the partition's UUID; its
-    owner's partition registry creates, purges, and drops partitions through
-    the `PartitionedStore` methods.
+    The store holds each partition's records under the partition's UUID. Its
+    `PartitionedStore` methods create, get, purge, and drop partitions, which
+    its owner's partition registry drives.
 
     Naming constraints:
         - Vector store names and property keys must match `[a-z0-9_]+`
@@ -172,6 +172,8 @@ class VectorStore(PartitionedStore):
     async def get_partition(self, partition_uuid: UUID) -> VectorStorePartition:
         """
         Get a handle on a created partition.
+
+        A vector store answers a handle for any UUID.
 
         Args:
             partition_uuid (UUID):

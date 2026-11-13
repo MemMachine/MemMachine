@@ -1,6 +1,5 @@
 """Protocols for accessing shared MemMachine resources."""
 
-from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
 from neo4j import AsyncDriver
@@ -65,18 +64,19 @@ class CommonResourceManager(Protocol):
         """Return the segment store by name."""
         raise NotImplementedError
 
-    async def get_partition_registry(
+    async def get_partition_registry[PartitionT](
         self,
         database: str,
         *,
         partition_namespace: str,
         tombstone_retention_seconds: int,
-        partitioned_stores: Sequence[PartitionedStore],
-    ) -> PartitionRegistry:
+        partitioned_store: PartitionedStore[PartitionT],
+    ) -> PartitionRegistry[PartitionT]:
         """
-        Return the started registry of a partition namespace in a database, over its stores, building it on first access.
+        Return a started registry of a partition namespace in a database, over the store that holds its partitions.
 
-        The registry's purge rounds run in the background for as long as the
+        The first call for a namespace in a database starts its registry,
+        whose purge rounds then run in the background for as long as the
         resource manager is open.
         """
         raise NotImplementedError
