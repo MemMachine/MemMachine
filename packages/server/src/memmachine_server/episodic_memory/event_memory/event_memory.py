@@ -610,6 +610,8 @@ class EventMemoryPartition:
                 or while they were.
         """
         async with self._tracker("encode_events"):
+            events = list(events)
+            self._validate_events(events)
             # Checked before and after the writes: a write that completed
             # to a partition deleted meanwhile raises instead of reporting
             # success, and the purge reclaims what it wrote.
@@ -619,14 +621,11 @@ class EventMemoryPartition:
 
     async def _encode_events(
         self,
-        events: Iterable[Event],
+        events: list[Event],
         *,
         format_options: FormatOptions | None,
     ) -> None:
         t_start = time.monotonic()
-
-        events = list(events)
-        self._validate_events(events)
 
         segment_lists = await asyncio.gather(
             *(
@@ -979,13 +978,11 @@ class EventMemoryPartition:
                 forgotten, or while they were.
         """
         event_uuids = set(event_uuids)
-        if not event_uuids:
-            return
-
         async with self._tracker("forget_events"):
             # Checked after the deletes only: a delete adds nothing a purge
             # must reclaim, and reaches only this partition's records.
-            await self._forget_events(event_uuids)
+            if event_uuids:
+                await self._forget_events(event_uuids)
             await self._registration.require_current()
 
     async def _forget_events(self, event_uuids: set[UUID]) -> None:

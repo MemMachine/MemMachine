@@ -27,6 +27,7 @@ from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import 
     WholeTextDeriver,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EVENT_TIMESTAMP_KEY,
     EventMemory,
     EventMemoryParams,
     EventMemoryPartition,
@@ -199,6 +200,25 @@ async def test_a_deleted_partitions_handle_refuses_every_operation(
         await partition.query("milk")
     with pytest.raises(PartitionDeletedError):
         await partition.forget_events([event.uuid])
+    # An operation with nothing to write or delete is checked too.
+    with pytest.raises(PartitionDeletedError):
+        await partition.encode_events([])
+    with pytest.raises(PartitionDeletedError):
+        await partition.forget_events([])
+
+
+@pytest.mark.asyncio
+async def test_an_encode_checks_its_events_before_its_partition(
+    event_memory: EventMemory,
+) -> None:
+    partition = await event_memory.create_partition(NAME)
+    await event_memory.delete_partition(NAME)
+    reserved = _event("remember the milk").model_copy(
+        update={"properties": {EVENT_TIMESTAMP_KEY: "reserved"}}
+    )
+
+    with pytest.raises(ValueError, match="reserved for the event memory"):
+        await partition.encode_events([reserved])
 
 
 @pytest.mark.asyncio
