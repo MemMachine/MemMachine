@@ -246,8 +246,8 @@ class SegmentRow(BaseSegmentStore):
 class DerivativeRow(BaseSegmentStore):
     """A derivative of a segment: what its derived index is written from, and the segment a hit on it names.
 
-    It outlives a forgotten segment until the segment's tombstone's second
-    delete deletes it, so the tombstone's deletes can still read it.
+    Deleted by cascade with its segment; the segment's tombstone keeps its
+    UUID.
     """
 
     __tablename__ = "segment_store_dv"
@@ -269,6 +269,15 @@ class DerivativeRow(BaseSegmentStore):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["incarnation", "segment_uuid"],
+            [
+                "segment_store_sg.incarnation",
+                "segment_store_sg.uuid",
+            ],
+            ondelete="CASCADE",
+        ),
+        # Serves the lookups by segment and the cascade from the segment row.
         Index(
             "segment_store_dv__in_su",
             "incarnation",
@@ -318,11 +327,11 @@ class PendingWriteRow(BaseSegmentStore):
 
 
 class TombstoneRow(BaseSegmentStore):
-    """A forgotten segment's tombstone, for the derivatives the forget kept.
+    """A forgotten segment's tombstone, holding the UUIDs of its derivatives.
 
-    Their derived index entries are deleted once at once, and once more
-    after the store's retention has passed since the first delete, which
-    then deletes the derivatives and the tombstone.
+    Their derived index entries are deleted at once, and once more after
+    the store's retention has passed since the first delete, which then
+    deletes the tombstone and, by cascade, the UUIDs.
     """
 
     __tablename__ = "segment_store_tb"
@@ -363,6 +372,38 @@ class TombstoneRow(BaseSegmentStore):
     )
 
 
+class TombstoneDerivativeRow(BaseSegmentStore):
+    """The UUID of a forgotten derivative, held by its segment's tombstone.
+
+    Copied from the derivative by the forget that deletes it, and deleted
+    by cascade with the tombstone.
+    """
+
+    __tablename__ = "segment_store_tb_dv"
+
+    incarnation: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    uuid: MappedColumn[UUID] = mapped_column(Uuid, primary_key=True)
+    segment_uuid: MappedColumn[UUID] = mapped_column(Uuid, nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["incarnation", "segment_uuid"],
+            [
+                "segment_store_tb.incarnation",
+                "segment_store_tb.segment_uuid",
+            ],
+            ondelete="CASCADE",
+        ),
+        # Serves the tombstone claims' reads and the cascade from the
+        # tombstone row.
+        Index(
+            "segment_store_tb_dv__in_su",
+            "incarnation",
+            "segment_uuid",
+        ),
+    )
+
+
 class PurgeQueueRow(BaseSegmentStore):
     """The purge queue: one row per dead partition incarnation.
 
@@ -370,9 +411,10 @@ class PurgeQueueRow(BaseSegmentStore):
     so entries from every server order on one clock; entries stamped in the
     same tick are unordered among themselves. The incarnation identifies
     the rows to reclaim. The purge reclaims derivatives, then segments with
-    their pending writes, then events, then tombstones, each continuing
-    after its own cursor: every row of the incarnation keyed at or below
-    the cursor is deleted, and a cursor is NULL until its first full batch.
+    their pending writes, then events, then the tombstones' derivative
+    UUIDs, then tombstones, each continuing after its own cursor: every row
+    of the incarnation keyed at or below the cursor is deleted, and a
+    cursor is NULL until its first full batch.
     A batch that ends exactly on the last row of one table leaves that
     table's cursor naming it, which says nothing about the next table,
     hence a cursor per table. An entry holds only what the purge reads.
@@ -391,6 +433,9 @@ class PurgeQueueRow(BaseSegmentStore):
         Uuid, nullable=True
     )
     events_purged_through: MappedColumn[UUID | None] = mapped_column(
+        Uuid, nullable=True
+    )
+    tombstone_derivatives_purged_through: MappedColumn[UUID | None] = mapped_column(
         Uuid, nullable=True
     )
     tombstones_purged_through: MappedColumn[UUID | None] = mapped_column(
@@ -1012,21 +1057,12 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("get_segment_uuids_by_derivative_uuids"),
             self._create_session() as session,
         ):
-            # Served by the primary keys, which lead on the columns this
-            # filters and joins on. A forgotten segment's derivatives, kept
-            # for its tombstone, join no segment.
-            query = (
-                select(DerivativeRow.uuid, DerivativeRow.segment_uuid)
-                .join(
-                    SegmentRow,
-                    (SegmentRow.incarnation == DerivativeRow.incarnation)
-                    & (SegmentRow.uuid == DerivativeRow.segment_uuid),
-                )
-                .where(
-                    DerivativeRow.incarnation == self._incarnation,
-                    DerivativeRow.uuid.in_(derivative_uuids),
-                    self._registry_row_query().exists(),
-                )
+            # Served by the primary key, which leads on the columns this
+            # filters on.
+            query = select(DerivativeRow.uuid, DerivativeRow.segment_uuid).where(
+                DerivativeRow.incarnation == self._incarnation,
+                DerivativeRow.uuid.in_(derivative_uuids),
+                self._registry_row_query().exists(),
             )
             rows = (await session.execute(query)).all()
             if not rows:
@@ -1090,19 +1126,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             derivative_uuids_by_segment: dict[UUID, list[UUID]] = {
                 segment_uuid: [] for segment_uuid in segment_uuids
             }
-            # By the segments locked above, which the derivatives' index
-            # leads on; a join from the events leaves SQLite free to scan
-            # the partition's derivatives instead.
-            for derivative_uuid, segment_uuid in (
-                await session.execute(
-                    select(DerivativeRow.uuid, DerivativeRow.segment_uuid).where(
-                        DerivativeRow.incarnation == self._incarnation,
-                        DerivativeRow.segment_uuid.in_(segment_uuids),
-                    )
-                )
-            ).all():
-                derivative_uuids_by_segment[segment_uuid].append(derivative_uuid)
-
             if segment_uuids:
                 await session.execute(
                     insert(TombstoneRow).values(
@@ -1116,10 +1139,32 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                         ]
                     )
                 )
+                # Each tombstone copies its segment's derivative UUIDs, found
+                # by the segments locked above, which the derivatives' index
+                # leads on.
+                copied = await session.execute(
+                    insert(TombstoneDerivativeRow)
+                    .from_select(
+                        ["incarnation", "uuid", "segment_uuid"],
+                        select(
+                            DerivativeRow.incarnation,
+                            DerivativeRow.uuid,
+                            DerivativeRow.segment_uuid,
+                        ).where(
+                            DerivativeRow.incarnation == self._incarnation,
+                            DerivativeRow.segment_uuid.in_(segment_uuids),
+                        ),
+                    )
+                    .returning(
+                        TombstoneDerivativeRow.uuid,
+                        TombstoneDerivativeRow.segment_uuid,
+                    )
+                )
+                for derivative_uuid, segment_uuid in copied.all():
+                    derivative_uuids_by_segment[segment_uuid].append(derivative_uuid)
 
             # The cascade follows to the events' segments, and through them
-            # to their pending writes; their derivatives stay for the
-            # tombstones.
+            # to their pending writes and derivatives.
             await session.execute(
                 delete(EventRow).where(
                     EventRow.incarnation == self._incarnation,
@@ -1220,8 +1265,8 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             (default: None).
         purge_max_rows (int):
             Maximum number of rows purged per call: derivatives, segments,
-            events, and tombstones. Deleting a segment deletes its pending
-            write by cascade (default: 10000).
+            events, tombstones' derivative UUIDs, and tombstones. Deleting
+            a segment deletes its pending write by cascade (default: 10000).
         purge_max_partitions (int):
             Maximum number of queue entries a purge call processes.
             Entries cost round trips rather than row deletions --
@@ -1268,8 +1313,8 @@ class SQLAlchemySegmentStoreParams(BaseModel):
         gt=0,
         description=(
             "Maximum number of rows purged per call: derivatives, segments, "
-            "events, and tombstones. Deleting a segment deletes its pending "
-            "write by cascade"
+            "events, tombstones' derivative UUIDs, and tombstones. Deleting "
+            "a segment deletes its pending write by cascade"
         ),
     )
     purge_max_partitions: int = Field(
@@ -1637,6 +1682,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                         PurgeQueueRow.derivatives_purged_through,
                         PurgeQueueRow.segments_purged_through,
                         PurgeQueueRow.events_purged_through,
+                        PurgeQueueRow.tombstone_derivatives_purged_through,
                         PurgeQueueRow.tombstones_purged_through,
                     )
                     .order_by(PurgeQueueRow.enqueued_at)
@@ -1651,18 +1697,26 @@ class SQLAlchemySegmentStore(SegmentStore):
                     "derivatives_purged_through": entry.derivatives_purged_through,
                     "segments_purged_through": entry.segments_purged_through,
                     "events_purged_through": entry.events_purged_through,
+                    "tombstone_derivatives_purged_through": (
+                        entry.tombstone_derivatives_purged_through
+                    ),
                     "tombstones_purged_through": entry.tombstones_purged_through,
                 }
 
-                # Segments are purged before events, so the cascade from an
-                # event row never runs on the budgeted path; deleting a
-                # segment deletes its pending write by cascade. Each table draws on the same budget,
+                # Each table is purged before the one its rows cascade from,
+                # so no cascade runs on the budgeted path but a segment's to
+                # its one pending write. Each table draws on the same budget,
                 # and a full batch records how far it got and leaves the
                 # entry for the next call.
                 for table, key, cursor in (
                     (DerivativeRow, DerivativeRow.uuid, "derivatives_purged_through"),
                     (SegmentRow, SegmentRow.uuid, "segments_purged_through"),
                     (EventRow, EventRow.uuid, "events_purged_through"),
+                    (
+                        TombstoneDerivativeRow,
+                        TombstoneDerivativeRow.uuid,
+                        "tombstone_derivatives_purged_through",
+                    ),
                     (
                         TombstoneRow,
                         TombstoneRow.segment_uuid,
@@ -1702,7 +1756,13 @@ class SQLAlchemySegmentStore(SegmentStore):
     @staticmethod
     async def _purge_batch(
         connection: AsyncConnection,
-        table: type[DerivativeRow | SegmentRow | EventRow | TombstoneRow],
+        table: type[
+            DerivativeRow
+            | SegmentRow
+            | EventRow
+            | TombstoneDerivativeRow
+            | TombstoneRow
+        ],
         key: InstrumentedAttribute[UUID],
         incarnation: UUID,
         *,
@@ -1928,9 +1988,9 @@ class SQLAlchemySegmentStore(SegmentStore):
             derivative_uuids = list(
                 (
                     await session.execute(
-                        select(DerivativeRow.uuid).where(
-                            DerivativeRow.incarnation == claimed.incarnation,
-                            DerivativeRow.segment_uuid == claimed.segment_uuid,
+                        select(TombstoneDerivativeRow.uuid).where(
+                            TombstoneDerivativeRow.incarnation == claimed.incarnation,
+                            TombstoneDerivativeRow.segment_uuid == claimed.segment_uuid,
                         )
                     )
                 ).scalars()
@@ -1957,13 +2017,7 @@ class SQLAlchemySegmentStore(SegmentStore):
             write_session(self._create_session) as session,
         ):
             if claim.second_delete:
-                # Nothing reads the derivatives after the second delete.
-                await session.execute(
-                    delete(DerivativeRow).where(
-                        DerivativeRow.incarnation == claim.incarnation,
-                        DerivativeRow.segment_uuid == claim.tombstone.segment_uuid,
-                    )
-                )
+                # The cascade deletes the tombstone's derivative UUIDs.
                 await session.execute(
                     delete(TombstoneRow).where(
                         TombstoneRow.incarnation == claim.incarnation,

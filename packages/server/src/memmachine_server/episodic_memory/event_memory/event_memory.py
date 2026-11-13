@@ -1017,7 +1017,7 @@ class EventMemoryPartition:
         for match in query_result.matches:
             segment_uuid = segments_by_derivatives.get(match.record_uuid)
             if segment_uuid is None:
-                # The derivative's segment is gone; its vector outlived it.
+                # The derivative is deleted; its vector outlived it.
                 unlinked_record_uuids.append(match.record_uuid)
                 continue
             if segment_uuid not in seed_embedding_scores:
@@ -1117,13 +1117,13 @@ class EventMemoryPartition:
         return QueryResult(scored_segment_contexts=scored_segment_contexts)
 
     async def _delete_unlinked_records(self, record_uuids: list[UUID]) -> None:
-        """Delete vector records whose derivatives name no stored segment.
+        """Delete vector records whose derivatives are no longer stored.
 
-        A derivative is stored before its record, and its segment is
-        deleted only by a forget, which deletes the record in the
-        background, so such a record was left by a delete that did not
-        reach the vector store yet. A delete that fails here, or that
-        shutdown cancels, is tried again by the next query that finds it.
+        A derivative is stored before its record, and deleted only by a
+        forget, which deletes the record in the background, so such a
+        record was left by a delete that did not reach the vector store
+        yet. A delete that fails here, or that shutdown cancels, is tried
+        again by the next query that finds it.
         """
         try:
             await self._vector_store_partition.delete(record_uuids=record_uuids)
@@ -1154,11 +1154,10 @@ class EventMemoryPartition:
         """
         Forget events by their UUIDs.
 
-        When this returns, the events and their segments are gone from the
-        segment store, and their derivatives' vectors are deleted from the
-        vector store at once and again after the segment store's retention,
-        by the background work if not here; the second delete deletes the
-        derivatives.
+        When this returns, the events, their segments, and their
+        derivatives are deleted from the segment store, and the derivatives'
+        vectors are deleted from the vector store at once and again after
+        the segment store's retention, by the background work if not here.
 
         Args:
             event_uuids (Iterable[UUID]):
