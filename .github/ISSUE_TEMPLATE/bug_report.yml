@@ -24,7 +24,7 @@ body:
       description: Provide a minimal, reproducible code snippet or steps to reproduce the behavior.
       placeholder: |
         Example using an API endpoint:
-        1. Request: GET https://api.yourproject.com/v1/resource/123
+        1. Request: POST http://localhost:8080/api/v2/memories
         2. Actual Response: HTTP 500 Internal Server Error
 
         Example using a code snippet:
@@ -42,7 +42,7 @@ body:
       description: A clear and concise description of what you expected to happen.
       placeholder: |
         Example using an API endpoint:
-        1. Request: GET https://api.yourproject.com/v1/resource/123
+        1. Request: POST http://localhost:8080/api/v2/memories
         2. Expected Response: HTTP 200 OK
     validations:
       required: true

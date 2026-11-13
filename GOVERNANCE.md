@@ -86,6 +86,6 @@ community. The path to becoming a maintainer is as follows:
 ### 5. Conflict Resolution and Code of Conduct
 
 All members of the MemMachine community are expected to follow the
-[Code of Conduct](https://www.google.com/search?q=CODE_OF_CONDUCT.md). All
+[Code of Conduct](CODE_OF_CONDUCT.md). All
 issues or conflicts should be resolved in a professional and respectful manner,
 as outlined in the Code of Conduct's Reporting Guidelines.

@@ -6,7 +6,7 @@ As a maintainer, you play a vital role in ensuring the quality and integrity of 
 
 1. **Check out the PR locally.** While you can review the code directly on GitHub, the best way to validate changes is to run and test them yourself. This is especially important for PRs from external contributors, which come from a forked repository.
 2. **Provide constructive feedback.** Leave comments on specific lines of code or files to suggest improvements. Remember to be friendly and encouraging.
-3. **Ensure code quality.** Check that the code adheres to the project's style guide and best practices.
+3. **Ensure code quality.** Check that the code follows the Style section of [CONTRIBUTING.md](../CONTRIBUTING.md#style).
 4. **Merge the PR.** Once the code has been tested, all checks have passed, and you are satisfied with the changes, you can approve and merge the PR.
 
 ## Important Note for Reviewers
@@ -17,13 +17,13 @@ As a reviewer, you must have your own fork of the upstream repository. Clone you
 
 The process of testing a contributor's code from a fork requires a couple of extra steps. This method is the best way to get their changes onto your machine without needing to clone their entire repository.
 
-For these steps, you will need the pull request number and the contributor's GitHub username. You can find both of these on the pull request page.
+For these steps, you will need the contributor's GitHub username and branch name, both shown at the top of the pull request page.
 
 1. **Add the contributor's repository as a new remote.** A "remote" is a URL that points to a Git repository. You already have a remote for your main repository (usually called `origin`). Now, you will add one for the contributor's fork.
 
     You can use one of the following methods:
 
-    Note: Replace `<contributor-username>` with the contributor's GitHub username and `<repo-name>` with the name of your repository.
+    Note: Replace `<contributor-username>` with the contributor's GitHub username and `<repo-name>` with the name of the contributor's fork (usually `MemMachine`).
 
     - **HTTPS method:**
 
@@ -72,7 +72,7 @@ For these steps, you will need the pull request number and the contributor's Git
 
 Once you've tested the changes and are ready to provide feedback, you can do so directly on the pull request page on GitHub. If you are satisfied with the changes, you can approve the pull request.
 
-**Note:** The protected branch rules for this repository require a minimum of 2 approving reviews before the "Merge" button becomes active. You will not be able to merge the pull request until it has met this requirement.
+**Note:** The protected branch rules for this repository require a minimum of 2 approving reviews before the "Merge" button becomes active. Until then, only a repository admin can merge it.
 
 Once all required reviews have been completed, you can merge the pull request.
 

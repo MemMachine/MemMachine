@@ -21,7 +21,7 @@ jobs:
     needs: build
     environment:
       name: pypi
-      url: https://pypi.org/project/memmachine/
+      url: https://pypi.org/project/memmachine-server/
     permissions:
       id-token: write
     steps:
