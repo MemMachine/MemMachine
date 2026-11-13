@@ -93,7 +93,7 @@ on random-UUID collision resistance.
 - **Open**: read the registry row. The handle captures the logical key, the
   incarnation, and the codec.
 - **Delete**: one transaction: lock the registry row (`SELECT ... FOR
-  UPDATE`, which waits out in-flight writers holding `FOR SHARE` pins),
+  UPDATE`, which waits out in-flight writers' locks on it),
   insert the incarnation into the purge queue, delete the registry row.
   O(1) regardless of tenant size, and the tenant is unreachable at once
   because every operation resolves the registry first.
@@ -177,9 +177,10 @@ on random-UUID collision resistance.
 
 ### Fencing (resolves #1549)
 
-Every write pins the registry row with `SELECT ... WHERE incarnation =
-:incarnation FOR SHARE` and raises a stale-handle error when no row
-matches. Reads add the same predicate to their data statement as an
+Every write locks the registry row with `SELECT ... WHERE incarnation =
+:incarnation`, under `FOR NO KEY UPDATE` for an ingest or forget of
+several events and `FOR KEY SHARE` otherwise, and raises a stale-handle
+error when no row matches. Reads add the same predicate to their data statement as an
 `EXISTS`, so one statement (one snapshot) checks liveness and reads: a
 stale handle reads nothing, at no extra round trip, and a read that returns
 no rows issues the registry check on its own to tell an empty partition
@@ -202,10 +203,13 @@ previously had no mechanism for this at all.
 
 ### Locking model
 
-Row locks only. Writers hold `FOR SHARE` on their registry row for the
-write transaction; deletion takes `FOR UPDATE` on the same row; the purger
-claims queue rows with `FOR UPDATE SKIP LOCKED` and never waits; the mint's
-queue re-check takes `FOR SHARE` on a queue row only in the collision case.
+Row locks only. Writers hold their registry row for the write
+transaction, under `FOR NO KEY UPDATE` for an ingest or forget of several
+events, which such writes take one at a time, and under `FOR KEY SHARE`
+otherwise, which no write blocks; deletion takes `FOR UPDATE` on the same
+row, which blocks both; the purger claims queue rows with `FOR UPDATE SKIP
+LOCKED` and never waits; the mint's queue re-check takes `FOR SHARE` on a
+queue row only in the collision case.
 No table-level lock, no DDL, and no lock upgrade anywhere in the store,
 which removes the measured deadlock classes at the root: writers and
 lifecycle operations share no lockable object except one tenant's registry

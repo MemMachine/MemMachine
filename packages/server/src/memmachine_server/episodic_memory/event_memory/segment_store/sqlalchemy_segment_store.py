@@ -489,13 +489,16 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         )
 
     async def _ensure_partition_live(
-        self, session: AsyncSession, *, pin: bool = False
+        self, session: AsyncSession, *, pin: bool = False, exclusive: bool = False
     ) -> None:
         """Raise if this handle's incarnation is no longer registered.
 
-        With `pin`, the row is read under a shared lock that blocks
-        deletion, which takes the exclusive row lock, for the rest of the
-        transaction. SQLite drops the locking clause; there a write
+        With `pin`, the row is read under `FOR KEY SHARE` for the rest of
+        the transaction, which blocks only the partition's deletion, under
+        `FOR UPDATE`. With `exclusive` as well, it is read under `FOR NO KEY
+        UPDATE`, which also blocks every other exclusive pin: a write that
+        locks several of the partition's events takes it, so such writes
+        take turns. SQLite drops the locking clause; there a write
         transaction holds the database's write lock from `BEGIN`, which
         deletion waits on just the same. Reads call this without the lock,
         and only when their data statement returned no rows: it tells an
@@ -503,7 +506,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         """
         query = self._registry_row_query()
         if pin:
-            query = query.with_for_update(read=True)
+            query = query.with_for_update(read=not exclusive, key_share=True)
         row = (await session.execute(query)).scalar_one_or_none()
         if row is None:
             raise SegmentStorePartitionHandleStaleError(self._partition_key)
@@ -531,10 +534,13 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("add_event_segments"),
             write_session(self._create_session) as session,
         ):
-            await self._ensure_partition_live(session, pin=True)
-            # In UUID order, so two batches naming the same events wait on
-            # each other's inserts in one order.
-            stored = await self._insert_event_rows(session, sorted(segments_by_event))
+            # A batch of several events can wait on another's insert while
+            # holding its own, so batches take turns; one event waits only
+            # before it holds any.
+            await self._ensure_partition_live(
+                session, pin=True, exclusive=len(segments_by_event) > 1
+            )
+            stored = await self._insert_event_rows(session, segments_by_event.keys())
             already_stored = segments_by_event.keys() - stored
             if already_stored:
                 raise SegmentStoreEventAlreadyExistsError(already_stored)
@@ -1099,13 +1105,17 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("delete_event_segments"),
             write_session(self._create_session) as session,
         ):
-            await self._ensure_partition_live(session, pin=True)
+            # A forget of several events can wait on one event while holding
+            # another, so such forgets take turns; one event waits only
+            # before it holds any.
+            await self._ensure_partition_live(
+                session, pin=True, exclusive=len(event_uuids) > 1
+            )
             # Every later statement acts on the events this one returned:
             # each statement reads a snapshot of its own on PostgreSQL, so
             # an event committed after this one would be deleted below with
-            # links nobody read. The order of the locks keeps concurrent
-            # forgets with overlapping sets from deadlocking; SQLite drops
-            # the locking clause and serializes write transactions instead.
+            # links nobody read. SQLite drops the locking clause and
+            # serializes write transactions instead.
             held_event_uuids = list(
                 (
                     await session.execute(
@@ -1114,25 +1124,21 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                             EventRow.incarnation == self._incarnation,
                             EventRow.uuid.in_(event_uuids),
                         )
-                        .order_by(EventRow.uuid)
                         .with_for_update()
                     )
                 ).scalars()
             )
             if not held_event_uuids:
                 return []
-            # The segments, locked in order too: the cascade alone would
-            # take their locks in table order.
+            # Reached only through the events held above, so no other
+            # transaction deletes them meanwhile.
             segment_uuids = list(
                 (
                     await session.execute(
-                        select(SegmentRow.uuid)
-                        .where(
+                        select(SegmentRow.uuid).where(
                             SegmentRow.incarnation == self._incarnation,
                             SegmentRow.event_uuid.in_(held_event_uuids),
                         )
-                        .order_by(SegmentRow.uuid)
-                        .with_for_update()
                     )
                 ).scalars()
             )
@@ -2052,7 +2058,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                     await session.execute(
                         select(PartitionRow.incarnation)
                         .where(PartitionRow.incarnation == claim.incarnation)
-                        .with_for_update(read=True)
+                        .with_for_update(read=True, key_share=True)
                     )
                 ).scalar_one_or_none()
                 if pinned is None:

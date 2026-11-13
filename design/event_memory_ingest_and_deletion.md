@@ -149,7 +149,7 @@ life. Embedding before the budget starts lets a recovery take as long to
 embed as an ingest does.
 
 No transactions on PostgreSQL can wait on each other in a cycle, since
-each is one of four kinds:
+each is one of five kinds:
 
 - **One row.** It locks one row at most: a claim, whose update takes the
   record it locked from a materialized CTE, which PostgreSQL evaluates
@@ -159,13 +159,19 @@ each is one of four kinds:
   LOCKED`: the writer's delete of its pending writes, and the request's
   record of a first delete. A row it skips is a forget's, which deletes
   it, or a one-row statement's, whose work the background work completes.
-- **In order.** It waits only for locks it takes in one order. The forget
-  locks its events, then their segments, each in UUID order, and reaches
-  their pending writes and derivatives only through them. An ingest
-  inserts its events in UUID order, and waits only on a transaction adding
-  or deleting the same event; a forget never waits on an ingest, whose
-  rows it cannot see before they commit. The second delete deletes its
-  tombstone before the tombstone's derivative UUIDs.
+- **One root.** It waits for one contested row before it holds any, and
+  reaches the rest only through it, where it waits only on one-row and
+  never-waiting transactions: an ingest of one event, which waits only on
+  a transaction adding or deleting the same event; a forget of one event,
+  which locks the event and reaches its segments, pending writes and
+  derivatives through it; and the second delete, which deletes its
+  tombstone before the tombstone's derivative UUIDs. A forget never waits
+  on an ingest, whose rows it cannot see before they commit.
+- **Takes turns.** An ingest or forget of several events can wait for one
+  event while holding another, so it holds the partition's registry row
+  under `FOR NO KEY UPDATE`, and such writes in a partition run one at a
+  time. Every other write pins the row under `FOR KEY SHARE`, which that
+  lock does not block.
 - **Fenced.** A transaction that locks more than one row of a partition
   holds a shared lock on the partition's registry row; the partition's
   deletion takes that row exclusively, and the purge reclaims only
@@ -174,20 +180,22 @@ each is one of four kinds:
   `SKIP LOCKED`.
 
 A wait cycle needs two transactions that each hold a lock while waiting
-for another. Neither a one-row nor a never-waiting transaction is one, the
-purge meets only those, and the rest wait in one order. Each pair of
-operations that can lock the same rows:
+for another. A one-row, never-waiting or one-root transaction never waits
+while holding a lock another member of a cycle could want, the purge
+meets only one-row statements, and two writes of several events never run
+at once. Each pair of operations that can lock the same rows:
 
 | Operations | Rows both lock | Why neither waits on the other in a cycle |
 |---|---|---|
-| Two forgets of the same events | events, segments | Both lock them in UUID order |
+| Forgets of the same events | events | Forgets of several events take turns; one of one event waits for it before holding any |
 | An ingest and a forget of the same event | the event | The forget never waits on the ingest |
-| Two ingests naming the same events | the events | Both insert them in UUID order |
+| Ingests naming the same events | events | Ingests of several events take turns; one of one event waits before holding any |
+| A write of several events and any other write | the registry row | The other write's pin does not wait for the write lock |
 | A forget and the writer's delete of its pending writes | pending writes | The delete never waits |
 | A forget and a claim, renewal, fail, cancel or finish of a pending write | a pending write | The background statement locks one row |
 | The request's first-delete record and a tombstone's claim, fail, cancel or first-delete finish | a tombstone | The record never waits |
 | Two second deletes of a tombstone | the tombstone, its UUIDs | Both delete the tombstone first |
-| A partition's deletion and a transaction locking several of its rows | the registry row | The deletion waits for the shared lock |
+| A partition's deletion and a transaction locking several of its rows | the registry row | The deletion waits for the write lock and the pins |
 | A purge and a one-row background statement | a deleted partition's row | The background statement locks one row |
 | Two purges | a queue entry | The claim never waits |
 
