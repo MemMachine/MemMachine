@@ -500,50 +500,6 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
             attempt=row.attempts_without_progress,
         )
 
-    def _purge_retry_backoff_seconds(
-        self, attempts: ColumnElement[int] | InstrumentedAttribute[int]
-    ) -> ColumnElement[int]:
-        """The purge retry backoff in seconds after `attempts` attempts, computed by the database."""
-        # 1 << (a - 1) is 2 ** (a - 1) on both dialects.
-        doublings = literal(1, Integer).op("<<")(attempts - 1)
-        smaller = func.min if self._is_sqlite else func.least
-        return smaller(
-            self._base_purge_retry_backoff_seconds * doublings,
-            self._max_purge_retry_backoff_seconds,
-            type_=Integer,
-        )
-
-    def _has_elapsed(
-        self,
-        seconds: int | ColumnElement[int],
-        *,
-        since: InstrumentedAttribute[datetime] | InstrumentedAttribute[datetime | None],
-    ) -> ColumnElement[bool]:
-        """Whether `seconds` have passed since `since`, on the database clock."""
-        if self._is_sqlite:
-            # datetime() emits CURRENT_TIMESTAMP's text form, so stored stamps
-            # compare with it in time order.
-            cutoff = func.datetime(
-                "now",
-                func.printf("-%d seconds", seconds),
-                type_=DateTime(timezone=True),
-            )
-        else:
-            cutoff = func.now() - literal(timedelta(seconds=1), Interval) * seconds
-        return since <= cutoff
-
-    def _seconds_from_now(
-        self, seconds: int | ColumnElement[int]
-    ) -> ColumnElement[datetime]:
-        """The time `seconds` from now, on the database clock."""
-        if self._is_sqlite:
-            return func.datetime(
-                "now",
-                func.printf("+%d seconds", seconds),
-                type_=DateTime(timezone=True),
-            )
-        return func.now() + literal(timedelta(seconds=1), Interval) * seconds
-
     async def _end_tombstone_claim_after_failure(
         self, claim: _TombstoneClaim, error: Exception
     ) -> None:
@@ -662,6 +618,50 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
             "tombstone was claimed again or removed while it ran",
             claim.partition_uuid,
             self._purge_lease_seconds,
+        )
+
+    def _has_elapsed(
+        self,
+        seconds: int | ColumnElement[int],
+        *,
+        since: InstrumentedAttribute[datetime] | InstrumentedAttribute[datetime | None],
+    ) -> ColumnElement[bool]:
+        """Whether `seconds` have passed since `since`, on the database clock."""
+        if self._is_sqlite:
+            # datetime() emits CURRENT_TIMESTAMP's text form, so stored stamps
+            # compare with it in time order.
+            cutoff = func.datetime(
+                "now",
+                func.printf("-%d seconds", seconds),
+                type_=DateTime(timezone=True),
+            )
+        else:
+            cutoff = func.now() - literal(timedelta(seconds=1), Interval) * seconds
+        return since <= cutoff
+
+    def _seconds_from_now(
+        self, seconds: int | ColumnElement[int]
+    ) -> ColumnElement[datetime]:
+        """The time `seconds` from now, on the database clock."""
+        if self._is_sqlite:
+            return func.datetime(
+                "now",
+                func.printf("+%d seconds", seconds),
+                type_=DateTime(timezone=True),
+            )
+        return func.now() + literal(timedelta(seconds=1), Interval) * seconds
+
+    def _purge_retry_backoff_seconds(
+        self, attempts: ColumnElement[int] | InstrumentedAttribute[int]
+    ) -> ColumnElement[int]:
+        """The purge retry backoff in seconds after `attempts` attempts, computed by the database."""
+        # 1 << (a - 1) is 2 ** (a - 1) on both dialects.
+        doublings = literal(1, Integer).op("<<")(attempts - 1)
+        smaller = func.min if self._is_sqlite else func.least
+        return smaller(
+            self._base_purge_retry_backoff_seconds * doublings,
+            self._max_purge_retry_backoff_seconds,
+            type_=Integer,
         )
 
 
