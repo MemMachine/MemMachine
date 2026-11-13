@@ -1733,10 +1733,10 @@ async def test_claim_holds_its_record_for_the_lease(
 
 
 @pytest.mark.asyncio
-async def test_finishing_a_pending_write_claim_deletes_the_record_only_for_the_latest_claim(
+async def test_finishing_a_superseded_pending_write_claim_deletes_the_record(
     store: SQLAlchemySegmentStore,
 ) -> None:
-    """A claim that outlasted its lease leaves the record to the later claim."""
+    """A claim that outlasted its lease wrote the derivatives, so its finish deletes the record, and the later claim's renewal finds it gone."""
     partition = await store.open_or_create_partition(
         PARTITION_KEY, _plaintext_partition_config()
     )
@@ -1748,10 +1748,9 @@ async def test_finishing_a_pending_write_claim_deletes_the_record_only_for_the_l
     assert latest is not None
 
     await store.finish_pending_write_claim(superseded)
-    assert await _count_rows(store, PendingWriteRow.segment_uuid == pending_uuid) == 1
-
-    await store.finish_pending_write_claim(latest)
     assert await _count_rows(store, PendingWriteRow.segment_uuid == pending_uuid) == 0
+    assert not await store.renew_pending_write_claim(latest, lease_seconds=60)
+    await store.finish_pending_write_claim(latest)
     # The segment's derivatives stay with it.
     assert await _count_rows(store, DerivativeRow.segment_uuid == pending_uuid) == 1
 
