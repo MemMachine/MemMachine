@@ -62,13 +62,14 @@ behind its choices.
 
 1. **Create.** The owner, such as event memory, creates the partition by
    name through its registry, which reserves the name, inserting a pending
-   row under a freshly minted UUID, has every store create the storage the
+   row under a freshly minted UUID, has its store create the storage the
    partition keeps for itself (on Qdrant and Milvus, none: its records go
    into the store's one native collection, which startup prepared), and
    confirms the reservation, which marks the row live. A racing creator loses at the registry's primary
-   key, and a pending partition is not opened.
-2. **Open.** The registry resolves the partition name to the live
-   partition; the owner opens the store's handle on its UUID.
+   key, and a pending partition is not answered.
+2. **Get.** The registry resolves the partition name to the live partition
+   and answers its registration, which carries the store's handle on the
+   partition's UUID.
 3. **Use.** Every record a handle writes carries the partition's UUID, and
    every read and delete is scoped to it. Before each of its writes and
    reads, and after each of its writes and deletes, the owner checks that
@@ -78,8 +79,8 @@ behind its choices.
    from then on, in every process.
 5. **Purge.** Once the retention (a day by default) has passed, sweepers in
    every process claim tombstones oldest first and purge their records from
-   every store of the registry in bounded rounds; once a round finds none,
-   it drops the partition from every store and the tombstone goes.
+   the registry's store in bounded rounds; once a round finds none, it drops
+   the partition from the store and the tombstone goes.
 
 ## Guarantees by store
 

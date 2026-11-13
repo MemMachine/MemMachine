@@ -41,11 +41,10 @@ def _manager(conf: SemanticMemoryConf, resources: MagicMock) -> SemanticResource
 
 def _resources_without_models(engine: AsyncEngine) -> MagicMock:
     vector_store = MagicMock()
-    vector_store.get_partition = AsyncMock(return_value=MagicMock())
     registration = MagicMock()
     registration.partition_uuid = uuid4()
     partition_registry = MagicMock()
-    partition_registry.resolve = AsyncMock(return_value=registration)
+    partition_registry.get_partition = AsyncMock(return_value=registration)
     resources = MagicMock()
     resources.get_sql_engine = AsyncMock(return_value=engine)
     resources.get_vector_store = AsyncMock(return_value=vector_store)

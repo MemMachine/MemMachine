@@ -34,6 +34,10 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemoryParams,
     EventMemoryPartition,
 )
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
     SegmentStorePartition,
@@ -226,22 +230,25 @@ async def open_event_memory_partition(
     reranker: Reranker | None = None,
     metrics_factory: MetricsFactory | None = None,
 ) -> EventMemoryPartition:
-    """Open a partition of an EventMemory whose stores hand out the given partitions, and whose vector store has `store_schema`."""
+    """Open a partition of an EventMemory whose registration carries the given partitions, and whose vector store has `store_schema`."""
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = "partition"
     registration.partition_uuid = uuid4()
+    registration.partition = EventMemoryStorePartition(
+        segment_store_partition=segment_store_partition,
+        vector_store_partition=vector_store_partition,
+    )
     partition_registry = create_autospec(PartitionRegistry, instance=True)
-    partition_registry.resolve.return_value = registration
-    segment_store = create_autospec(SegmentStore, instance=True)
-    segment_store.get_partition.return_value = segment_store_partition
+    partition_registry.get_partition.return_value = registration
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
-    vector_store.get_partition.return_value = vector_store_partition
     event_memory = EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,
-            segment_store=segment_store,
-            vector_store=vector_store,
+            event_memory_store=EventMemoryStore(
+                segment_store=create_autospec(SegmentStore, instance=True),
+                vector_store=vector_store,
+            ),
             segmenter=segmenter,
             deriver=deriver,
             embedder=embedder,

@@ -30,12 +30,10 @@ from memmachine_server.semantic_memory.storage.vector_store_semantic_storage imp
 @pytest.mark.asyncio
 async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_engine):
     vector_store = MagicMock()
-    partition = MagicMock()
-    vector_store.get_partition = AsyncMock(return_value=partition)
     registration = MagicMock()
     registration.partition_uuid = uuid4()
     partition_registry = MagicMock()
-    partition_registry.resolve = AsyncMock(return_value=registration)
+    partition_registry.get_partition = AsyncMock(return_value=registration)
 
     resource_manager = MagicMock()
     resource_manager.get_sql_engine = AsyncMock(return_value=sqlalchemy_sqlite_engine)
@@ -79,10 +77,10 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
         "semantic_db",
         partition_namespace="semantic_memory",
         tombstone_retention_seconds=86400,
-        partitioned_stores=[vector_store],
+        partitioned_store=vector_store,
     )
-    partition_registry.resolve.assert_awaited_once_with("semantic_memory")
-    vector_store.get_partition.assert_awaited_once_with(registration.partition_uuid)
+    partition_registry.get_partition.assert_awaited_once_with("semantic_memory")
+    assert storage._vector_partition is registration.partition
 
     await storage.cleanup()
 
@@ -102,9 +100,9 @@ async def partition_registry(
         SQLAlchemyPartitionRegistryParams(
             engine=sqlalchemy_sqlite_engine,
             partition_namespace="semantic_memory",
-            partitioned_stores=[partitioned_vector_store],
             tombstone_retention_seconds=0,
-        )
+        ),
+        partitioned_store=partitioned_vector_store,
     )
     await registry.startup()
     return registry
@@ -163,7 +161,7 @@ async def test_a_failed_creation_of_semantic_memorys_partition_frees_its_name(
     with pytest.raises(RuntimeError, match="refused"):
         await SemanticResourceManager._get_or_create_partition(partition_registry)
 
-    assert await partition_registry.resolve("semantic_memory") is None
+    assert await partition_registry.get_partition("semantic_memory") is None
     purged: list[UUID] = []
 
     async def purge(partition_uuid: UUID) -> bool:

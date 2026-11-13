@@ -43,6 +43,10 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
 )
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
+)
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
 )
@@ -206,19 +210,22 @@ async def _event_long_term_memory(
     embedder: Embedder,
     segmenter: Segmenter,
 ) -> LongTermMemory:
-    """A LongTermMemory on session `sess1`'s partition, which the given stores hand out."""
+    """A LongTermMemory on session `sess1`'s partition, whose registration carries the given partitions."""
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = "sess1"
     registration.partition_uuid = uuid4()
+    registration.partition = EventMemoryStorePartition(
+        segment_store_partition=segment_store_partition,
+        vector_store_partition=vector_store_partition,
+    )
     partition_registry = create_autospec(PartitionRegistry, instance=True)
-    partition_registry.resolve.return_value = registration
-    vector_store.get_partition.return_value = vector_store_partition
-    segment_store.get_partition.return_value = segment_store_partition
+    partition_registry.get_partition.return_value = registration
     event_memory = EventMemory(
         EventMemoryParams(
             partition_registry=partition_registry,
-            segment_store=segment_store,
-            vector_store=vector_store,
+            event_memory_store=EventMemoryStore(
+                segment_store=segment_store, vector_store=vector_store
+            ),
             segmenter=segmenter,
             deriver=WholeTextDeriver(),
             embedder=embedder,

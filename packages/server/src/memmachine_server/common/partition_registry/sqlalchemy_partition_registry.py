@@ -164,9 +164,6 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             The namespace the registry serves: registry objects with the same
             namespace on the same database are one registry. It is non-empty,
             at most `_PARTITION_NAMESPACE_MAX_BYTES` bytes, and free of NUL.
-        partitioned_stores (list[PartitionedStore]):
-            The stores that hold the namespace's partitions: the registry
-            creates, purges, and drops each partition in every one.
         tombstone_retention_seconds (int):
             Seconds a deleted partition's records are kept before its purge
             starts, on the database clock. It must exceed, by orders of
@@ -194,13 +191,6 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         description=(
             "The namespace the registry serves: registry objects with the same "
             "namespace on the same database are one registry"
-        ),
-    )
-    partitioned_stores: list[InstanceOf[PartitionedStore]] = Field(
-        ...,
-        description=(
-            "The stores that hold the namespace's partitions: the registry "
-            "creates, purges, and drops each partition in every one"
         ),
     )
     tombstone_retention_seconds: int = Field(
@@ -261,9 +251,9 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         return partition_namespace
 
 
-class SQLAlchemyPartitionRegistry(PartitionRegistry):
+class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
     """
-    The registry of one partition namespace.
+    The registry of one partition namespace, over the store that holds its partitions.
 
     Registries of different namespaces share the tables, keyed by namespace.
     A purge claim holds its tombstone for the purge lease, or
@@ -275,9 +265,14 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     returns it to the purge.
     """
 
-    def __init__(self, params: SQLAlchemyPartitionRegistryParams) -> None:
-        """Initialize with the provided parameters."""
-        super().__init__(params.partitioned_stores)
+    def __init__(
+        self,
+        params: SQLAlchemyPartitionRegistryParams,
+        *,
+        partitioned_store: PartitionedStore[PartitionT],
+    ) -> None:
+        """Initialize with the provided parameters and the store that holds the namespace's partitions."""
+        super().__init__(partitioned_store)
         self._engine = params.engine
         self._is_sqlite = params.engine.dialect.name == "sqlite"
         self._partition_namespace = params.partition_namespace
@@ -375,7 +370,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             ) from err
 
     @override
-    async def resolve(self, partition_name: str) -> Registration | None:
+    async def _resolve(self, partition_name: str) -> UUID | None:
         async with self._engine.connect() as connection:
             row = (
                 await connection.execute(
@@ -397,15 +392,22 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                 partition_name,
                 ensure_tz_aware(row.registered_at),
             )
+        return row.partition_uuid
+
+    @override
+    def _registration(
+        self, partition_name: str, partition_uuid: UUID, partition: PartitionT
+    ) -> Registration[PartitionT]:
         return _SQLAlchemyRegistration(
             partition_name=partition_name,
-            partition_uuid=row.partition_uuid,
+            partition_uuid=partition_uuid,
+            partition=partition,
             engine=self._engine,
             partition_namespace=self._partition_namespace,
         )
 
     @override
-    async def unregister(self, partition_name: str) -> None:
+    async def _unregister(self, partition_name: str) -> None:
         await _unregister_where(
             self._engine,
             self._partition_namespace,
@@ -671,7 +673,7 @@ class _SQLAlchemyReservation(Reservation):
     partition_namespace: str = field(repr=False)
 
     @override
-    async def confirm(self) -> Registration:
+    async def confirm(self) -> None:
         # Conditional on the UUID and on the row being pending, so a
         # creation marks live only the partition it reserved.
         async with write_connection(self.engine) as connection:
@@ -689,12 +691,6 @@ class _SQLAlchemyReservation(Reservation):
             raise PartitionDeletedError(
                 self.partition_namespace, self.partition_name, self.partition_uuid
             )
-        return _SQLAlchemyRegistration(
-            partition_name=self.partition_name,
-            partition_uuid=self.partition_uuid,
-            engine=self.engine,
-            partition_namespace=self.partition_namespace,
-        )
 
     @override
     async def cancel(self) -> None:
@@ -709,7 +705,7 @@ class _SQLAlchemyReservation(Reservation):
 
 
 @dataclass(frozen=True)
-class _SQLAlchemyRegistration(Registration):
+class _SQLAlchemyRegistration[PartitionT](Registration[PartitionT]):
     """A registration whose method reads the registry's tables directly."""
 
     engine: AsyncEngine = field(repr=False, compare=False)

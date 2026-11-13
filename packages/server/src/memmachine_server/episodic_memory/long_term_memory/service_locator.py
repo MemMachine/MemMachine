@@ -39,8 +39,9 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryParams,
 )
-from memmachine_server.episodic_memory.event_memory.segment_store import (
-    SegmentStore,
+from memmachine_server.episodic_memory.event_memory.event_memory_store import (
+    EventMemoryStore,
+    EventMemoryStorePartition,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.passthrough_segmenter import (
@@ -155,15 +156,16 @@ async def _event_memory(
         resource_manager.config
     )
     embedder = await resource_manager.get_embedder(embedder_id, validate=True)
-    segment_store = await resource_manager.get_segment_store(segment_store_id)
-    vector_store = await event_backend_vector_store(resource_manager)
+    event_memory_store = EventMemoryStore(
+        segment_store=await resource_manager.get_segment_store(segment_store_id),
+        vector_store=await event_backend_vector_store(resource_manager),
+    )
     return EventMemory(
         EventMemoryParams(
             partition_registry=await _event_memory_partition_registry(
-                resource_manager, segment_store, vector_store
+                resource_manager, event_memory_store
             ),
-            segment_store=segment_store,
-            vector_store=vector_store,
+            event_memory_store=event_memory_store,
             segmenter=_build_segmenter(config.segmenter),
             deriver=_build_deriver(config.deriver),
             embedder=embedder,
@@ -175,11 +177,10 @@ async def _event_memory(
 
 async def _event_memory_partition_registry(
     resource_manager: InstanceOf[CommonResourceManager],
-    segment_store: SegmentStore,
-    vector_store: VectorStore,
-) -> PartitionRegistry:
+    event_memory_store: EventMemoryStore,
+) -> PartitionRegistry[EventMemoryStorePartition]:
     """
-    The registry of event memory's partition namespace, over its segment store and vector store, whose purge rounds run in the background.
+    The registry of event memory's partition namespace, over event memory's stores, whose purge rounds run in the background.
 
     Raises:
         ConfigurationError: If the deployment names no registry database
@@ -195,7 +196,7 @@ async def _event_memory_partition_registry(
         deployment.partition_registry,
         partition_namespace=EventMemory.PARTITION_NAMESPACE,
         tombstone_retention_seconds=deployment.tombstone_retention_seconds,
-        partitioned_stores=[segment_store, vector_store],
+        partitioned_store=event_memory_store,
     )
 
 

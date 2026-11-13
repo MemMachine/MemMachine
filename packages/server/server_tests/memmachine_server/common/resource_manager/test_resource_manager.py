@@ -42,6 +42,9 @@ from memmachine_server.common.partition_registry import (
     PartitionedStore,
     PartitionRegistry,
 )
+from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
+    SQLAlchemyPartitionRegistry,
+)
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.resource_manager import (
     resource_manager as resource_manager_module,
@@ -334,12 +337,12 @@ async def test_purge_rounds_drain_a_backlog_without_waiting(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_partition_registry_builds_one_registry_per_namespace_with_its_purge_rounds(
+async def test_get_partition_registry_starts_each_namespace_once_with_its_purge_rounds(
     invalid_resource_manager, monkeypatch, tmp_path
 ):
-    """A namespace's first get builds and starts its registry, over its stores,
-    and its purge rounds; later gets reuse them, and close() cancels the
-    purges."""
+    """Each get answers a registry over the store it is given. A namespace's
+    first get starts its registry and its purge rounds, later gets start
+    nothing more, and close() cancels the purges."""
     monkeypatch.setattr(
         resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 3600
     )
@@ -351,6 +354,14 @@ async def test_get_partition_registry_builds_one_registry_per_namespace_with_its
     monkeypatch.setattr(
         invalid_resource_manager._database_manager, "close", AsyncMock()
     )
+    startup = SQLAlchemyPartitionRegistry.startup
+    started: list[str] = []
+
+    async def counted_startup(registry: SQLAlchemyPartitionRegistry) -> None:
+        started.append(registry.partition_namespace)
+        await startup(registry)
+
+    monkeypatch.setattr(SQLAlchemyPartitionRegistry, "startup", counted_startup)
     store = create_autospec(PartitionedStore, instance=True)
     other_store = create_autospec(PartitionedStore, instance=True)
 
@@ -358,27 +369,28 @@ async def test_get_partition_registry_builds_one_registry_per_namespace_with_its
         "db",
         partition_namespace="a",
         tombstone_retention_seconds=1,
-        partitioned_stores=[store],
+        partitioned_store=store,
     )
     second = await invalid_resource_manager.get_partition_registry(
         "db",
         partition_namespace="a",
         tombstone_retention_seconds=1,
-        partitioned_stores=[store],
+        partitioned_store=store,
     )
     other = await invalid_resource_manager.get_partition_registry(
         "db",
         partition_namespace="b",
         tombstone_retention_seconds=1,
-        partitioned_stores=[other_store],
+        partitioned_store=other_store,
     )
     await asyncio.sleep(0)
 
-    assert first is second
-    assert first.partition_namespace == "a"
-    assert first._partitioned_stores == (store,)
+    assert started == ["a", "b"]
+    assert first.partition_namespace == second.partition_namespace == "a"
+    assert first._partitioned_store is store
+    assert second._partitioned_store is store
     assert other.partition_namespace == "b"
-    assert other._partitioned_stores == (other_store,)
+    assert other._partitioned_store is other_store
     tasks = list(invalid_resource_manager._partition_registry_purge_tasks)
     assert len(tasks) == 2
 

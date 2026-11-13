@@ -23,7 +23,10 @@ from memmachine_server.common.partition_registry import (
     Registration,
 )
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreSchema
+from memmachine_server.common.vector_store import (
+    VectorStorePartition,
+    VectorStoreSchema,
+)
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -198,20 +201,19 @@ class SemanticResourceManager:
             feature_store_name,
             partition_namespace=_PARTITION_NAMESPACE,
             tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
-            partitioned_stores=[vector_store],
+            partitioned_store=vector_store,
         )
         registration = await SemanticResourceManager._get_or_create_partition(
             partition_registry
         )
-        vector_partition = await vector_store.get_partition(registration.partition_uuid)
-        storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
+        storage = VectorStoreSemanticStorage(sql_engine, registration.partition)
         await storage.startup()
         return storage
 
     @staticmethod
     async def _get_or_create_partition(
-        partition_registry: PartitionRegistry,
-    ) -> Registration:
+        partition_registry: PartitionRegistry[VectorStorePartition],
+    ) -> Registration[VectorStorePartition]:
         """
         Answer the registration of semantic memory's partition, creating it if no partition holds its name.
 
@@ -228,7 +230,7 @@ class SemanticResourceManager:
             if attempt:
                 await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
             try:
-                registration = await partition_registry.resolve(_PARTITION_NAME)
+                registration = await partition_registry.get_partition(_PARTITION_NAME)
             except PartitionPendingError as err:
                 pending_error = err
                 continue

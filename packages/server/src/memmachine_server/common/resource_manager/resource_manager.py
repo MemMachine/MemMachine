@@ -3,7 +3,6 @@
 import asyncio
 import logging
 from asyncio import Lock
-from collections.abc import Sequence
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -70,7 +69,9 @@ _PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS = 60.0
 _PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS = 1.0
 
 
-async def _run_purge_rounds_forever(partition_registry: PartitionRegistry) -> None:
+async def _run_purge_rounds_forever[PartitionT](
+    partition_registry: PartitionRegistry[PartitionT],
+) -> None:
     """Run a partition namespace's purge rounds for as long as the task runs.
 
     A call that ran a round is followed after a short pause, one that found
@@ -127,8 +128,9 @@ class ResourceManagerImpl:
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
-        # One registry per partition namespace in a database.
-        self._partition_registries: dict[tuple[str, str], PartitionRegistry] = {}
+        # The partition namespaces, each with its database, whose registry is
+        # started and purging.
+        self._started_partition_namespaces: set[tuple[str, str]] = set()
         self._partition_registry_purge_tasks: list[asyncio.Task[None]] = []
         # One sweeper per store, keyed by its vector store id and its name.
 
@@ -157,7 +159,7 @@ class ResourceManagerImpl:
         """Close resources and clean up state."""
         purge_tasks = list(self._partition_registry_purge_tasks)
         self._partition_registry_purge_tasks.clear()
-        self._partition_registries.clear()
+        self._started_partition_namespaces.clear()
         segment_stores = list(self._segment_stores.values())
         self._segment_stores.clear()
 
@@ -225,36 +227,37 @@ class ResourceManagerImpl:
                     self._segment_stores[name] = store
         return self._segment_stores[name]
 
-    async def get_partition_registry(
+    async def get_partition_registry[PartitionT](
         self,
         database: str,
         *,
         partition_namespace: str,
         tombstone_retention_seconds: int,
-        partitioned_stores: Sequence[PartitionedStore],
-    ) -> PartitionRegistry:
-        """Return the started registry of a partition namespace in a database, over its stores, building it on first access.
+        partitioned_store: PartitionedStore[PartitionT],
+    ) -> PartitionRegistry[PartitionT]:
+        """Return a started registry of a partition namespace in a database, over the store that holds its partitions.
 
-        The registry's purge rounds run in the background until close().
+        The first call for a namespace in a database starts its registry,
+        whose purge rounds then run in the background until close().
         """
+        registry = SQLAlchemyPartitionRegistry(
+            SQLAlchemyPartitionRegistryParams(
+                engine=await self.get_sql_engine(database),
+                partition_namespace=partition_namespace,
+                tombstone_retention_seconds=tombstone_retention_seconds,
+            ),
+            partitioned_store=partitioned_store,
+        )
         key = (database, partition_namespace)
-        if key not in self._partition_registries:
+        if key not in self._started_partition_namespaces:
             async with self._partition_registry_lock:
-                if key not in self._partition_registries:
-                    registry = SQLAlchemyPartitionRegistry(
-                        SQLAlchemyPartitionRegistryParams(
-                            engine=await self.get_sql_engine(database),
-                            partition_namespace=partition_namespace,
-                            partitioned_stores=list(partitioned_stores),
-                            tombstone_retention_seconds=tombstone_retention_seconds,
-                        )
-                    )
+                if key not in self._started_partition_namespaces:
                     await registry.startup()
-                    self._partition_registries[key] = registry
+                    self._started_partition_namespaces.add(key)
                     self._partition_registry_purge_tasks.append(
                         asyncio.create_task(_run_purge_rounds_forever(registry))
                     )
-        return self._partition_registries[key]
+        return registry
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""
