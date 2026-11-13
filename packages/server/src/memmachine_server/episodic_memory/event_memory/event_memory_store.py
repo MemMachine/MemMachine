@@ -32,7 +32,8 @@ class EventMemoryStore(PartitionedStore[EventMemoryStorePartition]):
     store's error is raised, so the stores that answer keep their progress
     while another is down. A purge finds records when any store's purge
     does. Getting a partition answers None when either store finds nothing
-    under its UUID.
+    under its UUID: a purge round drops a deleted partition from both stores,
+    and one store's drop may land before the other's.
     """
 
     def __init__(self, segment_store: SegmentStore, vector_store: VectorStore) -> None:
