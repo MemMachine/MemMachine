@@ -537,6 +537,40 @@ async def test_add_event_segments_rejects_mismatched_event_naming(
 
 
 @pytest.mark.asyncio
+async def test_add_event_segments_inserts_its_events_in_uuid_order(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """Two batches naming the same events then wait on each other's inserts in one order."""
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    segments = sorted(
+        (_seg() for _ in range(5)), key=lambda segment: segment.event_uuid, reverse=True
+    )
+    event_uuids = {segment.event_uuid for segment in segments}
+    inserted: list[UUID] = []
+
+    def _record(_conn, _cursor, statement, parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("INSERT INTO SEGMENT_STORE_EV "):
+            for value in parameters:
+                try:
+                    uuid = UUID(str(value))
+                except ValueError:
+                    continue
+                if uuid in event_uuids:
+                    inserted.append(uuid)
+
+    engine = store._engine.sync_engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        await _add_segments(partition, _links(*segments))
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert inserted == sorted(event_uuids)
+
+
+@pytest.mark.asyncio
 async def test_add_event_segments_failing_partway_writes_nothing(
     partition: SQLAlchemySegmentStorePartition,
 ) -> None:
@@ -707,6 +741,40 @@ async def test_delete_pending_writes_removes_only_the_pending_record(
     assert claim is not None
     assert claim.segment_uuid == unfinished.uuid
     assert await store.claim_pending_write(lease_seconds=60) is None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_delete_pending_writes_skips_a_record_another_transaction_holds(
+    pg_store: SQLAlchemySegmentStore,
+    sqlalchemy_pg_engine: AsyncEngine,
+) -> None:
+    """The delete never waits: a held record is left for the background work."""
+    partition = await pg_store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    held, free = _seg(), _seg()
+    await partition.add_event_segments(*_events(_links(held, free)), lease_seconds=0)
+
+    async with (
+        partition._create_session() as remote_session,
+        remote_session.begin(),
+    ):
+        await remote_session.execute(
+            select(PendingWriteRow)
+            .where(PendingWriteRow.segment_uuid == held.uuid)
+            .with_for_update()
+        )
+        deletion = asyncio.create_task(
+            partition.delete_pending_writes([held.uuid, free.uuid])
+        )
+        assert await _wait_until_blocked_or_done(sqlalchemy_pg_engine, deletion) == (
+            "done"
+        )
+        await deletion
+
+    assert await _count_rows(partition, PendingWriteRow.segment_uuid == held.uuid) == 1
+    assert await _count_rows(partition, PendingWriteRow.segment_uuid == free.uuid) == 0
 
 
 # ===================================================================
@@ -2087,6 +2155,112 @@ async def test_finishing_a_second_delete_claim_removes_the_tombstone(
     assert await _count_rows(store, TombstoneRow.segment_uuid == tombstone_uuid) == 0
     assert await _count_rows(store, holds) == 0
     assert await store.claim_tombstone() is None
+
+
+async def _claim_second_delete(
+    store: SQLAlchemySegmentStore,
+    partition: SQLAlchemySegmentStorePartition,
+) -> tuple[UUID, TombstoneClaim]:
+    """Leave a tombstone due for its second delete, claim that delete, and return its segment's UUID and the claim."""
+    tombstone_uuid = await _add_claimable_record(partition, TombstoneRow)
+    await partition.record_tombstone_first_delete([tombstone_uuid])
+    await _backdate(store, TombstoneRow.first_deleted_at, timedelta(days=2))
+    claim = await store.claim_tombstone()
+    assert claim is not None
+    assert claim.second_delete
+    return tombstone_uuid, claim
+
+
+@pytest.mark.asyncio
+async def test_a_second_delete_in_a_deleted_partition_leaves_the_tombstone_to_the_purge(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    tombstone_uuid, claim = await _claim_second_delete(store, partition)
+    await store.delete_partition(PARTITION_KEY)
+
+    await store.finish_tombstone_claim(claim)
+
+    assert await _count_rows(store, TombstoneRow.segment_uuid == tombstone_uuid) == 1
+    while await store.purge_deleted_partitions():
+        pass
+    assert await _count_rows(store, TombstoneRow.segment_uuid == tombstone_uuid) == 0
+    assert (
+        await _count_rows(store, TombstoneDerivativeRow.segment_uuid == tombstone_uuid)
+        == 0
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_second_delete_waits_for_a_deletion_of_its_partition(
+    pg_store: SQLAlchemySegmentStore,
+    sqlalchemy_pg_engine: AsyncEngine,
+) -> None:
+    """It pins the partition as a partition's writes do, so it never runs beside the purge."""
+    partition = await pg_store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    tombstone_uuid, claim = await _claim_second_delete(pg_store, partition)
+
+    async with (
+        partition._create_session() as remote_session,
+        remote_session.begin(),
+    ):
+        # As a deletion of the partition holds the row until it commits.
+        await remote_session.execute(
+            select(PartitionRow)
+            .where(PartitionRow.incarnation == partition._incarnation)
+            .with_for_update()
+        )
+        finish = asyncio.create_task(pg_store.finish_tombstone_claim(claim))
+        assert await _wait_until_blocked_or_done(sqlalchemy_pg_engine, finish) == (
+            "blocked"
+        )
+    await finish
+
+    assert await _count_rows(pg_store, TombstoneRow.segment_uuid == tombstone_uuid) == 0
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_recording_a_first_delete_skips_a_tombstone_another_transaction_holds(
+    pg_store: SQLAlchemySegmentStore,
+    sqlalchemy_pg_engine: AsyncEngine,
+) -> None:
+    """The record never waits: a held tombstone is left for its claim to record."""
+    partition = await pg_store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    held = await _add_claimable_record(partition, TombstoneRow)
+    free = await _add_claimable_record(partition, TombstoneRow)
+
+    async with (
+        partition._create_session() as remote_session,
+        remote_session.begin(),
+    ):
+        await remote_session.execute(
+            select(TombstoneRow)
+            .where(TombstoneRow.segment_uuid == held)
+            .with_for_update()
+        )
+        record = asyncio.create_task(
+            partition.record_tombstone_first_delete([held, free])
+        )
+        assert await _wait_until_blocked_or_done(sqlalchemy_pg_engine, record) == (
+            "done"
+        )
+        await record
+
+    recorded = TombstoneRow.first_deleted_at.is_not(None)
+    assert (
+        await _count_rows(pg_store, (TombstoneRow.segment_uuid == held) & recorded) == 0
+    )
+    assert (
+        await _count_rows(pg_store, (TombstoneRow.segment_uuid == free) & recorded) == 1
+    )
 
 
 @pytest.mark.asyncio

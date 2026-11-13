@@ -91,7 +91,9 @@ class SegmentStorePartition(ABC):
         Delete the pending writes of the given segments. Idempotent.
 
         Only the segments' pending writes are deleted. A segment forgotten
-        since keeps its tombstone.
+        since keeps its tombstone. Never waits on another transaction: a
+        pending write another one holds at the time is left in place, for a
+        forget to delete or the background work to write again.
 
         Args:
             segment_uuids (Iterable[UUID]):
@@ -194,7 +196,9 @@ class SegmentStorePartition(ABC):
         Each tombstone then awaits only its second delete, which falls due
         once the store's retention has passed since this record, on the
         store's clock. An open claim on one ends. Idempotent, and a no-op
-        for a tombstone no longer awaiting its first delete.
+        for a tombstone no longer awaiting its first delete. Never waits on
+        another transaction: a tombstone a claim's statement holds at the
+        time is left for its claim to record.
 
         Args:
             segment_uuids (Iterable[UUID]):
@@ -535,7 +539,8 @@ class SegmentStore(ABC):
         After its first delete, the tombstone awaits its second, due once
         the store's retention has passed since this record, and any other
         open claim on it ends; after its second, it is deleted with the
-        derivative UUIDs it holds.
+        derivative UUIDs it holds, unless its partition was deleted, whose
+        purge then deletes it.
 
         Args:
             claim (TombstoneClaim):
