@@ -66,15 +66,13 @@ class PartitionedStore[PartitionT](ABC):
     @abstractmethod
     async def purge_partition(self, partition_uuid: UUID) -> bool:
         """
-        Delete a batch of a deleted partition's records that its store keeps in storage shared with other partitions.
+        Delete some or all of a deleted partition's records that its store keeps in storage shared with other partitions.
 
         Called once the partition is deleted or its creation cancelled and the
-        retention has passed, until it returns False. The store sizes each
-        call for its backend, so a call does not noticeably degrade concurrent
-        request serving. A store that keeps a partition's records only in
-        storage of the partition's own returns False, since `drop_partition`
-        removes them with that storage. Safe to repeat, and to run on several
-        processes at once.
+        retention has passed, until it returns False. A store that keeps a
+        partition's records only in storage of the partition's own returns
+        False, since `drop_partition` removes them with that storage. Safe to
+        repeat, and to run on several processes at once.
 
         A call that raises leaves the partition's tombstone queued, so a
         later round purges again.
@@ -85,9 +83,8 @@ class PartitionedStore[PartitionT](ABC):
 
         Returns:
             bool:
-                Whether the call found any of the partition's records. A call
-                that returns False proves that none remains in the shared
-                storage, by a search from the partition's first record.
+                False when none of the partition's records remains in the
+                shared storage; True when a later call may find some.
         """
         raise NotImplementedError
 

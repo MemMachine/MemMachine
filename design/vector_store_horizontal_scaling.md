@@ -79,8 +79,8 @@ behind its choices.
    from then on, in every process.
 5. **Purge.** Once the retention (a day by default) has passed, sweepers in
    every process claim tombstones oldest first and purge their records from
-   the registry's store in bounded rounds; once a round finds none, it drops
-   the partition from the store and the tombstone goes.
+   the registry's store, a round at a time; once a round finds none, the
+   registry drops the partition from the store and deletes its tombstone.
 
 ## Guarantees by store
 
