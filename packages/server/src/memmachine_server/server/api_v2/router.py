@@ -84,6 +84,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotFoundError,
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 from memmachine_server.main.memmachine import ALL_MEMORY_TYPES
@@ -188,6 +189,8 @@ async def create_project(
         raise RestError(code=500, message="configuration error: " + str(e), ex=e) from e
     except SessionAlreadyExistsError as e:
         raise RestError(code=409, message="Project already exists", ex=e) from e
+    except SessionDeletedError as e:
+        raise RestError(code=409, message="Project is still being deleted", ex=e) from e
     except ValueError as e:
         raise RestError(
             code=500, message="server internal error: " + str(e), ex=e

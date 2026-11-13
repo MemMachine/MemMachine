@@ -10,6 +10,7 @@ from memmachine_server.common.errors import (
     InvalidArgumentError,
     ResourceNotReadyError,
     SessionAlreadyExistsError,
+    SessionDeletedError,
     SessionNotFoundError,
 )
 
@@ -79,6 +80,7 @@ class RestError(HTTPException):
     def is_known_error(ex: Exception) -> bool:
         known_errors = [
             SessionAlreadyExistsError,
+            SessionDeletedError,
             SessionNotFoundError,
             InvalidNameError,
             InvalidArgumentError,

@@ -197,6 +197,7 @@ class EpisodicMemoryManager:
 
         Raises:
             SessionAlreadyExistsError: If stored session data conflicts with the request.
+            SessionDeletedError: If the session is marked deleted.
 
         """
         instance: EpisodicMemory | None = None

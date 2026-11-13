@@ -665,7 +665,9 @@ class RouterDoc:
     cross-project memory access is allowed.
 
     If a project with the same ID already exists within the organization,
-    the request will fail with an error.
+    the request will fail with an error. If a project with the same ID is
+    still being deleted, the request fails with a conflict error until the
+    deletion finishes.
 
     Returns the fully resolved project record, including configuration defaults
     applied by the system.

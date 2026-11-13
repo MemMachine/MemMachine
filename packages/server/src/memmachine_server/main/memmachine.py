@@ -592,6 +592,12 @@ class MemMachine:
         Returns:
             The created session info.
 
+        Raises:
+            SessionAlreadyExistsError:
+                If an active session under the key has different data.
+            SessionDeletedError:
+                If the session under the key is still being deleted.
+
         """
         if not self._conf.episodic_memory.enabled:
             episodic_memory_conf = self._disabled_episodic_conf(session_key)
