@@ -323,9 +323,10 @@ confirm a partition reserved under the name since.
 (`_resolve`) and answers by its state: `PartitionPendingError`, with when the
 partition was reserved, when it is pending, and `None` when there is none.
 For a live partition it gets the store's handle on the partition's UUID and
-answers a `Registration` carrying it, or raises `PartitionDeletedError` when
-the store finds nothing under the UUID: the partition was deleted and
-dropped after the read. It is how an owner gets a handle: callers address
+answers a `Registration` carrying it. A store that finds nothing under the
+UUID answers for a partition deleted, and dropped from it, after the read, so
+the call answers `None`: no partition held the name once the deletion
+committed. It is how an owner gets a handle: callers address
 partitions by name, and the name is resolved to a live partition's UUID
 once, when the handle is built.
 

@@ -213,7 +213,14 @@ class PartitionRegistry[PartitionT](ABC):
             with contextlib.suppress(Exception):
                 await asyncio.shield(cancellation)
             raise
-        return await self._get_registration(partition_name, reservation.partition_uuid)
+        partition = await self._partitioned_store.get_partition(
+            reservation.partition_uuid
+        )
+        if partition is None:
+            raise PartitionDeletedError(
+                self.partition_namespace, partition_name, reservation.partition_uuid
+            )
+        return self._registration(partition_name, reservation.partition_uuid, partition)
 
     @abstractmethod
     async def _reserve(self, partition_name: str) -> Reservation:
@@ -249,8 +256,11 @@ class PartitionRegistry[PartitionT](ABC):
         """
         Get the live partition registered under a name.
 
-        One read of the registry decides the outcome; the store then answers
-        its handle on the partition.
+        One read of the registry decides the outcome, and the store then
+        answers its handle on the partition. A store that finds nothing under
+        the partition's UUID answers for a partition deleted, and dropped
+        from it, since the read, so the call answers None: no partition held
+        the name once the deletion committed.
 
         Args:
             partition_name (str): The name of the partition.
@@ -265,15 +275,15 @@ class PartitionRegistry[PartitionT](ABC):
                 If the partition name is invalid.
             PartitionPendingError:
                 If the partition registered under the name is pending.
-            PartitionDeletedError:
-                If the store holds nothing of the partition: it was deleted
-                and its purge has dropped it.
         """
         validate_partition_name(partition_name)
         partition_uuid = await self._resolve(partition_name)
         if partition_uuid is None:
             return None
-        return await self._get_registration(partition_name, partition_uuid)
+        partition = await self._partitioned_store.get_partition(partition_uuid)
+        if partition is None:
+            return None
+        return self._registration(partition_name, partition_uuid, partition)
 
     @abstractmethod
     async def _resolve(self, partition_name: str) -> UUID | None:
@@ -299,17 +309,6 @@ class PartitionRegistry[PartitionT](ABC):
                 If the partition registered under the name is pending.
         """
         raise NotImplementedError
-
-    async def _get_registration(
-        self, partition_name: str, partition_uuid: UUID
-    ) -> Registration[PartitionT]:
-        """Get the store's handle on a live partition and answer its registration."""
-        partition = await self._partitioned_store.get_partition(partition_uuid)
-        if partition is None:
-            raise PartitionDeletedError(
-                self.partition_namespace, partition_name, partition_uuid
-            )
-        return self._registration(partition_name, partition_uuid, partition)
 
     @abstractmethod
     def _registration(

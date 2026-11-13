@@ -245,9 +245,6 @@ class EventMemory:
                 If the partition name is invalid.
             PartitionPendingError:
                 If the partition registered under the name is pending.
-            PartitionDeletedError:
-                If the partition was deleted, and its purge dropped it,
-                before its handle was built.
         """
         registration = await self._params.partition_registry.get_partition(
             partition_name

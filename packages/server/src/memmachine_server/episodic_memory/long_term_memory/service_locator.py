@@ -128,9 +128,6 @@ async def _get_or_create_event_memory_partition(
             If the attempts ran out with the last one losing the name to
             another creator or deleter, or if the registry gave up after
             repeated attempts to reserve the free name failed.
-        PartitionDeletedError:
-            If the partition was deleted, and its purge dropped it, before
-            its handle was built.
     """
     pending_error: PartitionPendingError | None = None
     lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
