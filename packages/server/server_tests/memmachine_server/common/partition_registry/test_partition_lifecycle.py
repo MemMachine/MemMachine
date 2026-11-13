@@ -107,13 +107,25 @@ async def test_a_registration_carries_the_stores_handle_on_its_partition(
 
 
 @pytest.mark.asyncio
-async def test_a_partition_the_store_holds_nothing_of_is_deleted(registry, store):
-    created = await registry.create_partition(NAME)
+async def test_getting_a_partition_the_store_holds_nothing_of_answers_none(
+    registry, store
+):
+    """The store finds nothing only of a partition deleted, and dropped, since the registry's read."""
+    await registry.create_partition(NAME)
+    store.get_partition.return_value = None
+
+    assert await registry.get_partition(NAME) is None
+
+
+@pytest.mark.asyncio
+async def test_a_creation_whose_partition_the_store_holds_nothing_of_is_deleted(
+    registry, store
+):
     store.get_partition.return_value = None
 
     with pytest.raises(PartitionDeletedError) as deleted:
-        await registry.get_partition(NAME)
-    assert deleted.value.partition_uuid == created.partition_uuid
+        await registry.create_partition(NAME)
+    assert deleted.value.partition_name == NAME
 
 
 @pytest.mark.asyncio
