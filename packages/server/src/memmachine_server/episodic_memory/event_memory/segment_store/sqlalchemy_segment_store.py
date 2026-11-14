@@ -342,10 +342,11 @@ class TombstoneRow(BaseSegmentStore):
     first_deleted_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # When a claim may take the tombstone, once its delete is due: at once
-    # from the forget, once an open claim's lease and then the backoff have
-    # passed, or once the backoff after a failed claim has passed. None from
-    # the first delete's record until a claim of the second sets it.
+    # When a claim may take the tombstone, once its delete is due: once the
+    # forget's lease has passed, once an open claim's lease and then the
+    # backoff have passed, or once the backoff after a failed claim has
+    # passed. None from the first delete's record until a claim of the
+    # second sets it.
     claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1096,6 +1097,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     async def delete_event_segments(
         self,
         event_uuids: Iterable[UUID],
+        *,
+        lease_seconds: int,
     ) -> list[Tombstone]:
         event_uuids = set(event_uuids)
         if not event_uuids:
@@ -1153,7 +1156,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                             {
                                 "incarnation": self._incarnation,
                                 "segment_uuid": segment_uuid,
-                                "claimable_at": func.now(),
+                                "claimable_at": _seconds_from_now(
+                                    lease_seconds, is_sqlite=self._is_sqlite
+                                ),
                             }
                             for segment_uuid in segment_uuids
                         ]
@@ -1311,9 +1316,6 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             due, on the database clock. It must exceed, by orders of
             magnitude, the longest a write of a forgotten derivative to its
             index can land after the forget (default: 86400).
-        tombstone_lease_seconds (int):
-            Seconds a claim holds its tombstone, on the database clock; it
-            should exceed the longest delete (default: 300).
         base_claim_retry_backoff_seconds (int):
             Seconds before a record or tombstone is claimed again after a
             failed claim, doubled for each further failed claim in a row
@@ -1371,14 +1373,6 @@ class SQLAlchemySegmentStoreParams(BaseModel):
             "index can land after the forget"
         ),
     )
-    tombstone_lease_seconds: int = Field(
-        300,
-        gt=0,
-        description=(
-            "Seconds a claim holds its tombstone, on the database clock; it "
-            "should exceed the longest delete"
-        ),
-    )
     base_claim_retry_backoff_seconds: int = Field(
         30,
         gt=0,
@@ -1432,7 +1426,6 @@ class SQLAlchemySegmentStore(SegmentStore):
         self._purge_max_rows = params.purge_max_rows
         self._purge_max_partitions = params.purge_max_partitions
         self._tombstone_retention_seconds = params.tombstone_retention_seconds
-        self._tombstone_lease_seconds = params.tombstone_lease_seconds
         self._base_claim_retry_backoff_seconds = params.base_claim_retry_backoff_seconds
         self._max_claim_retry_backoff_seconds = params.max_claim_retry_backoff_seconds
 
@@ -1972,7 +1965,7 @@ class SQLAlchemySegmentStore(SegmentStore):
             await self._take_back_cancelled_claim(session, claim)
 
     @override
-    async def claim_tombstone(self) -> TombstoneClaim | None:
+    async def claim_tombstone(self, *, lease_seconds: int) -> TombstoneClaim | None:
         # The retention is its own condition, so no schedule written to
         # claimable_at brings a second delete forward.
         retention_passed = or_(
@@ -2009,7 +2002,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                 session,
                 TombstoneRow,
                 [scheduled_due, second_deletes_due],
-                lease_seconds=self._tombstone_lease_seconds,
+                lease_seconds=lease_seconds,
             )
             if claimed is None:
                 return None

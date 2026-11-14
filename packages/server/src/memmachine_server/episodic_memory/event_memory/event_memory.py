@@ -113,6 +113,10 @@ class EventMemoryParams(BaseModel):
             then is cancelled, and its derivatives are written again in the
             background. The segment store's tombstone retention must exceed
             it by a wide margin (default: 120).
+        tombstone_lease_seconds (int):
+            Seconds a forget, or a claim, holds a tombstone before another
+            process may take over its delete, on the segment store's clock;
+            it should exceed the longest delete (default: 300).
         background_idle_seconds (int):
             Seconds the background work waits after finding nothing to do
             (default: 5).
@@ -158,6 +162,15 @@ class EventMemoryParams(BaseModel):
             "it by a wide margin"
         ),
     )
+    tombstone_lease_seconds: int = Field(
+        300,
+        gt=0,
+        description=(
+            "Seconds a forget, or a claim, holds a tombstone before another "
+            "process may take over its delete, on the segment store's clock; it "
+            "should exceed the longest delete"
+        ),
+    )
     background_idle_seconds: int = Field(
         5,
         gt=0,
@@ -174,10 +187,10 @@ class EventMemory:
 
     Between `startup` and `shutdown`, it finishes in the background what
     its partitions' writes and forgets leave undone: derivatives whose
-    writer stopped before the vector store had them, and the deletes of
-    forgotten derivatives, once at once and once more after the segment
-    store's retention. Any number of processes may run this work over the
-    same stores at once.
+    writer stopped before the vector store had them, the first delete of
+    forgotten derivatives whose forget stopped before recording it, and
+    their second delete after the segment store's retention. Any number of
+    processes may run this work over the same stores at once.
     """
 
     @classmethod
@@ -375,7 +388,9 @@ class EventMemory:
 
     async def _delete_tombstoned_derivatives(self) -> bool:
         """Delete one claimed tombstone's derivatives from the vector store; whether one was claimed."""
-        claim = await self._params.segment_store.claim_tombstone()
+        claim = await self._params.segment_store.claim_tombstone(
+            lease_seconds=self._params.tombstone_lease_seconds
+        )
         if claim is None:
             return False
         try:
@@ -695,6 +710,7 @@ class EventMemoryPartition:
         self._embedder = params.embedder
         self._reranker = params.reranker
         self._write_budget_seconds = params.write_budget_seconds
+        self._tombstone_lease_seconds = params.tombstone_lease_seconds
 
         self._tracker = OperationTracker(
             params.metrics_factory,
@@ -1174,8 +1190,10 @@ class EventMemoryPartition:
             await self._forget_events(event_uuids)
 
     async def _forget_events(self, event_uuids: set[UUID]) -> None:
+        # The tombstones are held for the first delete below; the background
+        # work takes that delete over once the hold passes unrecorded.
         tombstones = await self._segment_store_partition.delete_event_segments(
-            event_uuids
+            event_uuids, lease_seconds=self._tombstone_lease_seconds
         )
         if not tombstones:
             return
