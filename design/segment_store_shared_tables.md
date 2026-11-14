@@ -41,23 +41,30 @@ One physical schema on every dialect; the ORM models are the tables.
 - `segment_store_pt`, the tenant registry: one row per live tenant, holding
   the logical partition key (primary key), an `incarnation` (a random UUID
   minted at creation, unique-constrained), and the payload codec config.
-- `segment_store_sg` and `segment_store_dv_ln`, the segment and
-  derivative-link tables, shared by all tenants and not partitioned. Rows
-  carry no logical key; they are keyed by the incarnation alone, so a data
-  query cannot be built without resolving the registry first, and
-  addressing the wrong tenant is structurally impossible rather than
-  guarded against. A 16-byte UUID also keeps index entries narrower than a
-  composite string key, and random UUIDs are unique across nodes without
-  coordination, so a tenant's rows move between databases verbatim.
-- `segment_store_gc`, the purge queue: one row per dead incarnation, with
-  the purge's cursor, the last segment key purged. An entry holds only what
-  the purge reads.
+- `segment_store_ev`, `segment_store_sg` and `segment_store_dv`, the
+  event, segment and derivative tables, shared by all tenants and not
+  partitioned. Rows carry no logical key; they are keyed by the incarnation
+  alone, so a data query cannot be built without resolving the registry
+  first, and addressing the wrong tenant is structurally impossible rather
+  than guarded against. A 16-byte UUID also keeps index entries narrower
+  than a composite string key, and random UUIDs are unique across nodes
+  without coordination, so a tenant's rows move between databases
+  verbatim.
+- `segment_store_pw`, pending writes, and `segment_store_tb`, tombstones,
+  each a segment's: the work a derived index of the derivatives leaves
+  behind (`event_memory_ingest_and_deletion.md`). `segment_store_tb_dv`
+  holds a tombstone's derivative UUIDs.
+- `segment_store_gc`, the purge queue: one row per dead incarnation, with a
+  cursor per table the purge reclaims, the last key purged. An entry holds
+  only what the purge reads.
 
-The link table keeps its foreign key to the segment table (`ON DELETE
-CASCADE`), both sides keyed by incarnation. The segment table has no
-foreign key to the registry: registry rows and data rows are decoupled so
-that registry deletion is O(1), and the rows left behind are exactly what
-the purge queue tracks.
+The derivative and pending write tables keep their foreign keys to the
+segment table, the segment table its to the event table, and the
+tombstone derivative UUIDs theirs to the tombstone table, all
+`ON DELETE CASCADE` and keyed by incarnation.
+The segment table has no foreign key to the registry: registry rows and
+data rows are decoupled so that registry deletion is O(1), and the rows
+left behind are exactly what the purge queue tracks.
 
 An incarnation value cannot be reused while any trace of it remains. A
 collision with a live incarnation violates the registry's unique
@@ -86,7 +93,7 @@ on random-UUID collision resistance.
 - **Open**: read the registry row. The handle captures the logical key, the
   incarnation, and the codec.
 - **Delete**: one transaction: lock the registry row (`SELECT ... FOR
-  UPDATE`, which waits out in-flight writers holding `FOR SHARE` pins),
+  UPDATE`, which waits out in-flight writers' locks on it),
   insert the incarnation into the purge queue, delete the registry row.
   O(1) regardless of tenant size, and the tenant is unreachable at once
   because every operation resolves the registry first.
@@ -103,24 +110,24 @@ on random-UUID collision resistance.
 
   - One transaction per call, committing its progress or nothing, so
     committed progress survives interruption.
-  - Segment rows are deleted in batches of up to
-    `SQLAlchemySegmentStoreParams.purge_max_segments` per call. A batch
-    continues from the entry's cursor: it reads the next keys after
-    `purged_through` in primary-key order, deletes that key range, and
-    records its last key in the same transaction. No batch reads a row an
+  - Rows are deleted in batches of up to
+    `SQLAlchemySegmentStoreParams.purge_max_rows` per call, shared by
+    the derivative, segment, event, tombstone derivative UUID and
+    tombstone tables in that order, each before the table its rows cascade
+    from, so the only cascade a batch runs deletes a segment's one pending
+    write. A batch continues from its table's cursor: it reads the next
+    keys after the cursor in primary-key order, deletes that key range, and
+    records its last key in the same transaction. A table is done when a
+    batch's search finds fewer keys than its bound, so rows another
+    transaction deletes from the batch meanwhile never end it early. No batch reads a row an
     earlier batch deleted; PostgreSQL keeps deleted rows in the table and
     its indexes until vacuum, and a batch that started from the
     incarnation's first key would step over all of them, making each
     batch, and the call that finds the incarnation empty, cost in
     proportion to what was already purged. The cursor relies on no row
     being written into an incarnation once it is enqueued, which the write
-    fence guarantees (below). The link table follows by cascade, measured
-    faster than deleting link rows manually at one and at four links per
-    segment. Cascade deletion
-    saturates around 3M link rows/s as density grows (380k segments/s at
-    one link per segment, 46k at 64), so heavily linked partitions still
-    purge in sub-second calls. Link fan-out is set by the deriver, not
-    something the store can reject after derivation.
+    fence guarantees (below). The bound counts every row a call deletes
+    but those pending writes.
   - Queue entries carry their own bound,
     `SQLAlchemySegmentStoreParams.purge_max_partitions`, because their cost
     is round trips rather than rows: empty partitions are cheap to create
@@ -145,11 +152,7 @@ on random-UUID collision resistance.
     in the background, at the sweeper's pace (below). Waking the sweeper
     from the delete path is future work with the tenant lifecycle layer.
   - An entry is retired only when the retiring call's own deletes found
-    fewer rows than its remaining budget. Link rows go with their segments
-    by the foreign key's cascade and nothing else: the store requires
-    foreign-key enforcement of its engine (on SQLite, per connection) and
-    does not verify it, so an engine without enforcement leaves link rows
-    behind.
+    fewer rows than its remaining budget.
   - On SQLite, which drops locking clauses, the call holds the database's
     write lock from BEGIN, so purgers serialize and each reads the cursor
     its predecessor committed. With a claim read before the write lock is
@@ -165,18 +168,19 @@ on random-UUID collision resistance.
     session drop; a deployment must run the sweeper somewhere, and the
     ABC says so.
   - The sweeper's pacing, not deletion speed, bounds how fast a backlog
-    drains: a call deletes at most `purge_max_segments` segment rows and
+    drains: a call deletes at most `purge_max_rows` rows and
     the resource manager pauses between busy calls, so one process
-    drains fewer than `purge_max_segments` rows per pause (under 10,000
+    drains fewer than `purge_max_rows` rows per pause (under 10,000
     rows per second at the defaults, so upwards of 17 minutes for a
     ten-million-row tenant). Deletion itself measured about 147k rows/s
     on the benchmark box.
 
 ### Fencing (resolves #1549)
 
-Every write pins the registry row with `SELECT ... WHERE incarnation =
-:incarnation FOR SHARE` and raises a stale-handle error when no row
-matches. Reads add the same predicate to their data statement as an
+Every write locks the registry row with `SELECT ... WHERE incarnation =
+:incarnation`, under `FOR NO KEY UPDATE` for an ingest or forget of
+several events and `FOR KEY SHARE` otherwise, and raises a stale-handle
+error when no row matches. Reads add the same predicate to their data statement as an
 `EXISTS`, so one statement (one snapshot) checks liveness and reads: a
 stale handle reads nothing, at no extra round trip, and a read that returns
 no rows issues the registry check on its own to tell an empty partition
@@ -199,10 +203,13 @@ previously had no mechanism for this at all.
 
 ### Locking model
 
-Row locks only. Writers hold `FOR SHARE` on their registry row for the
-write transaction; deletion takes `FOR UPDATE` on the same row; the purger
-claims queue rows with `FOR UPDATE SKIP LOCKED` and never waits; the mint's
-queue re-check takes `FOR SHARE` on a queue row only in the collision case.
+Row locks only. Writers hold their registry row for the write
+transaction, under `FOR NO KEY UPDATE` for an ingest or forget of several
+events, which such writes take one at a time, and under `FOR KEY SHARE`
+otherwise, which no write blocks; deletion takes `FOR UPDATE` on the same
+row, which blocks both; the purger claims queue rows with `FOR UPDATE SKIP
+LOCKED` and never waits; the mint's queue re-check takes `FOR SHARE` on a
+queue row only in the collision case.
 No table-level lock, no DDL, and no lock upgrade anywhere in the store,
 which removes the measured deadlock classes at the root: writers and
 lifecycle operations share no lockable object except one tenant's registry
@@ -246,7 +253,7 @@ requirement excludes.
   tuning is needed.
 - One architecture on every dialect. The remaining dialect splits are the
   LATERAL-vs-loop read strategy, the PostgreSQL-only ordered row locks in
-  `delete_segments` (SQLAlchemy drops locking clauses on SQLite), and
+  `delete_event_segments` (SQLAlchemy drops locking clauses on SQLite), and
   SQLite's engine setup: the foreign-key pragma, and transactions begun
   explicitly, a write transaction with `BEGIN IMMEDIATE`. Both are
   per-connection state that the engine's owner registers at engine
@@ -254,9 +261,8 @@ requirement excludes.
   the reference practice for SQLite foreign keys (SQLAlchemy's dialect
   docs, Django's and Rails' adapters); a listener added later by the store
   would miss connections already in the pool. An engine without the pragma
-  leaves link rows that outlive their segments, and nothing reclaims them:
-  the purge relies on the same cascade.
-- Replication and sharding: four ordinary tables. Logical replication
+  leaves a forgotten event's segments in place, and readable.
+- Replication and sharding: ordinary tables. Logical replication
   covers new tenants automatically (they are rows, not relations), and
   moving a tenant between nodes is an indexed row copy plus a registry
   insert whose fresh incarnation fences all stale handles.

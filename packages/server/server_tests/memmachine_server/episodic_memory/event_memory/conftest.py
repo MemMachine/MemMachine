@@ -19,7 +19,10 @@ from memmachine_server.common.filter.filter_parser import (
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
-from memmachine_server.episodic_memory.event_memory.data_types import Segment
+from memmachine_server.episodic_memory.event_memory.data_types import (
+    Derivative,
+    Segment,
+)
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
 from memmachine_server.episodic_memory.event_memory.deriver.text_deriver import (
     SentenceTextDeriver,
@@ -32,8 +35,10 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
+    SegmentStoreEventAlreadyExistsError,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
+    Tombstone,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
@@ -64,6 +69,11 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         self.segment_order: list[UUID] = []
         self.event_to_segments: dict[UUID, list[UUID]] = defaultdict(list)
         self.segment_to_derivatives: dict[UUID, list[UUID]] = {}
+        # Each pending segment's derivatives, by segment.
+        self.pending_writes: dict[UUID, list[Derivative]] = {}
+        # Each tombstone, by its forgotten segment.
+        self.tombstones: dict[UUID, Tombstone] = {}
+        self.tombstones_awaiting_second_delete: set[UUID] = set()
 
     @override
     @property
@@ -71,15 +81,39 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return self._config
 
     @override
-    async def add_segments(
+    async def add_event_segments(
         self,
-        segments_to_derivative_uuids: Mapping[Segment, Iterable[UUID]],
+        segments_by_event: Mapping[UUID, Iterable[Segment]],
+        derivatives: Iterable[Derivative],
+        *,
+        lease_seconds: int,
     ) -> None:
-        for segment, derivative_uuids in segments_to_derivative_uuids.items():
-            self.segments[segment.uuid] = segment
-            self.segment_order.append(segment.uuid)
-            self.event_to_segments[segment.event_uuid].append(segment.uuid)
-            self.segment_to_derivatives[segment.uuid] = list(derivative_uuids)
+        segments_by_event = {
+            event_uuid: list(segments)
+            for event_uuid, segments in segments_by_event.items()
+        }
+        already_stored = segments_by_event.keys() & self.event_to_segments.keys()
+        if already_stored:
+            raise SegmentStoreEventAlreadyExistsError(already_stored)
+        for event_uuid, segments in segments_by_event.items():
+            self.event_to_segments[event_uuid] = []
+            for segment in segments:
+                self.segments[segment.uuid] = segment
+                self.segment_order.append(segment.uuid)
+                self.event_to_segments[event_uuid].append(segment.uuid)
+                self.segment_to_derivatives[segment.uuid] = []
+                self.pending_writes[segment.uuid] = []
+        for derivative in derivatives:
+            self.segment_to_derivatives[derivative.segment_uuid].append(derivative.uuid)
+            self.pending_writes[derivative.segment_uuid].append(derivative)
+
+    @override
+    async def delete_pending_writes(
+        self,
+        segment_uuids: Iterable[UUID],
+    ) -> None:
+        for segment_uuid in segment_uuids:
+            self.pending_writes.pop(segment_uuid, None)
 
     @override
     async def get_segment_contexts(
@@ -148,30 +182,6 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         return demangle_user_metadata_key(internal_name)
 
     @override
-    async def get_segment_uuids_by_event_uuids(
-        self,
-        event_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        result: dict[UUID, list[UUID]] = {}
-        for event_uuid in event_uuids:
-            segment_uuids = self.event_to_segments.get(event_uuid)
-            if segment_uuids:
-                result[event_uuid] = list(segment_uuids)
-        return result
-
-    @override
-    async def get_derivative_uuids_by_segment_uuids(
-        self,
-        segment_uuids: Iterable[UUID],
-    ) -> dict[UUID, list[UUID]]:
-        result: dict[UUID, list[UUID]] = {}
-        for segment_uuid in segment_uuids:
-            derivative_uuids = self.segment_to_derivatives.get(segment_uuid)
-            if derivative_uuids:
-                result[segment_uuid] = list(derivative_uuids)
-        return result
-
-    @override
     async def get_segment_uuids_by_derivative_uuids(
         self,
         derivative_uuids: Iterable[UUID],
@@ -185,23 +195,36 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         }
 
     @override
-    async def delete_segments(
+    async def delete_event_segments(
         self,
-        segment_uuids: Iterable[UUID],
+        event_uuids: Iterable[UUID],
+        *,
+        lease_seconds: int,
+    ) -> list[Tombstone]:
+        held_event_uuids = set(event_uuids) & self.event_to_segments.keys()
+        tombstones: list[Tombstone] = []
+        for event_uuid in held_event_uuids:
+            for segment_uuid in self.event_to_segments.pop(event_uuid):
+                self.segments.pop(segment_uuid)
+                self.segment_order.remove(segment_uuid)
+                self.pending_writes.pop(segment_uuid, None)
+                tombstones.append(
+                    Tombstone(
+                        segment_uuid=segment_uuid,
+                        derivative_uuids=self.segment_to_derivatives.pop(segment_uuid),
+                    )
+                )
+        for tombstone in tombstones:
+            self.tombstones[tombstone.segment_uuid] = tombstone
+        return tombstones
+
+    @override
+    async def record_tombstone_first_delete(
+        self, segment_uuids: Iterable[UUID]
     ) -> None:
-        for segment_uuid in set(segment_uuids):
-            segment = self.segments.pop(segment_uuid, None)
-            if segment is None:
-                continue
-            self.segment_order = [
-                uid for uid in self.segment_order if uid != segment_uuid
-            ]
-            event_list = self.event_to_segments.get(segment.event_uuid)
-            if event_list is not None:
-                event_list[:] = [uid for uid in event_list if uid != segment_uuid]
-                if not event_list:
-                    del self.event_to_segments[segment.event_uuid]
-            self.segment_to_derivatives.pop(segment_uuid, None)
+        for segment_uuid in segment_uuids:
+            if segment_uuid in self.tombstones:
+                self.tombstones_awaiting_second_delete.add(segment_uuid)
 
 
 class FakeReranker(Reranker):
