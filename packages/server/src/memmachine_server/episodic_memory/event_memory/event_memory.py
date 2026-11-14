@@ -76,9 +76,12 @@ EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
 
 _BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY})
 
-# Seconds past its budget that a writer, or a claim, holds a pending write:
-# the margin between the database's clock, which times the holds, and the
-# writers' clocks, which run the budgets.
+# Seconds past its budget that a writer, or a claim, holds a pending write,
+# for the time the budget does not cover: an ingest's delete of its pending
+# writes after its last send, a recovery's embedding before its budget
+# starts, and the difference between the database's clock, which times the
+# holds, and the writers' clocks, which run the budgets. A hold that ends
+# early only lets another process repeat the write.
 _CLAIM_MARGIN_SECONDS = 60
 
 
