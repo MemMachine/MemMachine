@@ -198,6 +198,8 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
     async def delete_event_segments(
         self,
         event_uuids: Iterable[UUID],
+        *,
+        lease_seconds: int,
     ) -> list[Tombstone]:
         held_event_uuids = set(event_uuids) & self.event_to_segments.keys()
         tombstones: list[Tombstone] = []

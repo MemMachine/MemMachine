@@ -448,6 +448,16 @@ async def _age_pending_writes(engine: AsyncEngine, delta: timedelta) -> None:
         )
 
 
+async def _pass_forget_holds(engine: AsyncEngine) -> None:
+    """Make every tombstone awaiting its first delete claimable now, past its forget's lease."""
+    async with engine.begin() as connection:
+        await connection.execute(
+            update(TombstoneRow)
+            .where(TombstoneRow.first_deleted_at.is_(None))
+            .values(claimable_at=_database_time_ago(engine, timedelta(seconds=1)))
+        )
+
+
 async def _age_tombstones(engine: AsyncEngine, delta: timedelta) -> None:
     """Move every recorded first delete back to `delta` ago."""
     async with engine.begin() as connection:
@@ -540,6 +550,9 @@ async def test_background_work_deletes_a_forgotten_events_vectors_twice(
     vector_store_partition.fail_deletes = False
     assert len(vector_store_partition.records) == 1
 
+    # The forget holds its tombstone for the first delete it did not record.
+    assert not await event_memory._delete_tombstoned_derivatives()
+    await _pass_forget_holds(sqlalchemy_sqlite_engine)
     assert await event_memory._delete_tombstoned_derivatives()
     assert vector_store_partition.records == {}
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 1
@@ -565,6 +578,7 @@ async def test_an_event_encoded_again_right_after_its_forget_keeps_its_new_vecto
     [forgotten_record_uuid] = vector_store_partition.records
 
     await partition.encode_events([event])
+    await _pass_forget_holds(sqlalchemy_sqlite_engine)
     assert await event_memory._delete_tombstoned_derivatives()
     await _age_tombstones(sqlalchemy_sqlite_engine, timedelta(days=2))
     assert await event_memory._delete_tombstoned_derivatives()
@@ -696,6 +710,7 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
 async def test_startup_runs_the_background_work_until_shutdown(
     event_memory: EventMemory,
     vector_store_partition: _FailingVectorStorePartition,
+    sqlalchemy_sqlite_engine: AsyncEngine,
 ):
     partition = await event_memory.open_or_create_partition("partition")
     event = _event("hello")
@@ -704,6 +719,7 @@ async def test_startup_runs_the_background_work_until_shutdown(
     await partition.forget_events([event.uuid])
     vector_store_partition.fail_deletes = False
     vector_store_partition.deleted.clear()
+    await _pass_forget_holds(sqlalchemy_sqlite_engine)
 
     await event_memory.startup()
     try:

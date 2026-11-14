@@ -165,19 +165,24 @@ class SegmentStorePartition(ABC):
     async def delete_event_segments(
         self,
         event_uuids: Iterable[UUID],
+        *,
+        lease_seconds: int,
     ) -> list[Tombstone]:
         """
         Delete events with their segments, derivatives, and pending writes, leaving a tombstone for each segment.
 
         All of it commits together or not at all. A tombstone holds its
-        segment's derivative UUIDs until its second delete. A renewal of a
-        claim on these events' pending writes either commits first or finds
-        them gone. An event the partition does not hold is skipped.
-        Idempotent.
+        segment's derivative UUIDs until its second delete. The caller holds
+        the tombstones for `lease_seconds`, on the store's clock, before a
+        claim may take their first delete. A renewal of a claim on these
+        events' pending writes either commits first or finds them gone. An
+        event the partition does not hold is skipped. Idempotent.
 
         Args:
             event_uuids (Iterable[UUID]):
                 The UUIDs of the events to forget.
+            lease_seconds (int):
+                Seconds the caller holds the tombstones.
 
         Returns:
             list[Tombstone]:
@@ -514,18 +519,25 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def claim_tombstone(self) -> TombstoneClaim | None:
+    async def claim_tombstone(self, *, lease_seconds: int) -> TombstoneClaim | None:
         """
         Claim the oldest tombstone due for a delete.
 
-        A tombstone awaiting its first delete is due at once. One awaiting
-        its second is due once the store's retention has passed since its
-        first delete was recorded, on the store's clock; no claim's
-        schedule brings that forward. A due tombstone is claimable unless a
-        claim on it holds its lease, or its last claim failed and its
-        backoff has not passed, or its claims failed the store's maximum
-        number of times in a row. Claims skip deleted partitions. Safe to
-        call from several processes at once.
+        A tombstone awaiting its first delete is due once its forget's lease
+        has passed, on the store's clock. One awaiting its second is due
+        once the store's retention has passed since its first delete was
+        recorded; no claim's schedule brings that forward. A due tombstone
+        is claimable unless a claim on it holds its lease, or its last claim
+        failed and its backoff has not passed, or its claims failed the
+        store's maximum number of times in a row. A claim holds its
+        tombstone for `lease_seconds`, and a claim that never ends is
+        followed by the backoff before the tombstone is claimed again.
+        Claims skip deleted partitions. Safe to call from several processes
+        at once.
+
+        Args:
+            lease_seconds (int):
+                Seconds the claim holds its tombstone.
 
         Returns:
             TombstoneClaim | None:

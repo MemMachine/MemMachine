@@ -53,22 +53,22 @@ or a stop after step 3 leaves the derivatives pending, for the background
 work to write.
 
 **Forget.** One transaction locks the events and their segments, writes a
-tombstone for each segment, copies the segment's derivative UUIDs into it,
-and deletes the events, which cascades to the segments and to their
-pending writes and derivatives. The vectors are then deleted once and the
-first delete recorded, and each tombstone awaits its second delete, due R
-after that record, which deletes the tombstone and, by cascade, its
-derivative UUIDs. A failure here leaves the first delete to
-the background work.
+tombstone for each segment, held for the forget's lease, copies the
+segment's derivative UUIDs into it, and deletes the events, which cascades
+to the segments and to their pending writes and derivatives. The vectors
+are then deleted once and the first delete recorded, and each tombstone
+awaits its second delete, due R after that record, which deletes the
+tombstone and, by cascade, its derivative UUIDs. A failure here leaves the
+first delete to the background work, once the hold has passed.
 
 **Background work.** Any process claims, from the segment store:
 
 - pending writes whose ingest's hold has passed: it embeds the segment's
   stored derivatives, starts a budget of its own, and renews its claim,
   then writes them and deletes the record;
-- tombstones due for a delete, at once for the first and R after the
-  first was recorded for the second, and deletes their derivatives from
-  the vector store.
+- tombstones due for a delete, the first once the forget's hold has
+  passed and the second R after the first was recorded, and deletes their
+  derivatives from the vector store.
 
 Each record stores when a claim may next take it. A claim holds its record
 for a lease, and one that never ends is taken again once the lease and
