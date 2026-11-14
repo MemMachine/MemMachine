@@ -225,8 +225,9 @@ class PendingWriteClaim:
             The claim's generation; a later claim on the same record has a
             higher one.
         attempt (int):
-            The claim's attempt number since the record was claimed without
-            failing, from 1.
+            The claim's attempt number on the record, from 1: one more than
+            the claims on it before, each of which failed or was abandoned.
+            A cancelled claim does not count.
     """
 
     partition_key: str
@@ -257,7 +258,8 @@ class TombstoneClaim:
             a higher one.
         attempt (int):
             The claim's attempt number since the tombstone last made
-            progress, from 1.
+            progress, from 1: one more than the claims on it since, each of
+            which failed or was abandoned. A cancelled claim does not count.
     """
 
     partition_key: str
