@@ -15,7 +15,7 @@ load_dotenv()
 # ──────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────
-MODEL_STRING = "gpt-4.1-mini"  # we default on gpt-4.1-mini
+MODEL_STRING = "gpt-6-luna"  # we default on gpt-6-luna
 api_key = os.getenv("MODEL_API_KEY")
 client = openai.OpenAI(api_key=api_key)
 bedrock_runtime = boto3.client("bedrock-runtime", region_name="us-west-2")
@@ -52,8 +52,6 @@ def chat(messages, persona):
             model=MODEL_STRING,
             instructions=system_prompt,
             input=messages,  # messages=messages
-            max_output_tokens=500,  #  max_tokens=500,
-            temperature=0.5,
             store=False,  # keeps call stateless
         )
 

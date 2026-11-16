@@ -1,5 +1,6 @@
 """MemMachine installation and configuration script."""
 
+import hashlib
 import logging
 import os
 import platform
@@ -20,18 +21,24 @@ from memmachine_server.installation.configuration_wizard import (
 )
 from memmachine_server.installation.utilities import (
     DEFAULT_NEO4J_PASSWORD,
+    LINUX_JDK_SHA256,
     LINUX_JDK_TAR_NAME,
     LINUX_JDK_URL,
+    LINUX_NEO4J_SHA256,
     LINUX_NEO4J_TAR_NAME,
     LINUX_NEO4J_URL,
+    MACOS_JDK_SHA256_ARM64,
+    MACOS_JDK_SHA256_X64,
     MACOS_JDK_TAR_NAME_ARM64,
     MACOS_JDK_TAR_NAME_X64,
     MACOS_JDK_URL_ARM64,
     MACOS_JDK_URL_X64,
     NEO4J_DIR_NAME,
     NEO4J_WINDOWS_SERVICE_NAME,
+    WINDOWS_JDK_SHA256,
     WINDOWS_JDK_URL,
     WINDOWS_JDK_ZIP_NAME,
+    WINDOWS_NEO4J_SHA256,
     WINDOWS_NEO4J_URL,
     WINDOWS_NEO4J_ZIP_NAME,
     ScriptType,
@@ -79,6 +86,14 @@ def _safe_extract_zip(zip_path: str, extract_to: str) -> None:
                 )
 
             zip_ref.extract(member, extract_to)
+
+
+def _verify_sha256(path: str, sha256: str) -> None:
+    """Raise ``ValueError`` unless the file at ``path`` has SHA-256 digest ``sha256``."""
+    with Path(path).open("rb") as file:
+        digest = hashlib.file_digest(file, "sha256").hexdigest()
+    if digest != sha256:
+        raise ValueError(f"{path} has SHA-256 digest {digest}, expected {sha256}")
 
 
 class Installer(ABC):
@@ -142,9 +157,10 @@ class Installer(ABC):
 class LinuxEnvironment:
     """Environment utilities for Linux installation."""
 
-    def download_file(self, url: str, dest: str) -> None:
-        """Download file on Linux."""
+    def download_file(self, url: str, dest: str, sha256: str) -> None:
+        """Download file on Linux and verify its SHA-256 digest."""
         urllib.request.urlretrieve(url, dest)
+        _verify_sha256(dest, sha256)
 
     def extract_tar(self, tar_path: str, extract_to: str) -> None:
         """Extract a .tar.gz file on Linux or macOS.
@@ -241,7 +257,7 @@ class LinuxInstaller(Installer):
         # Install OpenJDK 21
         logger.info("Downloading and installing %s...", LINUX_JDK_TAR_NAME)
         jdk_tar_path = str(Path(self.install_dir, LINUX_JDK_TAR_NAME))
-        self.environment.download_file(LINUX_JDK_URL, jdk_tar_path)
+        self.environment.download_file(LINUX_JDK_URL, jdk_tar_path, LINUX_JDK_SHA256)
         self.environment.extract_tar(jdk_tar_path, self.install_dir)
         java_home = str(self.find_jdk21_dir(self.install_dir))
         logger.info("OpenJDK 21 installed successfully at %s", java_home)
@@ -249,7 +265,9 @@ class LinuxInstaller(Installer):
         # Install Neo4j
         logger.info("Downloading and installing %s...", LINUX_NEO4J_TAR_NAME)
         neo4j_tar_path = str(Path(self.install_dir, LINUX_NEO4J_TAR_NAME))
-        self.environment.download_file(LINUX_NEO4J_URL, neo4j_tar_path)
+        self.environment.download_file(
+            LINUX_NEO4J_URL, neo4j_tar_path, LINUX_NEO4J_SHA256
+        )
         self.environment.extract_tar(neo4j_tar_path, self.install_dir)
         neo4j_dir = str(Path(self.install_dir) / NEO4J_DIR_NAME)
         logger.info("Neo4j Community Edition installed successfully at %s.", neo4j_dir)
@@ -291,15 +309,17 @@ class MacosInstaller(Installer):
         machine = platform.machine().lower()
         if machine in ("arm64", "aarch64"):
             jdk_url = MACOS_JDK_URL_ARM64
+            jdk_sha256 = MACOS_JDK_SHA256_ARM64
             jdk_tar_name = MACOS_JDK_TAR_NAME_ARM64
         else:
             jdk_url = MACOS_JDK_URL_X64
+            jdk_sha256 = MACOS_JDK_SHA256_X64
             jdk_tar_name = MACOS_JDK_TAR_NAME_X64
 
         # Install OpenJDK 21
         logger.info("Downloading and installing %s...", jdk_tar_name)
         jdk_tar_path = str(Path(self.install_dir, jdk_tar_name))
-        self.environment.download_file(jdk_url, jdk_tar_path)
+        self.environment.download_file(jdk_url, jdk_tar_path, jdk_sha256)
         self.environment.extract_tar(jdk_tar_path, self.install_dir)
 
         # Find JDK directory
@@ -310,7 +330,9 @@ class MacosInstaller(Installer):
         # Install Neo4j
         logger.info("Downloading and installing %s...", LINUX_NEO4J_TAR_NAME)
         neo4j_tar_path = str(Path(self.install_dir, LINUX_NEO4J_TAR_NAME))
-        self.environment.download_file(LINUX_NEO4J_URL, neo4j_tar_path)
+        self.environment.download_file(
+            LINUX_NEO4J_URL, neo4j_tar_path, LINUX_NEO4J_SHA256
+        )
         self.environment.extract_tar(neo4j_tar_path, self.install_dir)
         neo4j_dir = str(Path(self.install_dir) / NEO4J_DIR_NAME)
         logger.info("Neo4j Community Edition installed successfully at %s.", neo4j_dir)
@@ -326,9 +348,10 @@ class MacosInstaller(Installer):
 class WindowsEnvironment:
     """Environment utilities for Windows installation."""
 
-    def download_file(self, url: str, dest: str) -> None:
-        """Download file on Windows."""
+    def download_file(self, url: str, dest: str, sha256: str) -> None:
+        """Download file on Windows and verify its SHA-256 digest."""
         urllib.request.urlretrieve(url, dest)
+        _verify_sha256(dest, sha256)
 
     def extract_zip(self, zip_path: str, extract_to: str) -> None:
         """Extract zip file on Windows.
@@ -442,12 +465,16 @@ class WindowsInstaller(Installer):
         self.ask_install_dir()
         logger.info("Downloading and installing OpenJDK 21...")
         jdk_zip_path = str(Path(self.install_dir, WINDOWS_JDK_ZIP_NAME))
-        self.environment.download_file(WINDOWS_JDK_URL, jdk_zip_path)
+        self.environment.download_file(
+            WINDOWS_JDK_URL, jdk_zip_path, WINDOWS_JDK_SHA256
+        )
         self.environment.extract_zip(jdk_zip_path, self.install_dir)
         logger.info("OpenJDK 21 installed successfully.")
         logger.info("Downloading and installing Neo4j Community Edition 2025.09.0...")
         neo4j_zip_path = str(Path(self.install_dir, WINDOWS_NEO4J_ZIP_NAME))
-        self.environment.download_file(WINDOWS_NEO4J_URL, neo4j_zip_path)
+        self.environment.download_file(
+            WINDOWS_NEO4J_URL, neo4j_zip_path, WINDOWS_NEO4J_SHA256
+        )
         self.environment.extract_zip(neo4j_zip_path, self.install_dir)
         logger.info("Neo4j Community Edition installed successfully.")
         # delete zip files

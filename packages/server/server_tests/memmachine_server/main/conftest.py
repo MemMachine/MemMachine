@@ -114,9 +114,11 @@ def bedrock_language_model_config(
     language_model_id = "bedrock_model"
     config = bedrock_integration_language_model_config
 
-    return (
-        language_model_id,
-        LanguageModelsConf.parse(
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        # The conf fills a missing session token from AWS_SESSION_TOKEN,
+        # which would pair the shell's token with the test key.
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        language_models = LanguageModelsConf.parse(
             {
                 "language_models": {
                     language_model_id: {
@@ -125,13 +127,15 @@ def bedrock_language_model_config(
                             "model_id": config["model"],
                             "aws_access_key_id": config["aws_access_key_id"],
                             "aws_secret_access_key": config["aws_secret_access_key"],
+                            "aws_session_token": config["aws_session_token"],
                             "region": config["aws_region"],
                         },
                     }
                 }
             }
-        ),
-    )
+        )
+
+    return language_model_id, language_models
 
 
 @pytest.fixture(
