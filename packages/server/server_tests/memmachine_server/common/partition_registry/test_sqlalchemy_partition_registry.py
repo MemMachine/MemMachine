@@ -861,6 +861,63 @@ async def test_a_cancelled_round_ends_its_claim_without_counting_it(
 
 
 @pytest.mark.asyncio
+async def test_a_round_cancelled_after_its_attempts_are_reset_leaves_them_at_zero(
+    sqlalchemy_engine, partition_namespace
+):
+    """An operator's reset of the attempts, made while a round runs, stands
+    when the round is cancelled: the attempts never go below zero, and the
+    tombstone is claimed again."""
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    partition_uuid = (await registry._reserve("a")).partition_uuid
+    await registry.delete_partition("a")
+    await _age_deletion(registry, partition_uuid)
+
+    _, holding = await _start_held_round(registry)
+    await _reset_attempts(registry, partition_uuid)
+    holding.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await holding
+
+    assert await _attempts(registry, partition_uuid) == 0
+    assert await _round(registry, any_records_found=False) == partition_uuid
+
+
+@pytest.mark.asyncio
+async def test_a_round_failing_after_its_attempts_are_reset_backs_off_one_attempt(
+    sqlalchemy_engine, partition_namespace
+):
+    """A round that fails after an operator reset its tombstone's attempts
+    backs off as a first attempt does: the backoff is never computed from a
+    negative shift."""
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    partition_uuid = (await registry._reserve("a")).partition_uuid
+    await registry.delete_partition("a")
+    await _age_deletion(registry, partition_uuid)
+
+    held, holding = await _start_held_round(registry)
+    await _reset_attempts(registry, partition_uuid)
+    held.fail(RuntimeError("the backend refused"))
+    with pytest.raises(RuntimeError, match="the backend refused"):
+        await holding
+
+    assert await _round(registry, any_records_found=False) is None
+    await _age_claimable_at(registry, partition_uuid, timedelta(seconds=31))
+    assert await _round(registry, any_records_found=False) == partition_uuid
+
+
+async def _reset_attempts(
+    registry: SQLAlchemyPartitionRegistry, partition_uuid: UUID
+) -> None:
+    """Reset a tombstone's attempts, as the dead-letter log tells an operator to."""
+    async with registry._engine.begin() as connection:
+        await connection.execute(
+            update(PurgeQueueRow)
+            .where(PurgeQueueRow.partition_uuid == partition_uuid)
+            .values(attempts_without_progress=0, claimable_at=None)
+        )
+
+
+@pytest.mark.asyncio
 async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backoff_pass(
     sqlalchemy_engine, partition_namespace, monkeypatch, caplog
 ):

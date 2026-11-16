@@ -28,6 +28,7 @@ from sqlalchemy import (
     Interval,
     String,
     Uuid,
+    case,
     delete,
     func,
     insert,
@@ -568,7 +569,11 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
             await asyncio.shield(ending)
 
     async def _end_tombstone_claim(self, claim: _TombstoneClaim) -> None:
-        """End a tombstone claim and take back its attempt, if the claim is the latest."""
+        """End a tombstone claim and take back its attempt, never below zero, if the claim is the latest.
+
+        An operator may reset the attempts while the round runs; the reset
+        stands.
+        """
         async with write_connection(self._engine) as connection:
             await connection.execute(
                 update(PurgeQueueRow)
@@ -578,8 +583,12 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
                 )
                 .values(
                     claimable_at=None,
-                    attempts_without_progress=(
-                        PurgeQueueRow.attempts_without_progress - 1
+                    attempts_without_progress=case(
+                        (
+                            PurgeQueueRow.attempts_without_progress > 0,
+                            PurgeQueueRow.attempts_without_progress - 1,
+                        ),
+                        else_=0,
                     ),
                 )
             )
@@ -658,8 +667,12 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
         self, attempts: ColumnElement[int] | InstrumentedAttribute[int]
     ) -> ColumnElement[int]:
         """The purge retry backoff in seconds after `attempts` attempts, computed by the database."""
-        # 1 << (a - 1) is 2 ** (a - 1) on both dialects.
-        doublings = literal(1, Integer).op("<<")(attempts - 1)
+        # 1 << (a - 1) is 2 ** (a - 1) on both dialects. The shift is clamped
+        # at 0: an operator may reset a tombstone's attempts while a round on
+        # it runs, and PostgreSQL leaves a negative shift undefined.
+        doublings = literal(1, Integer).op("<<")(
+            case((attempts > 0, attempts - 1), else_=0)
+        )
         smaller = func.min if self._is_sqlite else func.least
         return smaller(
             self._base_purge_retry_backoff_seconds * doublings,
