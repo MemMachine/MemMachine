@@ -76,14 +76,6 @@ EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
 
 _BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY})
 
-# Seconds past its budget that an ingest, or a claim, holds an indexing job,
-# for the time the budget does not cover: an ingest's delete of its indexing
-# jobs after its last send, a recovery's embedding before its budget
-# starts, and the difference between the database's clock, which times the
-# holds, and the writers' clocks, which run the budgets. A hold that ends
-# early only lets another process repeat the write.
-_CLAIM_MARGIN_SECONDS = 60
-
 
 class EventMemoryParams(BaseModel):
     """
@@ -107,12 +99,11 @@ class EventMemoryParams(BaseModel):
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
-        write_budget_seconds (int):
-            Seconds from its start within which a write of derivatives to
-            the vector store sends its last request. A write still running
-            then is cancelled, and its derivatives are written again in the
-            background. The segment store's tombstone retention must exceed
-            it by a wide margin (default: 120).
+        indexing_job_lease_seconds (int):
+            Seconds an ingest, or a claim, holds an indexing job before
+            another process may take over its write, on the segment store's
+            clock; it should exceed the longest embedding and the longest
+            write (default: 180).
         tombstone_lease_seconds (int):
             Seconds a forget, or a claim, holds a tombstone before another
             process may take over its delete, on the segment store's clock;
@@ -151,15 +142,13 @@ class EventMemoryParams(BaseModel):
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
     )
-    write_budget_seconds: int = Field(
-        120,
+    indexing_job_lease_seconds: int = Field(
+        180,
         gt=0,
         description=(
-            "Seconds from its start within which a write of derivatives to "
-            "the vector store sends its last request. A write still running "
-            "then is cancelled, and its derivatives are written again in the "
-            "background. The segment store's tombstone retention must exceed "
-            "it by a wide margin"
+            "Seconds an ingest, or a claim, holds an indexing job before "
+            "another process may take over its write, on the segment store's "
+            "clock; it should exceed the longest embedding and the longest write"
         ),
     )
     tombstone_lease_seconds: int = Field(
@@ -325,7 +314,7 @@ class EventMemory:
     async def _run_indexing_job(self) -> bool:
         """Write one claimed indexing job's derivatives to the vector store; whether one was claimed."""
         claim = await self._params.segment_store.claim_indexing_job(
-            lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
+            lease_seconds=self._params.indexing_job_lease_seconds,
         )
         if claim is None:
             return False
@@ -353,7 +342,7 @@ class EventMemory:
         return True
 
     async def _write_pending_derivatives(self, claim: IndexingJobClaim) -> bool:
-        """Write a claim's derivatives to the vector store within a budget; whether the claim still held."""
+        """Write a claim's derivatives to the vector store; whether the claim still held."""
         vector_store_partition = await self._params.vector_store.open_partition(
             claim.partition_key
         )
@@ -361,28 +350,26 @@ class EventMemory:
         embeddings = await self._params.embedder.ingest_embed(
             _derivative_texts(derivatives)
         )
-        # The budget starts before the renewal, which a forget of these
-        # derivatives follows. The renewal also checks that the partition
-        # still exists after the vector store partition was opened under its
-        # key; since a partition leaves the segment store first, that vector
-        # store partition belongs to the claimed partition.
-        deadline = asyncio.get_running_loop().time() + self._params.write_budget_seconds
+        # Embedding comes before the renewal, which a forget of these
+        # derivatives follows, so only the upsert runs between the renewal
+        # and the requests it sends. The renewal also checks that the
+        # partition still exists after the vector store partition was opened
+        # under its key; since a partition leaves the segment store first,
+        # that vector store partition belongs to the claimed partition.
         if not await self._params.segment_store.renew_indexing_job_claim(
             claim,
-            lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
+            lease_seconds=self._params.indexing_job_lease_seconds,
         ):
             return False
         if vector_store_partition is None:
             raise RuntimeError(
                 f"Partition {claim.partition_key!r} has no vector store partition"
             )
-        await _upsert_within_budget(
-            vector_store_partition,
-            [
+        await vector_store_partition.upsert(
+            records=[
                 _build_derivative_record(derivative, embedding, self._schema_fields)
                 for derivative, embedding in zip(derivatives, embeddings, strict=True)
-            ],
-            deadline,
+            ]
         )
         return True
 
@@ -709,7 +696,7 @@ class EventMemoryPartition:
         self._deriver = params.deriver
         self._embedder = params.embedder
         self._reranker = params.reranker
-        self._write_budget_seconds = params.write_budget_seconds
+        self._indexing_job_lease_seconds = params.indexing_job_lease_seconds
         self._tombstone_lease_seconds = params.tombstone_lease_seconds
 
         self._tracker = OperationTracker(
@@ -772,9 +759,8 @@ class EventMemoryPartition:
 
         Returns once the events are stored with their segments and
         derivatives, from which the background work finishes writing the
-        derivatives to the vector store. They are written before then when
-        the vector store takes them within the write budget; a write that
-        fails or runs out of budget is logged and left to the background
+        derivatives to the vector store. They are written before then
+        unless the write fails, which is logged and left to the background
         work. When a written derivative is searchable is the vector store's
         to say.
 
@@ -845,16 +831,16 @@ class EventMemoryPartition:
         )
         t_embedding = time.monotonic()
 
-        # The budget starts before the events are stored, so a forget of them
-        # either finds nothing or stamps its tombstone after the start.
-        deadline = asyncio.get_running_loop().time() + self._write_budget_seconds
+        # Embedding comes before the events are stored, which a forget of
+        # them follows, so only the upsert runs between the commit and the
+        # requests it sends.
         await self._segment_store_partition.add_event_segments(
             {
                 event.uuid: segment_list
                 for event, segment_list in zip(events, segment_lists, strict=True)
             },
             derivatives,
-            lease_seconds=self._write_budget_seconds + _CLAIM_MARGIN_SECONDS,
+            lease_seconds=self._indexing_job_lease_seconds,
         )
         t_segment_store = time.monotonic()
 
@@ -873,9 +859,7 @@ class EventMemoryPartition:
         # background work, except a deletion of the partition meanwhile.
         try:
             if derivative_records:
-                await _upsert_within_budget(
-                    self._vector_store_partition, derivative_records, deadline
-                )
+                await self._vector_store_partition.upsert(records=derivative_records)
             t_vector_store = time.monotonic()
 
             await self._segment_store_partition.delete_indexing_jobs(
@@ -1265,26 +1249,3 @@ def _build_derivative_record(
         vector=list(derivative_embedding),
         properties=properties,
     )
-
-
-async def _upsert_within_budget(
-    vector_store_partition: VectorStorePartition,
-    records: list[Record],
-    deadline: float,
-) -> None:
-    """
-    Upsert records, sending nothing once the write budget's deadline has passed.
-
-    The deadline is on the event loop's clock. The upsert is cancelled at
-    the deadline, which stops it from sending further requests; a request
-    already sent may still be applied.
-
-    Raises:
-        TimeoutError: If the deadline passed before the upsert finished.
-    """
-    # A deadline already passed would cancel the upsert only at its first
-    # wait, after it may have sent a request.
-    if asyncio.get_running_loop().time() >= deadline:
-        raise TimeoutError("The write budget ran out before the upsert started")
-    async with asyncio.timeout_at(deadline):
-        await vector_store_partition.upsert(records=records)

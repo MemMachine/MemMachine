@@ -14,13 +14,13 @@ and a forget stays complete anyway.
   soon as the forget commits.
 - **Late writes.** A write to the vector store can be applied after its
   client stopped waiting for it, and after a delete sent later. A write
-  landing more than R after its forget is outside this design, provided no
-  code path of ours sends after its deadline and R exceeds any in-flight
-  time by orders of magnitude.
+  landing more than R after its forget is outside this design, provided
+  every vector store call ends within its client's configured timeouts and
+  R exceeds them and any in-flight time by orders of magnitude.
 - **Self-recovery.** An event the server accepted is ingested in full even
   if the process stops midway and the client never retries.
-- **Deadline, not lock.** No lock is held across a vector store call, and
-  no correctness argument rests on one.
+- **Time bounds, not locks.** No lock is held across a vector store call,
+  and no correctness argument rests on one.
 - **Horizontal scaling.** Any process serves any request and any process
   takes up background work; opening a partition has no side effects.
 
@@ -38,18 +38,16 @@ segments, and neither holds a value the caller chose.
 **Ingest.**
 
 1. Segment, derive and embed.
-2. Start the write budget, before anything is stored.
-3. In one transaction, store the events, their segments, the derivatives,
-   and the indexing jobs, which the ingest holds for its budget plus a
-   margin. A batch naming an event already stored is rejected
-   whole.
-4. Upsert the vectors, cancelled when the budget runs out.
-5. Delete the indexing jobs.
+2. In one transaction, store the events, their segments, the derivatives,
+   and the indexing jobs, which the ingest holds for its lease. A batch
+   naming an event already stored is rejected whole.
+3. Upsert the vectors.
+4. Delete the indexing jobs.
 
-The ingest succeeds once step 3 commits: its events are accepted, and
-stored with everything their derived index is built from. Steps 4 and 5
+The ingest succeeds once step 2 commits: its events are accepted, and
+stored with everything their derived index is built from. Steps 3 and 4
 only spare the background work: a failure there is logged, and a failure
-or a stop after step 3 leaves the derivatives pending, for the background
+or a stop after step 2 leaves the derivatives pending, for the background
 work to write.
 
 **Forget.** One transaction locks the events and their segments, writes a
@@ -64,8 +62,8 @@ first delete to the background work, once the hold has passed.
 **Background work.** Any process claims, from the segment store:
 
 - indexing jobs whose ingest's hold has passed: it embeds the segment's
-  stored derivatives, starts a budget of its own, and renews its claim,
-  then writes them and deletes the record;
+  stored derivatives and renews its claim, then writes them and deletes
+  the record;
 - tombstones due for a delete, the first once the forget's hold has
   passed and the second R after the first was recorded, and deletes their
   derivatives from the vector store.
@@ -113,22 +111,22 @@ A segmenter gives every segment, and a deriver every derivative, a UUID no
 other has, so a tombstone's deletes reach only the vectors of the events it
 forgot, and never those of an event added again under the same UUID.
 
-Every vector write is sent within the budget L of a moment its derivative
-was stored and its event not forgotten: an ingest starts its budget before
-its transaction, and a recovery starts its budget before renewing its
-claim, which a forget of the same derivatives must follow. The forget
-commits after that moment, and its first delete is recorded after the
-forget commits, so the write lands before that record plus L plus the
-in-flight time d, and the second delete, R after the record, removes it
+Every vector write is one vector store call, made right after a moment
+its derivative was stored and its event not forgotten: an ingest's commit,
+or a recovery's renewal of its claim, which a forget of the same
+derivatives must follow. Both embed before that moment, so only the call
+runs between it and the call's requests. The call sends its last request
+within a time T that its client's configured timeouts bound, retries
+included, and a request lands within the in-flight time d after it is
+sent. The forget commits after that moment, and its first delete is
+recorded after the forget commits, so the write lands before that record
+plus T plus d, and the second delete, R after the record, removes it
 whenever
 
-    R >= L + d
+    R >= T + d
 
-The deployment keeps R above ten times L, with a margin for d.
-
-Cancelling the upsert at the deadline bounds when the last request is
-sent, whatever the vector store does inside one call. A request already
-sent may still land; d covers it.
+The vector store's partition deletion rests on the same bound for its own
+retention. The deployment keeps R above ten times T, with a margin for d.
 
 A claim's renewal holds its record's row, so the forget's cascade waits
 for a renewal in progress: a renewal either commits before the forget or
@@ -145,8 +143,7 @@ A recovery opens the vector store partition under the partition's key
 before renewing its claim, and the renewal checks that the partition it
 claimed from still exists: since deletion removes the segment store's
 partition first, the vector store partition it opened belongs to the same
-life. Embedding before the budget starts lets a recovery take as long to
-embed as an ingest does.
+life.
 
 No transactions on PostgreSQL can wait on each other in a cycle, since
 each is one of five kinds:
@@ -239,8 +236,11 @@ erasure. Removing any one piece above breaks one of them.
 - **Store-side fences** (expiring credentials, insert-only markers). They
   are checked only at admission, so an admitted write still lands late.
 - **One owner per tenant.** A paused former owner is the same problem as a
-  paused writer, and the stores cannot reject its writes, so the deadline
-  and the tombstones stay; ownership adds routing, leases and failover.
+  paused process mid-write, and the stores cannot reject its writes, so
+  the tombstones and R stay; ownership adds routing, leases and failover.
+- **A deadline of event memory's own**, cancelling the upsert when it
+  passes. It bounds the call whatever its client's timeouts, but needs
+  every vector store to be safe to cancel mid-call.
 - **Leave every index write to the background work**, the outbox's relay
   alone. One path writes the indexes, but every event waits for a claim,
   and ingest runs at the background work's claim rate rather than with
@@ -264,5 +264,6 @@ erasure. Removing any one piece above breaks one of them.
   outages in its backoff. A record or tombstone that keeps failing is
   reported and kept, with a tombstone's derivative UUIDs, and needs an
   operator to retry it.
-- A process paused for about R or longer after its budget starts, and a
-  restore of SQL from a backup, are outside this design.
+- A process paused for about R or longer between storing or renewing and
+  its write's requests, and a restore of SQL from a backup, are outside
+  this design.

@@ -167,36 +167,6 @@ async def test_a_failed_upsert_leaves_the_events_stored_and_their_derivatives_pe
     assert set(linked) == {derivative.uuid for derivative in derivatives}
 
 
-async def test_an_upsert_outlasting_the_write_budget_is_cancelled(
-    fake_segment_store_partition: InMemorySegmentStorePartition,
-    vector_store_partition: _FailingVectorStorePartition,
-    store_schema: VectorStoreSchema,
-    fake_embedder,
-):
-    segment_store = create_autospec(SegmentStore, instance=True)
-    segment_store.open_or_create_partition.return_value = fake_segment_store_partition
-    vector_store = create_autospec(VectorStore, instance=True)
-    vector_store.store_schema = store_schema
-    vector_store.open_or_create_partition.return_value = vector_store_partition
-    event_memory = EventMemory(
-        EventMemoryParams(
-            segment_store=segment_store,
-            vector_store=vector_store,
-            segmenter=TextSegmenter(),
-            deriver=WholeTextDeriver(),
-            embedder=fake_embedder,
-            write_budget_seconds=1,
-        )
-    )
-    partition = await event_memory.open_or_create_partition("partition")
-    vector_store_partition.upsert_delay_seconds = 30
-
-    await asyncio.wait_for(partition.encode_events([_event("hello")]), timeout=10)
-
-    assert vector_store_partition.records == {}
-    assert len(fake_segment_store_partition.indexing_jobs) == 1
-
-
 async def test_an_encode_whose_partition_is_deleted_while_it_writes_raises(
     partition: EventMemoryPartition,
     vector_store_partition: _FailingVectorStorePartition,
@@ -631,7 +601,6 @@ def _hooked_event_memory(
     vector_store_partition: _FailingVectorStorePartition,
     store_schema: VectorStoreSchema,
     embedder: _HookedEmbedder,
-    **params,
 ) -> EventMemory:
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = store_schema
@@ -644,39 +613,8 @@ def _hooked_event_memory(
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=embedder,
-            **params,
         )
     )
-
-
-async def test_background_work_embeds_before_its_write_budget_starts(
-    segment_store: SQLAlchemySegmentStore,
-    vector_store_partition: _FailingVectorStorePartition,
-    store_schema: VectorStoreSchema,
-    sqlalchemy_sqlite_engine: AsyncEngine,
-):
-    embedder = _HookedEmbedder()
-    event_memory = _hooked_event_memory(
-        segment_store,
-        vector_store_partition,
-        store_schema,
-        embedder,
-        write_budget_seconds=1,
-    )
-    partition = await event_memory.open_or_create_partition("partition")
-    vector_store_partition.fail_upserts = True
-    await partition.encode_events([_event("hello")])
-    vector_store_partition.fail_upserts = False
-    await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
-
-    async def embed_slower_than_the_budget() -> None:
-        await asyncio.sleep(1.5)
-
-    embedder.hook = embed_slower_than_the_budget
-    assert await event_memory._run_indexing_job()
-
-    assert len(vector_store_partition.records) == 1
-    assert not await event_memory._run_indexing_job()
 
 
 async def test_a_forget_while_the_background_work_embeds_ends_its_write(
