@@ -362,15 +362,20 @@ async def test_close_cancels_segment_store_purge_tasks(
 async def test_get_event_memory_builds_one_event_memory_and_runs_its_jobs_until_close(
     invalid_resource_manager, monkeypatch
 ):
-    """Concurrent first accesses build the deployment's EventMemory once, and close() ends its jobs."""
+    """Concurrent first accesses build the deployment's EventMemory once, and close() ends both kinds of its jobs."""
     event_memory = create_autospec(EventMemory, instance=True)
-    ran = asyncio.Event()
+    indexed = asyncio.Event()
+    purged = asyncio.Event()
 
-    async def idle_round() -> bool:
-        ran.set()
-        return False
+    def idle_job(ran: asyncio.Event):
+        async def job() -> bool:
+            ran.set()
+            return False
 
-    event_memory.run_background_jobs.side_effect = idle_round
+        return job
+
+    event_memory.index_pending_events.side_effect = idle_job(indexed)
+    event_memory.purge_forgotten_events.side_effect = idle_job(purged)
     build = AsyncMock(return_value=event_memory)
     monkeypatch.setattr(resource_manager_module, "event_memory_from_config", build)
 
@@ -378,40 +383,39 @@ async def test_get_event_memory_builds_one_event_memory_and_runs_its_jobs_until_
         invalid_resource_manager.get_event_memory(),
         invalid_resource_manager.get_event_memory(),
     )
-    await asyncio.wait_for(ran.wait(), 5)
+    await asyncio.wait_for(asyncio.gather(indexed.wait(), purged.wait()), 5)
     jobs = invalid_resource_manager._event_memory_jobs
 
     await invalid_resource_manager.close()
 
     assert handed_out == [event_memory, event_memory]
     build.assert_awaited_once_with(invalid_resource_manager)
-    assert jobs is not None
-    assert jobs.cancelled()
+    assert len(jobs) == 2
+    assert all(job.cancelled() for job in jobs)
 
 
 @pytest.mark.asyncio
-async def test_event_memory_jobs_loop_survives_a_failing_round(monkeypatch):
-    """The loop keeps running rounds past one that raised."""
+async def test_event_memory_jobs_loop_survives_a_failing_call(monkeypatch):
+    """The loop keeps running jobs past a call that raised."""
     monkeypatch.setattr(
         resource_manager_module, "_EVENT_MEMORY_JOBS_INTERVAL_SECONDS", 0
     )
-    event_memory = create_autospec(EventMemory, instance=True)
     calls = 0
     third_call = asyncio.Event()
 
-    async def counting_round() -> bool:
+    async def counting_job() -> bool:
         nonlocal calls
         calls += 1
         if calls == 2:
-            raise ConnectionError("dropped mid-round")
+            raise ConnectionError("dropped mid-job")
         if calls >= 3:
             third_call.set()
         return False
 
-    event_memory.run_background_jobs.side_effect = counting_round
-
     task = asyncio.create_task(
-        resource_manager_module._run_event_memory_jobs_forever(event_memory)
+        resource_manager_module._run_event_memory_jobs_forever(
+            counting_job, "indexing of pending events"
+        )
     )
     await asyncio.wait_for(third_call.wait(), 5)
     task.cancel()
@@ -420,18 +424,17 @@ async def test_event_memory_jobs_loop_survives_a_failing_round(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_event_memory_jobs_loop_runs_the_next_round_at_once_after_one_that_ran_jobs(
+async def test_event_memory_jobs_loop_runs_the_next_job_at_once_after_one_ran(
     monkeypatch,
 ):
-    """A round that ran jobs is followed by the next without the interval."""
+    """A call that ran a job is followed by the next without the interval."""
     monkeypatch.setattr(
         resource_manager_module, "_EVENT_MEMORY_JOBS_INTERVAL_SECONDS", 3600
     )
-    event_memory = create_autospec(EventMemory, instance=True)
     calls = 0
     third_call = asyncio.Event()
 
-    async def busy_round() -> bool:
+    async def busy_job() -> bool:
         nonlocal calls
         calls += 1
         if calls >= 3:
@@ -439,10 +442,10 @@ async def test_event_memory_jobs_loop_runs_the_next_round_at_once_after_one_that
             return False
         return True
 
-    event_memory.run_background_jobs.side_effect = busy_round
-
     task = asyncio.create_task(
-        resource_manager_module._run_event_memory_jobs_forever(event_memory)
+        resource_manager_module._run_event_memory_jobs_forever(
+            busy_job, "indexing of pending events"
+        )
     )
     await asyncio.wait_for(third_call.wait(), 5)
     task.cancel()

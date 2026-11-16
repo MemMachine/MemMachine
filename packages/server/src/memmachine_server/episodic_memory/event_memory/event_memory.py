@@ -165,8 +165,9 @@ class EventMemory:
     A partition key names one partition in each store, and must be valid
     in both. Handles on a partition read and write that pair only.
 
-    Its background jobs, which `run_background_jobs` runs a round at a
-    time, finish what its partitions' ingests and forgets leave undone:
+    Its background jobs, which `index_pending_events` and
+    `purge_forgotten_events` each run one at a time, finish what its
+    partitions' ingests and forgets leave undone:
     derivatives whose ingest stopped before the vector store had them, and
     the deletes of forgotten derivatives from the vector store, once after
     the forget and again after the segment store's retention. Any number of
@@ -262,21 +263,17 @@ class EventMemory:
         await self._params.segment_store.delete_partition(partition_key)
         await self._params.vector_store.delete_partition(partition_key)
 
-    async def run_background_jobs(self) -> bool:
+    async def index_pending_events(self) -> bool:
         """
-        Run one due indexing job and one due tombstone delete, if any; whether either was due.
+        Write one pending segment's derivatives to the vector store, if its indexing job is due; whether one was.
 
-        A job whose embedder or vector store call fails is logged and
-        recorded on its claim, which backs it off; a segment store failure
-        raises. When and how often to call this is the caller's policy. Safe
-        to call from several processes at once over the same stores.
+        A segment is pending while its indexing job stands: its ingest did
+        not write its derivatives. A write whose embedder or vector store
+        call fails is logged and recorded on the claim, which backs the job
+        off; a segment store failure raises. When and how often to call this
+        is the caller's policy. Safe to call from several processes at once
+        over the same stores.
         """
-        ran_indexing_job = await self._run_indexing_job()
-        deleted_tombstoned_derivatives = await self._delete_tombstoned_derivatives()
-        return ran_indexing_job or deleted_tombstoned_derivatives
-
-    async def _run_indexing_job(self) -> bool:
-        """Write one claimed indexing job's derivatives to the vector store; whether one was claimed."""
         claim = await self._params.segment_store.claim_indexing_job(
             lease_seconds=self._params.indexing_job_lease_seconds,
         )
@@ -331,8 +328,15 @@ class EventMemory:
         )
         return True
 
-    async def _delete_tombstoned_derivatives(self) -> bool:
-        """Delete one claimed tombstone's derivatives from the vector store; whether one was claimed."""
+    async def purge_forgotten_events(self) -> bool:
+        """
+        Delete one forgotten segment's derivatives from the vector store, for its tombstone's first or second delete, if one is due; whether one was.
+
+        A delete whose vector store call fails is logged and recorded on the
+        claim, which backs the tombstone off; a segment store failure
+        raises. When and how often to call this is the caller's policy. Safe
+        to call from several processes at once over the same stores.
+        """
         claim = await self._params.segment_store.claim_tombstone(
             lease_seconds=self._params.tombstone_lease_seconds
         )

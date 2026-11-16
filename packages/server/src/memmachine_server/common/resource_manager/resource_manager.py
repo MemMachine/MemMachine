@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from asyncio import Lock
+from collections.abc import Awaitable, Callable
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -122,21 +123,23 @@ async def _purge_deleted_vector_store_partitions_forever(
         )
 
 
-async def _run_event_memory_jobs_forever(event_memory: EventMemory) -> None:
-    """Run the EventMemory's background jobs for as long as the task runs.
+async def _run_event_memory_jobs_forever(
+    run_job: Callable[[], Awaitable[bool]], label: str
+) -> None:
+    """Run one kind of the EventMemory's background jobs for as long as the task runs.
 
-    A round that found jobs is followed by the next at once: each job's
+    A call that ran a job is followed by the next at once: a job's
     transactions lock one row, and its embedder and vector store calls hold
-    none, so request serving gets the database between them. A round that
-    found none is followed after the interval, and one that raised is
+    none, so request serving gets the database between them. A call that
+    found none due is followed after the interval, and one that raised is
     logged and retried a tick later. Other processes may run the same jobs
     at the same time.
     """
     while True:
         try:
-            ran = await event_memory.run_background_jobs()
+            ran = await run_job()
         except Exception:
-            logger.exception("Event memory background jobs failed; retrying next tick")
+            logger.exception("Event memory %s failed; retrying next tick", label)
             ran = False
         if not ran:
             await asyncio.sleep(_EVENT_MEMORY_JOBS_INTERVAL_SECONDS)
@@ -171,7 +174,7 @@ class ResourceManagerImpl:
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
         self._event_memory: EventMemory | None = None
-        self._event_memory_jobs: asyncio.Task[None] | None = None
+        self._event_memory_jobs: list[asyncio.Task[None]] = []
         self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
         # One sweeper per store, keyed by its vector store id and its name.
         self._vector_store_purge_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
@@ -201,11 +204,11 @@ class ResourceManagerImpl:
         """Close resources and clean up state."""
         # The EventMemory's background jobs use the stores closed below.
         event_memory_jobs = self._event_memory_jobs
-        self._event_memory_jobs = None
+        self._event_memory_jobs = []
         self._event_memory = None
-        if event_memory_jobs is not None:
-            event_memory_jobs.cancel()
-            await asyncio.gather(event_memory_jobs, return_exceptions=True)
+        for event_memory_job in event_memory_jobs:
+            event_memory_job.cancel()
+        await asyncio.gather(*event_memory_jobs, return_exceptions=True)
 
         purge_tasks = list(self._segment_store_purge_tasks)
         self._segment_store_purge_tasks.clear()
@@ -301,9 +304,21 @@ class ResourceManagerImpl:
             async with self._event_memory_lock:
                 if self._event_memory is None:
                     event_memory = await event_memory_from_config(self)
-                    self._event_memory_jobs = asyncio.create_task(
-                        _run_event_memory_jobs_forever(event_memory)
-                    )
+                    self._event_memory_jobs = [
+                        asyncio.create_task(
+                            _run_event_memory_jobs_forever(run_job, label)
+                        )
+                        for run_job, label in (
+                            (
+                                event_memory.index_pending_events,
+                                "indexing of pending events",
+                            ),
+                            (
+                                event_memory.purge_forgotten_events,
+                                "purge of forgotten events",
+                            ),
+                        )
+                    ]
                     self._event_memory = event_memory
         return self._event_memory
 

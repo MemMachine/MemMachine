@@ -353,12 +353,12 @@ async def test_background_work_writes_the_derivatives_an_encode_left_pending(
     await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
 
-    assert not await event_memory._run_indexing_job()
+    assert not await event_memory.index_pending_events()
     await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
-    assert await event_memory._run_indexing_job()
+    assert await event_memory.index_pending_events()
 
     assert len(vector_store_partition.records) == 1
-    assert not await event_memory._run_indexing_job()
+    assert not await event_memory.index_pending_events()
     result = await partition.query("hello")
     assert len(result.scored_segment_contexts) == 1
 
@@ -373,10 +373,10 @@ async def test_background_work_retries_indexing_jobs_after_a_failed_write(
     await partition.encode_events([_event("hello")])
     await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
-    assert await event_memory._run_indexing_job()
+    assert await event_memory.index_pending_events()
     assert vector_store_partition.records == {}
     # In its backoff now.
-    assert not await event_memory._run_indexing_job()
+    assert not await event_memory.index_pending_events()
 
 
 async def test_background_work_deletes_a_forgotten_events_vectors_twice(
@@ -390,13 +390,13 @@ async def test_background_work_deletes_a_forgotten_events_vectors_twice(
     await partition.forget_events([event.uuid])
     assert len(vector_store_partition.records) == 1
 
-    assert await event_memory._delete_tombstoned_derivatives()
+    assert await event_memory.purge_forgotten_events()
     assert vector_store_partition.records == {}
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 1
-    assert not await event_memory._delete_tombstoned_derivatives()
+    assert not await event_memory.purge_forgotten_events()
 
     await _age_tombstones(sqlalchemy_sqlite_engine, timedelta(days=2))
-    assert await event_memory._delete_tombstoned_derivatives()
+    assert await event_memory.purge_forgotten_events()
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 0
 
 
@@ -413,9 +413,9 @@ async def test_an_event_encoded_again_right_after_its_forget_keeps_its_new_vecto
     [forgotten_record_uuid] = vector_store_partition.records
 
     await partition.encode_events([event])
-    assert await event_memory._delete_tombstoned_derivatives()
+    assert await event_memory.purge_forgotten_events()
     await _age_tombstones(sqlalchemy_sqlite_engine, timedelta(days=2))
-    assert await event_memory._delete_tombstoned_derivatives()
+    assert await event_memory.purge_forgotten_events()
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 0
 
     assert len(vector_store_partition.records) == 1
@@ -441,7 +441,7 @@ async def test_a_forget_ends_the_derivatives_pending_with_it(
     await partition.forget_events([event.uuid])
     await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
-    assert not await event_memory._run_indexing_job()
+    assert not await event_memory.index_pending_events()
     assert vector_store_partition.records == {}
 
 
@@ -503,21 +503,7 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
         await partition.forget_events([event.uuid])
 
     embedder.hook = forget_the_event
-    assert await event_memory._run_indexing_job()
+    assert await event_memory.index_pending_events()
 
     assert vector_store_partition.records == {}
-    assert not await event_memory._run_indexing_job()
-
-
-async def test_a_round_of_background_jobs_runs_what_is_due_and_reports_it(
-    event_memory: EventMemory,
-    vector_store_partition: _FailingVectorStorePartition,
-):
-    partition = await event_memory.open_or_create_partition("partition")
-    event = _event("hello")
-    await partition.encode_events([event])
-    await partition.forget_events([event.uuid])
-
-    assert await event_memory.run_background_jobs()
-    assert vector_store_partition.records == {}
-    assert not await event_memory.run_background_jobs()
+    assert not await event_memory.index_pending_events()
