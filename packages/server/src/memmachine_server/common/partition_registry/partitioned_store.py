@@ -13,11 +13,12 @@ class PartitionedStore[PartitionT](ABC):
     A store whose records are divided into partitions, each identified by the UUID its owner's partition registry mints.
 
     The store holds no partition names and decides nothing about which
-    partition is live. Its registry calls these methods, for each partition:
-    `create_partition` once, before it confirms the partition, and
-    `get_partition` whenever it answers the partition; then, once the
-    partition is deleted or its creation cancelled and the retention has
-    passed, `purge_partition` until it returns False, then `drop_partition`.
+    partition is live. Its owner calls these methods, for each partition:
+    `create_partition` once, in the step the registry runs before it confirms
+    the partition, and `get_partition` whenever the owner answers the
+    partition; then, once the partition is deleted or its creation cancelled
+    and the retention has passed, in the purge rounds the registry runs,
+    `purge_partition` until it returns False, then `drop_partition`.
     Partitions are isolated from one another, including partitions created
     under the same name: records written to one are never read from another.
     """

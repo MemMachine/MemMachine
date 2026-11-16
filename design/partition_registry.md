@@ -56,64 +56,61 @@ another, including partitions created under the same name: records written
 to one are never read from another, so a name created again starts empty in
 every store.
 
-The registry also drives each partition's lifecycle in the namespace's
-store: it creates the partition in the store before confirming it, answers
-the store's handle on a live partition, and once the partition is deleted,
-its purge rounds purge it from the store and then drop it. Every store
-implements one interface for those steps, so the order of the steps is
-written once, in the registry, for every memory system. The registry
-addresses partitions by name as the store addresses them by UUID. A memory
-system whose records span several stores composes them into one store, which
-runs each step on the stores it holds.
+The registry also orders each partition's lifecycle, and the memory system
+supplies the steps that act on its stores: the registry runs the creation of
+the partition's storage before confirming the partition, and once the
+partition is deleted, runs its purge rounds, which purge it from the stores
+and then drop it. Every store implements one interface for those steps, and
+the registry writes once, for every memory system, where they run: between
+reserving and confirming a partition, and under a purge round's claim. The
+registry addresses partitions by name as the stores address them by UUID,
+and holds no store: the memory system holds its stores and its registry side
+by side.
 
 ### Roles
 
 - **The registry** belongs to one *partition namespace*: the partitions of one
-  memory system, such as `event_memory`, shared by every process serving it,
-  and is built over the store that holds the namespace's partitions. It
-  arbitrates creation, creates each partition in the store, answers the
-  store's handle on a live partition with its registration, makes deletion one
-  transaction, queues each deleted partition as a tombstone, and runs purge
-  rounds on due tombstones, which purge and then drop the partition in the
-  store. It knows partition names, UUIDs, and tombstones, and of the store
-  only the `PartitionedStore` interface. `PartitionRegistry`
-  (`common/partition_registry/`) is the ABC; its creation, lookup, and purge
-  rounds are written in it, over the catalog steps an implementation supplies,
-  and `SQLAlchemyPartitionRegistry` is its one implementation. It supports
+  memory system, such as `event_memory`, shared by every process serving it.
+  It arbitrates creation, runs the owner's creation of a partition's storage
+  between reserving the name and confirming it, answers a live partition's
+  registration, makes deletion one transaction, queues each deleted partition
+  as a tombstone, and runs the owner's purge round on each due tombstone. It
+  knows partition names, UUIDs, and tombstones, and of the stores nothing:
+  the owner's steps take a partition's UUID. `PartitionRegistry`
+  (`common/partition_registry/`) is the ABC; its creation and lookup are
+  written in it, over the catalog steps an implementation supplies, and
+  `SQLAlchemyPartitionRegistry` is its one implementation. It supports
   PostgreSQL and SQLite 3.35 or newer (for `RETURNING`), and its params refuse
   any other dialect or an older SQLite.
 - **The owner** is the memory system, the concept the registry binds to. It
-  holds its store and its registry, creates, gets, and deletes partitions by
-  name through the registry, builds its handle on a live partition from the
-  partition's registration, which carries the store's handle, and fences its
-  operations.
+  holds its stores and its registry, creates, gets, and deletes partitions by
+  name through the registry, supplies the creation of a partition's storage
+  and the purge round, builds its handle on a live partition from the
+  partition's registration and its stores' handles on the partition's UUID,
+  and fences its operations.
 - **A store** is a `PartitionedStore`: it holds records under partition UUIDs,
   creates the storage a partition keeps for itself, gets a handle on a
   partition, purges a deleted partition's records from storage it shares
-  with other partitions, and drops the partition's own storage, each when the
-  registry calls it. Nothing in the registry assumes how a backend lays
-  records out. Qdrant and Milvus keep every
+  with other partitions, and drops the partition's own storage, each when its
+  owner calls it. Nothing in the registry assumes how a backend lays records
+  out. Qdrant and Milvus keep every
   partition of a store in its one native collection, so a partition has no
   storage of its own to create or drop. A backend with a unit per tenant,
   such as a Pinecone or turbopuffer namespace, a Chroma collection, or a
   Weaviate tenant, makes the partition's unit when it creates the
   partition, which runs after the reservation that mints the UUID naming it,
   and removes it when it drops the partition.
-- **A composite store** is a `PartitionedStore` over several stores, for a
-  memory system whose records span them, such as `EventMemoryStore` over
-  event memory's segment store and vector store. It creates, purges, and
-  drops a partition in every store it holds, and its handle on a partition
-  holds every store's handle.
 - **`Reservation` and `Registration`** are handles on one partition (see
   [Reservations and registrations](#reservations-and-registrations)).
-- **Whoever builds the registry owns its lifecycle.** It builds the registry
-  over the owner's store, starts it, runs its purge rounds, and hands it over
-  started to whoever builds the owner. The resource manager does this for
-  event memory and semantic memory: it answers every request with a registry
-  over the store the request names, and starts a namespace's registry, with
-  its purge rounds, on the first request for it. The owner never starts or
-  stops it: an owner that started a registry it was given would own a
-  lifecycle it does not control.
+- **Whoever builds the registry owns its lifecycle.** It builds the registry,
+  starts it, runs its purge rounds with the owner's purge round over the
+  owner's stores, and hands it over started to whoever builds the owner, with
+  the same stores. The resource manager does this for event memory and
+  semantic memory: it answers every request with a registry of the namespace
+  the request names, and starts a namespace's registry, with its purge rounds
+  by the request's purge round, on the first request for it. The owner never
+  starts or stops it: an owner that started a registry it was given would own
+  a lifecycle it does not control.
 
 Memory systems do not share a partition namespace, and nothing ties one
 memory system's registry to another's. The registries of every namespace
@@ -130,28 +127,34 @@ for that alone.
 ### Interface
 
 ```python
-class PartitionRegistry[PartitionT](ABC):
-    def __init__(self, partitioned_store: PartitionedStore[PartitionT]) -> None: ...
+type PurgeRound = Callable[[UUID], Awaitable[bool]]
+
+
+class PartitionRegistry(ABC):
     @property
     def partition_namespace(self) -> str: ...
     async def startup(self) -> None: ...
     async def create_partition(
-        self, partition_name: str
-    ) -> Registration[PartitionT]: ...
-    async def get_partition(
-        self, partition_name: str
-    ) -> Registration[PartitionT] | None: ...
+        self,
+        partition_name: str,
+        create_partition_storage: Callable[[UUID], Awaitable[None]],
+    ) -> Registration: ...
+    async def get_partition(self, partition_name: str) -> Registration | None: ...
     async def delete_partition(self, partition_name: str) -> None: ...
-    async def run_purge_round(self) -> bool: ...
 
     # Supplied by an implementation.
+    async def run_purge_round(self, purge_round: PurgeRound) -> bool: ...
     async def _reserve(self, partition_name: str) -> Reservation: ...
     async def _resolve(self, partition_name: str) -> UUID | None: ...
     def _registration(
-        self, partition_name: str, partition_uuid: UUID, partition: PartitionT
-    ) -> Registration[PartitionT]: ...
+        self, partition_name: str, partition_uuid: UUID
+    ) -> Registration: ...
     async def _unregister(self, partition_name: str) -> None: ...
-    async def _run_purge_round(self, purge_round: PurgeRound) -> bool: ...
+
+
+def single_store_purge_round[PartitionT](
+    partitioned_store: PartitionedStore[PartitionT],
+) -> PurgeRound: ...
 
 
 class Reservation:  # partition_name, partition_uuid
@@ -159,7 +162,7 @@ class Reservation:  # partition_name, partition_uuid
     async def cancel(self) -> None: ...
 
 
-class Registration[PartitionT]:  # partition_name, partition_uuid, partition
+class Registration:  # partition_name, partition_uuid
     async def require_current(self) -> None: ...
 
 
@@ -186,6 +189,12 @@ any records still in it, and is idempotent. A store that keeps a
 partition's records only in storage of its own finds nothing to purge and
 removes them when it drops the partition.
 
+The owner's steps take a partition's UUID. `create_partition_storage` runs
+its stores' `create_partition`, and a purge round runs their
+`purge_partition` and, once none finds records, their `drop_partition`,
+answering whether any found records. `single_store_purge_round` is the purge
+round of an owner with one store.
+
 Deletion is the registry's, and a store deletes a partition's storage only in
 its purge rounds, after the retention, so a write still in flight cannot land
 after the deletion and outlive it, even on a backend that creates storage on
@@ -210,9 +219,7 @@ registration.
   caller would carry the UUID the reservation minted back into later calls,
   where any UUID fits: another partition's, a deleted one's, or one compared
   by hand against a lookup. On a handle, the UUID is bound once, when the
-  registry answers the handle, and no call takes it again. A registration
-  also carries the store's handle on the partition, so its holder reaches the
-  partition's records without passing the UUID anywhere.
+  registry answers the handle, and no call takes it again.
 - **Why two types.** What may be done with a partition depends on who holds
   it. Only its creation, holding the reservation, confirms or cancels it; a
   registration is checked, and its partition is deleted only by name. With one
@@ -221,10 +228,11 @@ registration.
   path every deletion goes through. With two, each type offers its holder's
   operations and nothing else, and the wrong call is a type error.
 - **Why the reservation stays inside the registry.** Creation is reserve,
-  create in the store, then confirm, or cancel when a step fails. A caller
-  that held the reservation could confirm a partition the store never created,
-  or skip the cancel; with the steps in `create_partition`, every creation
-  takes them in order.
+  create the partition's storage, then confirm, or cancel when a step fails.
+  A caller that held the reservation could confirm a partition whose storage
+  was never created, or skip the cancel; with the steps in `create_partition`,
+  which takes the storage creation as an argument, every creation takes them
+  in order.
 - **Why role names, not state names.** A partition moves from pending to
   live only through its reservation's own `confirm`, but any caller can
   delete it at any time, through either handle's back. A name that states
@@ -234,8 +242,8 @@ registration.
   known patterns: Try-Confirm/Cancel for the creation (reserve, then confirm
   or cancel), and the stale handle for everyone else (`require_current`,
   `PartitionDeletedError`).
-- **Why no state fields.** A handle's fields (partition name and UUID, and a
-  registration's store handle) belong to its partition and never change.
+- **Why no state fields.** A handle's fields (partition name and UUID) belong
+  to its partition and never change.
   Whether the partition is pending, live, or deleted changes under every
   holder: a `live` field would be a snapshot, made stale by the creation's own
   `confirm`. The state is conveyed instead by the outcome of each call.
@@ -246,7 +254,8 @@ registration.
   trip to the registry and the fence one.
 - **What each part gains.** The registry's public operations on a partition
   are all addressed by name. An owner's handle on a tenant is built from one
-  registration, and its fence is one call.
+  registration and its stores' handles on the registration's UUID, and its
+  fence is one call.
 
 ### Names and UUIDs
 
@@ -316,19 +325,18 @@ times, then `PartitionCreateAttemptsExhaustedError`.
 **`Reservation.confirm()`** marks the row live with an `UPDATE` conditional on
 the reservation's UUID, which is unique, and on the row being pending; it
 raises `PartitionDeletedError` when it matches nothing. A creation whose
-partition was deleted while the store created it matches nothing, so it cannot
-confirm a partition reserved under the name since.
+partition was deleted while its storage was created matches nothing, so it
+cannot confirm a partition reserved under the name since.
 
 **`get_partition(partition_name)`** reads the partition's row once
 (`_resolve`) and answers by its state: `PartitionPendingError`, with when the
-partition was reserved, when it is pending, and `None` when there is none.
-For a live partition it gets the store's handle on the partition's UUID and
-answers a `Registration` carrying it. A store that finds nothing under the
-UUID answers for a partition deleted, and dropped from it, after the read, so
-the call answers `None`: no partition held the name once the deletion
-committed. It is how an owner gets a handle: callers address
-partitions by name, and the name is resolved to a live partition's UUID
-once, when the handle is built.
+partition was reserved, when it is pending, `None` when there is none, and a
+`Registration` for a live partition. It is how an owner gets a handle:
+callers address partitions by name, and the name is resolved to a live
+partition's UUID once, when the handle is built. The owner then gets its
+stores' handles on the UUID; a store that finds nothing under it answers for
+a partition deleted, and dropped from it, after the read, so the owner
+answers `None`: no partition held the name once the deletion committed.
 
 **`Registration.require_current()`** reads the row under the registration's
 name and raises `PartitionDeletedError` unless it carries the registration's
@@ -338,25 +346,26 @@ UUID. It is how a handle is fenced (see [Fencing](#fencing)).
 `DELETE ... RETURNING` the partition's row, pending or live, then insert its
 tombstone with `enqueued_at = now()`. The partition is unreachable when it
 commits. **`Reservation.cancel()`** does the same for the row carrying the
-reservation's UUID while it is pending: a creation whose store step raised
+reservation's UUID while it is pending: a creation whose storage step raised
 takes back its own reservation that way, never one made under the name since,
 and never its partition once confirmed, which only a deletion by name ends,
 even when the confirmation committed but its answer was lost. Racing deleters
 serialize on the row's write lock and the loser deletes nothing, on PostgreSQL
 and SQLite alike, so a deletion is idempotent and queues one tombstone.
 
-**`run_purge_round()`** is described in [Deletion and
+**`run_purge_round(purge_round)`** is described in [Deletion and
 purge](#deletion-and-purge) and [purge](vector_store_purge.md).
 
 ### Creation
 
-`create_partition(partition_name)` is *reserved, created, then confirmed*. It
-reserves the name, which mints the UUID and leaves the partition pending,
-calls the store's `create_partition`, confirms the reservation, which makes
-the partition live, and answers a registration carrying the store's handle on
-the partition. When the store's call raises, the registry cancels the
-reservation and raises the store's own exception. Nothing gets the partition
-before it is confirmed.
+`create_partition(partition_name, create_partition_storage)` is *reserved,
+created, then confirmed*. It reserves the name, which mints the UUID and
+leaves the partition pending, runs the owner's `create_partition_storage` on
+the UUID, confirms the reservation, which makes the partition live, and
+answers the partition's registration; the owner then gets its stores'
+handles on the partition. When the storage step raises, the registry cancels
+the reservation and raises the step's own exception. Nothing gets the
+partition before it is confirmed.
 
 - The registry's primary key is the one arbiter: a racing creator on any
   process loses at the reservation, never in a backend.
@@ -364,14 +373,14 @@ before it is confirmed.
   raises `PartitionPendingError`, which says since when it has been pending,
   and a creation under the name raises `PartitionAlreadyExistsError`. `None`
   from `get_partition` means only that no partition holds the name.
-- A store step or confirmation that raises, or is cancelled, cancels the
+- A storage step or confirmation that raises, or is cancelled, cancels the
   reservation when the registry can, which frees the name and queues the
   partition's tombstone; a confirmation that committed before its failure
   was observed stands, since the cancel acts only on a pending partition. The
   reservation's cancellation is shielded, so a cancellation of the creation
   does not cut it short. Otherwise, and after a crash, the partition stays
   pending until it is deleted like any other.
-- A partition is confirmed only once the store has created it, so storage
+- A partition is confirmed only once its storage is created, so storage
   that cannot be created never goes live. Whatever a failed or interrupted
   creation leaves is recoverable: the partition's purge rounds reclaim its
   storage once it is cancelled or deleted. Every creation makes a new
@@ -380,9 +389,11 @@ before it is confirmed.
   step idempotent, so a startup that failed part way is completed by the
   next (the [Qdrant](qdrant_vector_store.md) and
   [Milvus](milvus_vector_store.md) documents say how).
-- A partition deleted while the store creates it is not marked live, since
+- A partition deleted while its storage is created is not marked live, since
   the mark is conditional on its UUID: the creation raises
-  `PartitionDeletedError`.
+  `PartitionDeletedError`. So does the owner's creation when a store finds
+  nothing under the UUID once the partition is confirmed: the partition was
+  deleted and dropped since.
 
 Only creation creates. Getting a name reads the registry: a live partition is
 answered, and a pending one is reported as pending, which a caller that gets
@@ -397,8 +408,8 @@ composes the two itself, as read-then-create retried a bounded number of
 times: a live partition is answered; a pending one is another creator's, so
 the caller waits for it rather than creating; no partition means create; a
 creation that finds the name taken lost it to a racing creator; one that
-finds the partition deleted lost it to a racing deleter while the store
-created it, so the caller tries again. Once the attempts run out it raises
+finds the partition deleted lost it to a racing deleter while its storage
+was created, so the caller tries again. Once the attempts run out it raises
 `PartitionPendingError` if the last lookup found the partition pending, and
 `PartitionCreateAttemptsExhaustedError` otherwise. The server's service
 locator gets a session's event memory partition this way, and semantic
@@ -450,18 +461,19 @@ creation under the name mints a new UUID at once, so a re-created tenant
 starts empty.
 
 A tombstone comes due once the namespace's retention has passed since the
-deletion. A purge round claims it under a lease, with backoff and
-dead-lettering, and then works through the store in two steps. It runs the
-store's `purge_partition`; while that finds records, the round ends there and
-the tombstone stays due. Once it finds none, the round runs the store's
+deletion. `run_purge_round(purge_round)` claims it under a lease, with
+backoff and dead-lettering, and runs the owner's purge round on its UUID,
+which works through the owner's stores in two steps. It runs the stores'
+`purge_partition`; while any finds records, the round ends there and the
+tombstone stays due. Once none finds any, the round runs the stores'
 `drop_partition` and answers that it found nothing, and the registry deletes
 the tombstone. A step that raises fails the round, so the registry's backoff
 applies, and a later round purges and drops again. A store keeps whatever
 progress its purge needs between calls, such as the segment store's cursor,
 in the partition's own storage, which the drop removes. A namespace's rounds
-run through its registry's store: a round run through a store that cannot
-reach the records finds none, removes the tombstone, and leaves the records
-behind.
+run over the stores its owner writes to: a round run over a store that
+cannot reach the records finds none, removes the tombstone, and leaves the
+records behind.
 
 A tombstone's lease and backoff are stored as one `claimable_at`, the
 earliest time a claim may take it again: a claim sets it to its lease end
@@ -484,45 +496,47 @@ retention is fixed in its code.
 
 ### Event memory on the registry
 
-- Event memory's registry holds its partition namespace, over
-  `EventMemoryStore`, which composes event memory's two stores: the segment
-  store and the vector store, each holding a tenant's records under the
-  partition's UUID. The segment store keeps one row per partition, with its
-  payload codec configuration and, during its purge, its cursor, and no name.
-- `EventMemoryStore` creates, purges, and drops a partition in both stores
-  at once. Each such call finishes in every store before the outcome is
-  decided: when any raised, it logs each error and raises the first, so no
-  store is still creating storage when the registry cancels the reservation,
-  the caller sees a store's own exception, and the stores that answer keep
-  purging while another is down. Its purge finds records while either
-  store's does. Its handle on a partition pairs the segment store's handle
-  with the vector store's, and it answers `None` when either store finds
-  nothing under the UUID.
+- Event memory holds its two stores, the segment store and the vector store,
+  each holding a tenant's records under the partition's UUID, and its
+  namespace's registry. The segment store keeps one row per partition, with
+  its payload codec configuration and, during its purge, its cursor, and no
+  name.
+- Event memory's storage step creates a partition in both stores at once,
+  and its purge round purges a partition from both stores at once and, once
+  neither finds records, drops it from both at once. Each such step finishes
+  in every store before the outcome is decided: when any raised, it logs
+  each error and raises the first, so no store is still creating storage
+  when the registry cancels the reservation, the caller sees a store's own
+  exception, and the stores that answer keep purging while another is down.
 - Event memory's `create_partition`, `get_partition`, and `delete_partition`
   address its partitions by name through the registry, and the first two
-  answer event memory's handle on the partition. The service locator gets a
-  session's partition and creates it when no partition holds the name.
+  answer event memory's handle on the partition, which pairs the segment
+  store's handle with the vector store's; getting answers `None` when either
+  store finds nothing under the UUID. The service locator builds event
+  memory and its namespace's purge round over the same two stores, and gets
+  a session's partition, creating it when no partition holds the name.
 - Event memory's deployment configuration (`episodic_memory.long_term_memory`)
   names the registry's database (`partition_registry`, required for the
   event backend) and the retention (`tombstone_retention_seconds`), one of
   each for every session's partition.
-- A further derived index is a further store in `EventMemoryStore`, with no
-  schema change and no change to the registry.
+- A further derived index is a further store of event memory's, in its
+  storage step, purge round, and handle, with no schema change and no change
+  to the registry.
 
 Semantic memory's vector-store backend keeps the one partition it never
 deletes: it gets the partition named `semantic_memory` in the namespace
-`semantic_memory` through a registry over its vector store, creating it when
-no partition holds the name, as the service locator gets a session's, and
-builds its storage on the vector store's handle that the registration
-carries. The registry is in the SQL database semantic memory's vector
-backend uses, and the partition is never deleted, so semantic memory takes
-no setting for it: its retention is fixed in its code.
+`semantic_memory` through its registry, creating it with the vector store's
+`create_partition` when no partition holds the name, as the service locator
+gets a session's, and builds its storage on the vector store's handle on the
+registration's UUID. Its purge round is the vector store's
+(`single_store_purge_round`). The registry is in the SQL database semantic
+memory's vector backend uses, and the partition is never deleted, so
+semantic memory takes no setting for it: its retention is fixed in its code.
 
 ### Other owners
 
 The registry knows nothing of what owns a namespace, so any component that
-keeps tenants in one store, or in several composed into one, owns a
-namespace the same way.
+keeps tenants in one store or several owns a namespace the same way.
 
 ### Differences from a catalog beside the data
 
@@ -549,27 +563,27 @@ differs where a store is remote:
 - **One identity per partition, minted by the registry.** Every store holds
   a partition's records under its UUID, so no store's partition can outlive
   or predate another's, and no order between stores matters.
-- **The registry drives its store's steps.** Creation (reserve, create in
-  the store, confirm or cancel) and the purge round (purge, then drop) are
-  written once, in the registry, over the `PartitionedStore` interface, so no
-  owner repeats the sequence or its cancellation handling, and no owner can
-  miss or reorder a step. The registry depends on that interface alone: any
-  store that implements it works. A round that finds nothing in the store
-  proves the partition gone, so the registry tracks no per-store progress.
-- **One store per registry; a memory system with several composes them.**
-  The registry's operations are the store's, addressed by name instead of
-  UUID, and each registration carries the store's own handle, typed for that
-  store, so an owner never pairs a UUID with a store by hand. How several
-  stores run one step is the composite store's, which knows its stores; a
-  new store is one more store in the composite, and the registry is
-  unchanged.
+- **The registry orders the owner's steps.** Creation (reserve, create the
+  partition's storage, confirm or cancel) and the purge round's claim and
+  outcome are written once, in the registry, which takes the owner's steps
+  as arguments, so no owner repeats the sequence or its cancellation
+  handling, and no owner can miss or reorder a step. A round that finds
+  nothing in the owner's stores proves the partition gone, so the registry
+  tracks no per-store progress.
+- **The registry holds no store; the owner holds its stores beside it.** The
+  owner's stores and its registry are separate dependencies, and the owner
+  composes them: its steps run on its stores, and it builds its handle from
+  a registration and its stores' handles on the registration's UUID. How
+  several stores run one step is the owner's, which knows its stores; a new
+  store is one more store in the owner's steps and handle, and the registry
+  is unchanged. The owner's handle and its purge round must cover the same
+  stores, which whoever builds both ensures by building them from the same
+  store objects.
 - **Purge and drop are separate steps.** A purge deletes records from
   storage the partition shares with other partitions, over one call or many,
   until none remains; a drop removes the storage the partition keeps for
-  itself.
-  The registry drops only after the store's purge finds nothing, and a
-  composite store's purge finds nothing only when none of its stores' does,
-  so a round that drops proves the partition gone from every store.
+  itself. A purge round drops only after no store's purge finds records, so a
+  round that drops proves the partition gone from every store.
 - **The owner fences each operation by its registration.** One liveness and
   late-write mechanism serves every store, the registry can live in any
   database, and an operation pays one check before and one after its
@@ -609,17 +623,24 @@ differs where a store is remote:
   dead-lettering), which the segment store's single-transaction purge lacks,
   would be built again there; and a memory system without a segment store
   could not use it.
-- **Each owner sequences its stores' steps.** The registry would know no
-  stores: each owner would reserve, create in its stores, and confirm or
-  cancel, and supply a purge callback that runs its stores. Every owner then
-  repeats the sequence and its shielded cancellation, and one that misses or
-  reorders a step, such as confirming before every store has created the
-  partition, leaves the stores out of step.
+- **Each owner holds the reservation.** Each owner would reserve, create its
+  partition's storage, and confirm or cancel. Every owner then repeats the
+  sequence and its shielded cancellation, and one that misses or reorders a
+  step, such as confirming before every store has created the partition,
+  leaves the stores out of step.
+- **The registry over the owner's store.** The registry is built over one
+  `PartitionedStore`, runs its steps itself, and carries its handle in each
+  registration; an owner with several stores composes them into one store.
+  The namespace's binding to its store is then the registry's alone, and
+  nothing can pair the registry with another store. The owner then reaches
+  its stores through the registry, which wraps them, a composite store exists
+  for the registry alone, and an owner that reads anything else from its
+  stores, such as the vector store's schema, depends on the store and on the
+  registry over it.
 - **The registry over a list of stores**, running each step on every store
-  itself. Each store's handle has its own type, so the registry could answer
-  none of them: the owner would get each store's handle by the
-  registration's UUID, and how the stores run one step would be the
-  registry's, for stores it knows nothing of.
+  itself. How the stores run one step would then be the registry's, for
+  stores it knows nothing of, and each store's handle has its own type, so
+  the registry could answer none of them.
 - **Stores register handlers that the registry tracks per store.** The
   registry would record each store's progress for each partition. A round
   that finds nothing in any store already ends the partition, so per-store
@@ -666,6 +687,7 @@ differs where a store is remote:
   one primary-key lookup on the registry's database.
 - A deleted tenant's records stay physically until its purge, after the
   retention; they are unreachable from the deletion.
-- A store is used through its owner, which holds the registry, and the
-  registry alone creates, gets, purges, and drops its partitions.
+- A store is used through its owner, which holds the registry beside it and
+  creates, gets, purges, and drops the store's partitions at the places the
+  registry gives those steps.
 - Stores address partitions by UUID, not by name.

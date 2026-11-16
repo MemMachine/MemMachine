@@ -20,10 +20,11 @@ from memmachine_server.common.partition_registry import (
     PartitionDeletedError,
     PartitionPendingError,
     PartitionRegistry,
-    Registration,
+    single_store_purge_round,
 )
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import (
+    VectorStore,
     VectorStorePartition,
     VectorStoreSchema,
 )
@@ -201,28 +202,30 @@ class SemanticResourceManager:
             feature_store_name,
             partition_namespace=_PARTITION_NAMESPACE,
             tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
-            partitioned_store=vector_store,
+            purge_round=single_store_purge_round(vector_store),
         )
-        registration = await SemanticResourceManager._get_or_create_partition(
-            partition_registry
+        partition = await SemanticResourceManager._get_or_create_partition(
+            partition_registry, vector_store
         )
-        storage = VectorStoreSemanticStorage(sql_engine, registration.partition)
+        storage = VectorStoreSemanticStorage(sql_engine, partition)
         await storage.startup()
         return storage
 
     @staticmethod
     async def _get_or_create_partition(
-        partition_registry: PartitionRegistry[VectorStorePartition],
-    ) -> Registration[VectorStorePartition]:
+        partition_registry: PartitionRegistry,
+        vector_store: VectorStore,
+    ) -> VectorStorePartition:
         """
-        Answer the registration of semantic memory's partition, creating it if no partition holds its name.
+        Answer the vector store's handle on semantic memory's partition, creating the partition if no partition holds its name.
 
         Read-then-create, retried a bounded number of times: a live partition
         is answered; a pending one is another process's creation, so the call
-        waits for it; no partition means create; a creation that finds the
-        name taken lost it to another process meanwhile; and one that finds
-        the partition deleted lost it while the store created it, so the call
-        tries again.
+        waits for it; no partition means create. The call tries again when a
+        creation finds the name taken by another process meanwhile, or the
+        partition deleted while the store created it, and when the store
+        finds nothing under the partition's UUID: the partition was deleted
+        and dropped since.
         """
         pending_error: PartitionPendingError | None = None
         lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
@@ -235,13 +238,17 @@ class SemanticResourceManager:
                 pending_error = err
                 continue
             pending_error = None
-            if registration is not None:
-                return registration
-            try:
-                return await partition_registry.create_partition(_PARTITION_NAME)
-            except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
-                lost_race = err
-                continue
+            if registration is None:
+                try:
+                    registration = await partition_registry.create_partition(
+                        _PARTITION_NAME, vector_store.create_partition
+                    )
+                except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
+                    lost_race = err
+                    continue
+            partition = await vector_store.get_partition(registration.partition_uuid)
+            if partition is not None:
+                return partition
         # The last lookup found the partition pending.
         if pending_error is not None:
             raise pending_error

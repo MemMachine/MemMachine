@@ -144,8 +144,8 @@ class VectorStore(PartitionedStore[VectorStorePartition]):
     migration.
 
     The store holds each partition's records under the partition's UUID. Its
-    `PartitionedStore` methods create, get, purge, and drop partitions, which
-    its owner's partition registry drives.
+    `PartitionedStore` methods create, get, purge, and drop partitions, in the
+    lifecycle its owner's partition registry orders.
 
     Naming constraints:
         - Vector store names and property keys must match `[a-z0-9_]+`

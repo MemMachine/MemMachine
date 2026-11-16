@@ -82,7 +82,7 @@ removes the storage the partition keeps for itself. Qdrant and Milvus purge
 records (per backend, below) and have nothing to drop; both SQLite stores
 find nothing to purge and drop the partition's tables at once.
 
-`PartitionRegistry.run_purge_round()` returns whether it ran a round,
+`PartitionRegistry.run_purge_round(purge_round)` returns whether it ran a round,
 `False` once no due tombstone is claimable, so a caller drains the queue by
 calling it until `False`. A call is one round on the tombstone that came due
 first, and runs it in three steps:
@@ -97,10 +97,10 @@ first, and runs it in three steps:
    claim is taking and purgers on every process split a backlog without
    coordinating. SQLite drops the locking clause; there the claim's write
    serializes claims, for one statement.
-2. **Round.** With no transaction open, the registry runs its store's
-   `purge_partition` on the tombstone's partition, and once that finds
-   nothing, the store's `drop_partition`. The round answers whether any
-   purge found records (see [partition
+2. **Round.** With no transaction open, the registry runs the owner's purge
+   round on the tombstone's partition: the owner's stores' `purge_partition`,
+   and once none finds anything, their `drop_partition`. The round answers
+   whether any purge found records (see [partition
    registry](partition_registry.md#deletion-and-purge)).
 3. **Record.** In a short transaction: a round that found nothing removes the
    tombstone, which frees the UUID; a round that found records ends its
@@ -204,7 +204,8 @@ holds nothing: the store's purge finds nothing there.
 
 The store never schedules its own purge. The resource manager starts one
 sweeper task per partition registry the first time it builds the registry,
-and `close()` cancels them. A sweeper calls `run_purge_round()` again after
+with the owner's purge round that build is given, and `close()` cancels
+them. A sweeper calls `run_purge_round` again after
 1 s when it ran a round and after 60 s when it ran none; a round that raises
 is logged and retried a tick later. Sweepers on other processes need no
 coordination: the claim arbitrates.

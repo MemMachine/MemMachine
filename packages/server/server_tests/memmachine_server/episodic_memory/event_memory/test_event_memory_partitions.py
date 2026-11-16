@@ -32,9 +32,6 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemoryParams,
     EventMemoryPartition,
 )
-from memmachine_server.episodic_memory.event_memory.event_memory_store import (
-    EventMemoryStore,
-)
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
@@ -65,7 +62,6 @@ def _event(text: str) -> Event:
 @pytest_asyncio.fixture
 async def partition_registry(
     sqlalchemy_sqlite_engine: AsyncEngine,
-    event_memory_store: EventMemoryStore,
 ) -> SQLAlchemyPartitionRegistry:
     registry = SQLAlchemyPartitionRegistry(
         SQLAlchemyPartitionRegistryParams(
@@ -73,7 +69,6 @@ async def partition_registry(
             partition_namespace=EventMemory.PARTITION_NAMESPACE,
             tombstone_retention_seconds=0,
         ),
-        partitioned_store=event_memory_store,
     )
     await registry.startup()
     return registry
@@ -109,22 +104,16 @@ def vector_store() -> NonCallableMagicMock:
 
 
 @pytest.fixture
-def event_memory_store(
+def event_memory(
     segment_store: SQLAlchemySegmentStore,
     vector_store: NonCallableMagicMock,
-) -> EventMemoryStore:
-    return EventMemoryStore(segment_store=segment_store, vector_store=vector_store)
-
-
-@pytest.fixture
-def event_memory(
     partition_registry: SQLAlchemyPartitionRegistry,
-    event_memory_store: EventMemoryStore,
 ) -> EventMemory:
     return EventMemory(
         EventMemoryParams(
+            segment_store=segment_store,
+            vector_store=vector_store,
             partition_registry=partition_registry,
-            event_memory_store=event_memory_store,
             segmenter=TextSegmenter(),
             deriver=WholeTextDeriver(),
             embedder=FakeEmbedder(),
@@ -134,7 +123,9 @@ def event_memory(
 
 async def _purge(event_memory: EventMemory) -> None:
     """Run the namespace's purge rounds until none is due."""
-    while await event_memory._params.partition_registry.run_purge_round():
+    params = event_memory._params
+    purge_round = EventMemory.purge_round(params.segment_store, params.vector_store)
+    while await params.partition_registry.run_purge_round(purge_round):
         pass
 
 

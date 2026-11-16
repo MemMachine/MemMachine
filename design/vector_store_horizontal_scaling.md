@@ -62,15 +62,15 @@ behind its choices.
 
 1. **Create.** The owner, such as event memory, creates the partition by
    name through its registry, which reserves the name, inserting a pending
-   row under a freshly minted UUID, has its store create the storage the
-   partition keeps for itself (on Qdrant and Milvus, none: its records go
-   into the store's one native collection, which startup prepared), and
-   confirms the reservation, which marks the row live. A racing creator
-   loses at the registry's primary key, and a pending partition is not
-   answered.
+   row under a freshly minted UUID, runs the owner's creation of the storage
+   the partition keeps for itself in each store (on Qdrant and Milvus, none:
+   its records go into the store's one native collection, which startup
+   prepared), and confirms the reservation, which marks the row live. A
+   racing creator loses at the registry's primary key, and a pending
+   partition is not answered.
 2. **Get.** The registry resolves the partition name to the live partition
-   and answers its registration, which carries the store's handle on the
-   partition's UUID.
+   and answers its registration, and the owner gets each store's handle on
+   the partition's UUID.
 3. **Use.** Every record a handle writes carries the partition's UUID, and
    every read and delete is scoped to it. Before each of its writes and
    reads, and after each of its writes and deletes, the owner checks that
@@ -79,9 +79,10 @@ behind its choices.
    queues a tombstone. Every operation of the owner on that partition raises
    from then on, in every process.
 5. **Purge.** Once the retention (a day by default) has passed, sweepers in
-   every process claim tombstones oldest first and purge their records from
-   the registry's store, a round at a time; once a round finds none, the
-   registry drops the partition from the store and deletes its tombstone.
+   every process claim tombstones oldest first and run the owner's purge
+   round on each, which purges the partition's records from the owner's
+   stores, a round at a time; once no store finds any, the round drops the
+   partition from the stores, and the registry deletes its tombstone.
 
 ## Guarantees by store
 

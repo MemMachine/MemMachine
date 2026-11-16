@@ -20,8 +20,8 @@ from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.partition_registry import (
-    PartitionedStore,
     PartitionRegistry,
+    PurgeRound,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
     SQLAlchemyPartitionRegistry,
@@ -69,8 +69,9 @@ _PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS = 60.0
 _PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS = 1.0
 
 
-async def _run_purge_rounds_forever[PartitionT](
-    partition_registry: PartitionRegistry[PartitionT],
+async def _run_purge_rounds_forever(
+    partition_registry: PartitionRegistry,
+    purge_round: PurgeRound,
 ) -> None:
     """Run a partition namespace's purge rounds for as long as the task runs.
 
@@ -81,12 +82,12 @@ async def _run_purge_rounds_forever[PartitionT](
 
     A module-level coroutine on purpose: the event loop keeps a pending task
     alive while it sleeps, so the task pins whatever its frame references.
-    Referencing only the registry lets a manager dropped without close() be
-    collected instead of pinned.
+    Referencing only the registry and the purge round lets a manager dropped
+    without close() be collected instead of pinned.
     """
     while True:
         try:
-            more = await partition_registry.run_purge_round()
+            more = await partition_registry.run_purge_round(purge_round)
         except Exception:
             logger.exception(
                 "Purge round of partition namespace %r failed; retrying next tick",
@@ -226,18 +227,19 @@ class ResourceManagerImpl:
                     self._segment_stores[name] = store
         return self._segment_stores[name]
 
-    async def get_partition_registry[PartitionT](
+    async def get_partition_registry(
         self,
         database: str,
         *,
         partition_namespace: str,
         tombstone_retention_seconds: int,
-        partitioned_store: PartitionedStore[PartitionT],
-    ) -> PartitionRegistry[PartitionT]:
-        """Return a started registry of a partition namespace in a database, over the store that holds its partitions.
+        purge_round: PurgeRound,
+    ) -> PartitionRegistry:
+        """Return a started registry of a partition namespace in a database.
 
-        The first call for a namespace in a database starts its registry,
-        whose purge rounds then run in the background until close().
+        The first call for a namespace in a database starts its registry, and
+        runs the namespace's purge rounds by that call's `purge_round` in the
+        background until close().
         """
         registry = SQLAlchemyPartitionRegistry(
             SQLAlchemyPartitionRegistryParams(
@@ -245,7 +247,6 @@ class ResourceManagerImpl:
                 partition_namespace=partition_namespace,
                 tombstone_retention_seconds=tombstone_retention_seconds,
             ),
-            partitioned_store=partitioned_store,
         )
         key = (database, partition_namespace)
         if key not in self._started_partition_namespaces:
@@ -254,7 +255,9 @@ class ResourceManagerImpl:
                     await registry.startup()
                     self._started_partition_namespaces.add(key)
                     self._partition_registry_purge_tasks.append(
-                        asyncio.create_task(_run_purge_rounds_forever(registry))
+                        asyncio.create_task(
+                            _run_purge_rounds_forever(registry, purge_round)
+                        )
                     )
         return registry
 

@@ -2,19 +2,20 @@
 Abstract base classes for a partition registry, its reservations, and registrations.
 
 A partition registry names the partitions of one partition namespace and
-drives each partition's lifecycle in the namespace's store. A partition has a
-name, which its owner chooses and may reuse, and a UUID, which the registry
-mints for it alone; the store holds the partition's records under the UUID.
-The registry's methods address partitions by name, as the store's address them
-by UUID. Its calls are arbitrated across every process sharing it: a
+orders each partition's lifecycle, running the steps the namespace's owner
+supplies on the owner's stores at their places in it. A partition has a name,
+which its owner chooses and may reuse, and a UUID, which the registry mints
+for it alone; the owner's stores hold the partition's records under the UUID.
+The registry's methods address partitions by name, as the stores' address
+them by UUID. Its calls are arbitrated across every process sharing it: a
 reservation mints a UUID no registered or queued partition carries, a deletion
 makes the partition unreachable when it returns, and a purge round runs on a
 due tombstone, possibly on two purgers at once.
 
 Creating a partition, or getting one by name, answers a `Registration`, which
-carries the store's handle on the partition and through which an owner checks
-that the partition has not been deleted. A registration acts on one partition
-alone, and a deletion by name voids it.
+carries the partition's UUID and through which an owner checks that the
+partition has not been deleted. A registration acts on one partition alone,
+and a deletion by name voids it.
 """
 
 import asyncio
@@ -25,7 +26,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
-from .data_types import PartitionDeletedError, validate_partition_name
+from .data_types import validate_partition_name
 from .partitioned_store import PartitionedStore
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ _reservation_cancellations: set[asyncio.Task[None]] = set()
 @dataclass(frozen=True)
 class Reservation(ABC):
     """
-    A pending partition's hold on its name, kept while the registry creates the partition in its store.
+    A pending partition's hold on its name, kept while the partition's storage is created.
 
     The partition is pending until the reservation is confirmed. A registry
     implementation supplies the methods, each of which writes the registry.
@@ -52,7 +53,7 @@ class Reservation(ABC):
         """
         Confirm this reservation, marking the pending partition live.
 
-        Called once, when the store has created the partition. A concurrent
+        Called once, when the partition's storage is created. A concurrent
         deletion of the partition either follows the confirmation or makes it
         raise.
 
@@ -68,7 +69,7 @@ class Reservation(ABC):
         Cancel this reservation, unregistering its partition while it is pending and queuing the partition's UUID for purge.
 
         Called by the registry's creation, in a task of its own, when
-        creating the partition in the store or confirming it raised or was
+        creating the partition's storage or confirming it raised or was
         cancelled; it may follow a confirmation that committed before its
         failure was observed, and race a deletion by name. The pending
         partition is unreachable when this returns, and purge rounds reclaim
@@ -84,18 +85,17 @@ class Reservation(ABC):
 
 
 @dataclass(frozen=True)
-class Registration[PartitionT](ABC):
+class Registration(ABC):
     """
-    A live partition's registration, carrying the store's handle on the partition.
+    A live partition's registration.
 
     Its fields never change: `partition_uuid` is the value the partition's
-    records carry, and `partition` the store's handle on them. A registry
-    implementation supplies the method, which reads the registry.
+    records carry. A registry implementation supplies the method, which reads
+    the registry.
     """
 
     partition_name: str
     partition_uuid: UUID
-    partition: PartitionT
 
     @abstractmethod
     async def require_current(self) -> None:
@@ -114,28 +114,30 @@ class Registration[PartitionT](ABC):
 
 
 type PurgeRound = Callable[[UUID], Awaitable[bool]]
-"""A purge round: purges the store of the deleted partition whose UUID it is given, and returns whether it found records."""
+"""
+A purge round of a deleted partition, given its UUID: purges the partition from its owner's stores and, once they find none of its records, drops it from them.
+
+Returns whether the stores found records: False once none of the
+partition's records remains and the partition is dropped, True when a later
+round may find some. Safe to repeat, and to run on several processes at once.
+"""
 
 
-class PartitionRegistry[PartitionT](ABC):
+class PartitionRegistry(ABC):
     """
-    The partition registry of one partition namespace, over the store that holds its partitions.
+    The partition registry of one partition namespace.
 
     A deleted partition's UUID waits on a queue as a tombstone. A write
-    checked as live before the deletion can land in the store after it, so a
+    checked as live before the deletion can land in a store after it, so a
     tombstone's purge starts once a retention, longer than any write can be in
     flight, has passed since the deletion. The registry deletes the tombstone
-    once a purge round finds nothing in the store and has dropped the
-    partition from it, and its UUID is not minted again before then.
+    once a purge round finds none of the partition's records and has dropped
+    the partition, and its UUID is not minted again before then.
 
     A registry implementation supplies the catalog: `_reserve`, `_resolve`,
-    `_registration`, `_unregister`, and `_run_purge_round`. The registry's
-    public methods call the store on the catalog's steps, in order.
+    `_registration`, `_unregister`, and `run_purge_round`. The registry's
+    public methods run the owner's steps between the catalog's, in order.
     """
-
-    def __init__(self, partitioned_store: PartitionedStore[PartitionT]) -> None:
-        """Initialize with the store that holds the namespace's partitions."""
-        self._partitioned_store = partitioned_store
 
     @property
     @abstractmethod
@@ -152,23 +154,31 @@ class PartitionRegistry[PartitionT](ABC):
         """
         raise NotImplementedError
 
-    async def create_partition(self, partition_name: str) -> Registration[PartitionT]:
+    async def create_partition(
+        self,
+        partition_name: str,
+        create_partition_storage: Callable[[UUID], Awaitable[None]],
+    ) -> Registration:
         """
-        Create a partition under a name: reserve the name, create the partition in the store, and confirm the reservation.
+        Create a partition under a name: reserve the name, create the partition's storage, and confirm the reservation.
 
         The partition is pending, holding its name, until it is confirmed. A
         creation that raises or is cancelled cancels its reservation, shielded,
         so the name is freed and the partition's purge rounds reclaim whatever
-        the store created. The cancel acts only on a pending partition, so a
+        storage was created. The cancel acts only on a pending partition, so a
         confirmation that committed before its failure or cancellation was
         observed stands. A partition whose reservation the registry cannot
         cancel stays pending until it is deleted.
 
         Args:
             partition_name (str): The name of the partition.
+            create_partition_storage (Callable[[UUID], Awaitable[None]]):
+                Creates the storage the partition keeps for itself in the
+                owner's stores, given the partition's UUID. Called once,
+                before the reservation is confirmed.
 
         Returns:
-            Registration[PartitionT]: The new partition's registration.
+            Registration: The new partition's registration.
 
         Raises:
             ValueError:
@@ -179,17 +189,14 @@ class PartitionRegistry[PartitionT](ABC):
                 If the registry gave up after repeated attempts to reserve
                 the free name failed.
             PartitionDeletedError:
-                If the partition was deleted while the store created it, or
-                deleted and dropped from the store before its handle was
-                built.
+                If the partition was deleted while its storage was created.
             Exception:
-                Whatever the store's `create_partition` or `get_partition`
-                raised.
+                Whatever `create_partition_storage` raised.
         """
         validate_partition_name(partition_name)
         reservation = await self._reserve(partition_name)
         try:
-            await self._partitioned_store.create_partition(reservation.partition_uuid)
+            await create_partition_storage(reservation.partition_uuid)
             await reservation.confirm()
         except BaseException:
             # Shielded, so a cancelled creation still frees the name. The task
@@ -213,14 +220,7 @@ class PartitionRegistry[PartitionT](ABC):
             with contextlib.suppress(Exception):
                 await asyncio.shield(cancellation)
             raise
-        partition = await self._partitioned_store.get_partition(
-            reservation.partition_uuid
-        )
-        if partition is None:
-            raise PartitionDeletedError(
-                self.partition_namespace, partition_name, reservation.partition_uuid
-            )
-        return self._registration(partition_name, reservation.partition_uuid, partition)
+        return self._registration(partition_name, reservation.partition_uuid)
 
     @abstractmethod
     async def _reserve(self, partition_name: str) -> Reservation:
@@ -250,23 +250,17 @@ class PartitionRegistry[PartitionT](ABC):
         """
         raise NotImplementedError
 
-    async def get_partition(
-        self, partition_name: str
-    ) -> Registration[PartitionT] | None:
+    async def get_partition(self, partition_name: str) -> Registration | None:
         """
         Get the live partition registered under a name.
 
-        One read of the registry decides the outcome, and the store then
-        answers its handle on the partition. A store that finds nothing under
-        the partition's UUID answers for a partition deleted, and dropped
-        from it, since the read, so the call answers None: no partition held
-        the name once the deletion committed.
+        One read of the registry decides the outcome.
 
         Args:
             partition_name (str): The name of the partition.
 
         Returns:
-            Registration[PartitionT] | None:
+            Registration | None:
                 The live partition's registration, or None when no partition
                 holds the name.
 
@@ -280,10 +274,7 @@ class PartitionRegistry[PartitionT](ABC):
         partition_uuid = await self._resolve(partition_name)
         if partition_uuid is None:
             return None
-        partition = await self._partitioned_store.get_partition(partition_uuid)
-        if partition is None:
-            return None
-        return self._registration(partition_name, partition_uuid, partition)
+        return self._registration(partition_name, partition_uuid)
 
     @abstractmethod
     async def _resolve(self, partition_name: str) -> UUID | None:
@@ -311,25 +302,21 @@ class PartitionRegistry[PartitionT](ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def _registration(
-        self, partition_name: str, partition_uuid: UUID, partition: PartitionT
-    ) -> Registration[PartitionT]:
+    def _registration(self, partition_name: str, partition_uuid: UUID) -> Registration:
         """
-        Build the registration of a live partition, carrying the store's handle on it.
+        Build the registration of a live partition.
 
         Called by `create_partition` once the partition is confirmed, and by
-        `get_partition` once `_resolve` answered it, each after the store
-        answered its handle. It builds the object alone, reading and writing
-        nothing, so a partition deleted since is reported by the
-        registration's `require_current`.
+        `get_partition` once `_resolve` answered it. It builds the object
+        alone, reading and writing nothing, so a partition deleted since is
+        reported by the registration's `require_current`.
 
         Args:
             partition_name (str): The name the partition is registered under.
             partition_uuid (UUID): The partition's UUID.
-            partition (PartitionT): The store's handle on the partition.
 
         Returns:
-            Registration[PartitionT]: The partition's registration.
+            Registration: The partition's registration.
         """
         raise NotImplementedError
 
@@ -370,42 +357,26 @@ class PartitionRegistry[PartitionT](ABC):
         """
         raise NotImplementedError
 
-    async def run_purge_round(self) -> bool:
-        """
-        Run one purge round on the tombstone that came due first, and return whether it ran one.
-
-        The round purges the partition from the store and, once the store's
-        purge finds nothing, drops it from the store; the registry then
-        deletes the tombstone.
-
-        Returns:
-            bool:
-                Whether a round ran: False also when every due tombstone is
-                claimed by another round, delayed after failed rounds, or no
-                longer run.
-        """
-        return await self._run_purge_round(self._purge_partition)
-
     @abstractmethod
-    async def _run_purge_round(self, purge_round: PurgeRound) -> bool:
+    async def run_purge_round(self, purge_round: PurgeRound) -> bool:
         """
         Run `purge_round` on the tombstone that came due first, and return whether it ran one.
 
         A tombstone is due once the retention has passed since its deletion.
-        The registry claims it, calls `purge_round` with its partition UUID, and
-        records the outcome under the claim: a round that returns False found
-        no records, so the registry deletes the tombstone and frees its UUID;
-        one that returns True keeps the tombstone due. A round that raises is
-        a failed round and its error propagates: the tombstone stays for a
-        later call, and a registry may delay a failed tombstone's next round,
-        or stop running one whose rounds keep failing, leaving its records in
-        place. A round must be safe to repeat, since a registry may run one
-        tombstone's round on two purgers at once.
+        The registry claims it, calls `purge_round` with its partition UUID,
+        and records the outcome under the claim: a round that returns False
+        found none of the partition's records and dropped the partition, so
+        the registry deletes the tombstone and frees its UUID; one that
+        returns True keeps the tombstone due. A round that raises is a failed
+        round and its error propagates: the tombstone stays for a later call,
+        and a registry may delay a failed tombstone's next round, or stop
+        running one whose rounds keep failing, leaving its records in place.
+        A registry may run one tombstone's round on two purgers at once.
 
         Args:
             purge_round (PurgeRound):
-                Purges the store of the partition whose UUID it is given, and
-                returns whether it found records.
+                The purge round of the namespace's partitions in its owner's
+                stores.
 
         Returns:
             bool:
@@ -415,9 +386,16 @@ class PartitionRegistry[PartitionT](ABC):
         """
         raise NotImplementedError
 
-    async def _purge_partition(self, partition_uuid: UUID) -> bool:
-        """Purge a deleted partition from the store and, once the store finds nothing, drop it; return whether the store found records."""
-        if await self._partitioned_store.purge_partition(partition_uuid):
+
+def single_store_purge_round[PartitionT](
+    partitioned_store: PartitionedStore[PartitionT],
+) -> PurgeRound:
+    """The purge round of a namespace whose partitions one store holds: purge the store and, once its purge finds nothing, drop the partition from it."""
+
+    async def purge_round(partition_uuid: UUID) -> bool:
+        if await partitioned_store.purge_partition(partition_uuid):
             return True
-        await self._partitioned_store.drop_partition(partition_uuid)
+        await partitioned_store.drop_partition(partition_uuid)
         return False
+
+    return purge_round

@@ -12,6 +12,7 @@ from .partition_registry import (
     PurgeRound,
     Registration,
     Reservation,
+    single_store_purge_round,
 )
 from .partitioned_store import PartitionedStore
 
@@ -25,5 +26,6 @@ __all__ = [
     "PurgeRound",
     "Registration",
     "Reservation",
+    "single_store_purge_round",
     "validate_partition_name",
 ]

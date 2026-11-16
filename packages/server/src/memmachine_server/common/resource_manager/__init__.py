@@ -11,8 +11,8 @@ from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.language_model import LanguageModel
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.partition_registry import (
-    PartitionedStore,
     PartitionRegistry,
+    PurgeRound,
 )
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.session_manager.session_data_manager import (
@@ -64,20 +64,20 @@ class CommonResourceManager(Protocol):
         """Return the segment store by name."""
         raise NotImplementedError
 
-    async def get_partition_registry[PartitionT](
+    async def get_partition_registry(
         self,
         database: str,
         *,
         partition_namespace: str,
         tombstone_retention_seconds: int,
-        partitioned_store: PartitionedStore[PartitionT],
-    ) -> PartitionRegistry[PartitionT]:
+        purge_round: PurgeRound,
+    ) -> PartitionRegistry:
         """
-        Return a started registry of a partition namespace in a database, over the store that holds its partitions.
+        Return a started registry of a partition namespace in a database.
 
-        The first call for a namespace in a database starts its registry,
-        whose purge rounds then run in the background for as long as the
-        resource manager is open.
+        The first call for a namespace in a database starts its registry, and
+        runs the namespace's purge rounds by that call's `purge_round` in the
+        background for as long as the resource manager is open.
         """
         raise NotImplementedError
 

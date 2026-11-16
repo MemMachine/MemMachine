@@ -41,10 +41,6 @@ from memmachine_server.episodic_memory.event_memory.event_memory import (
     EventMemory,
     EventMemoryPartition,
 )
-from memmachine_server.episodic_memory.event_memory.event_memory_store import (
-    EventMemoryStore,
-    EventMemoryStorePartition,
-)
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
     SegmentStorePartition,
@@ -121,16 +117,19 @@ def _deployment_resource_manager(
     resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(
         long_term_memory=deployment
     )
-    resource_manager.get_vector_store.return_value = vector_store
-    resource_manager.get_segment_store.return_value = create_autospec(
-        SegmentStore, instance=True
+    vector_store.get_partition.return_value = create_autospec(
+        VectorStorePartition, instance=True
     )
+    vector_store.purge_partition.return_value = False
+    resource_manager.get_vector_store.return_value = vector_store
+    segment_store = create_autospec(SegmentStore, instance=True)
+    segment_store.get_partition.return_value = create_autospec(
+        SegmentStorePartition, instance=True
+    )
+    segment_store.purge_partition.return_value = False
+    resource_manager.get_segment_store.return_value = segment_store
     registration = create_autospec(Registration, instance=True)
     registration.partition_uuid = uuid4()
-    registration.partition = EventMemoryStorePartition(
-        segment_store_partition=create_autospec(SegmentStorePartition, instance=True),
-        vector_store_partition=create_autospec(VectorStorePartition, instance=True),
-    )
     partition_registry = create_autospec(PartitionRegistry, instance=True)
     partition_registry.get_partition.return_value = registration
     resource_manager.get_partition_registry.return_value = partition_registry
@@ -159,24 +158,31 @@ async def test_event_params_get_the_session_partition_from_the_event_store():
 
     long_term_memory = await long_term_memory_from_config(config, resource_manager)
 
+    segment_store = resource_manager.get_segment_store.return_value
     vector_store = resource_manager.get_vector_store.return_value
     partition = long_term_memory._memory
     assert isinstance(partition, EventMemoryPartition)
     assert partition.similarity_metric is SimilarityMetric.COSINE
     partition_registry = resource_manager.get_partition_registry.return_value
     partition_registry.get_partition.assert_awaited_once_with("raced")
-    store_partition = partition_registry.get_partition.return_value.partition
+    partition_uuid = partition_registry.get_partition.return_value.partition_uuid
+    segment_store.get_partition.assert_awaited_once_with(partition_uuid)
+    vector_store.get_partition.assert_awaited_once_with(partition_uuid)
     assert partition._segment_store_partition is (
-        store_partition.segment_store_partition
+        segment_store.get_partition.return_value
     )
-    assert partition._vector_store_partition is store_partition.vector_store_partition
+    assert partition._vector_store_partition is vector_store.get_partition.return_value
     registry_call = resource_manager.get_partition_registry.await_args
+    assert registry_call is not None
     assert registry_call.args == ("pr",)
     assert registry_call.kwargs["partition_namespace"] == "event_memory"
     assert registry_call.kwargs["tombstone_retention_seconds"] == 86400
-    event_memory_store = registry_call.kwargs["partitioned_store"]
-    assert isinstance(event_memory_store, EventMemoryStore)
-    assert event_memory_store.vector_store is vector_store
+    # The namespace's purge rounds run over the stores the partition is in.
+    deleted_uuid = uuid4()
+    assert await registry_call.kwargs["purge_round"](deleted_uuid) is False
+    for store in (segment_store, vector_store):
+        store.purge_partition.assert_awaited_once_with(deleted_uuid)
+        store.drop_partition.assert_awaited_once_with(deleted_uuid)
     resource_manager.get_vector_store.assert_awaited_once_with(
         "vs",
         vector_store_name="event_memory",

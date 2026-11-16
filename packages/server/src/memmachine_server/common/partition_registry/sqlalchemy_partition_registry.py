@@ -64,7 +64,6 @@ from .partition_registry import (
     Registration,
     Reservation,
 )
-from .partitioned_store import PartitionedStore
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +167,7 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             Seconds a deleted partition's records are kept before its purge
             starts, on the database clock. It must exceed, by orders of
             magnitude, the longest a write to the backend can be in flight and
-            the delay before the store's reads reflect a write.
+            the delay before a store's reads reflect a write.
         purge_lease_seconds (int):
             Seconds a purge round's claim holds its tombstone, on the database
             clock; it should exceed the longest round (default: 300).
@@ -201,7 +200,7 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             "Seconds a deleted partition's records are kept before its purge "
             "starts, on the database clock. It must exceed, by orders of "
             "magnitude, the longest a write to the backend can be in flight and "
-            "the delay before the store's reads reflect a write"
+            "the delay before a store's reads reflect a write"
         ),
     )
     purge_lease_seconds: int = Field(
@@ -252,9 +251,9 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         return partition_namespace
 
 
-class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
+class SQLAlchemyPartitionRegistry(PartitionRegistry):
     """
-    The registry of one partition namespace, over the store that holds its partitions.
+    The registry of one partition namespace, in a relational database.
 
     Registries of different namespaces share the tables, keyed by namespace.
     A purge claim holds its tombstone until its round ends, or, for a round
@@ -267,14 +266,8 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
     returns it to the purge.
     """
 
-    def __init__(
-        self,
-        params: SQLAlchemyPartitionRegistryParams,
-        *,
-        partitioned_store: PartitionedStore[PartitionT],
-    ) -> None:
-        """Initialize with the provided parameters and the store that holds the namespace's partitions."""
-        super().__init__(partitioned_store)
+    def __init__(self, params: SQLAlchemyPartitionRegistryParams) -> None:
+        """Initialize with the provided parameters."""
         self._engine = params.engine
         self._is_sqlite = params.engine.dialect.name == "sqlite"
         self._partition_namespace = params.partition_namespace
@@ -397,13 +390,10 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
         return row.partition_uuid
 
     @override
-    def _registration(
-        self, partition_name: str, partition_uuid: UUID, partition: PartitionT
-    ) -> Registration[PartitionT]:
+    def _registration(self, partition_name: str, partition_uuid: UUID) -> Registration:
         return _SQLAlchemyRegistration(
             partition_name=partition_name,
             partition_uuid=partition_uuid,
-            partition=partition,
             engine=self._engine,
             partition_namespace=self._partition_namespace,
         )
@@ -417,7 +407,7 @@ class SQLAlchemyPartitionRegistry[PartitionT](PartitionRegistry[PartitionT]):
         )
 
     @override
-    async def _run_purge_round(self, purge_round: PurgeRound) -> bool:
+    async def run_purge_round(self, purge_round: PurgeRound) -> bool:
         claim = await self._claim_oldest_due_tombstone()
         if claim is None:
             return False
@@ -721,7 +711,7 @@ class _SQLAlchemyReservation(Reservation):
 
 
 @dataclass(frozen=True)
-class _SQLAlchemyRegistration[PartitionT](Registration[PartitionT]):
+class _SQLAlchemyRegistration(Registration):
     """A registration whose method reads the registry's tables directly."""
 
     engine: AsyncEngine = field(repr=False, compare=False)
