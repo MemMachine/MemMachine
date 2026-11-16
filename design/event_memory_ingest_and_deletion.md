@@ -28,7 +28,7 @@ and a forget stays complete anyway.
 
 **State.** The segment store keeps each segment's derivatives as derived,
 from the ingest until the forget: what its index is written from, and the
-segment a hit on one names. Besides those, it keeps a pending write for
+segment a hit on one names. Besides those, it keeps an indexing job for
 each segment, until the vector store has its derivatives, and a tombstone
 for each forgotten segment, holding its derivatives' UUIDs until the
 second delete, in its own database and transactions. Both are a segment's, so
@@ -40,11 +40,11 @@ segments, and neither holds a value the caller chose.
 1. Segment, derive and embed.
 2. Start the write budget, before anything is stored.
 3. In one transaction, store the events, their segments, the derivatives,
-   and the pending writes, which the ingest holds for its budget plus a
+   and the indexing jobs, which the ingest holds for its budget plus a
    margin. A batch naming an event already stored is rejected
    whole.
 4. Upsert the vectors, cancelled when the budget runs out.
-5. Delete the pending writes.
+5. Delete the indexing jobs.
 
 The ingest succeeds once step 3 commits: its events are accepted, and
 stored with everything their derived index is built from. Steps 4 and 5
@@ -55,7 +55,7 @@ work to write.
 **Forget.** One transaction locks the events and their segments, writes a
 tombstone for each segment, held for the forget's lease, copies the
 segment's derivative UUIDs into it, and deletes the events, which cascades
-to the segments and to their pending writes and derivatives. The vectors
+to the segments and to their indexing jobs and derivatives. The vectors
 are then deleted once and the first delete recorded, and each tombstone
 awaits its second delete, due R after that record, which deletes the
 tombstone and, by cascade, its derivative UUIDs. A failure here leaves the
@@ -63,7 +63,7 @@ first delete to the background work, once the hold has passed.
 
 **Background work.** Any process claims, from the segment store:
 
-- pending writes whose ingest's hold has passed: it embeds the segment's
+- indexing jobs whose ingest's hold has passed: it embeds the segment's
   stored derivatives, starts a budget of its own, and renews its claim,
   then writes them and deletes the record;
 - tombstones due for a delete, the first once the forget's hold has
@@ -86,7 +86,7 @@ runs whether or not any session is opened.
 **Further derived indexes.** Each derived index builds its own records
 from the stored events, segments, and derivatives, keys them its own way,
 and maps its hits to segments; it must accept a repeated write or delete
-of a record. A segment's pending write is deleted, and its tombstone's
+of a record. A segment's indexing job is deleted, and its tombstone's
 first delete recorded, only once every index has done its part, so a
 further index adds writes and deletes, not rows or columns. What an index
 cannot rebuild under the same keys from what is stored is stored with the
@@ -132,9 +132,9 @@ sent may still land; d covers it.
 
 A claim's renewal holds its record's row, so the forget's cascade waits
 for a renewal in progress: a renewal either commits before the forget or
-finds its record gone. Pending writes and tombstones are separate tables,
-so neither a claim on a pending write nor the writer's own delete of its
-pending writes can reach a tombstone. On PostgreSQL, transactions run at
+finds its record gone. Indexing jobs and tombstones are separate tables,
+so neither a claim on an indexing job nor the ingest's own delete of its
+indexing jobs can reach a tombstone. On PostgreSQL, transactions run at
 READ COMMITTED, where each statement reads its own snapshot, so the forget
 acts only on the events its lock returned: a statement that rereads the
 event list could delete an event committed after the segments were read,
@@ -153,17 +153,17 @@ each is one of five kinds:
 
 - **One row.** It locks one row at most: a claim, whose update takes the
   record it locked from a materialized CTE, which PostgreSQL evaluates
-  once; a renewal, fail or cancel; a pending write's finish; and a first
+  once; a renewal, fail or cancel; an indexing job's finish; and a first
   delete's finish. It never holds a lock while it waits for another.
 - **Never waits.** It takes every lock it could wait for with `SKIP
-  LOCKED`: the writer's delete of its pending writes, and the request's
+  LOCKED`: the ingest's delete of its indexing jobs, and the request's
   record of a first delete. A row it skips is a forget's, which deletes
   it, or a one-row statement's, whose work the background work completes.
 - **One root.** It waits for one contested row before it holds any, and
   reaches the rest only through it, where it waits only on one-row and
   never-waiting transactions: an ingest of one event, which waits only on
   a transaction adding or deleting the same event; a forget of one event,
-  which locks the event and reaches its segments, pending writes and
+  which locks the event and reaches its segments, indexing jobs and
   derivatives through it; and the second delete, which deletes its
   tombstone before the tombstone's derivative UUIDs. A forget never waits
   on an ingest, whose rows it cannot see before they commit.
@@ -191,8 +191,8 @@ at once. Each pair of operations that can lock the same rows:
 | An ingest and a forget of the same event | the event | The forget never waits on the ingest |
 | Ingests naming the same events | events | Ingests of several events take turns; one of one event waits before holding any |
 | A write of several events and any other write | the registry row | The other write's pin does not wait for the write lock |
-| A forget and the writer's delete of its pending writes | pending writes | The delete never waits |
-| A forget and a claim, renewal, fail, cancel or finish of a pending write | a pending write | The background statement locks one row |
+| A forget and the ingest's delete of its indexing jobs | indexing jobs | The delete never waits |
+| A forget and a claim, renewal, fail, cancel or finish of an indexing job | an indexing job | The background statement locks one row |
 | The request's first-delete record and a tombstone's claim, fail, cancel or first-delete finish | a tombstone | The record never waits |
 | Two second deletes of a tombstone | the tombstone, its UUIDs | Both delete the tombstone first |
 | A partition's deletion and a transaction locking several of its rows | the registry row | The deletion waits for the write lock and the pins |
@@ -227,13 +227,13 @@ erasure. Removing any one piece above breaks one of them.
   read of derivatives by UUID join the segments to skip forgotten ones.
 - **Keep the forgotten segments too, until the second delete.** Every read
   of segments would then have to skip forgotten ones.
-- **One table for pending writes and tombstones.** The forget would turn a
+- **One table for indexing jobs and tombstones.** The forget would turn a
   segment's row from one into the other, keeping only its key, and every
   statement on a row would have to name its kind as well as its
   generation; columns would mean something for one kind only.
 - **Time the second delete from the forget.** The forget's time must then
   follow every renewal it waited for, which on PostgreSQL takes deleting
-  the pending writes before taking the time, and taking it at the insert
+  the indexing jobs before taking the time, and taking it at the insert
   statement; timing the second delete from the first delete's record
   needs neither.
 - **Store-side fences** (expiring credentials, insert-only markers). They
@@ -244,8 +244,8 @@ erasure. Removing any one piece above breaks one of them.
 - **Leave every index write to the background work**, the outbox's relay
   alone. One path writes the indexes, but every event waits for a claim,
   and ingest runs at the background work's claim rate rather than with
-  the requests'. Writing in the request and falling back to the pending
-  write keeps the common case written when the request returns.
+  the requests'. Writing in the request and falling back to the indexing
+  job keeps the common case written when the request returns.
 - **Vectors in the SQL database.** Exact, with no late writes, but only for
   the backends that offer it.
 

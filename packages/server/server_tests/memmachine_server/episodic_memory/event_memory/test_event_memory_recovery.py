@@ -37,7 +37,7 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStoreEventAlreadyExistsError,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
-    PendingWriteRow,
+    IndexingJobRow,
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
     TombstoneRow,
@@ -126,7 +126,7 @@ async def partition(
 # ---------------------------------------------------------------------------
 
 
-async def test_encode_clears_the_pending_writes_once_the_vectors_are_written(
+async def test_encode_clears_the_indexing_jobs_once_the_vectors_are_written(
     partition: EventMemoryPartition,
     fake_segment_store_partition: InMemorySegmentStorePartition,
     vector_store_partition: _FailingVectorStorePartition,
@@ -135,7 +135,7 @@ async def test_encode_clears_the_pending_writes_once_the_vectors_are_written(
 
     assert len(fake_segment_store_partition.event_to_segments) == 2
     assert len(vector_store_partition.records) == 2
-    assert fake_segment_store_partition.pending_writes == {}
+    assert fake_segment_store_partition.indexing_jobs == {}
 
 
 async def test_a_failed_upsert_leaves_the_events_stored_and_their_derivatives_pending(
@@ -159,7 +159,7 @@ async def test_a_failed_upsert_leaves_the_events_stored_and_their_derivatives_pe
     ]
 
     assert event.uuid in fake_segment_store_partition.event_to_segments
-    ((segment_uuid, derivatives),) = fake_segment_store_partition.pending_writes.items()
+    ((segment_uuid, derivatives),) = fake_segment_store_partition.indexing_jobs.items()
     assert segment_uuid in fake_segment_store_partition.event_to_segments[event.uuid]
     linked = await fake_segment_store_partition.get_segment_uuids_by_derivative_uuids(
         derivative.uuid for derivative in derivatives
@@ -194,7 +194,7 @@ async def test_an_upsert_outlasting_the_write_budget_is_cancelled(
     await asyncio.wait_for(partition.encode_events([_event("hello")]), timeout=10)
 
     assert vector_store_partition.records == {}
-    assert len(fake_segment_store_partition.pending_writes) == 1
+    assert len(fake_segment_store_partition.indexing_jobs) == 1
 
 
 async def test_an_encode_whose_partition_is_deleted_while_it_writes_raises(
@@ -438,11 +438,11 @@ def _database_time_ago(engine: AsyncEngine, delta: timedelta) -> ColumnElement:
     return func.now() - delta
 
 
-async def _age_pending_writes(engine: AsyncEngine, delta: timedelta) -> None:
-    """Make every pending write claimable since `delta` ago, past its writer's lease."""
+async def _age_indexing_jobs(engine: AsyncEngine, delta: timedelta) -> None:
+    """Make every indexing job claimable since `delta` ago, past its ingest's lease."""
     async with engine.begin() as connection:
         await connection.execute(
-            update(PendingWriteRow).values(
+            update(IndexingJobRow).values(
                 claimable_at=_database_time_ago(engine, delta)
             )
         )
@@ -485,17 +485,17 @@ async def test_background_work_writes_the_derivatives_an_encode_left_pending(
     await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
 
-    assert not await event_memory._finish_pending_write()
-    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
-    assert await event_memory._finish_pending_write()
+    assert not await event_memory._run_indexing_job()
+    await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    assert await event_memory._run_indexing_job()
 
     assert len(vector_store_partition.records) == 1
-    assert not await event_memory._finish_pending_write()
+    assert not await event_memory._run_indexing_job()
     result = await partition.query("hello")
     assert len(result.scored_segment_contexts) == 1
 
 
-async def test_background_work_retries_pending_writes_after_a_failed_write(
+async def test_background_work_retries_indexing_jobs_after_a_failed_write(
     event_memory: EventMemory,
     vector_store_partition: _FailingVectorStorePartition,
     sqlalchemy_sqlite_engine: AsyncEngine,
@@ -503,12 +503,12 @@ async def test_background_work_retries_pending_writes_after_a_failed_write(
     partition = await event_memory.open_or_create_partition("partition")
     vector_store_partition.fail_upserts = True
     await partition.encode_events([_event("hello")])
-    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
-    assert await event_memory._finish_pending_write()
+    assert await event_memory._run_indexing_job()
     assert vector_store_partition.records == {}
     # In its backoff now.
-    assert not await event_memory._finish_pending_write()
+    assert not await event_memory._run_indexing_job()
 
 
 async def test_a_cancelled_recovery_takes_back_its_attempt(
@@ -522,18 +522,18 @@ async def test_a_cancelled_recovery_takes_back_its_attempt(
     vector_store_partition.fail_upserts = True
     await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
-    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
     vector_store_partition.upserting.clear()
     vector_store_partition.upsert_delay_seconds = 60
 
-    recovery = asyncio.create_task(event_memory._finish_pending_write())
+    recovery = asyncio.create_task(event_memory._run_indexing_job())
     await asyncio.wait_for(vector_store_partition.upserting.wait(), 30)
     recovery.cancel()
     with pytest.raises(asyncio.CancelledError):
         await recovery
 
     vector_store_partition.upsert_delay_seconds = 0
-    assert await event_memory._finish_pending_write()
+    assert await event_memory._run_indexing_job()
     assert len(vector_store_partition.records) == 1
 
 
@@ -605,9 +605,9 @@ async def test_a_forget_ends_the_derivatives_pending_with_it(
     vector_store_partition.fail_upserts = False
 
     await partition.forget_events([event.uuid])
-    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
-    assert not await event_memory._finish_pending_write()
+    assert not await event_memory._run_indexing_job()
     assert vector_store_partition.records == {}
 
 
@@ -667,16 +667,16 @@ async def test_background_work_embeds_before_its_write_budget_starts(
     vector_store_partition.fail_upserts = True
     await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
-    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
     async def embed_slower_than_the_budget() -> None:
         await asyncio.sleep(1.5)
 
     embedder.hook = embed_slower_than_the_budget
-    assert await event_memory._finish_pending_write()
+    assert await event_memory._run_indexing_job()
 
     assert len(vector_store_partition.records) == 1
-    assert not await event_memory._finish_pending_write()
+    assert not await event_memory._run_indexing_job()
 
 
 async def test_a_forget_while_the_background_work_embeds_ends_its_write(
@@ -694,17 +694,17 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
     event = _event("hello")
     await partition.encode_events([event])
     vector_store_partition.fail_upserts = False
-    await _age_pending_writes(sqlalchemy_sqlite_engine, timedelta(hours=1))
+    await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
     async def forget_the_event() -> None:
         embedder.hook = None
         await partition.forget_events([event.uuid])
 
     embedder.hook = forget_the_event
-    assert await event_memory._finish_pending_write()
+    assert await event_memory._run_indexing_job()
 
     assert vector_store_partition.records == {}
-    assert not await event_memory._finish_pending_write()
+    assert not await event_memory._run_indexing_job()
 
 
 async def test_startup_runs_the_background_work_until_shutdown(

@@ -70,7 +70,7 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         self.event_to_segments: dict[UUID, list[UUID]] = defaultdict(list)
         self.segment_to_derivatives: dict[UUID, list[UUID]] = {}
         # Each pending segment's derivatives, by segment.
-        self.pending_writes: dict[UUID, list[Derivative]] = {}
+        self.indexing_jobs: dict[UUID, list[Derivative]] = {}
         # Each tombstone, by its forgotten segment.
         self.tombstones: dict[UUID, Tombstone] = {}
         self.tombstones_awaiting_second_delete: set[UUID] = set()
@@ -102,18 +102,18 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 self.segment_order.append(segment.uuid)
                 self.event_to_segments[event_uuid].append(segment.uuid)
                 self.segment_to_derivatives[segment.uuid] = []
-                self.pending_writes[segment.uuid] = []
+                self.indexing_jobs[segment.uuid] = []
         for derivative in derivatives:
             self.segment_to_derivatives[derivative.segment_uuid].append(derivative.uuid)
-            self.pending_writes[derivative.segment_uuid].append(derivative)
+            self.indexing_jobs[derivative.segment_uuid].append(derivative)
 
     @override
-    async def delete_pending_writes(
+    async def delete_indexing_jobs(
         self,
         segment_uuids: Iterable[UUID],
     ) -> None:
         for segment_uuid in segment_uuids:
-            self.pending_writes.pop(segment_uuid, None)
+            self.indexing_jobs.pop(segment_uuid, None)
 
     @override
     async def get_segment_contexts(
@@ -207,7 +207,7 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
             for segment_uuid in self.event_to_segments.pop(event_uuid):
                 self.segments.pop(segment_uuid)
                 self.segment_order.remove(segment_uuid)
-                self.pending_writes.pop(segment_uuid, None)
+                self.indexing_jobs.pop(segment_uuid, None)
                 tombstones.append(
                     Tombstone(
                         segment_uuid=segment_uuid,

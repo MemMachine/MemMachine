@@ -10,14 +10,14 @@ from .data_types import (
     Tombstone,
 )
 from .segment_store import (
-    PendingWriteClaim,
+    IndexingJobClaim,
     SegmentStore,
     SegmentStorePartition,
     TombstoneClaim,
 )
 
 __all__ = [
-    "PendingWriteClaim",
+    "IndexingJobClaim",
     "SegmentStore",
     "SegmentStoreAttemptsExhaustedError",
     "SegmentStoreEventAlreadyExistsError",

@@ -57,7 +57,7 @@ from .data_types import (
 from .deriver import Deriver
 from .formatting import format_timestamp
 from .segment_store import (
-    PendingWriteClaim,
+    IndexingJobClaim,
     SegmentStore,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
@@ -76,9 +76,9 @@ EVENT_TIMESTAMP_KEY: Final[str] = reserved_property_key(
 
 _BASE_EVENT_MEMORY_FIELD_NAMES: frozenset[str] = frozenset({EVENT_TIMESTAMP_KEY})
 
-# Seconds past its budget that a writer, or a claim, holds a pending write,
-# for the time the budget does not cover: an ingest's delete of its pending
-# writes after its last send, a recovery's embedding before its budget
+# Seconds past its budget that an ingest, or a claim, holds an indexing job,
+# for the time the budget does not cover: an ingest's delete of its indexing
+# jobs after its last send, a recovery's embedding before its budget
 # starts, and the difference between the database's clock, which times the
 # holds, and the writers' clocks, which run the budgets. A hold that ends
 # early only lets another process repeat the write.
@@ -186,8 +186,8 @@ class EventMemory:
     in both. Handles on a partition read and write that pair only.
 
     Between `startup` and `shutdown`, it finishes in the background what
-    its partitions' writes and forgets leave undone: derivatives whose
-    writer stopped before the vector store had them, the first delete of
+    its partitions' ingests and forgets leave undone: derivatives whose
+    ingest stopped before the vector store had them, the first delete of
     forgotten derivatives whose forget stopped before recording it, and
     their second delete after the segment store's retention. Any number of
     processes may run this work over the same stores at once.
@@ -298,7 +298,7 @@ class EventMemory:
 
         The segment store's partition is deleted first. Its text is gone
         then, no write can start on it, and the background work stops
-        taking up its pending writes and tombstones, whose vectors
+        taking up its indexing jobs and tombstones, whose vectors
         the vector store's partition deletion removes.
 
         Args:
@@ -309,10 +309,10 @@ class EventMemory:
         await self._params.vector_store.delete_partition(partition_key)
 
     async def _work_in_background(self) -> None:
-        """Finish pending writes and delete tombstoned derivatives until cancelled."""
+        """Finish indexing jobs and delete tombstoned derivatives until cancelled."""
         while True:
             try:
-                worked = await self._finish_pending_write()
+                worked = await self._run_indexing_job()
                 worked = await self._delete_tombstoned_derivatives() or worked
             except Exception:
                 logger.exception(
@@ -322,9 +322,9 @@ class EventMemory:
             if not worked:
                 await asyncio.sleep(self._params.background_idle_seconds)
 
-    async def _finish_pending_write(self) -> bool:
-        """Write one claimed pending write's derivatives to the vector store; whether one was claimed."""
-        claim = await self._params.segment_store.claim_pending_write(
+    async def _run_indexing_job(self) -> bool:
+        """Write one claimed indexing job's derivatives to the vector store; whether one was claimed."""
+        claim = await self._params.segment_store.claim_indexing_job(
             lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
         )
         if claim is None:
@@ -340,19 +340,19 @@ class EventMemory:
                 claim.attempt,
                 exc_info=True,
             )
-            await self._params.segment_store.fail_pending_write_claim(claim, error)
+            await self._params.segment_store.fail_indexing_job_claim(claim, error)
             return True
         except BaseException:
             await self._end_claim_after_cancellation(
-                self._params.segment_store.cancel_pending_write_claim(claim),
-                f"the pending write of segment {claim.segment_uuid}",
+                self._params.segment_store.cancel_indexing_job_claim(claim),
+                f"the indexing job of segment {claim.segment_uuid}",
             )
             raise
         if written:
-            await self._params.segment_store.finish_pending_write_claim(claim)
+            await self._params.segment_store.finish_indexing_job_claim(claim)
         return True
 
-    async def _write_pending_derivatives(self, claim: PendingWriteClaim) -> bool:
+    async def _write_pending_derivatives(self, claim: IndexingJobClaim) -> bool:
         """Write a claim's derivatives to the vector store within a budget; whether the claim still held."""
         vector_store_partition = await self._params.vector_store.open_partition(
             claim.partition_key
@@ -367,7 +367,7 @@ class EventMemory:
         # key; since a partition leaves the segment store first, that vector
         # store partition belongs to the claimed partition.
         deadline = asyncio.get_running_loop().time() + self._params.write_budget_seconds
-        if not await self._params.segment_store.renew_pending_write_claim(
+        if not await self._params.segment_store.renew_indexing_job_claim(
             claim,
             lease_seconds=self._params.write_budget_seconds + _CLAIM_MARGIN_SECONDS,
         ):
@@ -878,7 +878,7 @@ class EventMemoryPartition:
                 )
             t_vector_store = time.monotonic()
 
-            await self._segment_store_partition.delete_pending_writes(
+            await self._segment_store_partition.delete_indexing_jobs(
                 segment.uuid for segment in segments
             )
         except (
@@ -894,7 +894,7 @@ class EventMemoryPartition:
                 exc_info=True,
             )
             return
-        t_pending_write_deletion = time.monotonic()
+        t_indexing_job_deletion = time.monotonic()
 
         phase_durations = {
             "segmentation": t_segmentation - t_start,
@@ -902,7 +902,7 @@ class EventMemoryPartition:
             "embedding": t_embedding - t_derivation,
             "segment_store": t_segment_store - t_embedding,
             "vector_store": t_vector_store - t_segment_store,
-            "pending_write_deletion": t_pending_write_deletion - t_vector_store,
+            "indexing_job_deletion": t_indexing_job_deletion - t_vector_store,
         }
 
         logger.debug(
@@ -911,7 +911,7 @@ class EventMemoryPartition:
                 f"{phase}={duration:.3f}s"
                 for phase, duration in phase_durations.items()
             ),
-            t_pending_write_deletion - t_start,
+            t_indexing_job_deletion - t_start,
         )
 
         if self._encode_events_phase_seconds is not None:

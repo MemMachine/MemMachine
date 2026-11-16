@@ -54,12 +54,12 @@ class SegmentStorePartition(ABC):
         lease_seconds: int,
     ) -> None:
         """
-        Add events with their segments and derivatives, and a pending write for each segment.
+        Add events with their segments and derivatives, and an indexing job for each segment.
 
         All of it commits together or not at all. A batch naming an event
         the partition already holds is rejected whole, before anything is
-        stored. A pending write stands until `delete_pending_writes`
-        removes it; the caller holds the pending writes for
+        stored. An indexing job stands until `delete_indexing_jobs`
+        removes it; the caller holds the indexing jobs for
         `lease_seconds`, on the store's clock, before a claim may take
         them.
 
@@ -69,7 +69,7 @@ class SegmentStorePartition(ABC):
             derivatives (Iterable[Derivative]):
                 The derivatives, each naming a segment in the batch.
             lease_seconds (int):
-                Seconds the caller holds the pending writes.
+                Seconds the caller holds the indexing jobs.
 
         Raises:
             SegmentStoreEventAlreadyExistsError:
@@ -83,21 +83,21 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_pending_writes(
+    async def delete_indexing_jobs(
         self,
         segment_uuids: Iterable[UUID],
     ) -> None:
         """
-        Delete the pending writes of the given segments. Idempotent.
+        Delete the indexing jobs of the given segments. Idempotent.
 
-        Only the segments' pending writes are deleted. A segment forgotten
-        since keeps its tombstone. Never waits on another transaction: a
-        pending write another one holds at the time is left in place, for a
+        Only the segments' indexing jobs are deleted. A segment forgotten
+        since keeps its tombstone. Never waits on another transaction: an
+        indexing job another one holds at the time is left in place, for a
         forget to delete or the background work to write again.
 
         Args:
             segment_uuids (Iterable[UUID]):
-                The UUIDs of the segments whose pending writes to delete.
+                The UUIDs of the segments whose indexing jobs to delete.
         """
         raise NotImplementedError
 
@@ -169,13 +169,13 @@ class SegmentStorePartition(ABC):
         lease_seconds: int,
     ) -> list[Tombstone]:
         """
-        Delete events with their segments, derivatives, and pending writes, leaving a tombstone for each segment.
+        Delete events with their segments, derivatives, and indexing jobs, leaving a tombstone for each segment.
 
         All of it commits together or not at all. A tombstone holds its
         segment's derivative UUIDs until its second delete. The caller holds
         the tombstones for `lease_seconds`, on the store's clock, before a
         claim may take their first delete. A renewal of a claim on these
-        events' pending writes either commits first or finds them gone. An
+        events' indexing jobs either commits first or finds them gone. An
         event the partition does not hold is skipped. Idempotent.
 
         Args:
@@ -213,9 +213,9 @@ class SegmentStorePartition(ABC):
 
 
 @dataclass(frozen=True)
-class PendingWriteClaim:
+class IndexingJobClaim:
     """
-    A claim on a segment's pending write, which its writer did not delete.
+    A claim on a segment's indexing job, which its ingest did not delete.
 
     Attributes:
         partition_key (str):
@@ -420,15 +420,15 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def claim_pending_write(
+    async def claim_indexing_job(
         self,
         *,
         lease_seconds: int,
-    ) -> PendingWriteClaim | None:
+    ) -> IndexingJobClaim | None:
         """
-        Claim the pending write that came due first.
+        Claim the indexing job that came due first.
 
-        A pending write is due once its writer's lease has passed, on the
+        An indexing job is due once its ingest's lease has passed, on the
         store's clock. It is claimable then unless a claim on it holds its
         lease, or its last claim failed and its backoff has not passed, or
         its claims failed the store's maximum number of times in a row. A
@@ -442,17 +442,17 @@ class SegmentStore(ABC):
                 Seconds the claim holds its record.
 
         Returns:
-            PendingWriteClaim | None:
+            IndexingJobClaim | None:
                 The claim, or None if no record is claimable.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def renew_pending_write_claim(
-        self, claim: PendingWriteClaim, *, lease_seconds: int
+    async def renew_indexing_job_claim(
+        self, claim: IndexingJobClaim, *, lease_seconds: int
     ) -> bool:
         """
-        Hold a claimed pending write for `lease_seconds` more, if the claim still holds.
+        Hold a claimed indexing job for `lease_seconds` more, if the claim still holds.
 
         The claim holds while it is the latest on its record, the record
         exists, and the record's partition exists. A forget of the record's
@@ -460,7 +460,7 @@ class SegmentStore(ABC):
         makes the renewal return False.
 
         Args:
-            claim (PendingWriteClaim):
+            claim (IndexingJobClaim):
                 The claim.
             lease_seconds (int):
                 Seconds from now the claim holds its record.
@@ -472,22 +472,22 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def finish_pending_write_claim(self, claim: PendingWriteClaim) -> None:
+    async def finish_indexing_job_claim(self, claim: IndexingJobClaim) -> None:
         """
-        Delete a claimed pending write, once the claim has written its derivatives.
+        Delete a claimed indexing job, once the claim has written its derivatives.
 
         A claim that outlasted its lease deletes the record too: the
         derivatives are written, whichever claim wrote them.
 
         Args:
-            claim (PendingWriteClaim):
+            claim (IndexingJobClaim):
                 The claim.
         """
         raise NotImplementedError
 
     @abstractmethod
-    async def fail_pending_write_claim(
-        self, claim: PendingWriteClaim, error: Exception
+    async def fail_indexing_job_claim(
+        self, claim: IndexingJobClaim, error: Exception
     ) -> None:
         """
         End a claim whose work raised, if the claim is the latest on its record.
@@ -497,7 +497,7 @@ class SegmentStore(ABC):
         claimed, and the store reports it.
 
         Args:
-            claim (PendingWriteClaim):
+            claim (IndexingJobClaim):
                 The claim.
             error (Exception):
                 What the work raised.
@@ -505,7 +505,7 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def cancel_pending_write_claim(self, claim: PendingWriteClaim) -> None:
+    async def cancel_indexing_job_claim(self, claim: IndexingJobClaim) -> None:
         """
         End a claim whose work was cancelled, if the claim is the latest on its record.
 
@@ -513,7 +513,7 @@ class SegmentStore(ABC):
         claimable at once.
 
         Args:
-            claim (PendingWriteClaim):
+            claim (IndexingJobClaim):
                 The claim.
         """
         raise NotImplementedError

@@ -50,7 +50,7 @@ One physical schema on every dialect; the ORM models are the tables.
   than a composite string key, and random UUIDs are unique across nodes
   without coordination, so a tenant's rows move between databases
   verbatim.
-- `segment_store_pw`, pending writes, and `segment_store_tb`, tombstones,
+- `segment_store_ij`, indexing jobs, and `segment_store_tb`, tombstones,
   each a segment's: the work a derived index of the derivatives leaves
   behind (`event_memory_ingest_and_deletion.md`). `segment_store_tb_dv`
   holds a tombstone's derivative UUIDs.
@@ -58,7 +58,7 @@ One physical schema on every dialect; the ORM models are the tables.
   cursor per table the purge reclaims, the last key purged. An entry holds
   only what the purge reads.
 
-The derivative and pending write tables keep their foreign keys to the
+The derivative and indexing job tables keep their foreign keys to the
 segment table, the segment table its to the event table, and the
 tombstone derivative UUIDs theirs to the tombstone table, all
 `ON DELETE CASCADE` and keyed by incarnation.
@@ -114,8 +114,8 @@ on random-UUID collision resistance.
     `SQLAlchemySegmentStoreParams.purge_max_rows` per call, shared by
     the derivative, segment, event, tombstone derivative UUID and
     tombstone tables in that order, each before the table its rows cascade
-    from, so the only cascade a batch runs deletes a segment's one pending
-    write. A batch continues from its table's cursor: it reads the next
+    from, so the only cascade a batch runs deletes a segment's one indexing
+    job. A batch continues from its table's cursor: it reads the next
     keys after the cursor in primary-key order, deletes that key range, and
     records its last key in the same transaction. A table is done when a
     batch's search finds fewer keys than its bound, so rows another
@@ -127,7 +127,7 @@ on random-UUID collision resistance.
     proportion to what was already purged. The cursor relies on no row
     being written into an incarnation once it is enqueued, which the write
     fence guarantees (below). The bound counts every row a call deletes
-    but those pending writes.
+    but those indexing jobs.
   - Queue entries carry their own bound,
     `SQLAlchemySegmentStoreParams.purge_max_partitions`, because their cost
     is round trips rather than rows: empty partitions are cheap to create
