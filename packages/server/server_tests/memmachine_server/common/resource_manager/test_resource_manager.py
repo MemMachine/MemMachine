@@ -359,11 +359,18 @@ async def test_close_cancels_segment_store_purge_tasks(
 
 
 @pytest.mark.asyncio
-async def test_get_event_memory_builds_and_starts_one_event_memory(
+async def test_get_event_memory_builds_one_event_memory_and_runs_its_jobs_until_close(
     invalid_resource_manager, monkeypatch
 ):
-    """Concurrent first accesses build the deployment's EventMemory once and start it once."""
+    """Concurrent first accesses build the deployment's EventMemory once, and close() ends its jobs."""
     event_memory = create_autospec(EventMemory, instance=True)
+    ran = asyncio.Event()
+
+    async def idle_round() -> bool:
+        ran.set()
+        return False
+
+    event_memory.run_background_jobs.side_effect = idle_round
     build = AsyncMock(return_value=event_memory)
     monkeypatch.setattr(resource_manager_module, "event_memory_from_config", build)
 
@@ -371,25 +378,76 @@ async def test_get_event_memory_builds_and_starts_one_event_memory(
         invalid_resource_manager.get_event_memory(),
         invalid_resource_manager.get_event_memory(),
     )
-
-    assert handed_out == [event_memory, event_memory]
-    build.assert_awaited_once_with(invalid_resource_manager)
-    event_memory.startup.assert_awaited_once_with()
-
-
-@pytest.mark.asyncio
-async def test_close_shuts_the_event_memory_down(invalid_resource_manager, monkeypatch):
-    event_memory = create_autospec(EventMemory, instance=True)
-    monkeypatch.setattr(
-        resource_manager_module,
-        "event_memory_from_config",
-        AsyncMock(return_value=event_memory),
-    )
-    await invalid_resource_manager.get_event_memory()
+    await asyncio.wait_for(ran.wait(), 5)
+    jobs = invalid_resource_manager._event_memory_jobs
 
     await invalid_resource_manager.close()
 
-    event_memory.shutdown.assert_awaited_once_with()
+    assert handed_out == [event_memory, event_memory]
+    build.assert_awaited_once_with(invalid_resource_manager)
+    assert jobs is not None
+    assert jobs.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_event_memory_jobs_loop_survives_a_failing_round(monkeypatch):
+    """The loop keeps running rounds past one that raised."""
+    monkeypatch.setattr(
+        resource_manager_module, "_EVENT_MEMORY_JOBS_INTERVAL_SECONDS", 0
+    )
+    event_memory = create_autospec(EventMemory, instance=True)
+    calls = 0
+    third_call = asyncio.Event()
+
+    async def counting_round() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ConnectionError("dropped mid-round")
+        if calls >= 3:
+            third_call.set()
+        return False
+
+    event_memory.run_background_jobs.side_effect = counting_round
+
+    task = asyncio.create_task(
+        resource_manager_module._run_event_memory_jobs_forever(event_memory)
+    )
+    await asyncio.wait_for(third_call.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_event_memory_jobs_loop_runs_the_next_round_at_once_after_one_that_ran_jobs(
+    monkeypatch,
+):
+    """A round that ran jobs is followed by the next without the interval."""
+    monkeypatch.setattr(
+        resource_manager_module, "_EVENT_MEMORY_JOBS_INTERVAL_SECONDS", 3600
+    )
+    event_memory = create_autospec(EventMemory, instance=True)
+    calls = 0
+    third_call = asyncio.Event()
+
+    async def busy_round() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls >= 3:
+            third_call.set()
+            return False
+        return True
+
+    event_memory.run_background_jobs.side_effect = busy_round
+
+    task = asyncio.create_task(
+        resource_manager_module._run_event_memory_jobs_forever(event_memory)
+    )
+    await asyncio.wait_for(third_call.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 @pytest.mark.asyncio

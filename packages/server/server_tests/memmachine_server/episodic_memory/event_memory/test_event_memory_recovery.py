@@ -1,12 +1,11 @@
 """EventMemory's writes, forgets and background work across its two stores."""
 
-import asyncio
 import datetime
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, timedelta
 from unittest.mock import call, create_autospec
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -70,16 +69,11 @@ class _FailingVectorStorePartition(InMemoryVectorStorePartition):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.fail_upserts = False
-        self.deleted = asyncio.Event()
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
         if self.fail_upserts:
             raise ConnectionError("upsert failed")
         await super().upsert(records=records)
-
-    async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
-        await super().delete(record_uuids=record_uuids)
-        self.deleted.set()
 
 
 @pytest.fixture
@@ -515,7 +509,7 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
     assert not await event_memory._run_indexing_job()
 
 
-async def test_startup_runs_the_background_work_until_shutdown(
+async def test_a_round_of_background_jobs_runs_what_is_due_and_reports_it(
     event_memory: EventMemory,
     vector_store_partition: _FailingVectorStorePartition,
 ):
@@ -523,12 +517,7 @@ async def test_startup_runs_the_background_work_until_shutdown(
     event = _event("hello")
     await partition.encode_events([event])
     await partition.forget_events([event.uuid])
-    vector_store_partition.deleted.clear()
 
-    await event_memory.startup()
-    try:
-        await asyncio.wait_for(vector_store_partition.deleted.wait(), timeout=10)
-    finally:
-        await event_memory.shutdown()
-
+    assert await event_memory.run_background_jobs()
     assert vector_store_partition.records == {}
+    assert not await event_memory.run_background_jobs()

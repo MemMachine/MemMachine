@@ -1,7 +1,6 @@
 """Event memory system for storing and retrieving events."""
 
 import asyncio
-import contextlib
 import datetime
 import json
 import logging
@@ -108,9 +107,6 @@ class EventMemoryParams(BaseModel):
             Seconds a claim holds a tombstone before another process may
             take over its delete, on the segment store's clock; it should
             exceed the longest delete (default: 300).
-        background_idle_seconds (int):
-            Seconds the background work waits after finding nothing to do
-            (default: 1).
     """
 
     segment_store: InstanceOf[SegmentStore] = Field(
@@ -160,11 +156,6 @@ class EventMemoryParams(BaseModel):
             "longest delete"
         ),
     )
-    background_idle_seconds: int = Field(
-        1,
-        gt=0,
-        description="Seconds the background work waits after finding nothing to do",
-    )
 
 
 class EventMemory:
@@ -174,12 +165,12 @@ class EventMemory:
     A partition key names one partition in each store, and must be valid
     in both. Handles on a partition read and write that pair only.
 
-    Between `startup` and `shutdown`, it finishes in the background what
-    its partitions' ingests and forgets leave undone: derivatives whose
-    ingest stopped before the vector store had them, and the deletes of
-    forgotten derivatives from the vector store, once at the forget and
-    again after the segment store's retention. Any number of processes may
-    run this work over the same stores at once.
+    Its background jobs, which `run_background_jobs` runs a round at a
+    time, finish what its partitions' ingests and forgets leave undone:
+    derivatives whose ingest stopped before the vector store had them, and
+    the deletes of forgotten derivatives from the vector store, once after
+    the forget and again after the segment store's retention. Any number of
+    processes may run them over the same stores at once.
     """
 
     @classmethod
@@ -220,25 +211,6 @@ class EventMemory:
             )
 
         self._similarity_metric = store_schema.similarity_metric
-        self._background_work: asyncio.Task[None] | None = None
-
-    async def startup(self) -> None:
-        """Start the background work."""
-        self._background_work = asyncio.create_task(self._work_in_background())
-
-    async def shutdown(self) -> None:
-        """
-        Stop the background work.
-
-        What it leaves unfinished is taken up again by background work
-        started later, in this process or another.
-        """
-        if self._background_work is None:
-            return
-        self._background_work.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._background_work
-        self._background_work = None
 
     async def open_or_create_partition(
         self, partition_key: str
@@ -290,19 +262,18 @@ class EventMemory:
         await self._params.segment_store.delete_partition(partition_key)
         await self._params.vector_store.delete_partition(partition_key)
 
-    async def _work_in_background(self) -> None:
-        """Finish indexing jobs and delete tombstoned derivatives until cancelled."""
-        while True:
-            try:
-                worked = await self._run_indexing_job()
-                worked = await self._delete_tombstoned_derivatives() or worked
-            except Exception:
-                logger.exception(
-                    "Failed to run the event memory background work; pausing"
-                )
-                worked = False
-            if not worked:
-                await asyncio.sleep(self._params.background_idle_seconds)
+    async def run_background_jobs(self) -> bool:
+        """
+        Run one due indexing job and one due tombstone delete, if any; whether either was due.
+
+        A job whose embedder or vector store call fails is logged and
+        recorded on its claim, which backs it off; a segment store failure
+        raises. When and how often to call this is the caller's policy. Safe
+        to call from several processes at once over the same stores.
+        """
+        ran_indexing_job = await self._run_indexing_job()
+        deleted_tombstoned_derivatives = await self._delete_tombstoned_derivatives()
+        return ran_indexing_job or deleted_tombstoned_derivatives
 
     async def _run_indexing_job(self) -> bool:
         """Write one claimed indexing job's derivatives to the vector store; whether one was claimed."""

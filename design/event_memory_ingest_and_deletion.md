@@ -75,10 +75,13 @@ failures, which is reported. The second delete's retention
 is a condition of its own, so no schedule brings it forward.
 
 The records name no vector store or embedder: a deployment has one
-EventMemory, built from its configuration and started with the server,
-and every partition in its segment store is that EventMemory's. So the
-background work writes and deletes with the EventMemory's own stores, and
-runs whether or not any session is opened.
+EventMemory, built from its configuration, and every partition in its
+segment store is that EventMemory's. So the background work writes and
+deletes with the EventMemory's own stores. EventMemory runs it a round
+at a time when asked, and the server, like its purges, runs the rounds in
+a loop from startup, whether or not any session is opened, with no pause
+after a round that found work and a short one after a round that found
+none.
 
 **Further derived indexes.** Each derived index builds its own records
 from the stored events, segments, and derivatives, keys them its own way,
