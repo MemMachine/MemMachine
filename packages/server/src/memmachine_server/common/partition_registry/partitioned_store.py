@@ -1,11 +1,13 @@
 """
-The interface of a store whose records a partition registry divides into partitions.
+The interface of a store whose records are divided into partitions by the UUIDs a partition registry mints, and the purge round of an owner with one such store.
 
-Imports nothing from this package; the registry builds on it.
+A store is one kind of resource an owner partitions by its registry's UUIDs.
 """
 
 from abc import ABC, abstractmethod
 from uuid import UUID
+
+from .partition_registry import PurgeRound
 
 
 class PartitionedStore[PartitionT](ABC):
@@ -14,8 +16,8 @@ class PartitionedStore[PartitionT](ABC):
 
     The store holds no partition names and decides nothing about which
     partition is live. Its owner calls these methods, for each partition:
-    `create_partition` once, in the step the registry runs before it confirms
-    the partition, and `get_partition` whenever the owner answers the
+    `create_partition` once, as it provisions the partition before the
+    registry confirms it, and `get_partition` whenever the owner answers the
     partition; then, once the partition is deleted or its creation cancelled
     and the retention has passed, in the purge rounds the registry runs,
     `purge_partition` until it returns False, then `drop_partition`.
@@ -104,3 +106,17 @@ class PartitionedStore[PartitionT](ABC):
                 The deleted partition's UUID.
         """
         raise NotImplementedError
+
+
+def single_store_purge_round[PartitionT](
+    partitioned_store: PartitionedStore[PartitionT],
+) -> PurgeRound:
+    """The purge round of a namespace whose partitions one store holds: purge the store and, once its purge finds nothing, drop the partition from it."""
+
+    async def purge_round(partition_uuid: UUID) -> bool:
+        if await partitioned_store.purge_partition(partition_uuid):
+            return True
+        await partitioned_store.drop_partition(partition_uuid)
+        return False
+
+    return purge_round

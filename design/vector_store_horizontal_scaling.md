@@ -62,9 +62,9 @@ behind its choices.
 
 1. **Create.** The owner, such as event memory, creates the partition by
    name through its registry, which reserves the name, inserting a pending
-   row under a freshly minted UUID, runs the owner's creation of the storage
-   the partition keeps for itself in each store (on Qdrant and Milvus, none:
-   its records go into the store's one native collection, which startup
+   row under a freshly minted UUID, runs the owner's provisioning, which
+   creates the partition in each store (on Qdrant and Milvus, nothing: its
+   records go into the store's one native collection, which startup
    prepared), and confirms the reservation, which marks the row live. A
    racing creator loses at the registry's primary key, and a pending
    partition is not answered.

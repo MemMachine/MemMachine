@@ -2,7 +2,7 @@
 A partition registry in a relational database, through SQLAlchemy.
 
 A table of registered partitions keyed by namespace and partition name,
-each with its UUID and whether it is live (its storage created), and
+each with its UUID and whether it is live (provisioned), and
 a queue of deleted partition UUIDs claimed in the order they come due. The
 primary key arbitrates registration across processes, a conditional update
 confirms a reservation, unregistration is one transaction, and a purge
@@ -94,7 +94,7 @@ class PartitionRow(BasePartitionRegistry):
     partition_uuid: MappedColumn[UUID] = mapped_column(
         Uuid, nullable=False, unique=True
     )
-    # Whether the partition's storage is created; it is pending until then.
+    # Whether the partition is provisioned; it is pending until then.
     live: MappedColumn[bool] = mapped_column(Boolean, nullable=False)
     registered_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -116,14 +116,14 @@ class PurgeQueueRow(BasePartitionRegistry):
     enqueued_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    # Purge rounds claimed since a round last found records and deleted them,
-    # the open one included; a cancelled round's attempt is taken back.
+    # Purge rounds claimed since a round last found something of the
+    # partition, the open one included; a cancelled round's attempt is taken back.
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
     # When a claim may next take the tombstone: once the open claim's lease
     # and the backoff pass, or the backoff after a raise; None until a claim
-    # sets it, and again after a round that found records or was cancelled.
+    # sets it, and again after a round that found something or was cancelled.
     claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -164,10 +164,10 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             The namespace the registry serves: registry objects with the same
             namespace on the same database are one registry.
         tombstone_retention_seconds (int):
-            Seconds a deleted partition's records are kept before its purge
+            Seconds a deleted partition's data is kept before its purge
             starts, on the database clock. It must exceed, by orders of
-            magnitude, the longest a write to the backend can be in flight and
-            the delay before a store's reads reflect a write.
+            magnitude, the longest a write to the owner's resources can be in
+            flight and the delay before their reads reflect a write.
         purge_lease_seconds (int):
             Seconds a purge round's claim holds its tombstone, on the database
             clock; it should exceed the longest round (default: 300).
@@ -197,10 +197,10 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         ...,
         ge=0,
         description=(
-            "Seconds a deleted partition's records are kept before its purge "
+            "Seconds a deleted partition's data is kept before its purge "
             "starts, on the database clock. It must exceed, by orders of "
-            "magnitude, the longest a write to the backend can be in flight and "
-            "the delay before a store's reads reflect a write"
+            "magnitude, the longest a write to the owner's resources can be in "
+            "flight and the delay before their reads reflect a write"
         ),
     )
     purge_lease_seconds: int = Field(
@@ -419,7 +419,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                 _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
             )
         try:
-            any_records_found = await purge_round(claim.partition_uuid)
+            found_any = await purge_round(claim.partition_uuid)
         except Exception as error:
             error.add_note(
                 f"Purge round on partition {claim.partition_uuid}, attempt "
@@ -430,7 +430,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         except BaseException:
             await self._end_tombstone_claim_after_cancellation(claim)
             raise
-        await self._record_purge_round(claim, any_records_found)
+        await self._record_purge_round(claim, found_any)
         return True
 
     async def _claim_oldest_due_tombstone(self) -> _TombstoneClaim | None:
@@ -522,7 +522,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         if claim.attempt >= _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS:
             logger.error(
                 "Purge of partition %s is dead-lettered after %d attempts "
-                "without progress: its records stay and it is no longer claimed. "
+                "without progress: its data stays and it is no longer claimed. "
                 "Last error: %r. Set its attempts_without_progress to 0 and its "
                 "claimable_at to NULL in %s to retry it.",
                 claim.partition_uuid,
@@ -584,16 +584,16 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             )
 
     async def _record_purge_round(
-        self, claim: _TombstoneClaim, any_records_found: bool
+        self, claim: _TombstoneClaim, found_any: bool
     ) -> None:
         """Record a purge round's outcome on its tombstone.
 
         Finding nothing removes the tombstone under any claim, since a
         partition found empty after the retention needs no more rounds.
-        Finding records ends the claim and resets its attempts without
+        Finding something ends the claim and resets its attempts without
         progress, if the claim is the latest.
         """
-        if not any_records_found:
+        if not found_any:
             async with write_connection(self._engine) as connection:
                 await connection.execute(
                     delete(PurgeQueueRow).where(

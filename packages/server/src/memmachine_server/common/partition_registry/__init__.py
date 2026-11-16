@@ -12,9 +12,8 @@ from .partition_registry import (
     PurgeRound,
     Registration,
     Reservation,
-    single_store_purge_round,
 )
-from .partitioned_store import PartitionedStore
+from .partitioned_store import PartitionedStore, single_store_purge_round
 
 __all__ = [
     "PartitionAlreadyExistsError",

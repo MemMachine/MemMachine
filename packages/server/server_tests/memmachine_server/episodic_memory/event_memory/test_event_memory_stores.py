@@ -55,7 +55,7 @@ def vector_store() -> NonCallableMagicMock:
 
 @pytest.fixture
 def partition_registry() -> NonCallableMagicMock:
-    """A registry that runs a creation's storage step and answers one partition's registration."""
+    """A registry that runs a creation's provisioning step and answers one partition's registration."""
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = NAME
     registration.partition_uuid = PARTITION_UUID
@@ -64,9 +64,9 @@ def partition_registry() -> NonCallableMagicMock:
 
     async def create_partition(
         partition_name: str,
-        create_partition_storage: Callable[[UUID], Awaitable[None]],
+        provision_partition: Callable[[UUID], Awaitable[None]],
     ) -> Registration:
-        await create_partition_storage(PARTITION_UUID)
+        await provision_partition(PARTITION_UUID)
         return registration
 
     registry.create_partition.side_effect = create_partition
@@ -94,7 +94,7 @@ def purge_round(segment_store, vector_store) -> PurgeRound:
 
 
 @pytest.mark.asyncio
-async def test_a_partitions_storage_is_created_in_every_store(
+async def test_a_partition_is_provisioned_in_every_store(
     event_memory, segment_store, vector_store
 ):
     await event_memory.create_partition(NAME)

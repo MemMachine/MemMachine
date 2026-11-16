@@ -207,8 +207,8 @@ class EventMemory:
         """
         Create a partition under a name.
 
-        The registry runs the creation of the partition's storage in event
-        memory's stores before confirming it.
+        The registry provisions the partition, creating it in event memory's
+        stores, before confirming it.
 
         Args:
             partition_name (str):
@@ -235,7 +235,7 @@ class EventMemory:
                 getting its handle.
         """
         registration = await self._params.partition_registry.create_partition(
-            partition_name, self._create_partition_storage
+            partition_name, self._provision_partition
         )
         partition = await self._partition(registration)
         if partition is None:
@@ -246,8 +246,8 @@ class EventMemory:
             )
         return partition
 
-    async def _create_partition_storage(self, partition_uuid: UUID) -> None:
-        """Create the storage a partition keeps for itself in every store at once."""
+    async def _provision_partition(self, partition_uuid: UUID) -> None:
+        """Provision a partition: create it in every store at once."""
         await _on_every_store(
             "create",
             partition_uuid,

@@ -241,8 +241,8 @@ def _failing_statement(
         event.remove(engine.sync_engine, "before_cursor_execute", on_statement)
 
 
-async def _create_no_storage(partition_uuid: UUID) -> None:
-    """Create the storage of a partition that keeps none of its own."""
+async def _provision_nothing(partition_uuid: UUID) -> None:
+    """Provision a partition its owner keeps nothing for."""
 
 
 async def _no_round(partition_uuid: UUID) -> bool:
@@ -379,14 +379,14 @@ async def test_a_registration_is_current_until_its_partition_is_deleted(
     sqlalchemy_engine, partition_namespace
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
-    live = await registry.create_partition("c", _create_no_storage)
+    live = await registry.create_partition("c", _provision_nothing)
     await live.require_current()
 
     await registry.delete_partition("c")
     with pytest.raises(PartitionDeletedError):
         await live.require_current()
 
-    await registry.create_partition("c", _create_no_storage)
+    await registry.create_partition("c", _provision_nothing)
     with pytest.raises(PartitionDeletedError):
         await live.require_current()
 
@@ -412,7 +412,7 @@ async def test_a_partition_name_of_any_characters_and_the_longest_length_is_kept
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     registration = await registry.create_partition(
-        ANY_CHARACTERS_NAME, _create_no_storage
+        ANY_CHARACTERS_NAME, _provision_nothing
     )
 
     resolved = await registry.get_partition(ANY_CHARACTERS_NAME)
@@ -496,8 +496,8 @@ async def test_registries_of_two_namespaces_share_a_database_and_nothing_else(
     first = await _registry(sqlalchemy_engine, f"{partition_namespace}_a")
     second = await _registry(sqlalchemy_engine, f"{partition_namespace}_b")
 
-    one = await first.create_partition("c", _create_no_storage)
-    two = await second.create_partition("c", _create_no_storage)
+    one = await first.create_partition("c", _provision_nothing)
+    two = await second.create_partition("c", _provision_nothing)
     assert one.partition_uuid != two.partition_uuid
     in_first = await first.get_partition("c")
     in_second = await second.get_partition("c")
@@ -571,7 +571,7 @@ async def test_a_recreated_name_gets_a_new_partition_uuid(
     old = (await registry._reserve("c")).partition_uuid
     await registry.delete_partition("c")
 
-    new = (await registry.create_partition("c", _create_no_storage)).partition_uuid
+    new = (await registry.create_partition("c", _provision_nothing)).partition_uuid
 
     assert new != old
     resolved = await registry.get_partition("c")
@@ -1424,7 +1424,7 @@ async def test_sqlite_stays_writable_while_a_round_runs(tmp_path, partition_name
         held, holding = await _start_held_round(purger)
         try:
             assert held.ran == [older]
-            await impatient.create_partition("c", _create_no_storage)
+            await impatient.create_partition("c", _provision_nothing)
             await impatient.delete_partition("c")
             assert await _round(impatient, any_records_found=False) == newer
             held.end(any_records_found=False)
@@ -1501,7 +1501,7 @@ async def test_a_partition_uuid_colliding_with_a_live_partitions_is_reminted(
     """A mint rejected by the partition's unique constraint, with the name
     free, is a collision to mint again, not a taken name."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
-    live = (await registry.create_partition("live", _create_no_storage)).partition_uuid
+    live = (await registry.create_partition("live", _provision_nothing)).partition_uuid
     minted = iter([live, uuid4()])
     monkeypatch.setattr(
         "memmachine_server.common.partition_registry.sqlalchemy_partition_registry.uuid4",
@@ -1669,7 +1669,7 @@ async def test_a_deletion_whose_tombstone_cannot_be_queued_changes_nothing(
     tombstone fails, the partition stays registered and nothing is queued,
     so no deleted partition UUID is ever left without a tombstone."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
-    live = await registry.create_partition("c", _create_no_storage)
+    live = await registry.create_partition("c", _provision_nothing)
 
     with (
         _failing_statement(
@@ -1705,7 +1705,7 @@ async def test_a_reservation_whose_queue_check_fails_leaves_the_name_free(
         await registry._reserve("c")
 
     assert await registry.get_partition("c") is None
-    await registry.create_partition("c", _create_no_storage)
+    await registry.create_partition("c", _provision_nothing)
 
 
 @pytest.mark.asyncio
