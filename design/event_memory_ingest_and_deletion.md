@@ -69,10 +69,10 @@ first delete to the background work, once the hold has passed.
   derivatives from the vector store.
 
 Each record stores when a claim may next take it. A claim holds its record
-for a lease, and one that never ends is taken again once the lease and
-then the backoff have passed. A failed claim backs off, doubling, a
-cancelled one takes back its attempt, and a record is no longer taken
-after repeated failures, which is reported. The second delete's retention
+for a lease, and one that never ends, as when its process stops, is taken
+again once the lease and then the backoff have passed. A failed claim
+backs off, doubling, and a record is no longer taken after repeated
+failures, which is reported. The second delete's retention
 is a condition of its own, so no schedule brings it forward.
 
 The records name no vector store or embedder: a deployment has one
@@ -148,7 +148,7 @@ each is one of five kinds:
 
 - **One row.** It locks one row at most: a claim, whose update takes the
   record it locked from a materialized CTE, which PostgreSQL evaluates
-  once; a renewal, fail or cancel; an indexing job's finish; and a first
+  once; a renewal or fail; an indexing job's finish; and a first
   delete's finish. It never holds a lock while it waits for another.
 - **Never waits.** It takes every lock it could wait for with `SKIP
   LOCKED`: the ingest's delete of its indexing jobs, and the request's
@@ -187,8 +187,8 @@ at once. Each pair of operations that can lock the same rows:
 | Ingests naming the same events | events | Ingests of several events take turns; one of one event waits before holding any |
 | A write of several events and any other write | the registry row | The other write's pin does not wait for the write lock |
 | A forget and the ingest's delete of its indexing jobs | indexing jobs | The delete never waits |
-| A forget and a claim, renewal, fail, cancel or finish of an indexing job | an indexing job | The background statement locks one row |
-| The request's first-delete record and a tombstone's claim, fail, cancel or first-delete finish | a tombstone | The record never waits |
+| A forget and a claim, renewal, fail or finish of an indexing job | an indexing job | The background statement locks one row |
+| The request's first-delete record and a tombstone's claim, fail or first-delete finish | a tombstone | The record never waits |
 | Two second deletes of a tombstone | the tombstone, its UUIDs | Both delete the tombstone first |
 | A partition's deletion and a transaction locking several of its rows | the registry row | The deletion waits for the write lock and the pins |
 | A purge and a one-row background statement | a deleted partition's row | The background statement locks one row |

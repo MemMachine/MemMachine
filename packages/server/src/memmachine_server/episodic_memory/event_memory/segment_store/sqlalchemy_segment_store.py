@@ -1957,14 +1957,6 @@ class SQLAlchemySegmentStore(SegmentStore):
             )
 
     @override
-    async def cancel_indexing_job_claim(self, claim: IndexingJobClaim) -> None:
-        async with (
-            self._tracker("cancel_indexing_job_claim"),
-            write_session(self._create_session) as session,
-        ):
-            await self._take_back_cancelled_claim(session, claim)
-
-    @override
     async def claim_tombstone(self, *, lease_seconds: int) -> TombstoneClaim | None:
         # The retention is its own condition, so no schedule written to
         # claimable_at brings a second delete forward.
@@ -2104,14 +2096,6 @@ class SQLAlchemySegmentStore(SegmentStore):
                 TombstoneRow.__tablename__,
             )
 
-    @override
-    async def cancel_tombstone_claim(self, claim: TombstoneClaim) -> None:
-        async with (
-            self._tracker("cancel_tombstone_claim"),
-            write_session(self._create_session) as session,
-        ):
-            await self._take_back_cancelled_claim(session, claim)
-
     async def _claim_oldest_due(
         self,
         session: AsyncSession,
@@ -2188,20 +2172,6 @@ class SQLAlchemySegmentStore(SegmentStore):
             )
         )
         return ended.rowcount == 1
-
-    async def _take_back_cancelled_claim(
-        self, session: AsyncSession, claim: IndexingJobClaim | TombstoneClaim
-    ) -> None:
-        """Take back the claimed record's attempt and make it claimable at once, if the claim is the latest on it."""
-        table, claimed_record = _claimed_record(claim)
-        await session.execute(
-            update(table)
-            .where(claimed_record)
-            .values(
-                claimable_at=func.now(),
-                attempts_without_progress=table.attempts_without_progress - 1,
-            )
-        )
 
     def _claim_retry_backoff_seconds(
         self, attempts: ColumnElement[int] | InstrumentedAttribute[int]

@@ -1572,7 +1572,6 @@ async def test_a_stale_indexing_job_claim_leaves_a_tombstone_at_its_generation_a
 
     assert not await store.renew_indexing_job_claim(stale, lease_seconds=60)
     await store.fail_indexing_job_claim(stale, RuntimeError("index unavailable"))
-    await store.cancel_indexing_job_claim(stale)
     await store.finish_indexing_job_claim(stale)
 
     await _backdate(store, TombstoneRow.first_deleted_at, timedelta(days=2))
@@ -1652,7 +1651,6 @@ async def test_claim_on_an_indexing_job_of_a_forgotten_event_ends_without_effect
     assert not await store.renew_indexing_job_claim(claim, lease_seconds=60)
     await store.finish_indexing_job_claim(claim)
     await store.fail_indexing_job_claim(claim, RuntimeError("index unavailable"))
-    await store.cancel_indexing_job_claim(claim)
 
     assert (
         await _count_rows(
@@ -1861,56 +1859,6 @@ async def test_failed_claim_backs_off_doubling_up_to_the_cap(
     claim = await _claim(store, table)
     assert claim is not None
     assert claim.attempt == 4
-
-
-@pytest.mark.asyncio
-@_CLAIMED_TABLES
-async def test_a_cancelled_claim_takes_back_its_attempt(
-    store: SQLAlchemySegmentStore,
-    table: type[IndexingJobRow | TombstoneRow],
-) -> None:
-    """A cancelled claim is not a failed one: its record is claimable at once, under the same attempt."""
-    partition = await store.open_or_create_partition(
-        PARTITION_KEY, _plaintext_partition_config()
-    )
-    record_uuid = await _add_claimable_record(partition, table)
-    cancelled = await _claim(store, table)
-    assert cancelled is not None
-
-    await _cancel_claim(store, cancelled)
-
-    again = await _claim(store, table)
-    assert again is not None
-    assert (_claimed_record_uuid(again), again.generation, again.attempt) == (
-        record_uuid,
-        cancelled.generation + 1,
-        1,
-    )
-
-
-@pytest.mark.asyncio
-@_CLAIMED_TABLES
-async def test_cancelling_a_superseded_claim_changes_nothing(
-    store: SQLAlchemySegmentStore,
-    table: type[IndexingJobRow | TombstoneRow],
-) -> None:
-    partition = await store.open_or_create_partition(
-        PARTITION_KEY, _plaintext_partition_config()
-    )
-    record_uuid = await _add_claimable_record(partition, table)
-    superseded = await _claim(store, table)
-    assert superseded is not None
-    await _backdate(store, table.claimable_at, timedelta(days=1))
-    assert await _claim(store, table) is not None
-    scheduled = await _claimable_at(store, table, record_uuid)
-
-    await _cancel_claim(store, superseded)
-
-    assert await _claimable_at(store, table, record_uuid) == scheduled
-    await _backdate(store, table.claimable_at, timedelta(days=1))
-    third = await _claim(store, table)
-    assert third is not None
-    assert third.attempt == 3
 
 
 @pytest.mark.asyncio
@@ -2427,17 +2375,6 @@ async def _fail_claim(
         await store.fail_indexing_job_claim(claim, error)
     else:
         await store.fail_tombstone_claim(claim, error)
-
-
-async def _cancel_claim(
-    store: SQLAlchemySegmentStore,
-    claim: IndexingJobClaim | TombstoneClaim,
-) -> None:
-    """End `claim` as cancelled."""
-    if isinstance(claim, IndexingJobClaim):
-        await store.cancel_indexing_job_claim(claim)
-    else:
-        await store.cancel_tombstone_claim(claim)
 
 
 async def _shift_earlier(

@@ -232,7 +232,6 @@ class IndexingJobClaim:
         attempt (int):
             The claim's attempt number on the record, from 1: one more than
             the claims on it before, each of which failed or was abandoned.
-            A cancelled claim does not count.
     """
 
     partition_key: str
@@ -264,7 +263,7 @@ class TombstoneClaim:
         attempt (int):
             The claim's attempt number since the tombstone last made
             progress, from 1: one more than the claims on it since, each of
-            which failed or was abandoned. A cancelled claim does not count.
+            which failed or was abandoned.
     """
 
     partition_key: str
@@ -505,20 +504,6 @@ class SegmentStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def cancel_indexing_job_claim(self, claim: IndexingJobClaim) -> None:
-        """
-        End a claim whose work was cancelled, if the claim is the latest on its record.
-
-        The attempt the claim counted is taken back, and the record is
-        claimable at once.
-
-        Args:
-            claim (IndexingJobClaim):
-                The claim.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
     async def claim_tombstone(self, *, lease_seconds: int) -> TombstoneClaim | None:
         """
         Claim the oldest tombstone due for a delete.
@@ -578,19 +563,5 @@ class SegmentStore(ABC):
                 The claim.
             error (Exception):
                 What the delete raised.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def cancel_tombstone_claim(self, claim: TombstoneClaim) -> None:
-        """
-        End a claim whose delete was cancelled, if the claim is the latest on its tombstone.
-
-        The attempt the claim counted is taken back, and the tombstone is
-        claimable at once if its delete is due.
-
-        Args:
-            claim (TombstoneClaim):
-                The claim.
         """
         raise NotImplementedError

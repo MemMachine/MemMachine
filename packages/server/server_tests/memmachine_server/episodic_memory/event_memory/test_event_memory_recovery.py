@@ -71,14 +71,9 @@ class _FailingVectorStorePartition(InMemoryVectorStorePartition):
         super().__init__(**kwargs)
         self.fail_upserts = False
         self.fail_deletes = False
-        self.upsert_delay_seconds = 0.0
-        self.upserting = asyncio.Event()
         self.deleted = asyncio.Event()
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
-        self.upserting.set()
-        if self.upsert_delay_seconds:
-            await asyncio.sleep(self.upsert_delay_seconds)
         if self.fail_upserts:
             raise ConnectionError("upsert failed")
         await super().upsert(records=records)
@@ -420,32 +415,6 @@ async def test_background_work_retries_indexing_jobs_after_a_failed_write(
     assert vector_store_partition.records == {}
     # In its backoff now.
     assert not await event_memory._run_indexing_job()
-
-
-async def test_a_cancelled_recovery_takes_back_its_attempt(
-    event_memory: EventMemory,
-    vector_store_partition: _FailingVectorStorePartition,
-    sqlalchemy_sqlite_engine: AsyncEngine,
-):
-    """A recovery cancelled during its write, as at shutdown, leaves its
-    record claimable at once rather than after its lease and backoff."""
-    partition = await event_memory.open_or_create_partition("partition")
-    vector_store_partition.fail_upserts = True
-    await partition.encode_events([_event("hello")])
-    vector_store_partition.fail_upserts = False
-    await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
-    vector_store_partition.upserting.clear()
-    vector_store_partition.upsert_delay_seconds = 60
-
-    recovery = asyncio.create_task(event_memory._run_indexing_job())
-    await asyncio.wait_for(vector_store_partition.upserting.wait(), 30)
-    recovery.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await recovery
-
-    vector_store_partition.upsert_delay_seconds = 0
-    assert await event_memory._run_indexing_job()
-    assert len(vector_store_partition.records) == 1
 
 
 async def test_background_work_deletes_a_forgotten_events_vectors_twice(
