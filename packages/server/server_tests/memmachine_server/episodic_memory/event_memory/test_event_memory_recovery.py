@@ -65,12 +65,11 @@ def _event(text: str) -> Event:
 
 
 class _FailingVectorStorePartition(InMemoryVectorStorePartition):
-    """A vector store partition whose upserts or deletes raise while told to."""
+    """A vector store partition whose upserts raise while told to."""
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.fail_upserts = False
-        self.fail_deletes = False
         self.deleted = asyncio.Event()
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
@@ -79,8 +78,6 @@ class _FailingVectorStorePartition(InMemoryVectorStorePartition):
         await super().upsert(records=records)
 
     async def delete(self, *, record_uuids: Iterable[UUID]) -> None:
-        if self.fail_deletes:
-            raise ConnectionError("delete failed")
         await super().delete(record_uuids=record_uuids)
         self.deleted.set()
 
@@ -195,38 +192,19 @@ async def test_encoding_a_held_event_again_is_rejected_whole(
 # ---------------------------------------------------------------------------
 
 
-async def test_forget_deletes_the_vectors_and_records_the_first_delete(
+async def test_forget_tombstones_the_segments_and_leaves_the_vectors_to_the_background(
     partition: EventMemoryPartition,
     fake_segment_store_partition: InMemorySegmentStorePartition,
     vector_store_partition: _FailingVectorStorePartition,
 ):
     event = _event("hello")
     await partition.encode_events([event])
-
-    await partition.forget_events([event.uuid])
-
-    assert vector_store_partition.records == {}
-    assert fake_segment_store_partition.event_to_segments == {}
-    (segment_uuid,) = fake_segment_store_partition.tombstones
-    assert fake_segment_store_partition.tombstones_awaiting_second_delete == {
-        segment_uuid
-    }
-
-
-async def test_a_failed_first_delete_leaves_the_forget_complete_and_its_deletes_to_the_background(
-    partition: EventMemoryPartition,
-    fake_segment_store_partition: InMemorySegmentStorePartition,
-    vector_store_partition: _FailingVectorStorePartition,
-):
-    event = _event("hello")
-    await partition.encode_events([event])
-    vector_store_partition.fail_deletes = True
 
     await partition.forget_events([event.uuid])
 
     assert fake_segment_store_partition.event_to_segments == {}
     assert len(fake_segment_store_partition.tombstones) == 1
-    assert fake_segment_store_partition.tombstones_awaiting_second_delete == set()
+    assert len(vector_store_partition.records) == 1
 
 
 async def test_forgetting_events_the_partition_does_not_hold_deletes_nothing(
@@ -354,16 +332,6 @@ async def _age_indexing_jobs(engine: AsyncEngine, delta: timedelta) -> None:
         )
 
 
-async def _pass_forget_holds(engine: AsyncEngine) -> None:
-    """Make every tombstone awaiting its first delete claimable now, past its forget's lease."""
-    async with engine.begin() as connection:
-        await connection.execute(
-            update(TombstoneRow)
-            .where(TombstoneRow.first_deleted_at.is_(None))
-            .values(claimable_at=_database_time_ago(engine, timedelta(seconds=1)))
-        )
-
-
 async def _age_tombstones(engine: AsyncEngine, delta: timedelta) -> None:
     """Move every recorded first delete back to `delta` ago."""
     async with engine.begin() as connection:
@@ -425,14 +393,9 @@ async def test_background_work_deletes_a_forgotten_events_vectors_twice(
     partition = await event_memory.open_or_create_partition("partition")
     event = _event("hello")
     await partition.encode_events([event])
-    vector_store_partition.fail_deletes = True
     await partition.forget_events([event.uuid])
-    vector_store_partition.fail_deletes = False
     assert len(vector_store_partition.records) == 1
 
-    # The forget holds its tombstone for the first delete it did not record.
-    assert not await event_memory._delete_tombstoned_derivatives()
-    await _pass_forget_holds(sqlalchemy_sqlite_engine)
     assert await event_memory._delete_tombstoned_derivatives()
     assert vector_store_partition.records == {}
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 1
@@ -452,13 +415,10 @@ async def test_an_event_encoded_again_right_after_its_forget_keeps_its_new_vecto
     partition = await event_memory.open_or_create_partition("partition")
     event = _event("hello")
     await partition.encode_events([event])
-    vector_store_partition.fail_deletes = True
     await partition.forget_events([event.uuid])
-    vector_store_partition.fail_deletes = False
     [forgotten_record_uuid] = vector_store_partition.records
 
     await partition.encode_events([event])
-    await _pass_forget_holds(sqlalchemy_sqlite_engine)
     assert await event_memory._delete_tombstoned_derivatives()
     await _age_tombstones(sqlalchemy_sqlite_engine, timedelta(days=2))
     assert await event_memory._delete_tombstoned_derivatives()
@@ -558,16 +518,12 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
 async def test_startup_runs_the_background_work_until_shutdown(
     event_memory: EventMemory,
     vector_store_partition: _FailingVectorStorePartition,
-    sqlalchemy_sqlite_engine: AsyncEngine,
 ):
     partition = await event_memory.open_or_create_partition("partition")
     event = _event("hello")
     await partition.encode_events([event])
-    vector_store_partition.fail_deletes = True
     await partition.forget_events([event.uuid])
-    vector_store_partition.fail_deletes = False
     vector_store_partition.deleted.clear()
-    await _pass_forget_holds(sqlalchemy_sqlite_engine)
 
     await event_memory.startup()
     try:

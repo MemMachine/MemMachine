@@ -162,52 +162,19 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_event_segments(
-        self,
-        event_uuids: Iterable[UUID],
-        *,
-        lease_seconds: int,
-    ) -> list[Tombstone]:
+    async def delete_event_segments(self, event_uuids: Iterable[UUID]) -> None:
         """
         Delete events with their segments, derivatives, and indexing jobs, leaving a tombstone for each segment.
 
         All of it commits together or not at all. A tombstone holds its
-        segment's derivative UUIDs until its second delete. The caller holds
-        the tombstones for `lease_seconds`, on the store's clock, before a
-        claim may take their first delete. A renewal of a claim on these
+        segment's derivative UUIDs until its second delete, and is due for
+        its first delete once this commits. A renewal of a claim on these
         events' indexing jobs either commits first or finds them gone. An
         event the partition does not hold is skipped. Idempotent.
 
         Args:
             event_uuids (Iterable[UUID]):
                 The UUIDs of the events to forget.
-            lease_seconds (int):
-                Seconds the caller holds the tombstones.
-
-        Returns:
-            list[Tombstone]:
-                The tombstones, one per deleted segment, each awaiting its
-                first delete.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def record_tombstone_first_delete(
-        self, segment_uuids: Iterable[UUID]
-    ) -> None:
-        """
-        Record that the given segments' tombstoned derivatives were deleted from their index once.
-
-        Each tombstone then awaits only its second delete, which falls due
-        once the store's retention has passed since this record, on the
-        store's clock. An open claim on one ends. Idempotent, and a no-op
-        for a tombstone no longer awaiting its first delete. Never waits on
-        another transaction: a tombstone a claim's statement holds at the
-        time is left for its claim to record.
-
-        Args:
-            segment_uuids (Iterable[UUID]):
-                The UUIDs of the forgotten segments whose tombstones to record.
         """
         raise NotImplementedError
 
@@ -508,11 +475,10 @@ class SegmentStore(ABC):
         """
         Claim the oldest tombstone due for a delete.
 
-        A tombstone awaiting its first delete is due once its forget's lease
-        has passed, on the store's clock. One awaiting its second is due
-        once the store's retention has passed since its first delete was
-        recorded; no claim's schedule brings that forward. A due tombstone
-        is claimable unless a claim on it holds its lease, or its last claim
+        A tombstone awaiting its first delete is due once its forget
+        commits. One awaiting its second is due once the store's retention
+        has passed since its first delete was recorded; no claim's schedule
+        brings that forward. A due tombstone is claimable unless a claim on it holds its lease, or its last claim
         failed and its backoff has not passed, or its claims failed the
         store's maximum number of times in a row. A claim holds its
         tombstone for `lease_seconds`, and a claim that never ends is

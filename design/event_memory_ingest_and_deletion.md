@@ -8,8 +8,8 @@ and a forget stays complete anyway.
 ## Requirements
 
 - **Deletion.** After a forget commits, the events, their segments, and
-  their derivatives are deleted from SQL, and the derivatives' vectors are
-  deleted at once and again after a retention R.
+  their derivatives are deleted from SQL, and the background work deletes
+  the derivatives' vectors, and again after a retention R.
 - **Adding again.** A forgotten event can be added again under its UUID as
   soon as the forget commits.
 - **Late writes.** A write to the vector store can be applied after its
@@ -51,22 +51,21 @@ or a stop after step 2 leaves the derivatives pending, for the background
 work to write.
 
 **Forget.** One transaction locks the events and their segments, writes a
-tombstone for each segment, held for the forget's lease, copies the
-segment's derivative UUIDs into it, and deletes the events, which cascades
-to the segments and to their indexing jobs and derivatives. The vectors
-are then deleted once and the first delete recorded, and each tombstone
-awaits its second delete, due R after that record, which deletes the
-tombstone and, by cascade, its derivative UUIDs. A failure here leaves the
-first delete to the background work, once the hold has passed.
+tombstone for each segment, copies the segment's derivative UUIDs into it,
+and deletes the events, which cascades to the segments and to their
+indexing jobs and derivatives. The background work then deletes the
+vectors and records that first delete, and each tombstone awaits its
+second delete, due R after that record, which deletes the tombstone and,
+by cascade, its derivative UUIDs.
 
 **Background work.** Any process claims, from the segment store:
 
 - indexing jobs whose ingest's hold has passed: it embeds the segment's
   stored derivatives and renews its claim, then writes them and deletes
   the record;
-- tombstones due for a delete, the first once the forget's hold has
-  passed and the second R after the first was recorded, and deletes their
-  derivatives from the vector store.
+- tombstones due for a delete, the first once the forget commits and the
+  second R after the first was recorded, and deletes their derivatives
+  from the vector store.
 
 Each record stores when a claim may next take it. A claim holds its record
 for a lease, and one that never ends, as when its process stops, is taken
@@ -151,9 +150,9 @@ each is one of five kinds:
   once; a renewal or fail; an indexing job's finish; and a first
   delete's finish. It never holds a lock while it waits for another.
 - **Never waits.** It takes every lock it could wait for with `SKIP
-  LOCKED`: the ingest's delete of its indexing jobs, and the request's
-  record of a first delete. A row it skips is a forget's, which deletes
-  it, or a one-row statement's, whose work the background work completes.
+  LOCKED`: the ingest's delete of its indexing jobs. A row it skips is a
+  forget's, which deletes it, or a claim's, whose work the background work
+  completes.
 - **One root.** It waits for one contested row before it holds any, and
   reaches the rest only through it, where it waits only on one-row and
   never-waiting transactions: an ingest of one event, which waits only on
@@ -188,7 +187,6 @@ at once. Each pair of operations that can lock the same rows:
 | A write of several events and any other write | the registry row | The other write's pin does not wait for the write lock |
 | A forget and the ingest's delete of its indexing jobs | indexing jobs | The delete never waits |
 | A forget and a claim, renewal, fail or finish of an indexing job | an indexing job | The background statement locks one row |
-| The request's first-delete record and a tombstone's claim, fail or first-delete finish | a tombstone | The record never waits |
 | Two second deletes of a tombstone | the tombstone, its UUIDs | Both delete the tombstone first |
 | A partition's deletion and a transaction locking several of its rows | the registry row | The deletion waits for the write lock and the pins |
 | A purge and a one-row background statement | a deleted partition's row | The background statement locks one row |
@@ -244,6 +242,12 @@ erasure. Removing any one piece above breaks one of them.
   and ingest runs at the background work's claim rate rather than with
   the requests'. Writing in the request and falling back to the indexing
   job keeps the common case written when the request returns.
+- **Delete the vectors in the forget's request** as well. The vectors go
+  before the forget returns rather than at the next claim, but the request
+  and a claim can then both do the first delete, which takes a hold on new
+  tombstones and a generation bump to end a claim that overlaps the
+  request. Results do not change, since a search drops hits whose
+  derivatives are deleted.
 - **Vectors in the SQL database.** Exact, with no late writes, but only for
   the backends that offer it.
 

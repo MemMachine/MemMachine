@@ -342,11 +342,10 @@ class TombstoneRow(BaseSegmentStore):
     first_deleted_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # When a claim may take the tombstone, once its delete is due: once the
-    # forget's lease has passed, once an open claim's lease and then the
-    # backoff have passed, or once the backoff after a failed claim has
-    # passed. None from the first delete's record until a claim of the
-    # second sets it.
+    # When a claim may take the tombstone, once its delete is due: at once
+    # from the forget, once an open claim's lease and then the backoff have
+    # passed, or once the backoff after a failed claim has passed. None from
+    # the first delete's record until a claim of the second sets it.
     claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -1094,15 +1093,10 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     # Forgetting
 
     @override
-    async def delete_event_segments(
-        self,
-        event_uuids: Iterable[UUID],
-        *,
-        lease_seconds: int,
-    ) -> list[Tombstone]:
+    async def delete_event_segments(self, event_uuids: Iterable[UUID]) -> None:
         event_uuids = set(event_uuids)
         if not event_uuids:
-            return []
+            return
 
         async with (
             self._tracker("delete_event_segments"),
@@ -1132,7 +1126,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 ).scalars()
             )
             if not held_event_uuids:
-                return []
+                return
             # Reached only through the events held above, so no other
             # transaction deletes them meanwhile.
             segment_uuids = list(
@@ -1145,10 +1139,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                     )
                 ).scalars()
             )
-
-            derivative_uuids_by_segment: dict[UUID, list[UUID]] = {
-                segment_uuid: [] for segment_uuid in segment_uuids
-            }
             if segment_uuids:
                 await session.execute(
                     insert(TombstoneRow).values(
@@ -1156,9 +1146,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                             {
                                 "incarnation": self._incarnation,
                                 "segment_uuid": segment_uuid,
-                                "claimable_at": _seconds_from_now(
-                                    lease_seconds, is_sqlite=self._is_sqlite
-                                ),
+                                "claimable_at": func.now(),
                             }
                             for segment_uuid in segment_uuids
                         ]
@@ -1167,9 +1155,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 # Each tombstone copies its segment's derivative UUIDs, found
                 # by the segments locked above, which the derivatives' index
                 # leads on.
-                copied = await session.execute(
-                    insert(TombstoneDerivativeRow)
-                    .from_select(
+                await session.execute(
+                    insert(TombstoneDerivativeRow).from_select(
                         ["incarnation", "uuid", "segment_uuid"],
                         select(
                             DerivativeRow.incarnation,
@@ -1180,13 +1167,7 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                             DerivativeRow.segment_uuid.in_(segment_uuids),
                         ),
                     )
-                    .returning(
-                        TombstoneDerivativeRow.uuid,
-                        TombstoneDerivativeRow.segment_uuid,
-                    )
                 )
-                for derivative_uuid, segment_uuid in copied.all():
-                    derivative_uuids_by_segment[segment_uuid].append(derivative_uuid)
 
             # The cascade follows to the events' segments, and through them
             # to their indexing jobs and derivatives.
@@ -1194,50 +1175,6 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                 delete(EventRow).where(
                     EventRow.incarnation == self._incarnation,
                     EventRow.uuid.in_(held_event_uuids),
-                )
-            )
-        return [
-            Tombstone(segment_uuid=segment_uuid, derivative_uuids=derivative_uuids)
-            for segment_uuid, derivative_uuids in derivative_uuids_by_segment.items()
-        ]
-
-    @override
-    async def record_tombstone_first_delete(
-        self, segment_uuids: Iterable[UUID]
-    ) -> None:
-        segment_uuids = set(segment_uuids)
-        if not segment_uuids:
-            return
-        async with (
-            self._tracker("record_tombstone_first_delete"),
-            write_session(self._create_session) as session,
-        ):
-            await self._ensure_partition_live(session, pin=True)
-            # Skips the tombstones a claim's statement holds, so this never
-            # waits; their claims record the first delete instead.
-            unheld = (
-                select(TombstoneRow.incarnation, TombstoneRow.segment_uuid)
-                .where(
-                    TombstoneRow.incarnation == self._incarnation,
-                    TombstoneRow.segment_uuid.in_(segment_uuids),
-                    TombstoneRow.first_deleted_at.is_(None),
-                )
-                .with_for_update(skip_locked=True)
-            )
-            await session.execute(
-                update(TombstoneRow)
-                .where(
-                    tuple_(TombstoneRow.incarnation, TombstoneRow.segment_uuid).in_(
-                        unheld
-                    )
-                )
-                # Made without a claim, so it starts a new generation: an
-                # open claim's late failure then changes nothing.
-                .values(
-                    first_deleted_at=func.now(),
-                    claimable_at=None,
-                    attempts_without_progress=0,
-                    claim_generation=TombstoneRow.claim_generation + 1,
                 )
             )
 

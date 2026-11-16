@@ -105,9 +105,9 @@ class EventMemoryParams(BaseModel):
             clock; it should exceed the longest embedding and the longest
             write (default: 180).
         tombstone_lease_seconds (int):
-            Seconds a forget, or a claim, holds a tombstone before another
-            process may take over its delete, on the segment store's clock;
-            it should exceed the longest delete (default: 300).
+            Seconds a claim holds a tombstone before another process may
+            take over its delete, on the segment store's clock; it should
+            exceed the longest delete (default: 300).
         background_idle_seconds (int):
             Seconds the background work waits after finding nothing to do
             (default: 5).
@@ -155,9 +155,9 @@ class EventMemoryParams(BaseModel):
         300,
         gt=0,
         description=(
-            "Seconds a forget, or a claim, holds a tombstone before another "
-            "process may take over its delete, on the segment store's clock; it "
-            "should exceed the longest delete"
+            "Seconds a claim holds a tombstone before another process may take "
+            "over its delete, on the segment store's clock; it should exceed the "
+            "longest delete"
         ),
     )
     background_idle_seconds: int = Field(
@@ -176,10 +176,10 @@ class EventMemory:
 
     Between `startup` and `shutdown`, it finishes in the background what
     its partitions' ingests and forgets leave undone: derivatives whose
-    ingest stopped before the vector store had them, the first delete of
-    forgotten derivatives whose forget stopped before recording it, and
-    their second delete after the segment store's retention. Any number of
-    processes may run this work over the same stores at once.
+    ingest stopped before the vector store had them, and the deletes of
+    forgotten derivatives from the vector store, once at the forget and
+    again after the segment store's retention. Any number of processes may
+    run this work over the same stores at once.
     """
 
     @classmethod
@@ -650,7 +650,6 @@ class EventMemoryPartition:
         self._embedder = params.embedder
         self._reranker = params.reranker
         self._indexing_job_lease_seconds = params.indexing_job_lease_seconds
-        self._tombstone_lease_seconds = params.tombstone_lease_seconds
 
         self._tracker = OperationTracker(
             params.metrics_factory,
@@ -1084,9 +1083,9 @@ class EventMemoryPartition:
         Forget events by their UUIDs.
 
         When this returns, the events, their segments, and their
-        derivatives are deleted from the segment store, and the derivatives'
-        vectors are deleted from the vector store at once and again after
-        the segment store's retention, by the background work if not here.
+        derivatives are deleted from the segment store. The background work
+        then deletes the derivatives' vectors from the vector store, and
+        again after the segment store's retention.
 
         Args:
             event_uuids (Iterable[UUID]):
@@ -1097,35 +1096,7 @@ class EventMemoryPartition:
             return
 
         async with self._tracker("forget_events"):
-            await self._forget_events(event_uuids)
-
-    async def _forget_events(self, event_uuids: set[UUID]) -> None:
-        # The tombstones are held for the first delete below; the background
-        # work takes that delete over once the hold passes unrecorded.
-        tombstones = await self._segment_store_partition.delete_event_segments(
-            event_uuids, lease_seconds=self._tombstone_lease_seconds
-        )
-        if not tombstones:
-            return
-        # The forget is complete once its tombstones commit: the background
-        # work deletes the vectors whether or not this first delete does.
-        try:
-            await self._vector_store_partition.delete(
-                record_uuids=[
-                    derivative_uuid
-                    for tombstone in tombstones
-                    for derivative_uuid in tombstone.derivative_uuids
-                ]
-            )
-            await self._segment_store_partition.record_tombstone_first_delete(
-                tombstone.segment_uuid for tombstone in tombstones
-            )
-        except Exception:
-            logger.warning(
-                "Failed to delete the vectors of the forgotten events' "
-                "derivatives; the background work will delete them later",
-                exc_info=True,
-            )
+            await self._segment_store_partition.delete_event_segments(event_uuids)
 
 
 def _extract_text(block: Block) -> str | None:

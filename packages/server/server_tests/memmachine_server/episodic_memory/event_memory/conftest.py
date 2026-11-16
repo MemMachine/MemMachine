@@ -73,7 +73,6 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         self.indexing_jobs: dict[UUID, list[Derivative]] = {}
         # Each tombstone, by its forgotten segment.
         self.tombstones: dict[UUID, Tombstone] = {}
-        self.tombstones_awaiting_second_delete: set[UUID] = set()
 
     @override
     @property
@@ -195,36 +194,17 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         }
 
     @override
-    async def delete_event_segments(
-        self,
-        event_uuids: Iterable[UUID],
-        *,
-        lease_seconds: int,
-    ) -> list[Tombstone]:
+    async def delete_event_segments(self, event_uuids: Iterable[UUID]) -> None:
         held_event_uuids = set(event_uuids) & self.event_to_segments.keys()
-        tombstones: list[Tombstone] = []
         for event_uuid in held_event_uuids:
             for segment_uuid in self.event_to_segments.pop(event_uuid):
                 self.segments.pop(segment_uuid)
                 self.segment_order.remove(segment_uuid)
                 self.indexing_jobs.pop(segment_uuid, None)
-                tombstones.append(
-                    Tombstone(
-                        segment_uuid=segment_uuid,
-                        derivative_uuids=self.segment_to_derivatives.pop(segment_uuid),
-                    )
+                self.tombstones[segment_uuid] = Tombstone(
+                    segment_uuid=segment_uuid,
+                    derivative_uuids=self.segment_to_derivatives.pop(segment_uuid),
                 )
-        for tombstone in tombstones:
-            self.tombstones[tombstone.segment_uuid] = tombstone
-        return tombstones
-
-    @override
-    async def record_tombstone_first_delete(
-        self, segment_uuids: Iterable[UUID]
-    ) -> None:
-        for segment_uuid in segment_uuids:
-            if segment_uuid in self.tombstones:
-                self.tombstones_awaiting_second_delete.add(segment_uuid)
 
 
 class FakeReranker(Reranker):
