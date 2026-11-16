@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from sqlalchemy import (
     ColumnElement,
     Delete,
+    Select,
     delete,
     event,
     func,
@@ -25,8 +26,14 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    create_async_engine,
+)
 from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.pool import StaticPool
 
@@ -4484,6 +4491,71 @@ async def test_concurrent_forgets_of_one_event_tombstone_it_once(
 
         tombstones = await _tombstones(partition)
         assert all(segment.uuid in tombstones for segment in segments)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_forget_acts_only_on_the_events_its_lock_returned(
+    pg_store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An event an ingest commits after the forget locked its events is neither tombstoned nor deleted.
+
+    Each statement of the forget reads a snapshot of its own on PostgreSQL,
+    so one that named the requested events rather than the locked ones would
+    see the event committed meanwhile: it would tombstone segments that stay
+    stored, or delete the event with its segments and derivatives and
+    tombstone none of them.
+    """
+    partition = await pg_store.open_or_create_partition(
+        "forget_lock_rule", _plaintext_partition_config()
+    )
+    held = _seg()
+    held_links = _links(held)
+    await _add_segments(partition, held_links)
+    late = _seg()
+    late_links = _links(late)
+
+    reached_pause = asyncio.Event()
+    release = asyncio.Event()
+    original_execute = AsyncSession.execute
+
+    async def pausing_after_the_event_lock(self, statement, *args, **kwargs):
+        result = await original_execute(self, statement, *args, **kwargs)
+        if not reached_pause.is_set() and _locks_events(statement):
+            reached_pause.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(AsyncSession, "execute", pausing_after_the_event_lock)
+
+    forget = asyncio.create_task(
+        partition.delete_event_segments([held.event_uuid, late.event_uuid])
+    )
+    try:
+        await asyncio.wait_for(reached_pause.wait(), 30)
+        await asyncio.wait_for(_add_segments(partition, late_links), 30)
+    finally:
+        # Release the forget even on failure so its open transaction cannot
+        # wedge fixture teardown.
+        release.set()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(forget, 30)
+    await forget
+
+    assert await _tombstones(partition) == {held.uuid: sorted(held_links[held])}
+    assert set(await partition.get_segment_contexts([late.uuid])) == {late.uuid}
+    assert await partition.get_segment_uuids_by_derivative_uuids(
+        late_links[late]
+    ) == dict.fromkeys(late_links[late], late.uuid)
+
+
+def _locks_events(statement: object) -> bool:
+    """Whether `statement` is a SELECT that locks event rows with FOR UPDATE."""
+    if not isinstance(statement, Select):
+        return False
+    compiled = str(statement.compile(dialect=postgresql.dialect()))
+    return EventRow.__tablename__ in compiled and "FOR UPDATE" in compiled
 
 
 @pytest.mark.asyncio
