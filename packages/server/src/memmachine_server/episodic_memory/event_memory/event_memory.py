@@ -222,7 +222,6 @@ class EventMemory:
         self._similarity_metric = store_schema.similarity_metric
         self._background_work: asyncio.Task[None] | None = None
         self._claim_endings: set[asyncio.Task[None]] = set()
-        self._unlinked_record_deletions: set[asyncio.Task[None]] = set()
 
     async def startup(self) -> None:
         """Start the background work."""
@@ -230,15 +229,11 @@ class EventMemory:
 
     async def shutdown(self) -> None:
         """
-        Stop the background work, and the deletions of unlinked records that queries left running.
+        Stop the background work.
 
-        What the background work leaves unfinished is taken up again by
-        background work started later, in this process or another, and a
-        query that finds an unlinked record again deletes it again.
+        What it leaves unfinished is taken up again by background work
+        started later, in this process or another.
         """
-        for deletion in self._unlinked_record_deletions:
-            deletion.cancel()
-        await asyncio.gather(*self._unlinked_record_deletions, return_exceptions=True)
         if self._background_work is None:
             return
         self._background_work.cancel()
@@ -278,7 +273,6 @@ class EventMemory:
             vector_store_partition=vector_store_partition,
             schema_fields=self._schema_fields,
             similarity_metric=self._similarity_metric,
-            unlinked_record_deletions=self._unlinked_record_deletions,
         )
 
     async def delete_partition(self, partition_key: str) -> None:
@@ -670,7 +664,6 @@ class EventMemoryPartition:
         vector_store_partition: VectorStorePartition,
         schema_fields: frozenset[str],
         similarity_metric: SimilarityMetric,
-        unlinked_record_deletions: set[asyncio.Task[None]],
     ) -> None:
         """
         Initialize a handle on one partition of an EventMemory.
@@ -686,9 +679,6 @@ class EventMemoryPartition:
                 The properties the vector store declares.
             similarity_metric (SimilarityMetric):
                 The metric the vector store scores matches by.
-            unlinked_record_deletions (set[asyncio.Task[None]]):
-                The EventMemory's running deletions of unlinked records,
-                which its shutdown cancels.
         """
         self._segment_store_partition = segment_store_partition
         self._vector_store_partition = vector_store_partition
@@ -706,7 +696,6 @@ class EventMemoryPartition:
 
         self._schema_fields = schema_fields
         self._similarity_metric = similarity_metric
-        self._unlinked_record_deletions = unlinked_record_deletions
 
         self._encode_events_phase_seconds: MetricsFactory.Histogram | None = None
         self._query_phase_seconds: MetricsFactory.Histogram | None = None
@@ -1016,22 +1005,14 @@ class EventMemoryPartition:
         # Deduplicate by first occurrence (multiple derivatives can map to the same segment).
         # First occurrence has the best score since matches are ordered best-to-worst.
         seed_embedding_scores: dict[UUID, float] = {}
-        unlinked_record_uuids: list[UUID] = []
         for match in query_result.matches:
             segment_uuid = segments_by_derivatives.get(match.record_uuid)
             if segment_uuid is None:
-                # The derivative is deleted; its vector outlived it.
-                unlinked_record_uuids.append(match.record_uuid)
+                # The derivative is deleted; its forget's deletes have not
+                # reached its vector yet.
                 continue
             if segment_uuid not in seed_embedding_scores:
                 seed_embedding_scores[segment_uuid] = match.score
-        if unlinked_record_uuids:
-            # The query does not wait for its cleanup.
-            deletion = asyncio.create_task(
-                self._delete_unlinked_records(unlinked_record_uuids)
-            )
-            self._unlinked_record_deletions.add(deletion)
-            deletion.add_done_callback(self._unlinked_record_deletions.discard)
 
         seed_segment_uuids = list(seed_embedding_scores)
 
@@ -1118,24 +1099,6 @@ class EventMemoryPartition:
                 self._query_phase_seconds.observe(duration, labels={"phase": phase})
 
         return QueryResult(scored_segment_contexts=scored_segment_contexts)
-
-    async def _delete_unlinked_records(self, record_uuids: list[UUID]) -> None:
-        """Delete vector records whose derivatives are no longer stored.
-
-        A derivative is stored before its record, and deleted only by a
-        forget, which deletes the record in the background, so such a
-        record was left by a delete that did not reach the vector store
-        yet. A delete that fails here, or that shutdown cancels, is tried
-        again by the next query that finds it.
-        """
-        try:
-            await self._vector_store_partition.delete(record_uuids=record_uuids)
-        except Exception:
-            logger.warning(
-                "Failed to delete %d vector records whose segments are gone",
-                len(record_uuids),
-                exc_info=True,
-            )
 
     async def _score_segment_contexts(
         self,
