@@ -310,12 +310,12 @@ class ResourceManagerImpl:
                         )
                         for run_job, label in (
                             (
-                                event_memory.index_pending_events,
-                                "indexing of pending events",
+                                event_memory.index_pending_segments,
+                                "indexing of pending segments",
                             ),
                             (
-                                event_memory.purge_forgotten_events,
-                                "purge of forgotten events",
+                                event_memory.purge_forgotten_segments,
+                                "purge of forgotten segments",
                             ),
                         )
                     ]

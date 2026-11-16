@@ -374,8 +374,8 @@ async def test_get_event_memory_builds_one_event_memory_and_runs_its_jobs_until_
 
         return job
 
-    event_memory.index_pending_events.side_effect = idle_job(indexed)
-    event_memory.purge_forgotten_events.side_effect = idle_job(purged)
+    event_memory.index_pending_segments.side_effect = idle_job(indexed)
+    event_memory.purge_forgotten_segments.side_effect = idle_job(purged)
     build = AsyncMock(return_value=event_memory)
     monkeypatch.setattr(resource_manager_module, "event_memory_from_config", build)
 
@@ -414,7 +414,7 @@ async def test_event_memory_jobs_loop_survives_a_failing_call(monkeypatch):
 
     task = asyncio.create_task(
         resource_manager_module._run_event_memory_jobs_forever(
-            counting_job, "indexing of pending events"
+            counting_job, "indexing of pending segments"
         )
     )
     await asyncio.wait_for(third_call.wait(), 5)
@@ -444,7 +444,7 @@ async def test_event_memory_jobs_loop_runs_the_next_job_at_once_after_one_ran(
 
     task = asyncio.create_task(
         resource_manager_module._run_event_memory_jobs_forever(
-            busy_job, "indexing of pending events"
+            busy_job, "indexing of pending segments"
         )
     )
     await asyncio.wait_for(third_call.wait(), 5)

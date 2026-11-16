@@ -165,8 +165,8 @@ class EventMemory:
     A partition key names one partition in each store, and must be valid
     in both. Handles on a partition read and write that pair only.
 
-    Its background jobs, which `index_pending_events` and
-    `purge_forgotten_events` each run one at a time, finish what its
+    Its background jobs, which `index_pending_segments` and
+    `purge_forgotten_segments` each run one at a time, finish what its
     partitions' ingests and forgets leave undone:
     derivatives whose ingest stopped before the vector store had them, and
     the deletes of forgotten derivatives from the vector store, once after
@@ -263,7 +263,7 @@ class EventMemory:
         await self._params.segment_store.delete_partition(partition_key)
         await self._params.vector_store.delete_partition(partition_key)
 
-    async def index_pending_events(self) -> bool:
+    async def index_pending_segments(self) -> bool:
         """
         Write one pending segment's derivatives to the vector store, if its indexing job is due; whether one was.
 
@@ -328,7 +328,7 @@ class EventMemory:
         )
         return True
 
-    async def purge_forgotten_events(self) -> bool:
+    async def purge_forgotten_segments(self) -> bool:
         """
         Delete one forgotten segment's derivatives from the vector store, for its tombstone's first or second delete, if one is due; whether one was.
 

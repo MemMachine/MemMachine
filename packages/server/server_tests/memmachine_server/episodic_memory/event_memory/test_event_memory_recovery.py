@@ -353,12 +353,12 @@ async def test_background_work_writes_the_derivatives_an_encode_left_pending(
     await partition.encode_events([_event("hello")])
     vector_store_partition.fail_upserts = False
 
-    assert not await event_memory.index_pending_events()
+    assert not await event_memory.index_pending_segments()
     await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
-    assert await event_memory.index_pending_events()
+    assert await event_memory.index_pending_segments()
 
     assert len(vector_store_partition.records) == 1
-    assert not await event_memory.index_pending_events()
+    assert not await event_memory.index_pending_segments()
     result = await partition.query("hello")
     assert len(result.scored_segment_contexts) == 1
 
@@ -373,10 +373,10 @@ async def test_background_work_retries_indexing_jobs_after_a_failed_write(
     await partition.encode_events([_event("hello")])
     await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
-    assert await event_memory.index_pending_events()
+    assert await event_memory.index_pending_segments()
     assert vector_store_partition.records == {}
     # In its backoff now.
-    assert not await event_memory.index_pending_events()
+    assert not await event_memory.index_pending_segments()
 
 
 async def test_background_work_deletes_a_forgotten_events_vectors_twice(
@@ -390,13 +390,13 @@ async def test_background_work_deletes_a_forgotten_events_vectors_twice(
     await partition.forget_events([event.uuid])
     assert len(vector_store_partition.records) == 1
 
-    assert await event_memory.purge_forgotten_events()
+    assert await event_memory.purge_forgotten_segments()
     assert vector_store_partition.records == {}
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 1
-    assert not await event_memory.purge_forgotten_events()
+    assert not await event_memory.purge_forgotten_segments()
 
     await _age_tombstones(sqlalchemy_sqlite_engine, timedelta(days=2))
-    assert await event_memory.purge_forgotten_events()
+    assert await event_memory.purge_forgotten_segments()
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 0
 
 
@@ -413,9 +413,9 @@ async def test_an_event_encoded_again_right_after_its_forget_keeps_its_new_vecto
     [forgotten_record_uuid] = vector_store_partition.records
 
     await partition.encode_events([event])
-    assert await event_memory.purge_forgotten_events()
+    assert await event_memory.purge_forgotten_segments()
     await _age_tombstones(sqlalchemy_sqlite_engine, timedelta(days=2))
-    assert await event_memory.purge_forgotten_events()
+    assert await event_memory.purge_forgotten_segments()
     assert await _tombstone_count(sqlalchemy_sqlite_engine) == 0
 
     assert len(vector_store_partition.records) == 1
@@ -441,7 +441,7 @@ async def test_a_forget_ends_the_derivatives_pending_with_it(
     await partition.forget_events([event.uuid])
     await _age_indexing_jobs(sqlalchemy_sqlite_engine, timedelta(hours=1))
 
-    assert not await event_memory.index_pending_events()
+    assert not await event_memory.index_pending_segments()
     assert vector_store_partition.records == {}
 
 
@@ -503,7 +503,7 @@ async def test_a_forget_while_the_background_work_embeds_ends_its_write(
         await partition.forget_events([event.uuid])
 
     embedder.hook = forget_the_event
-    assert await event_memory.index_pending_events()
+    assert await event_memory.index_pending_segments()
 
     assert vector_store_partition.records == {}
-    assert not await event_memory.index_pending_events()
+    assert not await event_memory.index_pending_segments()
