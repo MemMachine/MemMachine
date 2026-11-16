@@ -110,7 +110,7 @@ class EventMemoryParams(BaseModel):
             exceed the longest delete (default: 300).
         background_idle_seconds (int):
             Seconds the background work waits after finding nothing to do
-            (default: 5).
+            (default: 1).
     """
 
     segment_store: InstanceOf[SegmentStore] = Field(
@@ -161,7 +161,7 @@ class EventMemoryParams(BaseModel):
         ),
     )
     background_idle_seconds: int = Field(
-        5,
+        1,
         gt=0,
         description="Seconds the background work waits after finding nothing to do",
     )
