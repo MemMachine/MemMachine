@@ -433,12 +433,14 @@ memory, an ingest is the first, a query the second, and a forget the third.
 A write can still land in a deleted partition: between its two checks, or
 after a check that never ran because the process died. No store refuses it
 and no handle reads it, so the purge reclaims it, which is why a tombstone
-waits out a retention before its purge starts. Every write finishes within a
-bound well under the retention, and the bound is the client's, for SQL
-stores as for remote ones: a remote store's request timeout, and the SQL
-driver's statement timeout. A process paused, or an event loop stalled,
-between its check and its send or commit is outside this design, as a
-paused remote writer is.
+waits out a retention before its purge starts. Every write lands within a
+bound well under the retention after the check before it: the operation's own
+work before it writes, as an encode segments, derives, and embeds its events
+there, and then the client's bound, for SQL stores as for remote ones: a
+remote store's request timeout, and the SQL driver's statement timeout.
+Checking before that work saves it for an operation on a deleted partition.
+A process paused, or an event loop stalled, between its check and its send or
+commit is outside this design, as a paused remote writer is.
 
 ### Deletion and purge
 
