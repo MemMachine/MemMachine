@@ -7,7 +7,6 @@ from .data_types import (
     SegmentStorePartitionConfig,
     SegmentStorePartitionConfigMismatchError,
     SegmentStorePartitionHandleStaleError,
-    Tombstone,
 )
 from .segment_store import (
     IndexingJobClaim,
@@ -26,6 +25,5 @@ __all__ = [
     "SegmentStorePartitionConfig",
     "SegmentStorePartitionConfigMismatchError",
     "SegmentStorePartitionHandleStaleError",
-    "Tombstone",
     "TombstoneClaim",
 ]

@@ -97,23 +97,6 @@ class SegmentStorePartitionAlreadyExistsError(Exception):
         super().__init__(f"Partition {partition_key!r} already exists.")
 
 
-class Tombstone(BaseModel):
-    """
-    The derivatives of a forgotten segment, by UUID, whose derived index entries remain to delete.
-
-    Attributes:
-        segment_uuid (UUID):
-            UUID of the forgotten segment.
-        derivative_uuids (list[UUID]):
-            UUIDs of the segment's derivatives.
-    """
-
-    segment_uuid: UUID = Field(..., description="UUID of the forgotten segment")
-    derivative_uuids: list[UUID] = Field(
-        ..., description="UUIDs of the segment's derivatives"
-    )
-
-
 class SegmentStoreEventAlreadyExistsError(Exception):
     """A batch named an event the partition already holds; nothing was stored."""
 

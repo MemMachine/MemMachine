@@ -18,7 +18,6 @@ from memmachine_server.episodic_memory.event_memory.data_types import (
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.data_types import (
     SegmentStorePartitionConfig,
-    Tombstone,
 )
 
 
@@ -212,15 +211,18 @@ class IndexingJobClaim:
 @dataclass(frozen=True)
 class TombstoneClaim:
     """
-    A claim on a tombstone that is due for a delete.
+    A claim on a forgotten segment's tombstone, due for its first or second delete.
 
     Attributes:
         partition_key (str):
             The key of the partition the tombstone belongs to.
         incarnation (UUID):
             The partition incarnation the tombstone belongs to.
-        tombstone (Tombstone):
-            The tombstone.
+        segment_uuid (UUID):
+            The UUID of the forgotten segment.
+        derivative_uuids (list[UUID]):
+            The UUIDs of the segment's derivatives, whose index entries the
+            delete removes.
         second_delete (bool):
             Whether the claim is for the tombstone's second delete; it is
             for its first otherwise.
@@ -235,7 +237,8 @@ class TombstoneClaim:
 
     partition_key: str
     incarnation: UUID
-    tombstone: Tombstone
+    segment_uuid: UUID
+    derivative_uuids: list[UUID]
     second_delete: bool
     generation: int
     attempt: int

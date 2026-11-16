@@ -65,7 +65,6 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStorePartitionConfig,
     SegmentStorePartitionConfigMismatchError,
     SegmentStorePartitionHandleStaleError,
-    Tombstone,
     TombstoneClaim,
     sqlalchemy_segment_store,
 )
@@ -1468,7 +1467,7 @@ async def test_delete_event_segments_replaces_the_indexing_job_with_a_tombstone_
     assert await partition.get_segment_uuids_by_derivative_uuids(derivative_uuids) == {}
     claim = await store.claim_tombstone(lease_seconds=60)
     assert claim is not None
-    assert sorted(claim.tombstone.derivative_uuids) == sorted(derivative_uuids)
+    assert sorted(claim.derivative_uuids) == sorted(derivative_uuids)
 
 
 @pytest.mark.asyncio
@@ -1567,8 +1566,9 @@ async def test_an_ingests_own_indexing_job_delete_leaves_the_tombstone_a_forget_
 
     claim = await store.claim_tombstone(lease_seconds=60)
     assert claim is not None
-    assert claim.tombstone == Tombstone(
-        segment_uuid=segment.uuid, derivative_uuids=[derivatives[0].uuid]
+    assert (claim.segment_uuid, claim.derivative_uuids) == (
+        segment.uuid,
+        [derivatives[0].uuid],
     )
 
 
@@ -1595,7 +1595,7 @@ async def test_a_stale_indexing_job_claim_leaves_a_tombstone_at_its_generation_a
     await _backdate(store, TombstoneRow.first_deleted_at, timedelta(days=2))
     second = await store.claim_tombstone(lease_seconds=60)
     assert second is not None
-    assert (second.tombstone.segment_uuid, second.second_delete, second.attempt) == (
+    assert (second.segment_uuid, second.second_delete, second.attempt) == (
         segment.uuid,
         True,
         1,
@@ -1622,7 +1622,7 @@ async def test_a_segment_without_derivatives_has_the_lifecycle_of_any_other(
     await partition.delete_event_segments([segment.event_uuid])
     first = await store.claim_tombstone(lease_seconds=60)
     assert first is not None
-    assert first.tombstone == Tombstone(segment_uuid=segment.uuid, derivative_uuids=[])
+    assert (first.segment_uuid, first.derivative_uuids) == (segment.uuid, [])
     await store.finish_tombstone_claim(first)
     await _backdate(store, TombstoneRow.first_deleted_at, timedelta(hours=2))
     second = await store.claim_tombstone(lease_seconds=60)
@@ -1661,7 +1661,7 @@ async def test_claim_on_an_indexing_job_of_a_forgotten_event_ends_without_effect
     )
     tombstone_claim = await store.claim_tombstone(lease_seconds=60)
     assert tombstone_claim is not None
-    assert tombstone_claim.tombstone.derivative_uuids == [
+    assert tombstone_claim.derivative_uuids == [
         derivative.uuid for derivative in claim.derivatives
     ]
 
@@ -2013,8 +2013,8 @@ async def test_new_tombstone_is_claimable_at_once(
 
     assert claim is not None
     assert claim.partition_key == PARTITION_KEY
-    assert claim.tombstone.segment_uuid == segment.uuid
-    assert sorted(claim.tombstone.derivative_uuids) == sorted(derivative_uuids)
+    assert claim.segment_uuid == segment.uuid
+    assert sorted(claim.derivative_uuids) == sorted(derivative_uuids)
     assert claim.second_delete is False
     assert (claim.generation, claim.attempt) == (1, 1)
 
@@ -2038,7 +2038,7 @@ async def test_tombstone_awaits_the_retention_after_its_first_delete(
     await _backdate(store, TombstoneRow.first_deleted_at, timedelta(minutes=70))
     second = await store.claim_tombstone(lease_seconds=60)
     assert second is not None
-    assert (second.tombstone.segment_uuid, second.second_delete, second.attempt) == (
+    assert (second.segment_uuid, second.second_delete, second.attempt) == (
         tombstone_uuid,
         True,
         1,
@@ -2261,7 +2261,7 @@ def _claimed_record_uuid(
     if isinstance(claim, IndexingJobClaim):
         return claim.segment_uuid
     if isinstance(claim, TombstoneClaim):
-        return claim.tombstone.segment_uuid
+        return claim.segment_uuid
     return None
 
 

@@ -109,7 +109,6 @@ from memmachine_server.episodic_memory.event_memory.segment_store.data_types imp
     SegmentStorePartitionConfig,
     SegmentStorePartitionConfigMismatchError,
     SegmentStorePartitionHandleStaleError,
-    Tombstone,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.segment_store import (
     IndexingJobClaim,
@@ -1957,9 +1956,8 @@ class SQLAlchemySegmentStore(SegmentStore):
         return TombstoneClaim(
             partition_key=partition_row.partition_key,
             incarnation=claimed.incarnation,
-            tombstone=Tombstone(
-                segment_uuid=claimed.segment_uuid, derivative_uuids=derivative_uuids
-            ),
+            segment_uuid=claimed.segment_uuid,
+            derivative_uuids=derivative_uuids,
             second_delete=claimed.first_deleted_at is not None,
             generation=claimed.claim_generation,
             attempt=claimed.attempts_without_progress,
@@ -1989,7 +1987,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                 await session.execute(
                     delete(TombstoneRow).where(
                         TombstoneRow.incarnation == claim.incarnation,
-                        TombstoneRow.segment_uuid == claim.tombstone.segment_uuid,
+                        TombstoneRow.segment_uuid == claim.segment_uuid,
                     )
                 )
                 return
@@ -1997,7 +1995,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                 update(TombstoneRow)
                 .where(
                     TombstoneRow.incarnation == claim.incarnation,
-                    TombstoneRow.segment_uuid == claim.tombstone.segment_uuid,
+                    TombstoneRow.segment_uuid == claim.segment_uuid,
                     TombstoneRow.first_deleted_at.is_(None),
                 )
                 # Under any claim, so it starts a new generation: a later
@@ -2026,7 +2024,7 @@ class SQLAlchemySegmentStore(SegmentStore):
                 "claims in a row, so its derivatives may stay in their index; "
                 "last error: %r. Set its attempts_without_progress to 0 in %s to "
                 "claim it again.",
-                claim.tombstone.segment_uuid,
+                claim.segment_uuid,
                 claim.partition_key,
                 claim.attempt,
                 error,
@@ -2229,7 +2227,7 @@ def _claimed_record(
     if isinstance(claim, IndexingJobClaim):
         table, segment_uuid = IndexingJobRow, claim.segment_uuid
     else:
-        table, segment_uuid = TombstoneRow, claim.tombstone.segment_uuid
+        table, segment_uuid = TombstoneRow, claim.segment_uuid
     return table, and_(
         table.incarnation == claim.incarnation,
         table.segment_uuid == segment_uuid,

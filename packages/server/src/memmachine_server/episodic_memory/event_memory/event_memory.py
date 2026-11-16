@@ -349,14 +349,12 @@ class EventMemory:
             # A partition without its vector store partition has no vectors
             # left to delete.
             if vector_store_partition is not None:
-                await vector_store_partition.delete(
-                    record_uuids=claim.tombstone.derivative_uuids
-                )
+                await vector_store_partition.delete(record_uuids=claim.derivative_uuids)
         except Exception as error:
             logger.warning(
                 "Failed to delete the tombstoned derivatives of segment %s of "
                 "partition %r on attempt %d",
-                claim.tombstone.segment_uuid,
+                claim.segment_uuid,
                 claim.partition_key,
                 claim.attempt,
                 exc_info=True,

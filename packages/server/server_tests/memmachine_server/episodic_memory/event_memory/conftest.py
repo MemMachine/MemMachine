@@ -38,7 +38,6 @@ from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStoreEventAlreadyExistsError,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
-    Tombstone,
 )
 from memmachine_server.episodic_memory.event_memory.segmenter import Segmenter
 from memmachine_server.episodic_memory.event_memory.segmenter.text_segmenter import (
@@ -72,7 +71,8 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
         # Each pending segment's derivatives, by segment.
         self.indexing_jobs: dict[UUID, list[Derivative]] = {}
         # Each tombstone, by its forgotten segment.
-        self.tombstones: dict[UUID, Tombstone] = {}
+        # Each forgotten segment's derivative UUIDs, by segment UUID.
+        self.tombstones: dict[UUID, list[UUID]] = {}
 
     @override
     @property
@@ -201,9 +201,8 @@ class InMemorySegmentStorePartition(SegmentStorePartition):
                 self.segments.pop(segment_uuid)
                 self.segment_order.remove(segment_uuid)
                 self.indexing_jobs.pop(segment_uuid, None)
-                self.tombstones[segment_uuid] = Tombstone(
-                    segment_uuid=segment_uuid,
-                    derivative_uuids=self.segment_to_derivatives.pop(segment_uuid),
+                self.tombstones[segment_uuid] = self.segment_to_derivatives.pop(
+                    segment_uuid
                 )
 
 
