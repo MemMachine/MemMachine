@@ -285,8 +285,10 @@ async def generate_openai_response(formatted_query: str, original_query: str) ->
         )
 
         response = await client.chat.completions.create(
-            model="gpt-6-luna",
+            model="gpt-4o-mini",
             messages=messages,
+            max_tokens=1000,
+            temperature=0.7,
         )
 
         response_text = response.choices[0].message.content
