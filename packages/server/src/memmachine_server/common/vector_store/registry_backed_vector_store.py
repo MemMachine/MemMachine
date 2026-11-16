@@ -155,9 +155,7 @@ class RegistryBackedVectorStorePartition(VectorStorePartition):
         each value is of its key's declared type, and its vector has the
         store's dimensions.
         A record replaces the one with its UUID. The records are durable when
-        it returns; a call that raises may have written some of them. A
-        cancelled call sends no request after the cancellation, and one it
-        sent before may still be applied.
+        it returns; a call that raises may have written some of them.
 
         Args:
             records (list[Record]): The records to write.
