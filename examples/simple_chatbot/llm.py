@@ -50,7 +50,7 @@ load_dotenv()
 # ──────────────────────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────────────────────
-MODEL_STRING = "gpt-4.1-mini"  # we default on gpt-4.1-mini
+MODEL_STRING = "gpt-6-luna"  # we default on gpt-6-luna
 openai_api_key = os.getenv("OPENAI_API_KEY")
 # print(openai_api_key)  # Do NOT log secrets!
 client = openai.OpenAI(api_key=openai_api_key)
@@ -126,11 +126,7 @@ def chat(messages, persona):
         request_kwargs = {
             "model": MODEL_STRING,
             "messages": chat_messages,
-            "max_completion_tokens": 4000,
         }
-        # Some newer OpenAI models only support the default temperature.
-        if MODEL_STRING not in {"gpt-5", "gpt-5-nano", "gpt-5-mini"}:
-            request_kwargs["temperature"] = 0.3
 
         response = client.chat.completions.create(**request_kwargs)
 
