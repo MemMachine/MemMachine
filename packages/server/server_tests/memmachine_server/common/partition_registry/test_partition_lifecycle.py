@@ -185,7 +185,7 @@ async def test_a_partition_deleted_while_the_store_creates_it_is_not_confirmed(
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_creation_frees_the_name_and_queues_the_partition(
+async def test_a_canceled_creation_frees_the_name_and_queues_the_partition(
     registry, manager, store
 ):
     started = asyncio.Event()
@@ -208,11 +208,11 @@ async def test_a_cancelled_creation_frees_the_name_and_queues_the_partition(
 
 
 @pytest.mark.asyncio
-async def test_cancelling_the_reservation_after_a_cancelled_creation_survives_another_cancellation(
+async def test_canceling_the_reservation_after_a_canceled_creation_survives_another_cancellation(
     registry, manager, store, monkeypatch
 ):
     started = asyncio.Event()
-    cancelling = asyncio.Event()
+    canceling = asyncio.Event()
     release = asyncio.Event()
     reservation_type = sqlalchemy_partition_registry._SQLAlchemyReservation
     cancel = reservation_type._cancel
@@ -222,7 +222,7 @@ async def test_cancelling_the_reservation_after_a_cancelled_creation_survives_an
         await asyncio.Event().wait()
 
     async def slow(reservation) -> None:
-        cancelling.set()
+        canceling.set()
         await release.wait()
         await cancel(reservation)
 
@@ -231,7 +231,7 @@ async def test_cancelling_the_reservation_after_a_cancelled_creation_survives_an
     creating = asyncio.create_task(manager.create_partition(NAME))
     await started.wait()
     creating.cancel()
-    await asyncio.wait_for(cancelling.wait(), 5)
+    await asyncio.wait_for(canceling.wait(), 5)
     creating.cancel()
     with pytest.raises(asyncio.CancelledError):
         await creating
@@ -247,10 +247,10 @@ async def test_cancelling_the_reservation_after_a_cancelled_creation_survives_an
 async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_reported(
     manager, store, monkeypatch, caplog
 ):
-    """A creation cancelled again stops awaiting the reservation's cancel; the
+    """A creation canceled again stops awaiting the reservation's cancel; the
     cancel's failure is still logged, naming the partition."""
     started = asyncio.Event()
-    cancelling = asyncio.Event()
+    canceling = asyncio.Event()
     release = asyncio.Event()
 
     async def hangs(partition_uuid: UUID) -> None:
@@ -258,7 +258,7 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
         await asyncio.Event().wait()
 
     async def fails_late(reservation) -> None:
-        cancelling.set()
+        canceling.set()
         await release.wait()
         raise ConnectionError("the registry is unreachable")
 
@@ -269,7 +269,7 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
     creating = asyncio.create_task(manager.create_partition(NAME))
     await started.wait()
     creating.cancel()
-    await asyncio.wait_for(cancelling.wait(), 5)
+    await asyncio.wait_for(canceling.wait(), 5)
     creating.cancel()
     with pytest.raises(asyncio.CancelledError):
         await creating
@@ -314,7 +314,7 @@ async def test_a_confirmation_that_fails_frees_the_name(registry, manager, monke
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_confirmation_frees_the_name(registry, manager, monkeypatch):
+async def test_a_canceled_confirmation_frees_the_name(registry, manager, monkeypatch):
     confirming = asyncio.Event()
 
     async def hangs(reservation) -> None:
@@ -442,7 +442,7 @@ async def test_a_failed_drop_keeps_the_tombstone(registry, manager, store):
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_purge_round_leaves_its_claim_to_its_lease(
+async def test_a_canceled_purge_round_leaves_its_claim_to_its_lease(
     registry, manager, store
 ):
     await manager.create_partition(NAME)

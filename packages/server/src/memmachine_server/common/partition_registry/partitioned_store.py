@@ -1,7 +1,7 @@
 """
 The interface of a store whose records are divided into partitions by the UUIDs a partition registry mints.
 
-Imports nothing from this package; the partition manager builds on it.
+Imports nothing from this package.
 """
 
 from abc import ABC, abstractmethod
@@ -15,11 +15,13 @@ class PartitionedStore(ABC):
     The store holds no partition names and decides nothing about which
     partition is live. A partition manager calls these methods, for each
     partition: `create_partition` once, before the registry confirms the
-    partition; then, once the partition is deleted or its creation cancelled
-    and the retention has passed, `purge_partition` until it returns False,
-    then `drop_partition`. Partitions are isolated from one another,
-    including partitions created under the same name: records written to one
-    are never read from another. How a partition's records are read and
+    partition; then, once the partition is deleted or its creation canceled
+    and the retention has passed, `purge_partition` in each purge round, and
+    `drop_partition` in a round where no store's purge finds records. Rounds
+    repeat until one drops the partition and ends, and two may run at once, so
+    either call may come again after either. Partitions are isolated from one
+    another, including partitions created under the same name: records written
+    to one are never read from another. How a partition's records are read and
     written is the store's own.
     """
 
@@ -34,7 +36,7 @@ class PartitionedStore(ABC):
         several processes at once.
 
         A call that raises fails the partition's creation: its reservation is
-        cancelled, and the partition's purge rounds reclaim whatever the call
+        canceled, and the partition's purge rounds reclaim whatever the call
         created.
 
         Args:
@@ -48,8 +50,9 @@ class PartitionedStore(ABC):
         """
         Delete some or all of a deleted partition's records that its store keeps in storage shared with other partitions.
 
-        Called once the partition is deleted or its creation cancelled and the
-        retention has passed, until it returns False. A store that keeps a
+        Called in each of the partition's purge rounds, once it is deleted or
+        its creation canceled and the retention has passed, also after it
+        returned False or after `drop_partition`. A store that keeps a
         partition's records only in storage of the partition's own returns
         False, since `drop_partition` removes them with that storage. Safe to
         repeat, and to run on several processes at once.
@@ -73,8 +76,9 @@ class PartitionedStore(ABC):
         """
         Remove the storage a deleted partition keeps for itself, with any records still in it.
 
-        Called once `purge_partition` has returned False for the partition.
-        Idempotent, and safe to run on several processes at once.
+        Called in a purge round once no store's `purge_partition` finds
+        records of the partition. Idempotent, and safe to run on several
+        processes at once.
 
         A call that raises leaves the partition's tombstone queued, so a
         later round purges and drops again.

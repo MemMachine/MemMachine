@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import logging
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Iterable, Sequence
 from uuid import UUID
 
 from .partition_registry import PartitionRegistry, Registration
@@ -36,7 +36,7 @@ class PartitionManager:
     def __init__(
         self,
         partition_registry: PartitionRegistry,
-        partitioned_stores: Sequence[PartitionedStore],
+        partitioned_stores: Iterable[PartitionedStore],
     ) -> None:
         """Initialize with the registry of the namespace and the stores that hold its partitions."""
         self._partition_registry = partition_registry
@@ -47,11 +47,11 @@ class PartitionManager:
         Create a partition under a name: reserve the name, create the partition in every store, and confirm the reservation.
 
         The partition is pending, holding its name, until it is confirmed. A
-        creation that raises or is cancelled cancels its reservation, so the
+        creation that raises or is canceled cancels its reservation, so the
         name is freed and the partition's purge rounds reclaim whatever the
         stores created. The cancel acts only on a pending partition, so a
         confirmation that committed before its failure or cancellation was
-        observed stands. A partition whose reservation cannot be cancelled
+        observed stands. A partition whose reservation cannot be canceled
         stays pending until it is deleted.
 
         Args:
@@ -133,7 +133,7 @@ class PartitionManager:
         The round claims the tombstone, purges the deleted partition from
         every store and, once no store's purge finds records, drops it from
         every store, then finishes the claim with whether any store found
-        records. A round that raises fails the claim and raises. A cancelled
+        records. A round that raises fails the claim and raises. A canceled
         round ends no claim: its tombstone is claimable again once the
         claim's lease and the backoff have passed.
 

@@ -72,9 +72,9 @@ with a new UUID.
 - **Delete** is the owner's: deleting the tenant's name in its
   registry is O(1) regardless of tenant size, and the tenant is unreachable
   at once. The store is not called.
-- **Re-create**: the owner's registry creates a new partition under the
-  name, with a fresh UUID, safe at any time; the old partition's rows are
-  invisible to the successor even while its purge is still sweeping them.
+- **Re-create**: the owner creates a new partition under the name, under a
+  fresh UUID its registry mints, safe at any time; the old partition's rows
+  are invisible to the successor even while its purge is still sweeping them.
 - **Purge and drop**: `purge_partition(partition_uuid) -> bool` and
   `drop_partition(partition_uuid)`, the `PartitionedStore` steps. The
   owner's partition manager calls the purge for a deleted partition once

@@ -127,7 +127,7 @@ async def test_a_partition_gets_a_handle_from_each_store(
 async def test_a_partition_the_segment_store_holds_nothing_of_is_none(
     event_memory, segment_store, vector_store
 ):
-    """A store finds nothing only of a partition deleted, and dropped, since the registry's read."""
+    """A segment store with nothing under the registration's UUID makes the lookup answer None without asking the vector store."""
     segment_store.get_partition.return_value = None
 
     assert await event_memory.get_partition(NAME) is None

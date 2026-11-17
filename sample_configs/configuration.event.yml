@@ -61,8 +61,9 @@ prompt:
 
 resources:
   databases:
-    # Relational store: episodes, sessions, semantic memory, and the segment
-    # store for the event backend. `postgres` is the compose service name.
+    # Relational store: episodes, sessions, semantic memory, and the event
+    # backend's segment store and partition registry. `postgres` is the
+    # compose service name.
     profile_storage:
       provider: postgres
       config:

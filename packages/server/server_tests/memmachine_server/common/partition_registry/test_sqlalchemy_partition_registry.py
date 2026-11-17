@@ -218,7 +218,7 @@ async def _start_held_round(
 
 
 async def _abandon_claim(registry: SQLAlchemyPartitionRegistry) -> UUID:
-    """Claim the oldest due tombstone and stop, as a purger whose round is cancelled or that dies during it: nothing after the claim reaches the database. The claimed partition UUID."""
+    """Claim the oldest due tombstone and stop, as a purger whose round is canceled or that dies during it: nothing after the claim reaches the database. The claimed partition UUID."""
     held, task = await _start_held_round(registry)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -352,7 +352,7 @@ async def test_only_the_reserved_partition_is_confirmed(
 
 
 @pytest.mark.asyncio
-async def test_cancelling_a_reservation_spares_the_name_reserved_since(
+async def test_canceling_a_reservation_spares_the_name_reserved_since(
     sqlalchemy_engine, partition_namespace
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
@@ -505,7 +505,7 @@ async def test_registries_of_two_namespaces_share_a_database_and_nothing_else(
     sqlalchemy_engine, partition_namespace
 ):
     """The same name in two namespaces' registries is two partitions: each
-    gets, deletes and purges apart from the other, and a purge round
+    resolves, deletes, and purges apart from the other, and a purge round
     claims only its own registry's tombstones."""
     first = await _registry(sqlalchemy_engine, f"{partition_namespace}_a")
     second = await _registry(sqlalchemy_engine, f"{partition_namespace}_b")
@@ -855,10 +855,10 @@ async def test_a_round_that_finds_records_resets_the_attempts_without_progress(
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_round_keeps_its_attempt_and_its_claim(
+async def test_a_canceled_round_keeps_its_attempt_and_its_claim(
     sqlalchemy_engine, partition_namespace
 ):
-    """A cancelled round ends no claim: its attempt counts, and its tombstone
+    """A canceled round ends no claim: its attempt counts, and its tombstone
     is claimed again only once the lease and the backoff have passed."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid

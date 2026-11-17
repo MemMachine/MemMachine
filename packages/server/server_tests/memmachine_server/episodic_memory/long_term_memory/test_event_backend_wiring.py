@@ -3,8 +3,8 @@
 Builds a LongTermMemory over an EventMemoryPartition using:
 - the in-memory vector store partition from event_memory tests
 - the in-memory segment_store partition from event_memory tests
-- an EventMemory whose partition registry stand-in returns a registration
-  carrying those two partitions
+- an EventMemory whose partition registry stand-in resolves `sess1`, and
+  whose store stand-ins answer those two partitions
 - a fake embedder
 - a fake EpisodeStorage that satisfies the get_episode(uid) lookup used during
   query hydration.

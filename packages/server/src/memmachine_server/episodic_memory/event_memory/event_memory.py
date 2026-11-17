@@ -225,10 +225,10 @@ class EventMemory:
         """
         Get the live partition registered under a name.
 
-        One read of the registry decides the outcome, and the stores then
-        answer their handles on the partition. A store that finds nothing
-        under the partition's UUID answers for a partition deleted, and
-        dropped from it, since the read, so the call answers None: no
+        One read of the registry decides which partition the name resolves to,
+        and the stores then answer their handles on it. A store that finds
+        nothing under the partition's UUID answers for a partition deleted,
+        and dropped from it, since the read, so the call answers None: no
         partition held the name once the deletion committed.
 
         Args:
@@ -520,10 +520,10 @@ class EventMemoryPartition:
     A handle on one partition of an EventMemory.
 
     Reads and writes only its partition in each store, and fences each
-    operation by the partition's registration: an operation begun after the
-    partition was deleted raises PartitionDeletedError, whether or
-    not a partition was created again under the name since. Obtained from
-    `EventMemory.get_partition`.
+    operation by the partition's registration: an operation on valid arguments
+    begun after the partition was deleted raises PartitionDeletedError,
+    whether or not a partition was created again under the name since.
+    Obtained from `EventMemory.get_partition`.
     """
 
     def __init__(

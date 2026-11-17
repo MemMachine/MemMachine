@@ -1,6 +1,6 @@
 """Protocols for accessing shared MemMachine resources."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable
 from typing import Protocol, runtime_checkable
 
 from neo4j import AsyncDriver
@@ -71,7 +71,7 @@ class CommonResourceManager(Protocol):
         *,
         partition_namespace: str,
         tombstone_retention_seconds: int,
-        partitioned_stores: Sequence[PartitionedStore],
+        partitioned_stores: Iterable[PartitionedStore],
     ) -> PartitionRegistry:
         """
         Return a started registry of a partition namespace in a database.

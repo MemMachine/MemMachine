@@ -202,7 +202,8 @@ class EventLongTermMemoryConf(BaseModel):
     """
     A session's event-backend long-term memory (VectorStore + SegmentStore).
 
-    Its vector store, segment store, and embedder are the deployment's.
+    Its vector store, segment store, partition registry, and embedder are the
+    deployment's.
     """
 
     backend: Literal["event"] = "event"

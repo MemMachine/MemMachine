@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from asyncio import Lock
-from collections.abc import Sequence
+from collections.abc import Iterable
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -235,7 +235,7 @@ class ResourceManagerImpl:
         *,
         partition_namespace: str,
         tombstone_retention_seconds: int,
-        partitioned_stores: Sequence[PartitionedStore],
+        partitioned_stores: Iterable[PartitionedStore],
     ) -> PartitionRegistry:
         """Return a started registry of a partition namespace in a database.
 

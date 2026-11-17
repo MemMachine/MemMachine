@@ -1,5 +1,5 @@
 """
-Abstract base classes for a partition registry, its reservations, and registrations.
+Abstract base classes for a partition registry, its reservations, registrations, and tombstone claims.
 
 A partition registry is the catalog of one partition namespace. A partition
 has a name, which its owner chooses and may reuse, and a UUID, which the
@@ -10,10 +10,10 @@ arbitrated across every process sharing it: a reservation mints a UUID no
 registered or queued partition carries, a deletion makes the partition
 unreachable when it returns, and a claim on a deleted partition's tombstone
 holds it under a lease, possibly taken again by a second purger once the
-lease passes.
+lease, and then the backoff, have passed.
 
 A reservation holds a new partition's name while its owner creates the
-partition, until the reservation is confirmed or cancelled. Resolving a name
+partition, until the reservation is confirmed or canceled. Resolving a name
 answers a `Registration`, through which an owner checks that the partition has
 not been deleted. A tombstone claim holds a deleted partition's tombstone
 while its owner purges the partition, until the claim is finished or failed.
@@ -30,7 +30,7 @@ from .data_types import validate_partition_name
 
 logger = logging.getLogger(__name__)
 
-# The tasks cancelling reservations, held until done so the garbage collector
+# The tasks canceling reservations, held until done so the garbage collector
 # cannot drop one whose caller stopped awaiting it.
 _reservation_cancellations: set[asyncio.Task[None]] = set()
 
@@ -68,17 +68,17 @@ class Reservation(ABC):
         Cancel this reservation, unregistering its partition while it is pending and queuing the partition's UUID for purge.
 
         Called when creating the partition or confirming it raised or was
-        cancelled; it may follow a confirmation that committed before its
+        canceled; it may follow a confirmation that committed before its
         failure was observed, and race a deletion by name. The pending
         partition is unreachable when this returns, and purge rounds reclaim
-        its data later. Once the reservation is confirmed, cancelling it does
+        its data later. Once the reservation is confirmed, canceling it does
         nothing: only a deletion by name ends a live partition. A partition
         reserved since under the same name is another partition and stays.
         Idempotent.
 
         The cancellation runs in a task of its own, shielded, so a
         cancellation of the caller does not cut it short, and the task logs
-        its own failure, since a caller cancelled again stops awaiting it.
+        its own failure, since a caller canceled again stops awaiting it.
 
         Raises:
             Exception:
@@ -152,7 +152,7 @@ class TombstoneClaim(ABC):
     The tombstone is due: the retention has passed since the partition's
     deletion. The claim's holder purges the partition's records and ends the
     claim once: `finish` with the round's outcome, or `fail` with what a
-    round that raised raised. A claim never ended, such as a cancelled
+    round that raised raised. A claim never ended, such as a canceled
     round's or one whose purger died, keeps its attempt, and its tombstone is
     claimable again once the claim's lease, and then the backoff, have
     passed, so a round must be safe to repeat, also on two purgers at once. A
@@ -184,9 +184,10 @@ class TombstoneClaim(ABC):
         End the claim of a round that raised, if the claim is the latest on its tombstone.
 
         The tombstone is claimable again once a backoff has passed that grows
-        with each failed round in a row. After the registry's maximum, it is
-        no longer claimed and the partition's records stay: the registry
-        reports it. The registry notes the round's attempt on the error.
+        with each attempt without progress: each claim since a round last
+        found records. After the registry's maximum of attempts, it is no
+        longer claimed and the partition's records stay: the registry reports
+        it. The registry notes the round's attempt on the error.
 
         Args:
             error (Exception):
@@ -214,9 +215,10 @@ class PartitionRegistry(ABC):
     @abstractmethod
     async def startup(self) -> None:
         """
-        Make the registry ready for use, creating its durable resources idempotently.
+        Make the registry's durable resources ready for use, creating them idempotently.
 
-        Whoever builds the registry calls it before the first use.
+        Called before the resources are first used; one call serves every
+        registry object over the same resources.
         """
         raise NotImplementedError
 
@@ -226,7 +228,7 @@ class PartitionRegistry(ABC):
 
         The partition is pending, holding its name, until its reservation is
         confirmed: its owner creates the partition meanwhile, and cancels the
-        reservation if that or the confirmation raises or is cancelled.
+        reservation if that or the confirmation raises or is canceled.
 
         Args:
             partition_name (str): The name of the partition.
@@ -386,10 +388,10 @@ class PartitionRegistry(ABC):
         Claim the tombstone that came due first.
 
         A tombstone is due once the retention has passed since its
-        deletion, and claimable unless a claim on it holds its lease, its
-        last round failed and the backoff has not passed, or its rounds
-        failed the registry's maximum number of times in a row. Safe to call
-        from several processes at once.
+        deletion, and claimable unless its latest claim's lease and then the
+        backoff, or the backoff after its latest round raised, has not
+        passed, or it has had the registry's maximum of attempts without
+        progress. Safe to call from several processes at once.
 
         Returns:
             TombstoneClaim | None:

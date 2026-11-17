@@ -185,7 +185,7 @@ class VectorStore(PartitionedStore):
             VectorStorePartition | None:
                 A handle bound to the partition, or None when the store finds
                 nothing under the UUID: the partition was never created, or
-                was dropped. A store that cannot tell answers a handle.
+                was dropped. A store may answer a handle without looking.
         """
         raise NotImplementedError
 

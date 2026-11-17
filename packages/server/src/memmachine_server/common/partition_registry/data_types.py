@@ -1,7 +1,7 @@
 """
 Data types for partition registries.
 
-Imports nothing from this package; the rest of it builds on these types.
+Imports nothing from this package.
 """
 
 from datetime import datetime

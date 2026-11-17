@@ -1,4 +1,4 @@
-"""Partition registry interface and implementations."""
+"""Partition registries, partitioned stores, and the partition manager."""
 
 from .data_types import (
     PartitionAlreadyExistsError,

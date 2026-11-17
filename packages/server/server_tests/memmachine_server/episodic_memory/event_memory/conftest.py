@@ -226,7 +226,7 @@ async def create_event_memory_partition(
     reranker: Reranker | None = None,
     metrics_factory: MetricsFactory | None = None,
 ) -> EventMemoryPartition:
-    """Create a partition of an EventMemory whose stores answer the given partitions, and whose vector store has `store_schema`."""
+    """Get a handle on a partition of an EventMemory whose registry stand-in resolves its name, whose stores answer the given partitions, and whose vector store has `store_schema`."""
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = "partition"
     registration.partition_uuid = uuid4()

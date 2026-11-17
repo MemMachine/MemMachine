@@ -161,7 +161,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             clock; it should exceed the longest round (default: 300).
         base_purge_retry_backoff_seconds (int):
             Seconds before a tombstone is claimed again after a failed purge
-            round, doubled for each further failed round in a row (default: 30).
+            round, or after the lease of a round that never ended, doubled for
+            each further attempt without progress (default: 30).
         max_purge_retry_backoff_seconds (int):
             The longest the purge retry backoff grows to (default: 3600).
     """
@@ -204,7 +205,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         gt=0,
         description=(
             "Seconds before a tombstone is claimed again after a failed purge "
-            "round, doubled for each further failed round in a row"
+            "round, or after the lease of a round that never ended, doubled for "
+            "each further attempt without progress"
         ),
     )
     max_purge_retry_backoff_seconds: int = Field(

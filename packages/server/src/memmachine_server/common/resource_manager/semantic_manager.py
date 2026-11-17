@@ -68,7 +68,7 @@ _PARTITION_NAMESPACE = "semantic_memory"
 _PARTITION_NAME = "semantic_memory"
 """Semantic memory's one partition, which it never deletes."""
 _TOMBSTONE_RETENTION_SECONDS = 86400
-"""The retention of semantic memory's namespace, whose tombstones are only those of creations that failed."""
+"""The retention of semantic memory's namespace, whose tombstones are only those of creations that failed or were canceled."""
 
 # Attempts getting or creating the partition makes,
 # _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
@@ -195,8 +195,9 @@ class SemanticResourceManager:
             ),
         )
 
-        # The manager owns this partition and provisions it when the storage is
-        # built, through a registry in the database the storage already uses.
+        # Semantic memory owns this partition and creates it when the storage
+        # is built, through a registry in the database the storage already
+        # uses.
         partition_registry = await self._resource_manager.get_partition_registry(
             feature_store_name,
             partition_namespace=_PARTITION_NAMESPACE,
@@ -225,6 +226,15 @@ class SemanticResourceManager:
         meanwhile, or the partition deleted while the store created it, and
         when the partition is gone by the time it is read or its handle got:
         it was deleted since.
+
+        Raises:
+            PartitionPendingError:
+                If the partition's creation, by another process, did not
+                complete within the attempts to get it.
+            PartitionCreateAttemptsExhaustedError:
+                If the attempts ran out with the last one losing the name or
+                the partition to another process, or if the registry gave up
+                after repeated attempts to reserve the free name failed.
         """
         pending_error: PartitionPendingError | None = None
         lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None

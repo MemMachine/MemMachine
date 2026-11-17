@@ -1,4 +1,4 @@
-"""Tests of event memory as the owner of its partition namespace, on a SQLite registry and segment store."""
+"""Tests of event memory's partitions (creation, lookup, fencing, and purge) on a SQLite registry and segment store."""
 
 import datetime
 from unittest.mock import NonCallableMagicMock, create_autospec

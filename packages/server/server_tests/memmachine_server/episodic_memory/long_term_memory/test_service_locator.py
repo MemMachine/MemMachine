@@ -102,7 +102,7 @@ async def test_every_backend_and_embedder_name_the_one_event_store():
 def _deployment_resource_manager(
     deployment: LongTermMemoryConfPartial | None,
 ) -> NonCallableMagicMock:
-    """A resource manager whose deployment configures `deployment` and whose registry gets autospec partitions."""
+    """A resource manager whose deployment configures `deployment`, whose registry resolves every name, and whose stores answer autospec handles."""
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = VectorStoreSchema(
         vector_dimensions=3,
@@ -152,7 +152,7 @@ _DEPLOYMENT = LongTermMemoryConfPartial(
 
 @pytest.mark.asyncio
 async def test_event_params_get_the_session_partition_from_the_event_store():
-    """Event memory gets the session's partition from the registry over the deployment's event store."""
+    """Event memory resolves the session's partition in the deployment's registry and gets its handles from the deployment's segment and vector stores."""
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
     config = EventLongTermMemoryConf(session_id="raced")
 
