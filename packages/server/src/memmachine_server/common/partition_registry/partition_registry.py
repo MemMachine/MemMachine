@@ -5,17 +5,16 @@ A partition registry is the catalog of one partition namespace. A partition
 has a name, which its owner chooses and may reuse, and a UUID, which the
 registry mints for it alone; the owner keeps the partition's data under the
 UUID. The registry records each partition's name, its UUID, and whether it is
-pending or live, and holds none of the partition's data. Its calls are
-arbitrated across every process sharing it: a reservation mints a UUID no
-registered or queued partition carries, a deletion makes the partition
-unreachable when it returns, and a claim on a deleted partition's tombstone
-holds it under a lease, possibly taken again by a second purger once the
-lease, and then the backoff, have passed.
+pending or live. Its calls are arbitrated across every process sharing it: a
+reservation mints a UUID no registered or queued partition carries, a
+deletion makes the partition unreachable when it returns, and a claim on a
+deleted partition's tombstone holds it under a lease; a second purger may
+claim it again once the lease, and then the backoff, have passed.
 
 A reservation holds a new partition's name while its owner creates the
 partition, until the reservation is confirmed or canceled. Resolving a name
-answers a `Registration`, through which an owner checks that the partition has
-not been deleted. A tombstone claim holds a deleted partition's tombstone
+answers a `Registration`, through which an owner checks that the partition is
+still registered. A tombstone claim holds a deleted partition's tombstone
 while its owner purges the partition, until the claim is finished or failed.
 Each acts on one partition alone.
 """
@@ -40,9 +39,7 @@ class Reservation(ABC):
     """
     A pending partition's hold on its name, kept while its owner creates the partition.
 
-    The partition is pending until the reservation is confirmed. A registry
-    implementation supplies `confirm` and `_cancel`, each of which writes the
-    registry.
+    The partition is pending until the reservation is confirmed.
     """
 
     partition_name: str
@@ -59,7 +56,7 @@ class Reservation(ABC):
 
         Raises:
             PartitionDeletedError:
-                If the partition is no longer pending: it was deleted.
+                If the partition was deleted.
         """
         raise NotImplementedError
 
@@ -71,14 +68,14 @@ class Reservation(ABC):
         canceled; it may follow a confirmation that committed before its
         failure was observed, and race a deletion by name. The pending
         partition is unreachable when this returns, and purge rounds reclaim
-        its data later. Once the reservation is confirmed, canceling it does
-        nothing: only a deletion by name ends a live partition. A partition
+        its data later. Canceling leaves a confirmed reservation's partition
+        live, since only a deletion by name ends a live partition. A partition
         reserved since under the same name is another partition and stays.
         Idempotent.
 
-        The cancellation runs in a task of its own, shielded, so a
-        cancellation of the caller does not cut it short, and the task logs
-        its own failure, since a caller canceled again stops awaiting it.
+        The cancellation runs to completion in its own shielded task, even if
+        the caller is canceled, and the task logs its own failure, since a
+        canceled caller stops awaiting it.
 
         Raises:
             Exception:
@@ -104,7 +101,7 @@ class Reservation(ABC):
     @abstractmethod
     async def _cancel(self) -> None:
         """
-        Unregister this reservation's partition while it is pending, and queue its UUID for purge, in one transaction.
+        Unregister this reservation's partition while it is pending, and queue its UUID for purge, atomically.
 
         Called by `cancel`, in a task of its own. Conditional on the
         partition being pending under this reservation's UUID, so a confirmed
@@ -120,9 +117,8 @@ class Registration(ABC):
     """
     A live partition's registration.
 
-    Its fields never change: `partition_uuid` is the value the owner keeps
-    the partition's data under. A registry implementation supplies the
-    method, which reads the registry.
+    Its fields are fixed: the owner keeps the partition's data under
+    `partition_uuid`.
     """
 
     partition_name: str
@@ -150,14 +146,12 @@ class TombstoneClaim(ABC):
     A purge round's claim on a deleted partition's tombstone, held under a lease while the round runs.
 
     The tombstone is due: the retention has passed since the partition's
-    deletion. The claim's holder purges the partition's records and ends the
-    claim once: `finish` with the round's outcome, or `fail` with what a
-    round that raised raised. A claim never ended, such as a canceled
-    round's or one whose purger died, keeps its attempt, and its tombstone is
-    claimable again once the claim's lease, and then the backoff, have
-    passed, so a round must be safe to repeat, also on two purgers at once. A
-    registry implementation supplies the methods, each of which writes the
-    registry.
+    deletion. The claim's holder purges the partition's data and ends the
+    claim once: `finish` with the round's outcome, or `fail` with the error of
+    a round that raised. A claim never ended keeps its attempt, and its
+    tombstone is claimable again once the claim's lease, and then the backoff,
+    have passed, so a round must be safe to repeat, also on two purgers at
+    once.
     """
 
     partition_uuid: UUID
@@ -167,10 +161,10 @@ class TombstoneClaim(ABC):
         """
         Record the round's outcome.
 
-        A round that found none of the partition's records left ends the
-        tombstone: the registry deletes it and frees the partition's UUID.
-        One that found records keeps the tombstone due, and ends the claim if
-        it is the latest on the tombstone.
+        For a round that found none of the partition's records left, the
+        registry deletes the tombstone, freeing the partition's UUID. For one
+        that found records, the tombstone stays due, and the claim ends if it
+        is the latest on the tombstone.
 
         Args:
             found_records (bool):
@@ -185,9 +179,9 @@ class TombstoneClaim(ABC):
 
         The tombstone is claimable again once a backoff has passed that grows
         with each attempt without progress: each claim since a round last
-        found records. After the registry's maximum of attempts, it is no
-        longer claimed and the partition's records stay: the registry reports
-        it. The registry notes the round's attempt on the error.
+        found records. After the registry's maximum of attempts, claims skip
+        the tombstone and the partition's data stays, which the registry
+        reports. An implementation may note the round's attempt on the error.
 
         Args:
             error (Exception):
@@ -200,16 +194,12 @@ class PartitionRegistry(ABC):
     """
     The partition registry of one partition namespace.
 
-    A deleted partition's UUID waits on a queue as a tombstone. A write
-    checked as live before the deletion can land after it, so a tombstone's
-    purge starts once a retention, longer than any write can be in flight,
-    has passed since the deletion. The registry deletes the tombstone once a
-    purge round finds none of the partition's records left, and its UUID is
-    not minted again before then.
-
-    A registry implementation supplies the catalog: `_reserve`, `_resolve`,
-    `_registration`, `_unregister`, and `claim_tombstone`. The methods that
-    take a partition name check it before the catalog is read or written.
+    A deleted partition's UUID waits on a queue as a tombstone. A write to
+    the owner's data checked as live before the deletion can land after it,
+    so a tombstone's purge starts once a retention, longer than any write can
+    be in flight, has passed since the deletion. The registry deletes the
+    tombstone, freeing its UUID, once a purge round finds none of the
+    partition's data left.
     """
 
     @abstractmethod
@@ -366,7 +356,7 @@ class PartitionRegistry(ABC):
     @abstractmethod
     async def _unregister(self, partition_name: str) -> None:
         """
-        Unregister the partition under a name, pending or live, and queue its UUID for purge, in one transaction.
+        Unregister the partition under a name, pending or live, and queue its UUID for purge, atomically.
 
         Called by `unregister` with a valid name, concurrently with any other
         call on any process. Once it returns, the partition's reservation
@@ -387,11 +377,11 @@ class PartitionRegistry(ABC):
         """
         Claim the tombstone that came due first.
 
-        A tombstone is due once the retention has passed since its
-        deletion, and claimable unless its latest claim's lease and then the
-        backoff, or the backoff after its latest round raised, has not
-        passed, or it has had the registry's maximum of attempts without
-        progress. Safe to call from several processes at once.
+        A tombstone is due once the retention has passed since its deletion.
+        A due tombstone is claimable unless it has had the registry's maximum
+        of attempts without progress, or it waits out its latest claim's lease
+        and then the backoff, or the backoff after its latest round raised.
+        Safe to call from several processes at once.
 
         Returns:
             TombstoneClaim | None:

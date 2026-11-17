@@ -145,14 +145,13 @@ class EventMemory:
     """
     Event memory over a segment store and a vector store.
 
-    Its registry registers each partition under the name its caller gives
-    and mints its UUID, and each store holds a partition's records under the
-    UUID. A name deleted and created again names a new partition, and a
-    handle reads and writes the partition it is bound to only. A partition
-    manager over both stores creates, purges, and drops each partition in
-    both. Getting a partition answers None when either store finds nothing
-    under its UUID: a purge round drops a deleted partition from both stores,
-    and one store's drop may land before the other's.
+    Its registry registers each partition under a name and mints its UUID,
+    and each store holds a partition's records under the UUID. A name
+    deleted and created again names a new partition. A partition manager
+    over both stores creates, purges, and drops each partition in both.
+    Getting a partition answers None when either store finds nothing under
+    its UUID: a purge round drops a deleted partition from both stores, and
+    one store's drop may land before the other's.
     """
 
     @classmethod
@@ -224,11 +223,11 @@ class EventMemory:
         """
         Get the live partition registered under a name.
 
-        One read of the registry decides which partition the name resolves to,
-        and the stores then answer their handles on it. A store that finds
-        nothing under the partition's UUID answers for a partition deleted,
-        and dropped from it, since the read, so the call answers None: no
-        partition held the name once the deletion committed.
+        One read of the registry decides which partition the name resolves
+        to. A store finds nothing under that partition's UUID only if the
+        partition was deleted after the read and dropped from the store; the
+        call then answers None, as no partition held the name when the
+        deletion committed.
 
         Args:
             partition_name (str):
@@ -281,8 +280,8 @@ class EventMemory:
         """
         Delete the partition registered under a name, pending or live. Idempotent.
 
-        The partition is unreachable once its name is unregistered, and purge
-        rounds reclaim its records from both stores later.
+        The partition is unreachable when this returns, and purge rounds
+        reclaim its records from both stores later.
 
         Args:
             partition_name (str):

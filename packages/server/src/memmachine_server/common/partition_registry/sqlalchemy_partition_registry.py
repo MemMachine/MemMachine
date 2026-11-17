@@ -1,12 +1,12 @@
 """
 A partition registry in a relational database, through SQLAlchemy.
 
-A table of registered partitions keyed by namespace and partition name,
-each with its UUID and whether it is live (confirmed), and
-a queue of deleted partition UUIDs claimed in the order they come due. The
-primary key arbitrates registration across processes, a conditional update
-confirms a reservation, unregistration is one transaction, and a purge
-claim is a lease on a tombstone that one short write takes and another ends.
+The registry keeps a table of registered partitions, keyed by namespace and
+partition name, each with its UUID and whether it is live, and a queue of
+deleted partitions' UUIDs, claimed in the order they come due. The primary key
+arbitrates registration across processes, a conditional update confirms a
+reservation, unregistration is one transaction, and a purge claim is a lease
+on a tombstone that one short write takes and another ends.
 """
 
 import logging
@@ -100,7 +100,8 @@ class PartitionRow(BasePartitionRegistry):
 
 
 class PurgeQueueRow(BasePartitionRegistry):
-    """A deleted partition's tombstone: its partition UUID awaiting purge.
+    """
+    A deleted partition's tombstone: its partition UUID awaiting purge.
 
     It holds only what a purge round reads.
     """
@@ -114,14 +115,14 @@ class PurgeQueueRow(BasePartitionRegistry):
     enqueued_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    # Purge rounds claimed since a round last found something of the
-    # partition, the open one included.
+    # Purge rounds claimed since a round last found records of the partition,
+    # the open one included.
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
     # When a claim may next take the tombstone: once the open claim's lease
     # and the backoff pass, or the backoff after a raise; None until a claim
-    # sets it, and again after a round that found something.
+    # sets it, and again after a round that found records.
     claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -246,14 +247,13 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     The registry of one partition namespace, in a relational database.
 
     Registries of different namespaces share the tables, keyed by namespace.
-    A purge claim holds its tombstone until its round ends, or, for a round
-    that never ends, until the purge lease and the backoff pass, and no
-    transaction stays open during the round.
+    No transaction stays open during a purge round.
+
     After `_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS` attempts without progress, a
-    tombstone is dead-lettered: kept, its UUID reserved, and skipped by
-    claims; a last attempt that raises is reported in an error log. Setting its
-    `attempts_without_progress` back to 0 and its `claimable_at` to NULL
-    returns it to the purge.
+    tombstone is dead-lettered: kept, holding its UUID, and skipped by
+    claims, with an error log if the last round raised. Setting its
+    `attempts_without_progress` to 0 and its `claimable_at` to NULL returns it
+    to the purge.
     """
 
     def __init__(self, params: SQLAlchemyPartitionRegistryParams) -> None:
@@ -613,7 +613,8 @@ class _SQLAlchemyRegistration(Registration):
 async def _unregister_where(
     engine: AsyncEngine, partition_namespace: str, *conditions: ColumnElement[bool]
 ) -> None:
-    """Delete the partition row in a namespace the conditions select, and queue its tombstone.
+    """
+    Delete the partition row in a namespace the conditions select, and queue its tombstone.
 
     One transaction, so the partition is unreachable once it commits. The
     DELETE runs first and takes the row's write lock, so racing deleters

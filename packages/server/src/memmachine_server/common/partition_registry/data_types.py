@@ -73,7 +73,7 @@ class PartitionPendingError(Exception):
 
 
 class PartitionDeletedError(Exception):
-    """Raised when a partition is no longer the one registered under its name: it was deleted, before or after its creation completed."""
+    """Raised when a partition was deleted, before or after its creation completed."""
 
     def __init__(
         self, partition_namespace: str, partition_name: str, partition_uuid: UUID
@@ -89,4 +89,4 @@ class PartitionDeletedError(Exception):
 
 
 class PartitionCreateAttemptsExhaustedError(Exception):
-    """Raised when creating a partition, or getting it by creating it, gave up after repeated attempts that made no progress."""
+    """Raised when creating a partition gave up after repeated attempts that made no progress."""

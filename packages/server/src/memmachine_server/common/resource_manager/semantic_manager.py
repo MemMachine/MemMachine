@@ -68,7 +68,7 @@ _PARTITION_NAMESPACE = "semantic_memory"
 _PARTITION_NAME = "semantic_memory"
 """Semantic memory's one partition, which it never deletes."""
 _TOMBSTONE_RETENTION_SECONDS = 86400
-"""The retention of semantic memory's namespace, whose tombstones are only those of creations that failed or were canceled."""
+"""The retention of semantic memory's namespace, whose only tombstones are those of failed or canceled creations."""
 
 # Attempts getting or creating the partition makes,
 # _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
@@ -217,20 +217,20 @@ class SemanticResourceManager:
         vector_store: VectorStore,
     ) -> VectorStorePartition:
         """
-        Answer the vector store's handle on semantic memory's partition, creating the partition if no partition holds its name.
+        Return the vector store's handle on semantic memory's partition, creating the partition if no partition holds its name.
 
         Read-then-create, retried a bounded number of times: a live partition
-        is answered; a pending one is another process's creation, so the call
+        is returned; a pending one is another process's creation, so the call
         waits for it; no partition means create, then read again. The call
-        tries again when a creation finds the name taken by another process
-        meanwhile, or the partition deleted while the store created it, and
-        when the partition is gone by the time it is read or its handle got:
-        it was deleted since.
+        also retries when a creation finds the name taken by another process
+        meanwhile or the partition deleted while the store created it, and
+        when the partition was deleted before the read after its creation or
+        before the store returned its handle.
 
         Raises:
             PartitionPendingError:
-                If the partition's creation, by another process, did not
-                complete within the attempts to get it.
+                If the partition was another process's creation and still
+                pending at the last attempt.
             PartitionCreateAttemptsExhaustedError:
                 If the attempts ran out with the last one losing the name or
                 the partition to another process, or if the registry gave up

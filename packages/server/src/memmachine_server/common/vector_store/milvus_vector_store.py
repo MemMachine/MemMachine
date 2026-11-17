@@ -67,7 +67,7 @@ internals with a leading underscore, so the prefix begins with a letter.
 _ID_FIELD = "id"
 _RECORD_UUID_FIELD = "record_uuid"
 _PARTITION_KEY_FIELD = "partition_key"
-"""The native partition-key field, holding the partition UUID of the partition an entity belongs to."""
+"""The native partition-key field, holding the UUID of the partition an entity belongs to."""
 _VECTOR_FIELD = "vector"
 _DECLARED_FIELD_PREFIX = "_p_"
 """The prefix of the typed field holding a declared property."""

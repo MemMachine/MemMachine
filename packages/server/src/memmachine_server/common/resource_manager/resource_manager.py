@@ -132,8 +132,8 @@ class ResourceManagerImpl:
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
-        # The partition namespaces, each with its database, whose registry is
-        # started and purging.
+        # The (database, partition namespace) pairs whose registry is started
+        # and purging.
         self._started_partition_namespaces: set[tuple[str, str]] = set()
         self._partition_registry_purge_tasks: list[asyncio.Task[None]] = []
 
@@ -240,9 +240,9 @@ class ResourceManagerImpl:
     ) -> PartitionRegistry:
         """Return a started registry of a partition namespace in a database.
 
-        The first call for a namespace in a database starts its registry, and
-        runs the namespace's purge rounds over that call's `partitioned_stores`
-        in the background until close().
+        Each call builds a registry. The first call for a namespace in a
+        database starts its registry, and runs the namespace's purge rounds
+        over that call's `partitioned_stores` in the background until close().
         """
         registry = SQLAlchemyPartitionRegistry(
             SQLAlchemyPartitionRegistryParams(

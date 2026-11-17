@@ -118,8 +118,8 @@ class _PendingOperationRow(BaseSQLiteVectorStore):
     1. Inserted in the same SQLite transaction as the records table change.
     2. Marked `applied=True` after the search engine processes the operation.
     3. Applied operations are deleted after the search engine is saved to disk.
-    4. On a store's startup, its partitions' remaining rows
-       (applied or not) are replayed.
+    4. On a store's startup, its partitions' remaining rows (applied or not)
+       are replayed.
     """
 
     __tablename__ = "vector_store_sqlite_pd_op"
@@ -849,8 +849,8 @@ class SQLiteVectorStore(VectorStore):
         Unique prefix for the native resources of the store's partition.
 
         The fixed-length hex of the partition UUID precedes the store's name,
-        and no hex digit is the `v` of the sqlite-vec store's
-        `vector_store_sqlite_vec_`.
+        and no name continuing `vector_store_sqlite_` with a character other
+        than a hex digit shares the prefix.
         """
         return f"vector_store_sqlite_{partition_uuid.hex}_{self._vector_store_name}"
 

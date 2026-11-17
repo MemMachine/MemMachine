@@ -415,8 +415,8 @@ class SQLiteVecVectorStore(VectorStore):
 
     @override
     async def startup(self) -> None:
-        # Each partition's tables are created by create_partition; nothing
-        # is shared.
+        # create_partition creates each partition's tables, and the store
+        # has no others.
         pass
 
     @override

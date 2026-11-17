@@ -118,16 +118,16 @@ async def _get_or_create_event_memory_partition(
     Get the live event memory partition under a name, creating it if no partition holds the name.
 
     Read-then-create, retried a bounded number of times: a live partition is
-    answered; a pending one is another creator's, so the call waits for it;
-    no partition means create, then read again. The call tries again when a
-    creation finds the name taken by another creator meanwhile, or the
-    partition deleted while the stores created it, and when the read after
-    a creation finds no partition: it was deleted since.
+    returned; a pending one is another creator's, so the call waits for it;
+    no partition means create, then read again. The call also retries when a
+    creation finds the name taken by another creator meanwhile or the
+    partition deleted while the stores created it, and when the partition
+    was deleted before the read after its creation.
 
     Raises:
         PartitionPendingError:
-            If the partition's creation, by another caller, did not complete
-            within the attempts to get it.
+            If the partition was another creator's and still pending at the
+            last attempt.
         PartitionCreateAttemptsExhaustedError:
             If the attempts ran out with the last one losing the name to
             another creator or deleter, or if the registry gave up after
@@ -247,7 +247,7 @@ async def _event_memory_partition_registry(
     vector_store: VectorStore,
 ) -> PartitionRegistry:
     """
-    The registry of event memory's partition namespace, whose purge rounds run over event memory's stores in the background.
+    The registry of event memory's partition namespace, whose purge rounds run over the given stores in the background.
 
     The stores must be the ones event memory is built over, so the purge
     rounds reach every store holding the namespace's partitions.
@@ -276,8 +276,8 @@ def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str,
 
     Raises:
         ConfigurationError: If the deployment configures no event memory:
-            it names no vector store, segment store, partition registry,
-            or embedder.
+            it leaves any of its vector store, segment store, partition
+            registry, and embedder unset.
 
     """
     deployment = configuration.episodic_memory.long_term_memory
@@ -324,9 +324,9 @@ def partition_name_for_session(session_id: str) -> str:
     Derive the name of a session's event memory partition.
 
     A session id that is a valid partition name is the name as it is, which
-    keeps debug paths legible. Any other is hashed to a stable hex
-    digest, with a DEBUG log of the original-to-hashed mapping so operators
-    can correlate partition names back to sessions during incident response.
+    keeps debug paths legible. Any other is hashed to a stable hex digest,
+    and the mapping is logged at DEBUG so operators can correlate partition
+    names back to sessions.
     """
     try:
         validate_partition_name(session_id)

@@ -64,7 +64,7 @@ from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
 # contain (Record requires identifiers), so the two never collide.
 _SYSTEM_KEY_PREFIX = "sys-"
 _PAYLOAD_PARTITION_UUID = f"{_SYSTEM_KEY_PREFIX}partition_uuid"
-"""The payload key holding the partition UUID of the partition a point belongs to."""
+"""The payload key holding the UUID of the partition a point belongs to."""
 _PAYLOAD_RECORD_UUID = f"{_SYSTEM_KEY_PREFIX}record_uuid"
 """The payload key holding a point's record UUID.
 

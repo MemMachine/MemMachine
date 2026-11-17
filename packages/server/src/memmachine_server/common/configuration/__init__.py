@@ -51,8 +51,8 @@ logger = logging.getLogger(__name__)
 
 # The floor of event memory's tombstone retention on a remote vector store: a
 # write in flight when its partition is deleted lands within its client's
-# request timeout plus the server's own delay, seconds to minutes, so the
-# floor is the request timeout times this factor, plus these extra seconds.
+# request timeout plus the server's own delay, so the floor is the request
+# timeout times this factor, plus these extra seconds.
 _RETENTION_FLOOR_TIMEOUT_FACTOR = 10
 _RETENTION_FLOOR_EXTRA_SECONDS = 300
 

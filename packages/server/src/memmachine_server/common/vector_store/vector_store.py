@@ -26,10 +26,9 @@ class VectorStorePartition(ABC):
     All data operations are scoped to the partition: a record's UUID names it
     in this partition only, and the same UUID in another partition names
     another record. The handle owns nothing: a caller builds one with
-    `VectorStore.get_partition`, drops it, and builds another at will. The
-    handle checks its inputs, and nothing about whether the partition is
-    still live: its owner fences each operation by the partition's
-    registration.
+    `VectorStore.get_partition`, drops it, and builds another at will. It
+    reads and writes its partition whether or not the partition is still
+    live.
 
     An `upsert` or `delete` is durable once it returns; queries may not
     reflect it right away. A store that guarantees more states it.
@@ -143,9 +142,9 @@ class VectorStore(PartitionedStore):
     The schema is fixed for the life of the store's data: changing it is a
     migration.
 
-    The store holds each partition's records under the partition's UUID. Its
-    `PartitionedStore` methods create, purge, and drop partitions, as its
-    owner's partition manager runs them.
+    The store holds each partition's records under the partition's UUID; a
+    partition manager creates, purges, and drops partitions through its
+    `PartitionedStore` methods.
 
     Naming constraints:
         - Vector store names and property keys must match `[a-z0-9_]+`
@@ -173,9 +172,6 @@ class VectorStore(PartitionedStore):
     async def get_partition(self, partition_uuid: UUID) -> VectorStorePartition | None:
         """
         Get a handle on a created partition.
-
-        The handle reads and writes the partition's records alone, whether or
-        not the partition is still live.
 
         Args:
             partition_uuid (UUID):

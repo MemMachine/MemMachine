@@ -17,20 +17,16 @@ class PartitionManager:
     The partitions of one partition namespace, in every store that holds them.
 
     The registry names the namespace's partitions and mints their UUIDs, and
-    every store holds a partition's records under its UUID. Creating a
-    partition creates it in every store between reserving its name and
-    confirming it. A purge round purges a deleted partition from every store
-    and, once no store's purge finds records, drops it from every store. Each
-    step runs on every store at once: every store finishes, each error is
-    logged, and the first failing store's error is raised, so the stores that
-    answer keep their progress while another is down.
+    every store holds a partition's records under its UUID. Each step of a
+    partition's lifecycle runs on every store at once: every store finishes,
+    each error is logged, and the first failing store's error is raised, so
+    the stores that answer keep their progress while another is down.
 
     Every partition manager of a namespace, in any process, must be given the
-    same stores. Any of them may run the namespace's purge rounds, and a round
-    removes a deleted partition's records only from the stores it was given,
-    so records in a store that the others lack would never be removed.
-    Processes that should share partitions must use the same namespace: the
-    same name in two namespaces is two separate partitions.
+    same stores: any of them may run the namespace's purge rounds, and a
+    round purges only the stores its manager was given. Processes that share
+    partitions must use the same namespace: the same name in two namespaces
+    is two separate partitions.
     """
 
     def __init__(
@@ -47,12 +43,11 @@ class PartitionManager:
         Create a partition under a name: reserve the name, create the partition in every store, and confirm the reservation.
 
         The partition is pending, holding its name, until it is confirmed. A
-        creation that raises or is canceled cancels its reservation, so the
-        name is freed and the partition's purge rounds reclaim whatever the
-        stores created. The cancel acts only on a pending partition, so a
-        confirmation that committed before its failure or cancellation was
-        observed stands. A partition whose reservation cannot be canceled
-        stays pending until it is deleted.
+        creation that raises or is canceled cancels its reservation, freeing
+        the name, and the partition's purge rounds reclaim whatever the stores
+        created; a confirmation that committed before its failure or
+        cancellation was observed stands. A partition whose reservation cannot
+        be canceled stays pending until it is deleted.
 
         Args:
             partition_name (str): The name of the partition.
@@ -112,10 +107,11 @@ class PartitionManager:
 
     async def delete_partition(self, partition_name: str) -> None:
         """
-        Delete the partition registered under a name, pending or live. Idempotent.
+        Delete the partition registered under a name, pending or live.
 
         The partition is unreachable when this returns, and purge rounds
         reclaim its records from every store once the retention has passed.
+        Idempotent.
 
         Args:
             partition_name (str): The name of the partition.
@@ -128,14 +124,14 @@ class PartitionManager:
 
     async def run_purge_round(self) -> bool:
         """
-        Run one purge round on the tombstone that came due first, and return whether it ran one.
+        Run one purge round on the tombstone that came due first.
 
         The round claims the tombstone, purges the deleted partition from
         every store and, once no store's purge finds records, drops it from
         every store, then finishes the claim with whether any store found
         records. A round that raises fails the claim and raises. A canceled
-        round ends no claim: its tombstone is claimable again once the
-        claim's lease and the backoff have passed.
+        round leaves its claim open: its tombstone is claimable again once
+        the claim's lease, and then the backoff, have passed.
 
         Returns:
             bool:
@@ -178,7 +174,7 @@ class PartitionManager:
 async def _on_every_store[T](
     step: str, partition_uuid: UUID, calls: Sequence[Awaitable[T]]
 ) -> list[T]:
-    """Run one step of a partition's lifecycle on every store at once, and raise the first error once every store has finished."""
+    """Run one step of a partition's lifecycle on every store at once; once every store has finished, log each error and raise the first."""
     values: list[T] = []
     errors: list[BaseException] = []
     for result in await asyncio.gather(*calls, return_exceptions=True):

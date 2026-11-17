@@ -939,9 +939,9 @@ class SQLAlchemySegmentStore(SegmentStore):
 
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:
-        # One transaction per call: purge up to the bound and commit, or
-        # nothing, so a call that fails on contention is safe to repeat: a
-        # raise rolls the whole call back, cursor included. Purgers of one
+        # One transaction per call: a call purges up to the bound and
+        # commits, or a raise rolls it back whole, cursor included, so a call
+        # that fails on contention is safe to repeat. Purgers of one
         # partition serialize on its row's lock, so each reads the cursor
         # its predecessor committed; on SQLite, which drops locking clauses,
         # the call holds the write lock from BEGIN.
