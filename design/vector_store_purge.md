@@ -12,7 +12,9 @@ process serves a backend:
 - A write in flight during the deletion, from a handle in another process,
   lands after it and outlives it.
 - One delete of a large tenant is one burst of work the backend applies at
-  once, stalling other tenants (measured below).
+  once, stalling other tenants (measured in the
+  [Qdrant](qdrant_vector_store.md#purge) and
+  [Milvus](milvus_vector_store.md#purge) documents).
 - Nothing records that a deletion is incomplete, so a crash part way through
   leaves records no one will ever reclaim.
 
@@ -207,8 +209,8 @@ The store never schedules its own purge. The resource manager starts one
 sweeper task per partition registry the first time it builds the registry,
 running a partition manager over the stores that build is given, and
 `close()` cancels them. A sweeper calls `run_purge_round` again after
-1 s when it ran a round and after 60 s when it ran none; a round that raises
-is logged and retried a tick later. Sweepers on other processes need no
+1 s when it ran a round and after 60 s when it ran none or raised; a round
+that raises is logged. Sweepers on other processes need no
 coordination: the claim arbitrates.
 
 ### Measured cost of the claim

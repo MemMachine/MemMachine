@@ -2,16 +2,16 @@
 
 ## Problem
 
-The `VectorStore` contract said "a collection must be managed by at most one
-process; the consumer shards names across processes." No consumer sharded
-anything, and the Qdrant and Milvus stores relied on that sentence for
-correctness:
+A `VectorStore` contract under which at most one process manages a
+collection, with the consumer sharding names across processes, rests the
+stores' correctness on a sharding no consumer does. Qdrant and Milvus stores
+built on that contract fail across processes:
 
-- their catalogs lived inside the backend, which cannot arbitrate a create, a
-  delete, or a purge between processes;
-- they serialized their own operations with process-local locks;
-- a collection's name was the tenant discriminator on its records, so deleting
-  and re-creating a name did not end the old partition (#1563).
+- a catalog inside the backend cannot arbitrate a create, a delete, or a
+  purge between processes;
+- process-local locks serialize one process's operations only;
+- with a collection's name as the tenant discriminator on its records,
+  deleting and re-creating a name does not end the old partition (#1563).
 
 The goal is that any number of MemMachine server processes, on any hosts, can
 serve any partition of a Qdrant or Milvus store they share, with:
@@ -114,6 +114,6 @@ request timeout plus 300 seconds (see [purge](vector_store_purge.md)).
 - Existing Qdrant and Milvus data is not carried over. The stores name their
   native collections by vector store name, which no earlier release did, so
   an existing collection stays as it is, never read or purged, until it is
-  dropped, before or after upgrading. No migration; pre-GA.
+  dropped, before or after upgrading. No migration is provided.
 - Milvus Lite is not supported; the Milvus store needs a Milvus server.
 - Event memory needs a relational database for its partition registry.

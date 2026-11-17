@@ -77,10 +77,10 @@ async def _run_purge_rounds_forever(
 ) -> None:
     """Run a partition namespace's purge rounds for as long as the task runs.
 
-    A call that ran a round is followed after a short pause, one that ran
-    none after the idle interval, and one that raised is logged and
-    retried a tick later. Sweepers in other processes may run the same
-    namespace's purge rounds at the same time.
+    A call that ran a round is followed after a short pause, and one that
+    ran none or raised after the idle interval; a raise is logged. Sweepers
+    in other processes may run the same namespace's purge rounds at the
+    same time.
 
     A module-level coroutine on purpose: the event loop keeps a pending task
     alive while it sleeps, so the task pins whatever its frame references.
@@ -92,8 +92,9 @@ async def _run_purge_rounds_forever(
             more = await partition_manager.run_purge_round()
         except Exception:
             logger.exception(
-                "Purge round of partition namespace %r failed; retrying next tick",
+                "Purge round of partition namespace %r failed; retrying in %g s",
                 partition_namespace,
+                _PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS,
             )
             more = False
         await asyncio.sleep(

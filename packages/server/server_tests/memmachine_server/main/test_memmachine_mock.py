@@ -1837,7 +1837,7 @@ async def test_stop_cancels_active_deletion_without_processing_queued_deletion(
     await machine.start(lambda key: DummySessionData(key))
 
     entered = asyncio.Event()
-    cancelled = asyncio.Event()
+    canceled = asyncio.Event()
     processed: list[str] = []
 
     async def slow_delete(session: MemMachine.SessionData) -> None:
@@ -1846,7 +1846,7 @@ async def test_stop_cancels_active_deletion_without_processing_queued_deletion(
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
-            cancelled.set()
+            canceled.set()
             raise
 
     monkeypatch.setattr(machine, "_delete_queued_session", slow_delete)
@@ -1856,7 +1856,7 @@ async def test_stop_cancels_active_deletion_without_processing_queued_deletion(
 
     await asyncio.wait_for(machine.stop(), 1)
 
-    assert cancelled.is_set()
+    assert canceled.is_set()
     assert processed == ["active"]
     await asyncio.wait_for(machine._deletion_queue.join(), 1)
     patched_resource_manager.close.assert_awaited_once()

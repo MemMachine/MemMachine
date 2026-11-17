@@ -2,30 +2,29 @@
 
 ## Problem
 
-On PostgreSQL, every partition (tenant) had its own pair of child tables
-under LIST-partitioned parents, created and dropped by per-tenant DDL. That
-layout produced a family of defects, each diagnosed and measured on the way
-here:
+On PostgreSQL, giving every partition (tenant) its own pair of child tables
+under LIST-partitioned parents, created and dropped by per-tenant DDL,
+produces a family of defects, each diagnosed and measured:
 
-- `DROP ... CASCADE` of one tenant's child tables removed the store-wide
+- `DROP ... CASCADE` of one tenant's child tables removes the store-wide
   parent-level foreign key, ending referential integrity for every other
   tenant (#1544).
-- Any statement with the partition key as a bind parameter switched to a
+- Any statement with the partition key as a bind parameter switches to a
   cached generic plan after five executions, and a generic plan locks every
   child partition per execution: 9 locks per read with a custom plan, 319
   with the generic plan at 316 partitions, and HTTP 500 `out of shared
   memory` under 128-way concurrency (#1546).
 - PostgreSQL's foreign-key integrity triggers address the partitioned
-  parents internally, so writes and deletes kept a per-backend lock spike
-  proportional to partition count even after the client statements were
-  fixed (10 -> 166 -> 10 locks across the generic-plan attempt).
-- Create and delete DDL against the shared parents deadlocked with writers
-  and with each other, on upstream and on every intermediate fix.
-- Each fix added machinery: detach-before-drop, a store-wide management
-  lock, per-partition ORM entities with a memoized cache, statement-cache
-  tuning.
+  parents internally, so writes and deletes keep a per-backend lock spike
+  proportional to partition count even with custom plans for the client
+  statements (10 -> 166 -> 10 locks across the generic-plan attempt).
+- Create and delete DDL against the shared parents deadlocks with writers
+  and with each other, in every variant of the layout measured.
+- Each workaround adds machinery: detach-before-drop, a store-wide
+  management lock, per-partition ORM entities with a memoized cache,
+  statement-cache tuning.
 
-Two scaling requirements then ruled out every per-tenant-table layout:
+Two scaling requirements rule out every per-tenant-table layout:
 tenant creation must stay cheap up to hundreds of thousands to millions of
 tenants (a per-tenant table costs about 5 catalog relations plus disk
 files, which PostgreSQL does not survive at those counts), and a single
@@ -178,9 +177,9 @@ requirement excludes.
 
 ## Consequences
 
-- Removed: partitioned parents, per-tenant DDL, detach machinery, the
-  store-wide management lock, per-partition ORM entities and their cache,
-  the compiled-statement-cache tuning. Generic plans are benign on
+- No partitioned parents, per-tenant DDL, detach machinery, store-wide
+  management lock, per-partition ORM entities or their cache, or
+  compiled-statement-cache tuning. Generic plans are benign on
   unpartitioned tables (a plan references one table), so no plan-mode
   tuning is needed.
 - One architecture on every dialect. The remaining dialect splits are the
@@ -203,13 +202,12 @@ requirement excludes.
   partition is unreachable at once, and its rows are reclaimed by the
   registry's purge rounds, at the pace their bounds and pause set. A
   deployment must run the purge rounds.
-- No schema migration is provided (the event backend is opt-in and
-  pre-GA); existing databases recreate their schema.
+- No schema migration is provided; existing databases recreate their
+  schema.
 - Datetime convention: filter nodes normalize datetime values to UTC-aware
   instants at construction (`FilterExpr`'s contract), so every consumer
-  sees instants. The Neo4j compiler's `datetime.timestamp()` used to read
-  a naive value in the server's local zone; it now parses ISO-string
-  filter values and applies the naive-means-UTC rule the rest of the
+  sees instants. The Neo4j compiler parses ISO-string filter values and
+  applies the naive-means-UTC rule the rest of the
   codebase uses. The in-memory short-term evaluator tags a naive stored
   metadata datetime the same way at comparison time, since stored user
   data is not rewritten. Storage write paths spell

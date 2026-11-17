@@ -153,8 +153,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             namespace on the same database are one registry.
         tombstone_retention_seconds (int):
             Seconds a deleted partition's data is kept before its purge
-            starts, on the database clock. It must exceed, by orders of
-            magnitude, the longest a write to the owner's resources can be in
+            starts, on the database clock. It must exceed, by a wide margin,
+            the longest a write to the owner's resources can be in
             flight and the delay before their reads reflect a write.
         purge_lease_seconds (int):
             Seconds a purge round's claim holds its tombstone, on the database
@@ -187,8 +187,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         ge=0,
         description=(
             "Seconds a deleted partition's data is kept before its purge "
-            "starts, on the database clock. It must exceed, by orders of "
-            "magnitude, the longest a write to the owner's resources can be in "
+            "starts, on the database clock. It must exceed, by a wide margin, "
+            "the longest a write to the owner's resources can be in "
             "flight and the delay before their reads reflect a write"
         ),
     )
@@ -280,6 +280,12 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             try:
                 await self._insert_pending_partition(partition_name, partition_uuid)
             except _RegistryInsertRejectedError as err:
+                attempts += 1
+                if attempts >= _MAX_MINT_ATTEMPTS:
+                    raise PartitionCreateAttemptsExhaustedError(
+                        f"Creating partition {partition_name!r} made no progress "
+                        f"after {_MAX_MINT_ATTEMPTS} attempts"
+                    ) from err
                 logger.warning(
                     "Reserving partition %r under UUID %s was rejected: "
                     "%s; minting another",
@@ -287,12 +293,6 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                     partition_uuid,
                     err,
                 )
-                attempts += 1
-                if attempts >= _MAX_MINT_ATTEMPTS:
-                    raise PartitionCreateAttemptsExhaustedError(
-                        f"Creating partition {partition_name!r} made no progress "
-                        f"after {_MAX_MINT_ATTEMPTS} attempts"
-                    ) from err
                 continue
             return _SQLAlchemyReservation(
                 partition_name=partition_name,
@@ -578,8 +578,9 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
     def _report_round_outlasting_its_claim(self) -> None:
         """Report a purge round that ended after its tombstone was claimed again or removed."""
         logger.warning(
-            "Purge round on partition %s outlasted its claim's %d s lease: the "
-            "tombstone was claimed again or removed while it ran",
+            "Purge round on partition %s ended no claim: while it ran, the "
+            "tombstone was claimed again after this claim's %d s lease and "
+            "backoff, or another round removed it",
             self.partition_uuid,
             self.params.purge_lease_seconds,
         )

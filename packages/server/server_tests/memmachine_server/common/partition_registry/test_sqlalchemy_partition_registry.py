@@ -374,7 +374,7 @@ async def test_canceling_a_reservation_spares_the_name_reserved_since(
 
 
 @pytest.mark.asyncio
-async def test_cancelling_a_confirmed_reservation_leaves_the_partition_live(
+async def test_canceling_a_confirmed_reservation_leaves_the_partition_live(
     sqlalchemy_engine, partition_namespace
 ):
     """Only a deletion by name ends a live partition, so a creator that
@@ -1759,7 +1759,7 @@ async def _churn(
     seed: int,
     purge_round: _OverlapWatch,
 ) -> None:
-    """A seeded run of creations, cancellations, deletions, reads and purge rounds over a few names."""
+    """A seeded run of creations, cancellations, deletions, reads, and purge rounds over a few names."""
     rng = random.Random(seed)
     for _ in range(40):
         name = rng.choice(["a", "b", "c"])
@@ -1791,7 +1791,7 @@ async def _found_nothing(partition_uuid: UUID) -> bool:
 async def test_mixed_operations_across_engines_finish_cleanly_and_strand_nothing(
     sqlalchemy_engine, partition_namespace
 ):
-    """Creators, deleters, readers and purgers on separate engines, as in
+    """Creators, deleters, readers, and purgers on separate engines, as in
     separate processes, race over a few shared names. Every operation ends in
     its result or a documented refusal, never a database error or a deadlock;
     no tombstone's rounds overlap; and once they stop, no partition UUID is both

@@ -1213,7 +1213,7 @@ case "${1:-}" in
             $COMPOSE_CMD down -v
             print_success "Cleanup completed"
         else
-            print_info "Cleanup cancelled"
+            print_info "Cleanup canceled"
         fi
         ;;
     "build")
