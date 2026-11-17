@@ -168,7 +168,8 @@ class Registration:  # partition_name, partition_uuid
 
 
 class TombstoneClaim:  # partition_uuid
-    async def finish(self, found_records: bool) -> None: ...
+    async def complete(self) -> None: ...
+    async def progress(self) -> None: ...
     async def fail(self, error: Exception) -> None: ...
 
 
@@ -221,7 +222,7 @@ or the claim a purge round holds.
 | `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `claim_tombstone` | |
 | `Reservation` | `confirm`, `cancel` | `reserve` |
 | `Registration` | `require_current` | `resolve` |
-| `TombstoneClaim` | `finish`, `fail` | `claim_tombstone` |
+| `TombstoneClaim` | `complete`, `progress`, `fail` | `claim_tombstone` |
 
 - **Why handles.** Every operation on one partition needs its UUID:
   confirming it, canceling it, checking that it was not deleted, and ending
@@ -241,13 +242,14 @@ or the claim a purge round holds.
   path every deletion goes through. With one type per holder, each offers its
   holder's operations and nothing else, and the wrong call is a type error.
 - **Why the manager holds the reservation and the claim.** Creation is
-  reserve, create in every store, then confirm, or cancel when a step fails;
-  a purge round is claim, purge and drop, then finish, or fail when a step
-  raises. Both sequences are written once, in the partition manager, for
-  every owner, so no owner can confirm a partition its stores never created,
-  skip a cancel, or end a claim with the wrong outcome. A claim left unended,
-  by a canceled round or by a purger that died, keeps its attempt, and its
-  tombstone is claimable again once the lease and then the backoff pass.
+  reserve, create in every store, then confirm, or cancel when a step fails; a
+  purge round is claim, purge and drop, then complete or progress, or fail
+  when a step raises. Both sequences are written once, in the partition
+  manager, for every owner, so no owner can confirm a partition its stores
+  never created, skip a cancel, or end a claim with the wrong outcome. A claim
+  left unended, by a canceled round or by a purger that died, keeps its
+  attempt, and its tombstone is claimable again once the lease and then the
+  backoff pass.
 - **Why role names, not state names.** A partition moves from pending to
   live only through its reservation's own `confirm`, but any caller can
   delete it at any time, behind the back of whoever holds its reservation or
@@ -258,7 +260,7 @@ or the claim a purge round holds.
   patterns: Try-Confirm/Cancel for the creation (reserve, then confirm or
   cancel), the stale handle for everyone else (`require_current`,
   `PartitionDeletedError`), and a leased work queue for a purge round (claim,
-  then finish or fail).
+  then complete, progress, or fail).
 - **Why no state fields.** A handle's fields (partition name and UUID) belong
   to its partition and never change. Whether the partition is pending, live,
   or deleted changes under every holder: a `live` field would be a snapshot,
@@ -373,8 +375,9 @@ name ends a live partition. Racing deleters serialize on the row's write lock
 and the loser deletes nothing, on PostgreSQL and SQLite alike, so a deletion
 is idempotent and queues one tombstone.
 
-**`claim_tombstone()`** and the claim's `finish` and `fail` are described in
-[Deletion and purge](#deletion-and-purge) and [purge](vector_store_purge.md).
+**`claim_tombstone()`** and the claim's `complete`, `progress`, and `fail` are
+described in [Deletion and purge](#deletion-and-purge) and
+[purge](vector_store_purge.md).
 
 ### Creation
 
@@ -483,10 +486,10 @@ a new UUID at once, so a re-created tenant starts empty.
 A tombstone comes due once the namespace's retention has passed since the
 deletion. The manager's `run_purge_round()` claims it (`claim_tombstone`)
 under a lease and works through its stores in two steps. It runs every store's
-`purge_partition`; when any finds records, it finishes the claim with that
-outcome, and the tombstone stays due. Once none finds any, it runs every
-store's `drop_partition` and finishes the claim having found nothing, and the
-registry deletes the tombstone. A round that raises fails the claim, so the
+`purge_partition`; when any finds records, it records the claim's
+`progress`, and the tombstone stays due. Once none finds any, it runs every
+store's `drop_partition` and records the claim `complete`, and the registry
+deletes the tombstone. A round that raises fails the claim, so the
 registry's backoff applies. After the registry's maximum of rounds without
 progress, the tombstone is dead-lettered: kept, with its UUID reserved, and
 skipped by claims; an error log reports it when its last round raised.
@@ -506,8 +509,8 @@ every queued tombstone and no retry schedule can shorten it. The
 claim keeps its one index range, oldest deletion first, and skips tombstones
 whose `claimable_at` has not passed. Every write after a tombstone's insert
 is a claim's, except an operator's reset of a dead-lettered tombstone: the
-writes that end a claim are matched on `claim_generation`, and a claim
-finished having found nothing deletes the tombstone under any claim (see
+writes that end a claim are matched on `claim_generation`, and a claim's
+`complete` deletes the tombstone under any claim (see
 [purge](vector_store_purge.md#the-lease)). The reset leaves the generation as
 it is, so a round still running can end its claim, which at most
 delays the tombstone by the base backoff.
@@ -587,7 +590,8 @@ differs where a store is remote:
   or predate another's, and no order between stores matters.
 - **The partition manager runs the lifecycle; the registry is the catalog.**
   Creation (reserve, create in every store, confirm or cancel) and the purge
-  round (claim, purge and drop in every store, then finish or fail)
+  round (claim, purge and drop in every store, then complete, progress, or
+  fail)
   are written once, in the manager, for every owner, so no owner repeats them
   or their cancellation handling, and no owner can miss or reorder a step. The
   registry holds names, UUIDs, and tombstones and calls no other code, so it

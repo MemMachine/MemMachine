@@ -105,9 +105,7 @@ async def test_a_deleted_partition_is_purged_and_dropped_from_both_stores(
     for store in (segment_store, vector_store):
         store.purge_partition.assert_awaited_once_with(PARTITION_UUID)
         store.drop_partition.assert_awaited_once_with(PARTITION_UUID)
-    partition_registry.claim_tombstone.return_value.finish.assert_awaited_once_with(
-        False
-    )
+    partition_registry.claim_tombstone.return_value.complete.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio

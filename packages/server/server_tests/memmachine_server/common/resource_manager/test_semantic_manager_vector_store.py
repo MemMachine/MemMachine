@@ -191,10 +191,7 @@ async def test_a_failed_creation_of_semantic_memorys_partition_frees_its_name(
     assert await partition_registry.resolve("semantic_memory") is None
     purged: list[UUID] = []
 
-    async def purge(partition_uuid: UUID) -> bool:
-        purged.append(partition_uuid)
-        return False
-
     while (claim := await partition_registry.claim_tombstone()) is not None:
-        await claim.finish(await purge(claim.partition_uuid))
+        purged.append(claim.partition_uuid)
+        await claim.complete()
     assert purged == partition_uuids

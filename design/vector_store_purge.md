@@ -106,11 +106,12 @@ first, in three steps:
    `purge_partition` on the tombstone's partition, and once none finds
    anything, every store's `drop_partition` (see [partition
    registry](partition_registry.md#deletion-and-purge)).
-3. **Record.** The claim's `finish`, in a short transaction: a round that
-   found nothing removes the tombstone, which frees the UUID; a round that
-   found records ends its claim, keeping the tombstone due, and resets its
-   attempts without progress. A round that raised ends with the claim's
-   `fail`; a canceled round, like one whose purger died, ends nothing.
+3. **Record.** In a short transaction, a round that found nothing calls the
+   claim's `complete`, which removes the tombstone and frees the UUID; a round
+   that found records calls `progress`, which ends its claim, keeping the
+   tombstone due, and resets its attempts without progress. A round that
+   raised ends with the claim's `fail`; a canceled round, like one whose
+   purger died, ends nothing.
 
 ### The lease
 

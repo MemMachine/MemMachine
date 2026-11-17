@@ -524,19 +524,18 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
     max_purge_retry_backoff_seconds: int = field(repr=False)
 
     @override
-    async def finish(self, found_records: bool) -> None:
-        # Finding nothing removes the tombstone under any claim, since a
-        # partition found empty after the retention needs no more rounds.
-        # Finding records ends the claim and resets the tombstone's attempts
-        # without progress, if the claim is the latest.
-        if not found_records:
-            async with write_connection(self.engine) as connection:
-                await connection.execute(
-                    delete(PurgeQueueRow).where(
-                        PurgeQueueRow.partition_uuid == self.partition_uuid
-                    )
+    async def complete(self) -> None:
+        # Under any claim, since a partition found empty after the retention
+        # needs no more rounds.
+        async with write_connection(self.engine) as connection:
+            await connection.execute(
+                delete(PurgeQueueRow).where(
+                    PurgeQueueRow.partition_uuid == self.partition_uuid
                 )
-            return
+            )
+
+    @override
+    async def progress(self) -> None:
         async with write_connection(self.engine) as connection:
             ended = await connection.execute(
                 update(PurgeQueueRow)

@@ -129,8 +129,8 @@ class PartitionManager:
 
         The round claims the tombstone, purges the deleted partition from
         every store and, once no store's purge finds records, drops it from
-        every store, then finishes the claim with whether any store found
-        records. A round that raises fails the claim and raises. A canceled
+        every store, then records on the claim whether the purge made progress
+        or is complete. A round that raises fails the claim and raises. A canceled
         round leaves its claim open: its tombstone is claimable again once
         the claim's lease, and then the backoff, have passed.
 
@@ -146,7 +146,10 @@ class PartitionManager:
         except Exception as error:
             await claim.fail(error)
             raise
-        await claim.finish(found_records)
+        if found_records:
+            await claim.progress()
+        else:
+            await claim.complete()
         return True
 
     async def _purge_partition(self, partition_uuid: UUID) -> bool:

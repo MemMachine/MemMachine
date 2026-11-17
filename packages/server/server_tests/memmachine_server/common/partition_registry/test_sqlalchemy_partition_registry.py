@@ -204,7 +204,10 @@ async def _run_round(
     except Exception as error:
         await claim.fail(error)
         raise
-    await claim.finish(found_records)
+    if found_records:
+        await claim.progress()
+    else:
+        await claim.complete()
     return True
 
 

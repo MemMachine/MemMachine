@@ -79,15 +79,12 @@ async def _created(
 
 
 async def _purged(registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
-    """Claim tombstones until none is claimable, finishing each as a round that found nothing, and return their partition UUIDs."""
+    """Claim tombstones until none is claimable, completing each, and return their partition UUIDs."""
     purged: list[UUID] = []
 
-    async def purge(partition_uuid: UUID) -> bool:
-        purged.append(partition_uuid)
-        return False
-
     while (claim := await registry.claim_tombstone()) is not None:
-        await claim.finish(await purge(claim.partition_uuid))
+        purged.append(claim.partition_uuid)
+        await claim.complete()
     return purged
 
 
