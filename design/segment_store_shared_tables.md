@@ -148,6 +148,65 @@ transaction of the store takes the database's write lock at BEGIN
 (`BEGIN IMMEDIATE`, through the `enable_sqlite_explicit_begin` setup the
 store requires of its engine), which stands in for the row locks.
 
+### Lookups by key
+
+A statement that reads a partition's rows for a list of keys (seed segments
+by UUID, segments by event UUID, links by segment UUID or by derivative
+UUID) looks each key up on its own on PostgreSQL. The keys are one array
+parameter, and each joins a `LATERAL` subquery selecting that key's rows,
+whose `OFFSET 0` keeps the planner from merging it into the statement.
+
+Given the keys as one `IN` list, PostgreSQL chooses between an index lookup
+per key and one scan of the partition's whole range of an index led by the
+partition UUID, filtered by the list. It prices that scan by the number of
+rows it estimates the partition to hold. It has that number only for the
+partitions among the column's most common values (100 at the default
+statistics target), and only in a plan built for the statement's parameter
+values. For any other partition, and in the generic plan a prepared
+statement switches to after five executions, it uses the average over all
+partitions. Where most tenants are small, it prices the scan below the
+lookups once the list holds more than a few keys, and on a large tenant the
+scan reads every row the tenant has.
+
+Measured on PostgreSQL 18.6 (1 to 6 million rows, statistics from
+`ANALYZE`, data in memory):
+
+- With one 100,000-segment tenant among 1,000,000 tenants of one segment
+  each, the generic plan for the segments of 20 events read 100,681 blocks
+  in 82 ms; a lookup per key read 140 blocks in 0.2 ms. The seed read and
+  the link read by derivative UUID, both on the query path, did the same
+  (101,472 and 100,662 blocks).
+- With one 1,000,000-segment tenant among 20,000 tenants of 48, the generic
+  plan for the segments of 5 events read 14,713 blocks in 51 ms against 20
+  blocks, and the seed read of 500 segments took 5.4 s against 3 ms.
+- A plan built for the parameter values chose the scan as well for a large
+  tenant outside the most common values (4,973 blocks against 80 for 20
+  events of a 5,000-segment tenant, at `random_page_cost` 1.1), so
+  `plan_cache_mode = force_custom_plan` corrects only the listed tenants.
+- The cost of the scan grows in proportion to the tenant, and the cost of
+  the lookups with the number of keys alone.
+
+For one key, the index on the partition UUID and the key answers in one
+lookup at any estimate, and no scan of the partition's range is priced
+below it, so the plan depends on neither the tenant's size, the plan mode,
+nor the statistics. It held in every case measured on PostgreSQL 18: seven
+distributions of tenant sizes, 1 to 500 keys, plans built for the values
+and generic plans, with and without statistics, at `random_page_cost` 4 and
+1.1. It held for three of the distributions on PostgreSQL 16 as well. The
+statement's text is also the same for any number of keys, so one prepared
+statement serves them all.
+
+Where a single scan is the better plan, the lookups cost more: about four
+blocks per key where the scan of a tenant of a few rows reads four in all,
+and up to four times the blocks for 500 keys of a 5,000-segment tenant.
+Both stay within a few milliseconds.
+
+Rewrites that keep the keys as one list (`= ANY` of an array, a plain join
+to the unnested array) leave the planner the same choice, and it chose the
+scan for large tenants there too. SQLite chooses the index on both columns
+for an `IN` list of any length measured, with and without statistics, so it
+keeps the list.
+
 ## Alternatives considered
 
 Measured 2026-08-31 (raw asyncpg, 40 tenants x 2000 row-pairs; scaled runs
@@ -178,12 +237,15 @@ requirement excludes.
 
 - No partitioned parents, per-tenant DDL, detach machinery, store-wide
   management lock, per-partition ORM entities or their cache, or
-  compiled-statement-cache tuning. Generic plans are benign on
-  unpartitioned tables (a plan references one table), so no plan-mode
-  tuning is needed.
+  compiled-statement-cache tuning. A generic plan references one table,
+  so its locks do not grow with the tenant count. It prices a statement
+  for an average tenant, so the statements whose best plan depends on the
+  tenant's size take a form with one plan (see [lookups by
+  key](#lookups-by-key)), and no plan-mode tuning is needed.
 - One architecture on every dialect. The remaining dialect splits are the
-  LATERAL-vs-loop read strategy, the PostgreSQL-only ordered row locks in
-  `delete_segments` (SQLAlchemy drops locking clauses on SQLite), and
+  LATERAL-vs-loop read strategy, the lookup per key on PostgreSQL, the
+  PostgreSQL-only ordered row locks in `delete_segments` (SQLAlchemy drops
+  locking clauses on SQLite), and
   SQLite's engine setup: the foreign-key pragma, and transactions begun
   explicitly, a write transaction with `BEGIN IMMEDIATE`. Both are
   per-connection state that the engine's owner registers at engine

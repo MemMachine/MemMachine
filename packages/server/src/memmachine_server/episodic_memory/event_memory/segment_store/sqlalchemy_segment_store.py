@@ -25,18 +25,21 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     Select,
+    SQLColumnExpression,
     Tuple,
     Uuid,
     bindparam,
     delete,
     func,
     insert,
+    literal,
+    literal_column,
     select,
     true,
     tuple_,
     update,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -316,9 +319,9 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("get_segment_contexts"),
             self._create_session() as session,
         ):
-            seed_segments_query = select(SegmentRow).where(
-                SegmentRow.uuid.in_(seed_segment_uuids),
-                SegmentRow.partition_uuid == self._partition_uuid,
+            segments = SegmentRow.__table__
+            seed_segments_query = select(segments).where(
+                segments.c.partition_uuid == self._partition_uuid,
             )
             if property_filter is not None:
                 seed_segments_query = seed_segments_query.where(
@@ -326,13 +329,25 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
                         property_filter,
                         lambda field: (
                             SQLAlchemySegmentStorePartition._resolve_segment_field(
-                                field, columns=SegmentRow.__table__.c
+                                field, columns=segments.c
                             )
                         ),
                     )
                 )
             seed_segment_rows = (
-                (await session.execute(seed_segments_query)).scalars().all()
+                (
+                    await session.execute(
+                        select(SegmentRow).from_statement(
+                            self._restrict_to_keys(
+                                seed_segments_query,
+                                segments.c.uuid,
+                                seed_segment_uuids,
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .all()
             )
 
             seed_segment_rows_by_uuid: dict[UUID, SegmentRow] = {
@@ -392,20 +407,17 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         property_filter: FilterExpr | None,
     ) -> dict[UUID, tuple[list[SegmentRow], list[SegmentRow]]]:
         """Get backward/forward context using LATERAL joins (non-SQLite)."""
-        seeds_subquery = (
+        seeds_subquery = self._restrict_to_keys(
             select(
                 SegmentRow.uuid.label("seed_uuid"),
                 SegmentRow.timestamp.label("seed_timestamp"),
                 SegmentRow.event_uuid.label("seed_event_uuid"),
                 SegmentRow.index.label("seed_index"),
                 SegmentRow.offset.label("seed_offset"),
-            )
-            .where(
-                SegmentRow.partition_uuid == self._partition_uuid,
-                SegmentRow.uuid.in_(seed_rows_by_uuid.keys()),
-            )
-            .subquery("seeds")
-        )
+            ).where(SegmentRow.partition_uuid == self._partition_uuid),
+            SegmentRow.uuid,
+            seed_rows_by_uuid.keys(),
+        ).subquery("seeds")
         seed_ordering_columns = tuple_(
             seeds_subquery.c.seed_timestamp,
             seeds_subquery.c.seed_event_uuid,
@@ -640,9 +652,12 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("get_segment_uuids_by_event_uuids"),
             self._create_session() as session,
         ):
-            query = select(SegmentRow.event_uuid, SegmentRow.uuid).where(
-                SegmentRow.partition_uuid == self._partition_uuid,
-                SegmentRow.event_uuid.in_(event_uuids),
+            query = self._restrict_to_keys(
+                select(SegmentRow.event_uuid, SegmentRow.uuid).where(
+                    SegmentRow.partition_uuid == self._partition_uuid
+                ),
+                SegmentRow.event_uuid,
+                event_uuids,
             )
             rows = (await session.execute(query)).all()
 
@@ -664,11 +679,12 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("get_derivative_uuids_by_segment_uuids"),
             self._create_session() as session,
         ):
-            query = select(
-                DerivativeLinkRow.segment_uuid, DerivativeLinkRow.uuid
-            ).where(
-                DerivativeLinkRow.partition_uuid == self._partition_uuid,
-                DerivativeLinkRow.segment_uuid.in_(segment_uuids),
+            query = self._restrict_to_keys(
+                select(DerivativeLinkRow.segment_uuid, DerivativeLinkRow.uuid).where(
+                    DerivativeLinkRow.partition_uuid == self._partition_uuid
+                ),
+                DerivativeLinkRow.segment_uuid,
+                segment_uuids,
             )
             rows = (await session.execute(query)).all()
 
@@ -692,11 +708,12 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         ):
             # Served by the primary key, which leads on the same two columns
             # this filters: the mapping is the derivative row itself.
-            query = select(
-                DerivativeLinkRow.uuid, DerivativeLinkRow.segment_uuid
-            ).where(
-                DerivativeLinkRow.partition_uuid == self._partition_uuid,
-                DerivativeLinkRow.uuid.in_(derivative_uuids),
+            query = self._restrict_to_keys(
+                select(DerivativeLinkRow.uuid, DerivativeLinkRow.segment_uuid).where(
+                    DerivativeLinkRow.partition_uuid == self._partition_uuid
+                ),
+                DerivativeLinkRow.uuid,
+                derivative_uuids,
             )
             rows = (await session.execute(query)).all()
 
@@ -740,6 +757,42 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             )
 
     # Helpers
+
+    def _restrict_to_keys(
+        self,
+        rows: Select,
+        key_column: SQLColumnExpression[UUID],
+        keys: Iterable[UUID],
+    ) -> Select:
+        """Select the `rows` whose `key_column` is one of `keys`.
+
+        `rows` selects from this partition's rows of one table.
+
+        On PostgreSQL the statement looks each key up on its own. Given the
+        keys as one list, the planner weighs an index lookup per key against
+        one scan of all the partition's rows, by the number of rows it
+        estimates the partition to hold. It has that number only for the
+        partitions its statistics list as most common, and a generic plan
+        has it for none, so for any other partition it uses the average
+        partition's. A partition far larger than the average then gets the
+        scan, which reads all of its rows. For one key, the planner prices
+        the lookup at or below the scan whatever it estimates.
+        """
+        if self._is_sqlite:
+            return rows.where(key_column.in_(keys))
+        key_table = (
+            func.unnest(literal(list(keys), ARRAY(Uuid)))
+            .table_valued("key")
+            .render_derived(name="keys")
+        )
+        # The OFFSET keeps the planner from merging the subquery into the
+        # statement, where it would again weigh the keys as one list.
+        rows_of_key = (
+            rows.where(key_column == key_table.c.key)
+            .offset(literal_column("0"))
+            .lateral("rows")
+        )
+        return select(rows_of_key).select_from(key_table.join(rows_of_key, true()))
 
     @staticmethod
     def _resolve_segment_field(
