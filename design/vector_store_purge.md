@@ -125,9 +125,7 @@ session sits idle in a transaction, holding back vacuum or meeting
 `idle_in_transaction_session_timeout`.
 
 - **The lease spreads work; correctness does not rest on it.** A round is safe
-  to repeat and to run on two purgers at once, and a round that, after the
-  retention, finds the partition empty has finished its purge, under any
-  claim. The lease lets purgers split a backlog, each taking a different
+  to repeat and to run on two purgers at once. The lease lets purgers split a backlog, each taking a different
   tombstone, where without it they would all take the oldest. A repeated round
   costs Qdrant a scroll and a filter-delete that matches nothing; on Milvus it
   repeats a listing and deletes keys already deleted.
@@ -143,13 +141,14 @@ session sits idle in a transaction, holding back vacuum or meeting
   100 ms per Milvus batch and, on Qdrant, whose single filter-delete makes
   the longest round, about 1.3 s per million points (see the per-backend
   documents).
-- **The generation fences the claim's own writes.** A round ends its claim,
-  schedules its retry, or resets the attempts, only while the tombstone's
-  `claim_generation` is still its claim's. So a round that outlasted its lease
-  neither ends the claim taken after it, which would let a third purger in
-  during that claim's round, nor records an outcome against it. A round that
-  found nothing removes the tombstone under any claim: what it found holds
-  whoever found it. The fence covers the registry's writes only: the backend
+- **The generation fences the claim's own writes.** A round completes the
+  purge, records progress, or records a failure only while the tombstone's
+  `claim_generation` is still its claim's, and each of those writes advances
+  the generation or deletes the tombstone, so a claim ends once. A round that
+  outlasted its lease therefore neither ends the claim taken after it, which
+  would let a third purger in during that claim's round, nor records an
+  outcome against it; when it found nothing, the current claim's round finds
+  nothing too and completes the purge. The fence covers the registry's writes only: the backend
   cannot condition a delete on a value held in the registry's database, so a
   round that outlasted its lease still sends its deletes, which reach only its
   own deleted partition.
@@ -290,9 +289,11 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - **A token the purger mints for each claim**, in place of the generation.
   Either fences the claim's writes; the generation needs nothing from the
   purger, since the database assigns it.
-- **Fence the tombstone's removal too.** A partition found empty after the
-  retention needs no more rounds, whoever found it, so the fence would only
-  discard the finding and repeat the round.
+- **Remove the tombstone under any claim.** A partition found empty after
+  the retention needs no more rounds, whoever found it, so a stale round's
+  finding could end the purge and save the current claim's round. But that
+  one write would escape the fence every other end follows, and the round it
+  saves happens only after a lease was outlasted.
 - **A progress cursor on the tombstone**, like the segment store's cursor in
   its partition's row. Qdrant's round deletes the whole partition at once
   and leaves nothing to resume. Milvus lists the partition's keys by the

@@ -1048,7 +1048,7 @@ async def test_a_claimed_tombstone_is_skipped_while_its_round_runs(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stale_outcome", ["records found", "raised"])
+@pytest.mark.parametrize("stale_outcome", ["records found", "nothing found", "raised"])
 async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
     sqlalchemy_engine, partition_namespace, caplog, stale_outcome
 ):
@@ -1074,7 +1074,7 @@ async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
                 with pytest.raises(RuntimeError):
                     await asyncio.wait_for(stale_task, 30)
             else:
-                stale.end(any_records_found=True)
+                stale.end(any_records_found=stale_outcome == "records found")
                 assert await asyncio.wait_for(stale_task, 30)
         assert [
             r
@@ -1095,33 +1095,40 @@ async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
 
 
 @pytest.mark.asyncio
-async def test_a_round_that_finds_nothing_removes_the_tombstone_under_any_claim(
-    sqlalchemy_engine, partition_namespace
+@pytest.mark.parametrize("first_end", ["complete", "progress"])
+@pytest.mark.parametrize("second_end", ["complete", "progress", "fail"])
+async def test_a_second_end_of_a_claim_changes_nothing(
+    sqlalchemy_engine, partition_namespace, caplog, first_end, second_end
 ):
-    """A partition UUID found empty after the retention stays empty, so a round
-    that outlasted its lease removes the tombstone it found empty."""
+    """A claim's first end takes effect; a second end of the same claim changes nothing and is reported."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
+    claim = await registry.claim_tombstone()
+    assert claim is not None
+    await getattr(claim, first_end)()
 
-    stale, stale_task = await _start_held_round(registry)
-    current_task = None
-    try:
-        await _age_claimable_at(registry, partition_uuid)
-        current, current_task = await _start_held_round(registry)
-        stale.end(any_records_found=False)
-        assert await asyncio.wait_for(stale_task, 30)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        if second_end == "fail":
+            await claim.fail(RuntimeError("late"))
+        else:
+            await getattr(claim, second_end)()
+    assert [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and str(partition_uuid) in r.getMessage()
+    ]
+
+    if first_end == "complete":
         assert await _queued(registry) == []
-
-        current.end(any_records_found=True)
-        assert await asyncio.wait_for(current_task, 30)
-    finally:
-        for task in (stale_task, current_task):
-            if task is not None and not task.done():
-                task.cancel()
-
-    assert await _queued(registry) == []
+    else:
+        # Progress made the tombstone claimable at once, with no attempts.
+        assert await _attempts(registry, partition_uuid) == 0
+        again = await registry.claim_tombstone()
+        assert again is not None
+        assert again.partition_uuid == partition_uuid
 
 
 @pytest.mark.asyncio

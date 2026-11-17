@@ -143,9 +143,11 @@ class TombstoneClaim(ABC):
     A purge round's claim on a deleted partition's tombstone, held under a lease.
 
     The tombstone is due: the retention has passed since the partition's
-    deletion. Its holder ends it once: `complete` when the partition's purge
-    is complete, `progress` when the round purged records, or `fail` with a
-    raised round's error. Each claim counts an attempt without progress on the
+    deletion. Its holder ends it with `complete` when the partition's purge is
+    complete, `progress` when the round purged records, or `fail` with a
+    raised round's error. An end takes effect only while the claim is the
+    latest on its tombstone and has not ended; any other end changes nothing
+    and is reported. Each claim counts an attempt without progress on the
     tombstone. A claim never ended keeps its attempt, and its tombstone is
     claimable again once the claim's lease, and then the backoff, have passed,
     so a tombstone may be claimed again while an earlier round on it runs.
@@ -158,8 +160,7 @@ class TombstoneClaim(ABC):
         """
         Record that the partition's purge is complete.
 
-        The registry deletes the tombstone under any claim, freeing the
-        partition's UUID.
+        The registry deletes the tombstone, freeing the partition's UUID.
         """
         raise NotImplementedError
 
@@ -168,16 +169,15 @@ class TombstoneClaim(ABC):
         """
         Record that the round purged some of the partition's records.
 
-        The tombstone stays due. If the claim is the latest on the tombstone,
-        the claim ends, and the tombstone is claimable at once with its
-        attempts without progress reset.
+        The tombstone stays due and is claimable at once, with its attempts
+        without progress reset.
         """
         raise NotImplementedError
 
     @abstractmethod
     async def fail(self, error: Exception) -> None:
         """
-        End the claim of a round that raised, if the claim is the latest on its tombstone.
+        Record that the round raised.
 
         The tombstone is claimable again after a backoff that grows with each
         attempt without progress. A round that raised on the registry's last

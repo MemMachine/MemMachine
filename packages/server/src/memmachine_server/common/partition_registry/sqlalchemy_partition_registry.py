@@ -128,8 +128,8 @@ class PurgeQueueRow(BasePartitionRegistry):
     claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Incremented by each claim; a round ends its claim only while the claim
-    # is the latest.
+    # Advanced by each claim and by each end of a claim, so an end takes
+    # effect once, and only under the latest claim.
     claim_generation: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
@@ -523,16 +523,20 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
     base_purge_retry_backoff_seconds: int = field(repr=False)
     max_purge_retry_backoff_seconds: int = field(repr=False)
 
+    # Each end matches the claim's generation, and advances it or deletes the
+    # tombstone, so it takes effect once, and only under the latest claim.
+
     @override
     async def complete(self) -> None:
-        # Under any claim, since a partition found empty after the retention
-        # needs no more rounds.
         async with write_connection(self.engine) as connection:
-            await connection.execute(
+            ended = await connection.execute(
                 delete(PurgeQueueRow).where(
-                    PurgeQueueRow.partition_uuid == self.partition_uuid
+                    PurgeQueueRow.partition_uuid == self.partition_uuid,
+                    PurgeQueueRow.claim_generation == self.claim_generation,
                 )
             )
+        if ended.rowcount != 1:
+            self._report_stale_end()
 
     @override
     async def progress(self) -> None:
@@ -543,15 +547,18 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                     PurgeQueueRow.partition_uuid == self.partition_uuid,
                     PurgeQueueRow.claim_generation == self.claim_generation,
                 )
-                .values(attempts_without_progress=0, claimable_at=None)
+                .values(
+                    attempts_without_progress=0,
+                    claimable_at=None,
+                    claim_generation=PurgeQueueRow.claim_generation + 1,
+                )
             )
         if ended.rowcount != 1:
-            self._report_round_outlasting_its_claim()
+            self._report_stale_end()
 
     @override
     async def fail(self, error: Exception) -> None:
-        # The tombstone is claimable once the backoff passes, if the claim is
-        # the latest. A raise on the last attempt is reported: claims skip the
+        # A raise on the last attempt is reported, since claims skip the
         # tombstone from then on.
         error.add_note(
             f"Purge round on partition {self.partition_uuid}, attempt "
@@ -573,11 +580,12 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                             base_seconds=self.base_purge_retry_backoff_seconds,
                             max_seconds=self.max_purge_retry_backoff_seconds,
                         ),
-                    )
+                    ),
+                    claim_generation=PurgeQueueRow.claim_generation + 1,
                 )
             )
         if ended.rowcount != 1:
-            self._report_round_outlasting_its_claim()
+            self._report_stale_end()
             return
         # Claims take only tombstones under the bound.
         if self.attempt >= _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS:
@@ -592,12 +600,12 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                 PurgeQueueRow.__tablename__,
             )
 
-    def _report_round_outlasting_its_claim(self) -> None:
-        """Report a purge round that ended after its tombstone was claimed again or removed."""
+    def _report_stale_end(self) -> None:
+        """Report an end that changed nothing: the claim had ended, or the tombstone was claimed again."""
         logger.warning(
-            "Purge round on partition %s ended no claim: while it ran, the "
-            "tombstone was claimed again after this claim's %d s lease and "
-            "backoff, or another round removed it",
+            "Purge round on partition %s ended no claim: the claim had ended "
+            "already, or the tombstone was claimed again after the claim's "
+            "%d s lease and backoff",
             self.partition_uuid,
             self.purge_lease_seconds,
         )

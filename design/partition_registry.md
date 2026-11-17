@@ -508,12 +508,12 @@ computed from `enqueued_at` when the claim runs, so a change to it reaches
 every queued tombstone and no retry schedule can shorten it. The
 claim keeps its one index range, oldest deletion first, and skips tombstones
 whose `claimable_at` has not passed. Every write after a tombstone's insert
-is a claim's, except an operator's reset of a dead-lettered tombstone: the
-writes that end a claim are matched on `claim_generation`, and a claim's
-`complete` deletes the tombstone under any claim (see
-[purge](vector_store_purge.md#the-lease)). The reset leaves the generation as
-it is, so a round still running can end its claim, which at most
-delays the tombstone by the base backoff.
+is a claim's, except an operator's reset of a dead-lettered tombstone. Each
+write that ends a claim is matched on `claim_generation` and advances it, or
+deletes the tombstone, so it takes effect once, and only under the latest
+claim (see [purge](vector_store_purge.md#the-lease)). The reset leaves the
+generation as it is, so a round still running can end its claim, which at
+most delays the tombstone by the base backoff.
 
 The retention is the namespace's. Event memory's configuration names its
 registry's database and its retention, and checks the retention's floor
