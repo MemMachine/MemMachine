@@ -32,6 +32,7 @@ from memmachine_server.common.partition_registry import (
 )
 from memmachine_server.common.partition_registry.data_types import (
     PartitionAlreadyConfirmedError,
+    TombstoneClaimStaleError,
 )
 from memmachine_server.common.partition_registry.partition_registry import (
     Reservation,
@@ -1058,11 +1059,11 @@ async def test_a_claimed_tombstone_is_skipped_while_its_round_runs(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stale_outcome", ["records found", "nothing found", "raised"])
 async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
-    sqlalchemy_engine, partition_namespace, caplog, stale_outcome
+    sqlalchemy_engine, partition_namespace, stale_outcome
 ):
     """Once a round's lease and the backoff have passed, the tombstone is
     claimed again as the next attempt. The first round's end then changes
-    nothing: the later claim holds, and each round counts once."""
+    nothing and raises: the later claim holds, and each round counts once."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
@@ -1075,20 +1076,12 @@ async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
         current, current_task = await _start_held_round(registry)
         assert current.ran == [partition_uuid]
 
-        caplog.clear()
-        with caplog.at_level(logging.WARNING):
-            if stale_outcome == "raised":
-                stale.fail(RuntimeError("the backend refused"))
-                with pytest.raises(RuntimeError):
-                    await asyncio.wait_for(stale_task, 30)
-            else:
-                stale.end(any_records_found=stale_outcome == "records found")
-                assert await asyncio.wait_for(stale_task, 30)
-        assert [
-            r
-            for r in caplog.records
-            if r.levelno == logging.WARNING and str(partition_uuid) in r.getMessage()
-        ]
+        if stale_outcome == "raised":
+            stale.fail(RuntimeError("the backend refused"))
+        else:
+            stale.end(any_records_found=stale_outcome == "records found")
+        with pytest.raises(TombstoneClaimStaleError):
+            await asyncio.wait_for(stale_task, 30)
         assert await _attempts(registry, partition_uuid) == 2
         assert await _round(registry, any_records_found=False) is None
 
@@ -1106,9 +1099,9 @@ async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
 @pytest.mark.parametrize("first_end", ["complete", "progress"])
 @pytest.mark.parametrize("second_end", ["complete", "progress", "fail"])
 async def test_a_second_end_of_a_claim_changes_nothing(
-    sqlalchemy_engine, partition_namespace, caplog, first_end, second_end
+    sqlalchemy_engine, partition_namespace, first_end, second_end
 ):
-    """A claim's first end takes effect; a second end of the same claim changes nothing and is reported."""
+    """A claim's first end takes effect; a second end of the same claim changes nothing and raises."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
@@ -1117,17 +1110,13 @@ async def test_a_second_end_of_a_claim_changes_nothing(
     assert claim is not None
     await getattr(claim, first_end)()
 
-    caplog.clear()
-    with caplog.at_level(logging.WARNING):
-        if second_end == "fail":
-            await claim.fail(RuntimeError("late"))
-        else:
-            await getattr(claim, second_end)()
-    assert [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and str(partition_uuid) in r.getMessage()
-    ]
+    second = (
+        claim.fail(RuntimeError("late"))
+        if second_end == "fail"
+        else getattr(claim, second_end)()
+    )
+    with pytest.raises(TombstoneClaimStaleError):
+        await second
 
     if first_end == "complete":
         assert await _queued(registry) == []
@@ -1611,7 +1600,8 @@ async def test_a_claim_holds_for_the_lease_it_was_taken_under(
         await _age_claimable_at(five_minutes, partition_uuid, PURGE_LEASE)
         assert await _round(one_minute, any_records_found=True) == partition_uuid
         held.end(any_records_found=True)
-        assert await asyncio.wait_for(holding, 30)
+        with pytest.raises(TombstoneClaimStaleError):
+            await asyncio.wait_for(holding, 30)
     finally:
         if not holding.done():
             holding.cancel()

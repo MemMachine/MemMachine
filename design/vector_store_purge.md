@@ -125,10 +125,11 @@ session sits idle in a transaction, holding back vacuum or meeting
 `idle_in_transaction_session_timeout`.
 
 - **The lease spreads work; correctness does not rest on it.** A round is safe
-  to repeat and to run on two purgers at once. The lease lets purgers split a backlog, each taking a different
-  tombstone, where without it they would all take the oldest. A repeated round
-  costs Qdrant a scroll and a filter-delete that matches nothing; on Milvus it
-  repeats a listing and deletes keys already deleted.
+  to repeat and to run on two purgers at once. The lease lets purgers split a
+  backlog, each taking a different tombstone, where without it they would all
+  take the oldest. A repeated round costs Qdrant a scroll and a filter-delete
+  that matches nothing; on Milvus it repeats a listing and deletes keys
+  already deleted.
 - **A round that is canceled, or whose purger died, keeps its attempt.**
   Neither writes anything after its claim, which already counted the
   attempt; its tombstone is claimed again once the lease, and then the
@@ -136,22 +137,23 @@ session sits idle in a transaction, holding back vacuum or meeting
 - **The lease should exceed a round.** A round's remote calls run one after
   another, each bounded by the store's request timeout. A round that outlasts
   its lease and backoff may run beside a later round on the same tombstone,
-  which is harmless but repeats work. When the earlier round ends, it logs a
-  warning naming the partition and the lease. The measured rounds take about
-  100 ms per Milvus batch and, on Qdrant, whose single filter-delete makes
-  the longest round, about 1.3 s per million points (see the per-backend
-  documents).
+  which is harmless but repeats work. When the earlier round ends, its end
+  raises `TombstoneClaimStaleError`, which the partition manager logs as a
+  warning naming the partition. The measured rounds take about 100 ms per
+  Milvus batch and, on Qdrant, whose single filter-delete makes the longest
+  round, about 1.3 s per million points (see the per-backend documents).
 - **The generation fences the claim's own writes.** A round completes the
   purge, records progress, or records a failure only while the tombstone's
   `claim_generation` is still its claim's, and each of those writes advances
-  the generation or deletes the tombstone, so a claim ends once. A round that
-  outlasted its lease therefore neither ends the claim taken after it, which
-  would let a third purger in during that claim's round, nor records an
-  outcome against it; when it found nothing, the current claim's round finds
-  nothing too and completes the purge. The fence covers the registry's writes only: the backend
-  cannot condition a delete on a value held in the registry's database, so a
-  round that outlasted its lease still sends its deletes, which reach only its
-  own deleted partition.
+  the generation or deletes the tombstone, so a claim ends once; any other end
+  raises `TombstoneClaimStaleError`. A round that outlasted its lease
+  therefore neither ends the claim taken after it, which would let a third
+  purger in during that claim's round, nor records an outcome against it; when
+  it found nothing, the current claim's round finds nothing too and completes
+  the purge. The fence covers the registry's writes only: the backend cannot
+  condition a delete on a value held in the registry's database, so a round
+  that outlasted its lease still sends its deletes, which reach only its own
+  deleted partition.
 - **The lease runs on the database's clock.** The registry takes every time
   it schedules or compares from the database's `now()`: a claim's
   `claimable_at` and retention cutoff, and a failure's backoff. The generation

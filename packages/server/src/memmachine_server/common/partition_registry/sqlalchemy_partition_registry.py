@@ -56,6 +56,7 @@ from .data_types import (
     PartitionCreateAttemptsExhaustedError,
     PartitionDeletedError,
     PartitionPendingError,
+    TombstoneClaimStaleError,
     validate_partition_namespace,
 )
 from .partition_registry import (
@@ -467,7 +468,6 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             claim_generation=row.claim_generation,
             attempt=row.attempts_without_progress,
             engine=self._engine,
-            purge_lease_seconds=self._purge_lease_seconds,
             base_purge_retry_backoff_seconds=self._base_purge_retry_backoff_seconds,
             max_purge_retry_backoff_seconds=self._max_purge_retry_backoff_seconds,
         )
@@ -570,7 +570,6 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
     # The claim's attempt number since the last progress, from 1.
     attempt: int
     engine: AsyncEngine = field(repr=False, compare=False)
-    purge_lease_seconds: int = field(repr=False)
     base_purge_retry_backoff_seconds: int = field(repr=False)
     max_purge_retry_backoff_seconds: int = field(repr=False)
 
@@ -587,7 +586,7 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                 )
             )
         if ended.rowcount != 1:
-            self._report_stale_end()
+            raise TombstoneClaimStaleError(self.partition_uuid)
 
     @override
     async def progress(self) -> None:
@@ -605,7 +604,7 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                 )
             )
         if ended.rowcount != 1:
-            self._report_stale_end()
+            raise TombstoneClaimStaleError(self.partition_uuid)
 
     @override
     async def fail(self, error: Exception) -> None:
@@ -636,8 +635,7 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                 )
             )
         if ended.rowcount != 1:
-            self._report_stale_end()
-            return
+            raise TombstoneClaimStaleError(self.partition_uuid)
         # Claims take only tombstones under the bound.
         if self.attempt >= _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS:
             logger.error(
@@ -650,16 +648,6 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                 error,
                 PurgeQueueRow.__tablename__,
             )
-
-    def _report_stale_end(self) -> None:
-        """Report an end that changed nothing: the claim had ended, or the tombstone was claimed again."""
-        logger.warning(
-            "Purge round on partition %s ended no claim: the claim had ended "
-            "already, or the tombstone was claimed again after the claim's "
-            "%d s lease and backoff",
-            self.partition_uuid,
-            self.purge_lease_seconds,
-        )
 
 
 async def _unregister_where(

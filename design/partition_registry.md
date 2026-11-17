@@ -516,20 +516,21 @@ lease and then the backoff pass. A store keeps whatever progress its purge
 needs between calls, such as the segment store's cursor, in the partition's
 own storage, which the drop removes.
 
-A tombstone's lease and backoff are stored as one `claimable_at`, the
-earliest time a claim may take it again: a claim sets it to the claim's lease
-end plus the backoff for its attempt, a failure sets it to the end of the
-backoff, and progress clears it. The retention stays its own condition,
-computed from `enqueued_at` when the claim runs, so a change to it reaches
-every queued tombstone and no retry schedule can shorten it. The
-claim keeps its one index range, oldest deletion first, and skips tombstones
-whose `claimable_at` has not passed. Every write after a tombstone's insert
-is a claim's, except an operator's reset of a dead-lettered tombstone. Each
-write that ends a claim is matched on `claim_generation` and advances it, or
-deletes the tombstone, so it takes effect once, and only under the latest
-claim (see [purge](vector_store_purge.md#the-lease)). The reset leaves the
-generation as it is, so a round still running can end its claim, which at
-most delays the tombstone by the base backoff.
+A tombstone's lease and backoff are stored as one `claimable_at`, the earliest
+time a claim may take it again: a claim sets it to the claim's lease end plus
+the backoff for its attempt, a failure sets it to the end of the backoff, and
+progress clears it. The retention stays its own condition, computed from
+`enqueued_at` when the claim runs, so a change to it reaches every queued
+tombstone and no retry schedule can shorten it. The claim keeps its one index
+range, oldest deletion first, and skips tombstones whose `claimable_at` has
+not passed. Every write after a tombstone's insert is a claim's, except an
+operator's reset of a dead-lettered tombstone. Each write that ends a claim is
+matched on `claim_generation` and advances it, or deletes the tombstone, so it
+takes effect once, and only under the latest claim; any other end raises
+`TombstoneClaimStaleError`, which the partition manager logs (see
+[purge](vector_store_purge.md#the-lease)). The reset leaves the generation as
+it is, so a round still running can end its claim, which at most delays the
+tombstone by the base backoff.
 
 The retention is the namespace's. Event memory's configuration names its
 registry's database and its retention, and checks the retention's floor

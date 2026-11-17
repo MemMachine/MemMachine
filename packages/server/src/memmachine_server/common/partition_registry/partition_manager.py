@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Iterable, Sequence
 from uuid import UUID
 
+from .data_types import TombstoneClaimStaleError
 from .partition_registry import PartitionRegistry, Registration
 from .partitioned_store import PartitionedStore
 
@@ -130,7 +131,9 @@ class PartitionManager:
         The round claims the tombstone, purges the deleted partition from
         every store and, once no store's purge finds records, drops it from
         every store, then records on the claim whether the purge made progress
-        or is complete. A round that raises fails the claim and raises. A canceled
+        or is complete. A round that raises fails the claim and raises. An end
+        of a claim that has gone stale is logged, since a later claim decides
+        the tombstone. A canceled
         round leaves its claim open: its tombstone is claimable again once
         the claim's lease, and then the backoff, have passed.
 
@@ -144,12 +147,9 @@ class PartitionManager:
         try:
             found_records = await self._purge_partition(claim.partition_uuid)
         except Exception as error:
-            await claim.fail(error)
+            await _end_claim(claim.fail(error))
             raise
-        if found_records:
-            await claim.progress()
-        else:
-            await claim.complete()
+        await _end_claim(claim.progress() if found_records else claim.complete())
         return True
 
     async def _purge_partition(self, partition_uuid: UUID) -> bool:
@@ -173,6 +173,14 @@ class PartitionManager:
             ],
         )
         return False
+
+
+async def _end_claim(end: Awaitable[None]) -> None:
+    """Await the end of a tombstone claim, logging the end of a stale claim instead of raising."""
+    try:
+        await end
+    except TombstoneClaimStaleError as stale:
+        logger.warning("Purge round ended no claim: %s", stale)
 
 
 async def _on_every_store[T](

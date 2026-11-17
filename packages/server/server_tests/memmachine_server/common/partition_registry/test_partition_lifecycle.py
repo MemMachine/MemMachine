@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from memmachine_server.common.partition_registry import (
@@ -556,4 +556,62 @@ async def test_every_store_drops_before_the_first_error_is_raised(
     with pytest.raises(ConnectionError):
         await manager.run_purge_round()
     other_store.drop_partition.assert_awaited_once_with(partition_uuid)
+    assert await _queued(registry) == 1
+
+
+async def _claimed_again(
+    registry: SQLAlchemyPartitionRegistry, partition_uuid: UUID
+) -> None:
+    """Advance the tombstone's generation, as a claim taken after the running round's lease and backoff does."""
+    async with registry._engine.begin() as connection:
+        await connection.execute(
+            update(PurgeQueueRow)
+            .where(PurgeQueueRow.partition_uuid == partition_uuid)
+            .values(claim_generation=PurgeQueueRow.claim_generation + 1)
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_round_whose_claim_went_stale_is_logged_and_counts(
+    registry, manager, store, caplog
+):
+    """A round whose tombstone was claimed again while it ran ends nothing; the manager logs the stale claim and counts the round as run."""
+    partition_uuid = await _created(manager, registry)
+    await manager.delete_partition(NAME)
+
+    async def claimed_again(claimed: UUID) -> bool:
+        await _claimed_again(registry, claimed)
+        return False
+
+    store.purge_partition.side_effect = claimed_again
+    with caplog.at_level(logging.WARNING):
+        assert await manager.run_purge_round() is True
+    assert [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and str(partition_uuid) in r.getMessage()
+    ]
+    assert await _queued(registry) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_raised_round_whose_claim_went_stale_raises_its_own_error(
+    registry, manager, store, caplog
+):
+    """A round that raised after its tombstone was claimed again raises its own error, and the manager logs the stale claim."""
+    partition_uuid = await _created(manager, registry)
+    await manager.delete_partition(NAME)
+
+    async def claimed_again_then_fails(claimed: UUID) -> bool:
+        await _claimed_again(registry, claimed)
+        raise ConnectionError("the store is down")
+
+    store.purge_partition.side_effect = claimed_again_then_fails
+    with caplog.at_level(logging.WARNING), pytest.raises(ConnectionError):
+        await manager.run_purge_round()
+    assert [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and str(partition_uuid) in r.getMessage()
+    ]
     assert await _queued(registry) == 1

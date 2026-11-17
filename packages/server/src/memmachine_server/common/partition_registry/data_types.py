@@ -104,5 +104,18 @@ class PartitionAlreadyConfirmedError(Exception):
         )
 
 
+class TombstoneClaimStaleError(Exception):
+    """Raised when a tombstone claim is ended after it stopped being the tombstone's latest, unended claim."""
+
+    def __init__(self, partition_uuid: UUID) -> None:
+        """Initialize with the UUID of the partition whose tombstone was claimed."""
+        self.partition_uuid = partition_uuid
+        super().__init__(
+            f"The claim on partition {partition_uuid}'s tombstone is stale: it "
+            "ended already, or the tombstone was claimed again after its lease "
+            "and backoff"
+        )
+
+
 class PartitionCreateAttemptsExhaustedError(Exception):
     """Raised when creating a partition gave up after repeated attempts that made no progress."""

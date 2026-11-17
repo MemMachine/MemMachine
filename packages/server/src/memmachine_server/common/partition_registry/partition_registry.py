@@ -168,7 +168,7 @@ class TombstoneClaim(ABC):
     complete, `progress` when the round purged records, or `fail` with a
     raised round's error. An end takes effect only while the claim is the
     latest on its tombstone and has not ended; any other end changes nothing
-    and is reported. Each claim counts an attempt without progress on the
+    and raises TombstoneClaimStaleError. Each claim counts an attempt without progress on the
     tombstone. A claim never ended keeps its attempt, and its tombstone is
     claimable again once the claim's lease, and then the backoff, have passed,
     so a tombstone may be claimed again while an earlier round on it runs.
@@ -182,6 +182,10 @@ class TombstoneClaim(ABC):
         Record that the partition's purge is complete.
 
         The registry deletes the tombstone, freeing the partition's UUID.
+
+        Raises:
+            TombstoneClaimStaleError:
+                If the claim is not the tombstone's latest, unended claim.
         """
         raise NotImplementedError
 
@@ -192,6 +196,10 @@ class TombstoneClaim(ABC):
 
         The tombstone stays due and is claimable at once, with its attempts
         without progress reset.
+
+        Raises:
+            TombstoneClaimStaleError:
+                If the claim is not the tombstone's latest, unended claim.
         """
         raise NotImplementedError
 
@@ -208,6 +216,10 @@ class TombstoneClaim(ABC):
         Args:
             error (Exception):
                 What the round raised.
+
+        Raises:
+            TombstoneClaimStaleError:
+                If the claim is not the tombstone's latest, unended claim.
         """
         raise NotImplementedError
 
