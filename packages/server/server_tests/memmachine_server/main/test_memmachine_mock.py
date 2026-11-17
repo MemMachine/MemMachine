@@ -1383,7 +1383,7 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
 
     # Mock SemanticService
     semantic_service = MagicMock()
-    semantic_service.delete_feature_set = AsyncMock()
+    semantic_service.delete_project_sets = AsyncMock()
     semantic_service.start = AsyncMock()
     semantic_service.stop = AsyncMock()
     patched_resource_manager.get_semantic_service = AsyncMock(
@@ -1417,9 +1417,7 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
         session_key=session_key
     )
 
-    semantic_service.delete_feature_set.assert_awaited_once_with(
-        session_data=test_session_data
-    )
+    semantic_service.delete_project_sets.assert_awaited_once_with(test_session_data)
 
     session_manager.delete_session.assert_awaited_once_with(session_key=session_key)
 

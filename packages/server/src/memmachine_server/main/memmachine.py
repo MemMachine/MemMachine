@@ -461,7 +461,7 @@ class MemMachine:
 
     async def _delete_session_semantic_memory(self, session: SessionData) -> None:
         semantic_service = await self._resources.get_semantic_service()
-        await semantic_service.delete_feature_set(session_data=session)
+        await semantic_service.delete_project_sets(session)
 
     async def start(
         self, key_to_session: Callable[[str], SessionData] | None = None

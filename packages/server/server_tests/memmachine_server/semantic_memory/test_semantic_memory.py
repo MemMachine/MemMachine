@@ -319,40 +319,6 @@ async def test_delete_features_removes_selected_entries(
     assert await semantic_service.get_feature(session_data, to_keep) is not None
 
 
-async def test_delete_feature_set_applies_filters(
-    semantic_service: SemanticService,
-    session_data: SessionData,
-):
-    set_id = await get_set_id(semantic_service, session_data)
-    await semantic_service.add_feature(
-        session_data=session_data,
-        set_id=set_id,
-        category_name="Profile",
-        feature="tone",
-        value="Alpha calm",
-        tag="writing_style",
-    )
-    await semantic_service.add_feature(
-        session_data=session_data,
-        set_id=set_id,
-        category_name="Profile",
-        feature="favorite_color",
-        value="Blue",
-        tag="personal_info",
-    )
-
-    await semantic_service.delete_feature_set(
-        session_data,
-        property_filter=parse_filter("tag in ('writing_style')"),
-    )
-
-    remaining = await _collect_async(
-        semantic_service.get_set_features(session_data=session_data)
-    )
-    assert len(remaining) == 1
-    assert remaining[0].feature_name == "favorite_color"
-
-
 async def test_search_returns_matching_features(
     semantic_service: SemanticService,
     spy_embedder: SpyEmbedder,

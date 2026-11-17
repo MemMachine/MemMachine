@@ -59,6 +59,8 @@ from .storage.storage_base import SemanticStorage
 
 logger = logging.getLogger(__name__)
 
+_DELETE_BATCH_SIZE = 100
+
 
 def _consolidate_errors_and_raise(possible_errors: Sequence[Any], msg: str) -> None:
     errors = [r for r in possible_errors if isinstance(r, Exception)]
@@ -616,24 +618,26 @@ class SemanticService:
         ):
             yield feature
 
-    async def delete_feature_set(
-        self,
-        session_data: SessionData,
-        *,
-        set_metadata: Mapping[str, JsonValue] | None = None,
-        property_filter: FilterExpr | None = None,
-    ) -> None:
+    async def delete_project_sets(self, session_data: SessionData) -> None:
+        """
+        Delete the sets of the session's project and everything in them.
+
+        Features, queued history and per-set configuration go with each set.
+        Org-level sets, which every project of the org shares, stay.
+        """
         self._assert_session_data_implements_protocol(session_data=session_data)
 
-        set_ids = await self._find_set_ids(
-            session_data=session_data,
-            metadata=set_metadata,
-        )
+        while sets := await self._semantic_config_storage.find_sets(
+            org_id=session_data.org_id,
+            project_id=session_data.project_id,
+            limit=_DELETE_BATCH_SIZE,
+        ):
+            set_ids = [semantic_set.id for semantic_set in sets]
+            logger.info("Deleting project sets %s", set_ids)
 
-        await self._delete_set_features(
-            set_ids=set_ids,
-            filter_expr=property_filter,
-        )
+            await self._delete_set_ids(set_ids=set_ids)
+            await self._semantic_storage.delete_history_set(set_ids)
+            await self._semantic_config_storage.delete_sets(set_ids=set_ids)
 
     async def _find_set_ids(
         self,

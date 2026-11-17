@@ -248,54 +248,6 @@ async def test_add_feature_isolation(
     assert spy_embedder.ingest_calls == [["Alpha casual"]]
 
 
-async def test_delete_feature_set_removes_filtered_entries(
-    semantic_service: SemanticService,
-    semantic_storage: SemanticStorage,
-    session_data,
-):
-    # Given profile and session features with distinct tags
-    set_type_id = await get_set_id(semantic_service, session_data, is_org_level=True)
-    project_set_id = await get_set_id(semantic_service, session_data)
-
-    await semantic_service.add_feature(
-        session_data=session_data,
-        set_id=set_type_id,
-        category_name="Profile",
-        feature="favorite_color",
-        value="Blue",
-        tag="profile_tag",
-    )
-    await semantic_service.add_feature(
-        session_data=session_data,
-        set_id=project_set_id,
-        category_name="Profile",
-        feature="session_note",
-        value="Remember to ask about projects",
-        tag="session_tag",
-    )
-
-    # When deleting only the profile-tagged features
-    property_filter = parse_filter("tag IN ('profile_tag')")
-    await semantic_service.delete_feature_set(
-        session_data=session_data,
-        property_filter=property_filter,
-    )
-
-    # Then profile features are cleared while session-scoped entries remain
-    org_features = await _collect_feature_set(
-        semantic_storage,
-        filter_expr=parse_filter(f"set_id IN ('{set_type_id}')"),
-    )
-    project_features = await _collect_feature_set(
-        semantic_storage,
-        filter_expr=parse_filter(f"set_id IN ('{project_set_id}')"),
-    )
-
-    assert org_features == []
-    assert len(project_features) == 1
-    assert project_features[0].feature_name == "session_note"
-
-
 async def test_delete_features_deletes_features_in_sets_the_session_addresses(
     semantic_service: SemanticService,
     session_data,
@@ -1105,3 +1057,89 @@ async def test_reads_add_no_sets(
             )
             == []
         )
+
+
+async def test_delete_project_sets_deletes_only_the_project_sets(
+    semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
+    semantic_config_storage: SemanticConfigStorage,
+    episode_storage: EpisodeStorage,
+    session_data,
+):
+    # Given the project's default and tagged sets, the org's set, and another
+    # project's set, each with a feature
+    await semantic_service.create_set_type(
+        session_data=session_data, is_org_level=False, metadata_tags=["team"]
+    )
+    project_set_id = await get_set_id(semantic_service, session_data)
+    team_set_id = await get_set_id(semantic_service, session_data, team="eng")
+    org_set_id = await get_set_id(semantic_service, session_data, is_org_level=True)
+    other_project = SessionData(org_id=session_data.org_id, project_id="other_proj")
+    other_set_id = await get_set_id(semantic_service, other_project)
+
+    await semantic_service.add_new_category(
+        session_data=session_data,
+        set_id=team_set_id,
+        category_name="hobbies",
+        prompt="Hobbies",
+        description=None,
+    )
+    feature_ids = {}
+    for set_id, session in (
+        (project_set_id, session_data),
+        (team_set_id, session_data),
+        (org_set_id, session_data),
+        (other_set_id, other_project),
+    ):
+        feature_ids[set_id] = await semantic_service.add_feature(
+            session_data=session,
+            set_id=set_id,
+            category_name="Profile",
+            feature="note",
+            value="Alpha note",
+            tag="facts",
+        )
+    episodes = await episode_storage.add_episodes(
+        session_key="session_id",
+        episodes=[
+            EpisodeEntry(
+                content="Alpha memory",
+                producer_id="profile_id",
+                producer_role="dev",
+                metadata={"team": "eng"},
+            )
+        ],
+    )
+    await semantic_service.add_message(episodes=episodes, session_data=session_data)
+
+    # When deleting the project's sets
+    await semantic_service.delete_project_sets(session_data)
+
+    # Then the project's sets go with their features, history and configuration
+    deleted = [project_set_id, team_set_id]
+    assert await semantic_config_storage.get_sets(set_ids=deleted) == []
+    assert (
+        await semantic_config_storage.find_sets(
+            org_id=session_data.org_id, project_id=session_data.project_id
+        )
+        == []
+    )
+    for set_id in deleted:
+        assert await semantic_storage.get_feature(feature_ids[set_id]) is None
+        assert await semantic_storage.get_history_messages_count(set_ids=[set_id]) == 0
+        config = await semantic_config_storage.get_setid_config(set_id=set_id)
+        assert config.categories == []
+        assert config.embedder_name is None
+
+    # And the org's set and the other project's set stay
+    for set_id in (org_set_id, other_set_id):
+        assert await semantic_storage.get_feature(feature_ids[set_id]) is not None
+
+    # And a project with the same ids starts with new, empty sets
+    assert await get_set_id(semantic_service, session_data) != project_set_id
+    features = await _collect_async(
+        semantic_service.get_set_features(
+            session_data=session_data, set_metadata={"team": "eng"}
+        )
+    )
+    assert [feature.metadata.id for feature in features] == [feature_ids[org_set_id]]
