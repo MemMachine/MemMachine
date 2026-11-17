@@ -194,7 +194,7 @@ async def _run_round(
     registry: SQLAlchemyPartitionRegistry,
     purge_round: Callable[[UUID], Awaitable[bool]],
 ) -> bool:
-    """Run one purge round as a partition manager does: claim the tombstone that came due first, run `purge_round` on it, and end the claim; whether one was claimed."""
+    """Run one purge round like a partition manager's: claim the tombstone that came due first, run `purge_round` on it, and end the claim. Return whether a tombstone was claimed."""
     claim = await registry.claim_tombstone()
     if claim is None:
         return False
@@ -878,7 +878,7 @@ async def test_a_round_failing_after_its_attempts_are_reset_backs_off_one_attemp
     sqlalchemy_engine, partition_namespace
 ):
     """A round that fails after an operator reset its tombstone's attempts
-    backs off as a first attempt does: the backoff is never computed from a
+    backs off like a first attempt: the backoff is never computed from a
     negative shift."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid

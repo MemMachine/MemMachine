@@ -489,7 +489,7 @@ class _SQLAlchemyReservation(Reservation):
 
     @override
     async def _cancel(self) -> None:
-        # Conditional on the row being pending, as confirm is, so a cancel
+        # Conditional on the row being pending, like confirm, so a cancel
         # after a confirmation that committed leaves the live partition.
         await _unregister_where(
             self.engine,

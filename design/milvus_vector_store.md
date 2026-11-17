@@ -172,7 +172,7 @@ of 1M points instead stalled every tenant's reads and writes for 2.7-9 s at
 Session consistency. Listing by the partition UUID field took 57-63 ms per round
 of 10,000 against 70-75 ms by primary-key range (1.4M rows, Milvus 2.6.24).
 
-The listing reads at Bounded, as every other read does, and is correct there: a
+The listing reads at Bounded, like every other read, and is correct there: a
 Bounded read is at most `common.gracefulTime` (5 s by default) behind and waits
 rather than read staler, far inside the tombstone retention, so a round that
 lists nothing has found the partition empty. When the query node keeps up, a

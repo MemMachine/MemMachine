@@ -1639,7 +1639,7 @@ async def test_purge_advances_its_cursor_past_a_full_batch_another_transaction_s
 def _deleted_before_the_next_segment_delete(
     engine: AsyncEngine, segment_uuids: list[UUID]
 ) -> Generator[None, None, None]:
-    """Delete the given segments just before the engine's next delete of segment rows runs, as a concurrent delete would."""
+    """Delete the given segments just before the engine's next delete of segment rows runs, standing in for a concurrent delete."""
     deleted: list[bool] = []
 
     def _delete_first(connection, clauseelement, *_args) -> None:

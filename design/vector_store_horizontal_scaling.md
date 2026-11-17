@@ -3,9 +3,9 @@
 ## Problem
 
 A `VectorStore` contract under which at most one process manages a
-collection, with the consumer sharding names across processes, rests the
-stores' correctness on a sharding no consumer does. Qdrant and Milvus stores
-built on that contract fail across processes:
+collection, with the consumer sharding names across processes, makes the
+stores' correctness depend on sharding that no consumer performs. Qdrant and
+Milvus stores built on that contract fail across processes:
 
 - a catalog inside the backend cannot arbitrate a create, a delete, or a
   purge between processes;
@@ -106,8 +106,8 @@ request timeout plus 300 seconds (see [purge](vector_store_purge.md)).
 ## Related work
 
 - The segment store's shared tables ([its
-  design](segment_store_shared_tables.md)) are keyed by the partition UUID
-  its owner's registry mints, as a vector store's partitions are.
+  design](segment_store_shared_tables.md)), like a vector store's partitions,
+  are keyed by the partition UUID its owner's registry mints.
 
 ## Deployment consequences
 

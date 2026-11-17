@@ -291,8 +291,9 @@ with each partition it creates.
 
 ### Tables
 
-The registries of every namespace share two tables, defined once at module
-level as the segment store's are, and keyed by `partition_namespace`. One
+The registries of every namespace share two tables, keyed by
+`partition_namespace` and, like the segment store's, defined once at module
+level. One
 table pair with a namespace column, rather than a table pair per namespace,
 keeps the schema static.
 
@@ -388,12 +389,12 @@ afterwards.
   creation under the name raises `PartitionAlreadyExistsError`. `None` from
   `resolve` means only that no partition holds the name.
 - A store or confirmation that raises, or is canceled, cancels the
-  reservation when the registry can, which frees the name and queues the
-  partition's tombstone; a confirmation that committed before its failure
-  was observed stands, since the cancel acts only on a pending partition. The
-  reservation's cancellation is shielded, so a cancellation of the creation
-  does not cut it short. Otherwise, and after a crash, the partition stays
-  pending until it is deleted like any other.
+  reservation, which frees the name and queues the partition's tombstone; a
+  confirmation that committed before its failure was observed stands, since
+  the cancel acts only on a pending partition. The reservation's cancellation
+  is shielded, so a cancellation of the creation does not cut it short. A
+  partition whose cancel fails, or whose creator crashed, stays pending until
+  it is deleted like any other.
 - A partition is confirmed only once every store has created it, so storage
   that cannot be created never goes live. Whatever a failed or interrupted
   creation leaves is recoverable: the partition's purge rounds reclaim it
@@ -464,8 +465,8 @@ there, and then the client's bound, for SQL stores as for remote ones: a
 remote store's request timeout, and, on PostgreSQL, the driver's
 `command_timeout`.
 Checking before that work saves it for an operation on a deleted partition.
-A process paused, or an event loop stalled, between its check and its send or
-commit is outside this design, as a paused remote writer is.
+Like a paused remote writer, a process paused, or an event loop stalled,
+between its check and its send or commit is outside this design.
 
 ### Deletion and purge
 
@@ -675,8 +676,8 @@ differs where a store is remote:
 - **A release for a canceled round's claim**, taking its attempt back and
   leaving the tombstone claimable at once, on the same columns. A canceled
   round otherwise counts one attempt, toward dead-lettering too, and delays
-  its tombstone by the lease and the backoff, as a purger that died does, so
-  one rule covers every claim left unended.
+  its tombstone by the lease and the backoff, like a purger that died, so one
+  rule covers every claim left unended.
 - **Namespaces fixed by each memory system.** A library user could then run
   only one owner of each memory system per registry database.
 - **The owner checking its registry's namespace.** It cannot see other

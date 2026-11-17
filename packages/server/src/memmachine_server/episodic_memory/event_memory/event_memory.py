@@ -634,8 +634,8 @@ class EventMemoryPartition:
                 If any event supplies an illegal property key, or one of
                 the memory's own reserved keys.
             PartitionDeletedError:
-                If the partition was deleted before the events were stored,
-                or while they were.
+                If the partition was deleted before or while the events were
+                stored.
         """
         async with self._tracker("encode_events"):
             events = list(events)
@@ -1002,8 +1002,8 @@ class EventMemoryPartition:
 
         Raises:
             PartitionDeletedError:
-                If the partition was deleted before the events were
-                forgotten, or while they were.
+                If the partition was deleted before or while the events were
+                forgotten.
         """
         event_uuids = set(event_uuids)
         async with self._tracker("forget_events"):

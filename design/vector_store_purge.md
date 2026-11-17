@@ -110,7 +110,7 @@ and runs it in three steps:
    found nothing removes the tombstone, which frees the UUID; a round that
    found records ends its claim, keeping the tombstone due, and resets its
    attempts without progress. A round that raised ends with the claim's
-   `fail`; a canceled one ends nothing, as a round whose purger died does.
+   `fail`; a canceled round, like one whose purger died, ends nothing.
 
 ### The lease
 
@@ -151,10 +151,11 @@ session sits idle in a transaction, holding back vacuum or meeting
   cannot condition a delete on a value held in the registry's database, so a
   round that outlasted its lease still sends its deletes, which reach only its
   own deleted partition.
-- **The lease runs on the database's clock.** The claim computes
-  `claimable_at` from the database's `now()`, as a failure does its backoff and
-  a claim its retention. The generation is assigned by the database too; a
-  purger supplies neither a time nor an identity.
+- **The lease runs on the database's clock.** The registry takes every time
+  it schedules or compares from the database's `now()`: a claim's
+  `claimable_at` and retention cutoff, and a failure's backoff. The generation
+  is assigned by the database too; a purger supplies neither a time nor an
+  identity.
 
 ### Failed rounds: backoff and dead-lettering
 
@@ -219,7 +220,7 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 2 CPUs and SQLite in a file.
 
 - Backoff (a claim computing the backoff from a recorded `last_failed_at`,
-  as an alternative below does; PostgreSQL 18.6 and SQLite 3.50.4; 1,000,000
+  the alternative below; PostgreSQL 18.6 and SQLite 3.50.4; 1,000,000
   tombstones not yet due; median of 50 calls): a call that claims nothing
   reads each due tombstone that is backing off and none that is not yet due.
   It took 1.5 / 2.9 / 20 ms on PostgreSQL and 1.0 / 4.5 / 40 ms on SQLite
