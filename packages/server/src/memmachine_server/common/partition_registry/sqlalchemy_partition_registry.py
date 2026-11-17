@@ -539,6 +539,30 @@ class _SQLAlchemyReservation(Reservation):
 
 
 @dataclass(frozen=True)
+class _SQLAlchemyRegistration(Registration):
+    """A registration whose method reads the registry's tables directly."""
+
+    engine: AsyncEngine = field(repr=False, compare=False)
+    partition_namespace: str = field(repr=False)
+
+    @override
+    async def require_current(self) -> None:
+        async with self.engine.connect() as connection:
+            current = (
+                await connection.execute(
+                    select(PartitionRow.partition_uuid).where(
+                        PartitionRow.partition_namespace == self.partition_namespace,
+                        PartitionRow.partition_name == self.partition_name,
+                    )
+                )
+            ).scalar_one_or_none()
+        if current != self.partition_uuid:
+            raise PartitionDeletedError(
+                self.partition_namespace, self.partition_name, self.partition_uuid
+            )
+
+
+@dataclass(frozen=True)
 class _SQLAlchemyTombstoneClaim(TombstoneClaim):
     """A tombstone claim whose methods write the registry's tables directly."""
 
@@ -636,30 +660,6 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
             self.partition_uuid,
             self.purge_lease_seconds,
         )
-
-
-@dataclass(frozen=True)
-class _SQLAlchemyRegistration(Registration):
-    """A registration whose method reads the registry's tables directly."""
-
-    engine: AsyncEngine = field(repr=False, compare=False)
-    partition_namespace: str = field(repr=False)
-
-    @override
-    async def require_current(self) -> None:
-        async with self.engine.connect() as connection:
-            current = (
-                await connection.execute(
-                    select(PartitionRow.partition_uuid).where(
-                        PartitionRow.partition_namespace == self.partition_namespace,
-                        PartitionRow.partition_name == self.partition_name,
-                    )
-                )
-            ).scalar_one_or_none()
-        if current != self.partition_uuid:
-            raise PartitionDeletedError(
-                self.partition_namespace, self.partition_name, self.partition_uuid
-            )
 
 
 async def _unregister_where(
