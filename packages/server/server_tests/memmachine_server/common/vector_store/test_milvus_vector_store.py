@@ -71,7 +71,7 @@ REQUEST_TIMEOUT_SECONDS = 17
 MAX_VARCHAR_LENGTH = 1024
 PURGE_BATCH_SIZE = 5000
 # Purge calls `_purge` makes before it fails the test: far more than the
-# records a test writes need, so only a purge that keeps finding records
+# purging a test's records takes, so only a purge that keeps finding records
 # reaches it.
 _MAX_PURGE_CALLS = 1000
 

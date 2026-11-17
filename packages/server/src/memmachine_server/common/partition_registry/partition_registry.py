@@ -39,7 +39,11 @@ class Reservation(ABC):
     """
     A pending partition's hold on its name, kept while its owner creates the partition.
 
-    The partition is pending until the reservation is confirmed.
+    The partition is pending until the reservation is confirmed. The owner
+    confirms it once, when it has created the partition, and cancels it when
+    creating or confirming raised or was canceled; a cancel may follow a
+    confirmation that committed before its failure was observed, and may race
+    a deletion by name.
     """
 
     partition_name: str
@@ -50,9 +54,8 @@ class Reservation(ABC):
         """
         Confirm this reservation, marking the pending partition live.
 
-        Called once, when the owner has created the partition. A concurrent
-        deletion of the partition either follows the confirmation or makes it
-        raise.
+        A concurrent deletion of the partition either follows the
+        confirmation or makes it raise.
 
         Raises:
             PartitionDeletedError:
@@ -64,11 +67,8 @@ class Reservation(ABC):
         """
         Cancel this reservation, unregistering its partition while it is pending and queuing the partition's UUID for purge.
 
-        Called when creating the partition or confirming it raised or was
-        canceled; it may follow a confirmation that committed before its
-        failure was observed, and race a deletion by name. The pending
-        partition is unreachable when this returns, and purge rounds reclaim
-        its data later. Canceling leaves a confirmed reservation's partition
+        The pending partition is unreachable when this returns, and purge
+        rounds reclaim its data later. Canceling leaves a confirmed reservation's partition
         live, since only a deletion by name ends a live partition. A partition
         reserved since under the same name is another partition and stays.
         Idempotent.
@@ -217,8 +217,7 @@ class PartitionRegistry(ABC):
         Reserve a partition name for a new pending partition under a freshly minted UUID.
 
         The partition is pending, holding its name, until its reservation is
-        confirmed: its owner creates the partition meanwhile, and cancels the
-        reservation if that or the confirmation raises or is canceled.
+        confirmed.
 
         Args:
             partition_name (str): The name of the partition.

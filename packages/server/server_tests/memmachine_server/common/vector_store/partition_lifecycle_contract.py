@@ -17,7 +17,7 @@ import pytest
 from memmachine_server.common.vector_store import Record
 
 # Purge calls a drain makes before it fails the test: far more than the
-# records a test writes need, so only a purge that keeps finding records
+# purging a test's records takes, so only a purge that keeps finding records
 # reaches it.
 _MAX_PURGE_CALLS = 1000
 

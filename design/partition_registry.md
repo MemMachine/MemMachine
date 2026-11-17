@@ -651,9 +651,9 @@ differs where a store is remote:
   before every store has created the partition, leaves the stores out of step.
 - **The registry runs the owner's steps**, taking the owner's creation and
   purge round on each call, or bound once when it is built. The registry then
-  calls out to owner code, its creation takes a step no other method does,
-  and a step bound at construction closes over the owner's stores, which the
-  owner also holds, with nothing able to check that the two match.
+  calls out to owner code, only its creation takes a step, and a step bound at
+  construction closes over the owner's stores, which the owner also holds,
+  with nothing able to check that the two match.
 - **The registry over the owner's store.** The registry is built over one
   `PartitionedStore`, runs its steps itself, and carries its handle in each
   registration; an owner with several stores composes them into one store.
