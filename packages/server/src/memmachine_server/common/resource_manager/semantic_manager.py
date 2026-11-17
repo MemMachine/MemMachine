@@ -25,6 +25,7 @@ from memmachine_server.semantic_memory.config_store.config_store import (
 from memmachine_server.semantic_memory.config_store.config_store_sqlalchemy import (
     SemanticConfigStorageSqlAlchemy,
 )
+from memmachine_server.semantic_memory.legacy_set_ids import register_legacy_set_ids
 from memmachine_server.semantic_memory.semantic_memory import (
     ResourceManager,
     SemanticService,
@@ -237,6 +238,10 @@ class SemanticResourceManager:
         llm_model = await self._get_default_language_model()
 
         config_store = await self.get_semantic_config_storage()
+        await register_legacy_set_ids(
+            semantic_storage=semantic_storage,
+            semantic_config_storage=config_store,
+        )
 
         self._semantic_service = SemanticService(
             SemanticService.Params(
