@@ -1,29 +1,40 @@
 """
-Core module for the Semantic Memory engine.
+Semantic memory for orgs and projects.
 
-This module contains the `SemanticMemoryManager` class, which is the central component
-for creating, managing, and searching feature sets based on their
-conversation history. It integrates with language models for intelligent
-information extraction and a vector database for semantic search capabilities.
+`SemanticService` groups the messages of each project into semantic sets,
+extracts features from them in the background, and serves those features.
 """
 
 import asyncio
 import contextlib
+import hashlib
 import logging
+import re
 from asyncio import Task
-from collections.abc import AsyncIterator, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Iterable,
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 from uuid import UUID
 
 import numpy as np
-from pydantic import BaseModel, Field, InstanceOf
+from pydantic import BaseModel, Field, InstanceOf, JsonValue
 
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.episode_store import EpisodeStorage
+from memmachine_server.common.episode_store import Episode, EpisodeStorage
 from memmachine_server.common.errors import (
     CategoryNotFoundError,
     InvalidSetIdConfigurationError,
+    ResourceNotFoundError,
 )
 from memmachine_server.common.filter.filter_parser import (
     And,
@@ -43,6 +54,7 @@ from .semantic_model import (
     SemanticCategory,
     SemanticFeature,
     SetIdT,
+    SetTypeEntry,
     TagIdT,
 )
 from .storage.storage_base import SemanticStorage
@@ -85,8 +97,36 @@ def _with_has_set_ids(
     return And(left=set_expr, right=filter_expr)
 
 
+def _hash_tag_list(strings: Iterable[str]) -> str:
+    strings = sorted(strings)
+
+    h = hashlib.shake_256()
+    for s in strings:
+        h.update(s.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest(6)
+
+
 class SemanticService:
-    """High-level coordinator for ingesting history and serving semantic features."""
+    """Ingests the messages of orgs and projects and serves semantic features."""
+
+    @runtime_checkable
+    class SessionData(Protocol):
+        """Protocol exposing the identifiers used to derive set_ids."""
+
+        @property
+        def org_id(self) -> str: ...
+
+        @property
+        def project_id(self) -> str: ...
+
+    class SetType(Enum):
+        """Default set_id prefixes used by `SemanticService`."""
+
+        OrgSet = "set_type"
+        ProjectSet = "project_set"
+        UserSet = "user_set"
+        OtherSet = "other_set"
 
     class Params(BaseModel):
         """Infrastructure dependencies and background-update configuration."""
@@ -112,6 +152,15 @@ class SemanticService:
         default_category_retriever: DefaultCategoryRetriever
 
         debug_fail_loudly: bool = False
+
+    class Set(BaseModel):
+        """Semantic memory set, containing a set of features and resources."""
+
+        id: SetIdT
+        is_org_level: bool
+        tags: Sequence[str]
+        name: str | None = None
+        description: str | None = None
 
     def __init__(
         self,
@@ -169,6 +218,117 @@ class SemanticService:
         await self._ingestion_task
         self._ingestion_task = None
 
+    async def add_message(
+        self,
+        episodes: Sequence[Episode],
+        session_data: SessionData,
+    ) -> None:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+        if len(episodes) == 0:
+            return
+
+        episode_ids = [e.uid for e in episodes]
+        assert len(episode_ids) == len(set(episode_ids)), "Episodes must be unique"
+
+        async with asyncio.TaskGroup() as tg:
+            for episode in episodes:
+                tg.create_task(self._add_single_episode(episode, session_data))
+
+    async def _add_single_episode(
+        self,
+        episode: Episode,
+        session_data: SessionData,
+    ) -> None:
+        episode_metadata: MutableMapping[str, JsonValue] = (
+            dict(episode.metadata) if episode.metadata is not None else {}
+        )
+
+        episode_metadata.setdefault("producer_id", episode.producer_id)
+
+        set_ids = await self._get_set_ids_str_from_metadata(
+            session_data=session_data,
+            metadata=episode_metadata,
+        )
+        await self._add_message_to_sets(
+            episode.uid,
+            list(set_ids),
+            created_at=episode.created_at,
+        )
+
+    async def _add_message_to_sets(
+        self,
+        history_id: UUID,
+        set_ids: Sequence[SetIdT],
+        *,
+        created_at: datetime,
+    ) -> None:
+        assert len(set_ids) == len(set(set_ids))
+        if not set_ids:
+            return
+
+        logger.debug("Adding message id %s to sets %s", history_id, set_ids)
+
+        res = await asyncio.gather(
+            *[
+                self._semantic_storage.add_history_to_set(
+                    set_id=set_id,
+                    history_id=history_id,
+                    created_at=created_at,
+                )
+                for set_id in set_ids
+            ],
+            return_exceptions=True,
+        )
+
+        _consolidate_errors_and_raise(res, "Failed to add message to sets")
+
+    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
+        logger.info("Deleting history ids %s", history_ids)
+
+        await self._semantic_storage.delete_history(history_ids)
+
+    async def search(
+        self,
+        message: str,
+        session_data: SessionData,
+        *,
+        set_metadata: Mapping[str, JsonValue] | None = None,
+        min_distance: float | None = None,
+        limit: int | None = None,
+        load_citations: bool = False,
+        search_filter: FilterExpr | None = None,
+    ) -> AsyncIterator[SemanticFeature]:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        set_ids = await self._get_set_ids_str_from_metadata(
+            session_data=session_data,
+            metadata=set_metadata,
+        )
+
+        logger.debug("Searching for %s in set ids %s", message, set_ids)
+
+        embeddings: Mapping[str, Sequence[float]] = await self._set_ids_embed(
+            set_ids=list(set_ids),
+            query=message,
+        )
+
+        # Create iterators for each set_id search (parallel)
+        iterators = [
+            self._set_id_search(
+                set_id=set_id,
+                embedding=embeddings[set_id],
+                min_distance=min_distance,
+                limit=limit,
+                load_citations=load_citations,
+                filter_expr=search_filter,
+            )
+            for set_id in set_ids
+        ]
+
+        # Merge and yield results as they become available
+        async for feature in merge_async_iterators(iterators):
+            yield feature
+
     async def _set_id_search(
         self,
         *,
@@ -194,261 +354,6 @@ class SemanticService:
             load_citations=load_citations,
         ):
             yield feature
-
-    async def search(
-        self,
-        set_ids: Sequence[SetIdT],
-        query: str,
-        *,
-        min_distance: float | None = None,
-        limit: int | None = 30,
-        load_citations: bool = False,
-        filter_expr: FilterExpr | None = None,
-    ) -> AsyncIterator[SemanticFeature]:
-        logger.debug("Searching for %s in set ids %s", query, set_ids)
-
-        embeddings: Mapping[str, Sequence[float]] = await self._set_ids_embed(
-            set_ids=set_ids,
-            query=query,
-        )
-
-        assert set(set_ids) == set(embeddings.keys())
-
-        # Create iterators for each set_id search (parallel)
-        iterators = [
-            self._set_id_search(
-                set_id=set_id,
-                embedding=embeddings[set_id],
-                min_distance=min_distance,
-                limit=limit,
-                load_citations=load_citations,
-                filter_expr=filter_expr,
-            )
-            for set_id in set_ids
-        ]
-
-        # Merge and yield results as they become available
-        async for feature in merge_async_iterators(iterators):
-            yield feature
-
-    async def add_messages(self, set_id: SetIdT, history_ids: Sequence[UUID]) -> None:
-        logger.debug("Adding %d messages to set %s", len(history_ids), set_id)
-        if not history_ids:
-            return
-
-        episodes_by_id = {
-            episode.uid: episode
-            for episode in await self._episode_storage.get_episodes(history_ids)
-        }
-        res = await asyncio.gather(
-            *[
-                self._semantic_storage.add_history_to_set(
-                    set_id=set_id,
-                    history_id=h_id,
-                    # Missing episodes remain queued for ingestion's recovery path.
-                    created_at=episodes_by_id[h_id].created_at
-                    if h_id in episodes_by_id
-                    else None,
-                )
-                for h_id in history_ids
-            ],
-            return_exceptions=True,
-        )
-
-        _consolidate_errors_and_raise(res, "Failed to add messages to set")
-
-    async def add_message_to_sets(
-        self,
-        history_id: UUID,
-        set_ids: Sequence[SetIdT],
-        *,
-        created_at: datetime | None = None,
-        registered_at: datetime | None = None,
-    ) -> None:
-        """Register an episode; ``registered_at`` is a test clock override."""
-        assert len(set_ids) == len(set(set_ids))
-        if not set_ids:
-            return
-
-        logger.debug("Adding message id %s to sets %s", history_id, set_ids)
-        if created_at is None:
-            episode = await self._episode_storage.get_episode(history_id)
-            if episode is not None:
-                created_at = episode.created_at
-
-        res = await asyncio.gather(
-            *[
-                self._semantic_storage.add_history_to_set(
-                    set_id=set_id,
-                    history_id=history_id,
-                    created_at=created_at,
-                    registered_at=registered_at,
-                )
-                for set_id in set_ids
-            ],
-            return_exceptions=True,
-        )
-
-        _consolidate_errors_and_raise(res, "Failed to add message to sets")
-
-    async def delete_messages(self, *, set_ids: Sequence[SetIdT]) -> None:
-        logger.info("Deleting messages from sets %s", set_ids)
-
-        await self._semantic_storage.delete_history_set(set_ids=set_ids)
-
-    async def number_of_uningested(self, set_ids: Sequence[SetIdT]) -> int:
-        logger.debug("Getting number of uningested messages for set ids %s", set_ids)
-
-        return await self._semantic_storage.get_history_messages_count(
-            set_ids=set_ids,
-            is_ingested=False,
-        )
-
-    async def add_new_feature(
-        self,
-        *,
-        set_id: SetIdT,
-        category_name: str,
-        feature: str,
-        value: str,
-        tag: str,
-        metadata: Mapping[str, str] | None = None,
-        citations: Sequence[UUID] | None = None,
-    ) -> FeatureIdT:
-        logger.debug("Adding new feature %s to set %s", feature, set_id)
-
-        resources = await self._set_id_resource(set_id=set_id)
-
-        # Validate that the category exists
-        category_names = {cat.name for cat in resources.semantic_categories}
-        if category_name not in category_names:
-            raise CategoryNotFoundError(set_id=set_id, category_name=category_name)
-
-        embedding = (await resources.embedder.ingest_embed([value]))[0]
-
-        f_id = await self._semantic_storage.add_feature(
-            set_id=set_id,
-            category_name=category_name,
-            feature=feature,
-            value=value,
-            tag=tag,
-            metadata=metadata,
-            embedding=np.array(embedding),
-        )
-
-        if citations is not None:
-            await self._semantic_storage.add_citations(f_id, citations)
-
-        return f_id
-
-    async def get_feature(
-        self,
-        feature_id: FeatureIdT,
-        load_citations: bool,
-    ) -> SemanticFeature | None:
-        logger.debug("Getting feature %s", feature_id)
-
-        return await self._semantic_storage.get_feature(
-            feature_id,
-            load_citations=load_citations,
-        )
-
-    async def get_set_features(
-        self,
-        *,
-        set_ids: Sequence[SetIdT],
-        filter_expr: FilterExpr | None = None,
-        page_size: int | None = None,
-        page_num: int | None = None,
-        with_citations: bool = False,
-    ) -> AsyncIterator[SemanticFeature]:
-        logger.debug("Getting features for set ids %s", set_ids)
-
-        async for feature in self._semantic_storage.get_feature_set(
-            filter_expr=_with_has_set_ids(
-                set_ids=set_ids,
-                filter_expr=filter_expr,
-            ),
-            page_size=page_size,
-            page_num=page_num,
-            load_citations=with_citations,
-        ):
-            yield feature
-
-    async def update_feature(
-        self,
-        feature_id: FeatureIdT,
-        *,
-        set_id: SetIdT | None = None,
-        category_name: str | None = None,
-        feature: str | None = None,
-        value: str | None = None,
-        tag: str | None = None,
-        metadata: Mapping[str, str] | None = None,
-    ) -> None:
-        logger.debug("Updating feature %s", feature_id)
-        embedding = None
-
-        if category_name is not None or value is not None:
-            if set_id is None:
-                original_feature = await self._semantic_storage.get_feature(feature_id)
-                if original_feature is None or original_feature.set_id is None:
-                    raise ValueError(
-                        "Unable to deduce set_id, the feature_id may be incorrect. "
-                        "set_id is required to update a feature",
-                    )
-                str_set_id = original_feature.set_id
-            else:
-                str_set_id = set_id
-            resources = await self._set_id_resource(set_id=str_set_id)
-
-            if value is not None:
-                e = (await resources.embedder.ingest_embed([value]))[0]
-                embedding = np.array(e)
-
-            if category_name is not None:
-                category_names = {cat.name for cat in resources.semantic_categories}
-
-                if category_name not in category_names:
-                    raise CategoryNotFoundError(
-                        set_id=str_set_id, category_name=category_name
-                    )
-
-        await self._semantic_storage.update_feature(
-            feature_id=feature_id,
-            set_id=set_id,
-            category_name=category_name,
-            feature=feature,
-            value=value,
-            tag=tag,
-            metadata=metadata,
-            embedding=embedding,
-        )
-
-    async def delete_history(self, history_ids: Sequence[UUID]) -> None:
-        logger.info("Deleting history ids %s", history_ids)
-
-        await self._semantic_storage.delete_history(history_ids)
-
-    async def delete_features(self, feature_ids: Sequence[FeatureIdT]) -> None:
-        logger.info("Deleting features ids %s", feature_ids)
-
-        await self._semantic_storage.delete_features(feature_ids)
-
-    async def delete_feature_set(
-        self,
-        *,
-        set_ids: Sequence[SetIdT],
-        filter_expr: FilterExpr | None = None,
-    ) -> None:
-        logger.debug("Deleting filter feature set ids %s", set_ids)
-
-        await self._semantic_storage.delete_feature_set(
-            filter_expr=_with_has_set_ids(
-                set_ids=set_ids,
-                filter_expr=filter_expr,
-            ),
-        )
 
     async def _set_ids_embed(
         self,
@@ -521,6 +426,760 @@ class SemanticService:
 
         return set_id_embedders, embedders, has_default_embedder
 
+    async def add_feature(
+        self,
+        *,
+        set_id: SetIdT,
+        feature_metadata: Mapping[str, JsonValue] | None = None,
+        category_name: str,
+        feature: str,
+        value: str,
+        tag: str,
+        citations: Sequence[UUID] | None = None,
+    ) -> FeatureIdT:
+        logger.debug("Adding new feature %s to set %s", feature, set_id)
+
+        metadata = (
+            {k: str(v) for k, v in feature_metadata.items()}
+            if feature_metadata is not None
+            else None
+        )
+
+        resources = await self._set_id_resource(set_id=set_id)
+
+        # Validate that the category exists
+        category_names = {cat.name for cat in resources.semantic_categories}
+        if category_name not in category_names:
+            raise CategoryNotFoundError(set_id=set_id, category_name=category_name)
+
+        embedding = (await resources.embedder.ingest_embed([value]))[0]
+
+        f_id = await self._semantic_storage.add_feature(
+            set_id=set_id,
+            category_name=category_name,
+            feature=feature,
+            value=value,
+            tag=tag,
+            metadata=metadata,
+            embedding=np.array(embedding),
+        )
+
+        if citations is not None:
+            await self._semantic_storage.add_citations(f_id, citations)
+
+        return f_id
+
+    async def get_feature(
+        self,
+        feature_id: FeatureIdT,
+        load_citations: bool = False,
+    ) -> SemanticFeature | None:
+        logger.debug("Getting feature %s", feature_id)
+
+        return await self._semantic_storage.get_feature(
+            feature_id,
+            load_citations=load_citations,
+        )
+
+    async def update_feature(
+        self,
+        feature_id: FeatureIdT,
+        *,
+        category_name: str | None = None,
+        feature: str | None = None,
+        value: str | None = None,
+        tag: str | None = None,
+        metadata: Mapping[str, str] | None = None,
+    ) -> None:
+        logger.debug("Updating feature %s", feature_id)
+        embedding = None
+
+        if category_name is not None or value is not None:
+            original_feature = await self._semantic_storage.get_feature(feature_id)
+            if original_feature is None or original_feature.set_id is None:
+                raise ValueError(
+                    "Unable to deduce set_id, the feature_id may be incorrect. "
+                    "set_id is required to update a feature",
+                )
+            set_id = original_feature.set_id
+            resources = await self._set_id_resource(set_id=set_id)
+
+            if value is not None:
+                e = (await resources.embedder.ingest_embed([value]))[0]
+                embedding = np.array(e)
+
+            if category_name is not None:
+                category_names = {cat.name for cat in resources.semantic_categories}
+
+                if category_name not in category_names:
+                    raise CategoryNotFoundError(
+                        set_id=set_id, category_name=category_name
+                    )
+
+        await self._semantic_storage.update_feature(
+            feature_id=feature_id,
+            category_name=category_name,
+            feature=feature,
+            value=value,
+            tag=tag,
+            metadata=metadata,
+            embedding=embedding,
+        )
+
+    async def delete_features(
+        self,
+        session_data: SessionData,
+        feature_ids: Sequence[FeatureIdT],
+    ) -> None:
+        """
+        Delete features in the sets the session addresses.
+
+        Ids that name no feature are ignored.
+
+        Raises:
+            ResourceNotFoundError: A feature is in a set the session does not
+                address. Nothing is deleted.
+
+        """
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        for feature_id in feature_ids:
+            feature = await self._semantic_storage.get_feature(
+                feature_id,
+                load_citations=False,
+            )
+            if feature is not None and (
+                feature.set_id is None
+                or not self._session_addresses_set_id(
+                    session_data=session_data,
+                    set_id=feature.set_id,
+                )
+            ):
+                raise ResourceNotFoundError(
+                    f"Semantic feature '{feature_id}' was not found in this project."
+                )
+
+        logger.info("Deleting features ids %s", feature_ids)
+
+        await self._semantic_storage.delete_features(feature_ids)
+
+    async def get_set_features(
+        self,
+        session_data: SessionData,
+        *,
+        set_metadata: Mapping[str, JsonValue] | None = None,
+        search_filter: FilterExpr | None = None,
+        page_size: int | None = None,
+        page_num: int | None = None,
+        load_citations: bool = False,
+    ) -> AsyncIterator[SemanticFeature]:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        set_ids = await self._get_set_ids_str_from_metadata(
+            session_data=session_data,
+            metadata=set_metadata,
+        )
+
+        logger.debug("Getting features for set ids %s", set_ids)
+
+        async for feature in self._semantic_storage.get_feature_set(
+            filter_expr=_with_has_set_ids(
+                set_ids=list(set_ids),
+                filter_expr=search_filter,
+            ),
+            page_size=page_size,
+            page_num=page_num,
+            load_citations=load_citations,
+        ):
+            yield feature
+
+    async def delete_feature_set(
+        self,
+        session_data: SessionData,
+        *,
+        set_metadata: Mapping[str, JsonValue] | None = None,
+        property_filter: FilterExpr | None = None,
+    ) -> None:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        set_ids = await self._get_set_ids_str_from_metadata(
+            session_data=session_data,
+            metadata=set_metadata,
+        )
+
+        await self._delete_set_features(
+            set_ids=list(set_ids),
+            filter_expr=property_filter,
+        )
+
+    async def _get_set_ids_str_from_metadata(
+        self,
+        *,
+        session_data: SessionData,
+        metadata: Mapping[str, JsonValue] | None,
+    ) -> Iterable[SetIdT]:
+        normalized_metadata = self._normalize_metadata(metadata)
+
+        deduped: MutableMapping[SetIdT, None] = {}
+
+        async for entry in self._get_set_id_entries(
+            session_data=session_data,
+            metadata=metadata,
+        ):
+            set_id = self._generate_set_id(
+                org_id=session_data.org_id,
+                project_id=session_data.project_id if not entry.is_org_level else None,
+                metadata=entry.tags,
+            )
+            if set_id not in deduped:
+                deduped[set_id] = None
+                await self._semantic_config_storage.register_set_id_set_type(
+                    set_id=set_id,
+                    set_type_id=entry.set_type_id,
+                )
+
+        for default in self._generate_default_sets(
+            org_id=session_data.org_id,
+            project_id=session_data.project_id,
+            producer_id=normalized_metadata.get("producer_id"),
+        ):
+            deduped.setdefault(default.id, None)
+
+        return tuple(deduped.keys())
+
+    @dataclass(frozen=True, slots=True)
+    class _SetIdEntry:
+        """Resolved set_id qualifiers for a session message."""
+
+        set_type_id: str
+        is_org_level: bool
+        tags: Mapping[str, str]
+
+    async def _get_set_id_entries(
+        self,
+        *,
+        session_data: SessionData,
+        metadata: Mapping[str, JsonValue] | None = None,
+    ) -> AsyncIterator[_SetIdEntry]:
+        normalized_metadata = self._normalize_metadata(metadata)
+
+        if "producer_id" in normalized_metadata:
+            await self._ensure_user_set_type(org_id=session_data.org_id)
+
+        set_type_ids = await self._semantic_config_storage.list_set_type_ids(
+            org_id=session_data.org_id
+        )
+
+        metadata_tags = set(normalized_metadata.keys())
+
+        yielded = False
+        for set_type in set_type_ids:
+            if set_type.id is None:
+                continue
+
+            if not metadata_tags.issuperset(set(set_type.tags)):
+                continue
+
+            yielded = True
+            yield self._SetIdEntry(
+                set_type_id=set_type.id,
+                is_org_level=set_type.is_org_level,
+                tags={tag: normalized_metadata[tag] for tag in set_type.tags},
+            )
+
+        if not yielded:
+            logger.debug(
+                "No relevant set type ids found for metadata %s",
+                normalized_metadata,
+            )
+
+    @staticmethod
+    def _normalize_metadata(
+        metadata: Mapping[str, JsonValue] | None,
+    ) -> Mapping[str, str]:
+        if metadata is None:
+            return {}
+
+        metadata_dict = dict(metadata)
+        return {
+            key: str(value) for key, value in metadata_dict.items() if value is not None
+        }
+
+    @staticmethod
+    def _org_set_id(
+        *,
+        org_id: str,
+        project_id: str | None = None,
+    ) -> SetIdT:
+        org_base = f"org_{org_id}"
+
+        if project_id is not None:
+            org_project = f"{org_base}_project_{project_id}"
+        else:
+            org_project = org_base
+
+        return org_project
+
+    @classmethod
+    def _generate_set_id(
+        cls,
+        *,
+        org_id: str,
+        project_id: str | None = None,
+        metadata: Mapping[str, JsonValue],
+    ) -> SetIdT:
+        org_project = cls._org_set_id(org_id=org_id, project_id=project_id)
+
+        string_tags = [f"{k}_{v}" for k, v in metadata.items()]
+
+        metadata_keys = set(metadata.keys())
+
+        if len(string_tags) == 0:
+            if project_id is not None:
+                def_type = SemanticService.SetType.ProjectSet
+            else:
+                def_type = SemanticService.SetType.OrgSet
+        elif metadata_keys == {"producer_id"}:
+            def_type = SemanticService.SetType.UserSet
+        else:
+            def_type = SemanticService.SetType.OtherSet
+
+        return f"mem_{def_type.value}_{org_project}_{len(metadata)}_{_hash_tag_list(metadata.keys())}__{'_'.join(sorted(string_tags))}"
+
+    @classmethod
+    def _session_addresses_set_id(
+        cls,
+        *,
+        session_data: SessionData,
+        set_id: SetIdT,
+    ) -> bool:
+        """
+        Report whether `_generate_set_id` produces `set_id` for the session.
+
+        Those are the org-level sets of the session's org and the sets of
+        its project, with any metadata.
+        """
+        set_types = "|".join(re.escape(set_type.value) for set_type in cls.SetType)
+        org_projects = "|".join(
+            re.escape(
+                cls._org_set_id(org_id=session_data.org_id, project_id=project_id)
+            )
+            for project_id in (None, session_data.project_id)
+        )
+        return (
+            re.fullmatch(
+                rf"mem_(?:{set_types})_(?:{org_projects})_[0-9]+_[0-9a-f]+__.*",
+                set_id,
+                flags=re.DOTALL,
+            )
+            is not None
+        )
+
+    @staticmethod
+    def get_default_set_id_type(
+        set_id: SetIdT,
+    ) -> SetType:
+        for def_type in SemanticService.SetType:
+            if set_id.startswith(f"mem_{def_type.value}"):
+                return def_type
+
+        raise RuntimeError(f"Invalid set_id: {set_id}")
+
+    async def _ensure_user_set_type(self, *, org_id: str) -> None:
+        set_types = await self._semantic_config_storage.list_set_type_ids(org_id=org_id)
+        for set_type in set_types:
+            if set_type.is_org_level and set(set_type.tags) == {"producer_id"}:
+                return
+
+        await self._semantic_config_storage.add_set_type_id(
+            org_id=org_id,
+            org_level_set=True,
+            metadata_tags=["producer_id"],
+            name="User Profile",
+            description="Semantic memory scoped to producer identifiers.",
+        )
+
+    async def create_set_type(
+        self,
+        *,
+        session_data: SessionData,
+        is_org_level: bool = False,
+        metadata_tags: Sequence[str],
+        name: str | None = None,
+        description: str | None = None,
+    ) -> str:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        return await self._semantic_config_storage.add_set_type_id(
+            org_id=session_data.org_id,
+            org_level_set=is_org_level,
+            metadata_tags=list(metadata_tags),
+            name=name,
+            description=description,
+        )
+
+    async def delete_set_type(
+        self,
+        *,
+        set_type_id: str,
+    ) -> None:
+        await self._semantic_config_storage.delete_set_type_id(set_type_id=set_type_id)
+
+    async def list_set_types(
+        self,
+        *,
+        session_data: SessionData,
+    ) -> Iterable[SetTypeEntry]:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        return await self._semantic_config_storage.list_set_type_ids(
+            org_id=session_data.org_id
+        )
+
+    async def configure_set(
+        self,
+        *,
+        set_id: SetIdT,
+        embedder_name: str | None = None,
+        llm_name: str | None = None,
+    ) -> None:
+        logger.info("Setting set id config for %s", set_id)
+
+        current_set_id_embedder_name = (
+            await self._semantic_config_storage.get_setid_config(set_id=set_id)
+        ).embedder_name
+
+        if embedder_name != current_set_id_embedder_name:
+            has_features = False
+            async for _ in self._semantic_storage.get_feature_set(
+                filter_expr=_with_has_set_ids(set_ids=[set_id], filter_expr=None),
+            ):
+                has_features = True
+                break
+            valid_changing_embedder = (
+                current_set_id_embedder_name is None and not has_features
+            )
+            if not valid_changing_embedder:
+                raise InvalidSetIdConfigurationError(set_id=set_id)
+
+            # Reset any indexes that the set id may have referencing it.
+            await self._delete_set_ids(set_ids=[set_id])
+
+        await self._semantic_config_storage.set_setid_config(
+            set_id=set_id, embedder_name=embedder_name, llm_name=llm_name
+        )
+
+    async def _delete_set_ids(self, *, set_ids: Sequence[SetIdT]) -> None:
+        logger.info("Deleting set ids %s", set_ids)
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(self._delete_set_features(set_ids=set_ids))
+            tg.create_task(self._semantic_storage.reset_set_ids(set_ids=set_ids))
+
+    async def get_set_id(
+        self,
+        *,
+        session_data: SessionData,
+        set_metadata_keys: Sequence[str],
+        set_metadata: Mapping[str, JsonValue] | None = None,
+        is_org_level: bool = False,
+    ) -> SetIdT:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        metadata = (
+            {key: set_metadata.get(key) for key in set_metadata_keys}
+            if set_metadata is not None
+            else {}
+        )
+        normalized_metadata = {
+            key: str(value) for key, value in metadata.items() if value is not None
+        }
+
+        if "producer_id" in normalized_metadata:
+            await self._ensure_user_set_type(org_id=session_data.org_id)
+
+        set_id = self._generate_set_id(
+            org_id=session_data.org_id,
+            project_id=session_data.project_id if not is_org_level else None,
+            metadata=normalized_metadata,
+        )
+
+        set_type_ids = await self._semantic_config_storage.list_set_type_ids(
+            org_id=session_data.org_id
+        )
+        for set_type in set_type_ids:
+            if set_type.id is None:
+                continue
+
+            if set_type.is_org_level != is_org_level:
+                continue
+
+            if set(set_type.tags) != set(set_metadata_keys):
+                continue
+
+            await self._semantic_config_storage.register_set_id_set_type(
+                set_id=set_id,
+                set_type_id=set_type.id,
+            )
+            break
+
+        return set_id
+
+    async def list_set_ids(
+        self,
+        *,
+        session_data: SessionData,
+        set_metadata: Mapping[str, JsonValue] | None = None,
+    ) -> Iterable[Set]:
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        normalized_metadata = self._normalize_metadata(set_metadata)
+
+        set_type_ids = await self._semantic_config_storage.list_set_type_ids(
+            org_id=session_data.org_id
+        )
+        set_type_map = {sid.id: sid for sid in set_type_ids if sid.id is not None}
+
+        sets: MutableMapping[str, SemanticService.Set] = {}
+        async for sid in self._get_set_id_entries(
+            session_data=session_data,
+            metadata=set_metadata,
+        ):
+            set_id = self._generate_set_id(
+                org_id=session_data.org_id,
+                project_id=session_data.project_id if not sid.is_org_level else None,
+                metadata=sid.tags,
+            )
+
+            set_type_entry = set_type_map.get(sid.set_type_id)
+            sets.setdefault(
+                set_id,
+                SemanticService.Set(
+                    id=set_id,
+                    is_org_level=sid.is_org_level,
+                    tags=list(sid.tags.keys()),
+                    name=set_type_entry.name if set_type_entry else None,
+                    description=set_type_entry.description if set_type_entry else None,
+                ),
+            )
+
+        for default in self._generate_default_sets(
+            org_id=session_data.org_id,
+            project_id=session_data.project_id,
+            producer_id=normalized_metadata.get("producer_id"),
+        ):
+            sets.setdefault(default.id, default)
+
+        return tuple(sets.values())
+
+    @classmethod
+    def _generate_default_sets(
+        cls,
+        *,
+        org_id: str,
+        project_id: str | None,
+        producer_id: str | None,
+    ) -> Iterator[Set]:
+        yield SemanticService.Set(
+            id=cls._generate_set_id(
+                org_id=org_id,
+                project_id=None,
+                metadata={},
+            ),
+            is_org_level=True,
+            tags=[],
+            name=None,
+            description=None,
+        )
+
+        if producer_id is not None:
+            yield SemanticService.Set(
+                id=cls._generate_set_id(
+                    org_id=org_id,
+                    project_id=None,
+                    metadata={"producer_id": producer_id},
+                ),
+                is_org_level=True,
+                tags=["producer_id"],
+                name=None,
+                description=None,
+            )
+
+        if project_id is not None:
+            yield SemanticService.Set(
+                id=cls._generate_set_id(
+                    org_id=org_id,
+                    project_id=project_id,
+                    metadata={},
+                ),
+                is_org_level=False,
+                tags=[],
+            )
+
+    async def get_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> SemanticConfigStorage.Category | None:
+        logger.debug("Getting category %s", category_id)
+
+        return await self._semantic_config_storage.get_category(category_id=category_id)
+
+    async def get_category_set_ids(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> Sequence[SetIdT]:
+        logger.debug("Getting set_ids for category %s", category_id)
+
+        return await self._semantic_config_storage.get_category_set_ids(
+            category_id=category_id
+        )
+
+    async def add_new_category(
+        self,
+        *,
+        set_id: SetIdT,
+        category_name: str,
+        prompt: str,
+        description: str | None,
+    ) -> CategoryIdT:
+        logger.info("Adding new category %s to set %s", category_name, set_id)
+
+        return await self._semantic_config_storage.create_category(
+            set_id=set_id,
+            category_name=category_name,
+            prompt=prompt,
+            description=description,
+        )
+
+    async def add_category_template(
+        self,
+        *,
+        set_type_id: str,
+        category_name: str,
+        prompt: str,
+        description: str | None,
+    ) -> CategoryIdT:
+        logger.info("Adding new category %s to set type %s", category_name, set_type_id)
+
+        return await self._semantic_config_storage.create_set_type_category(
+            set_type_id=set_type_id,
+            category_name=category_name,
+            prompt=prompt,
+            description=description,
+        )
+
+    async def list_category_templates(
+        self, *, set_type_id: str
+    ) -> Iterable[SemanticCategory]:
+        logger.debug("Getting set type categories for %s", set_type_id)
+
+        return await self._semantic_config_storage.get_set_type_categories(
+            set_type_id=set_type_id
+        )
+
+    async def disable_category(
+        self,
+        *,
+        set_id: SetIdT,
+        category_name: str,
+    ) -> None:
+        logger.info("Disabling default category %s for set %s", category_name, set_id)
+
+        await self._semantic_config_storage.add_disabled_category_to_setid(
+            set_id=set_id,
+            category_name=category_name,
+        )
+
+    async def delete_category(
+        self,
+        *,
+        category_id: CategoryIdT,
+    ) -> None:
+        logger.info("Deleting category %s", category_id)
+
+        async with asyncio.TaskGroup() as tg:
+            set_ids_task = tg.create_task(
+                self._semantic_config_storage.get_category_set_ids(
+                    category_id=category_id,
+                )
+            )
+
+            category_task = tg.create_task(
+                self._semantic_config_storage.get_category(
+                    category_id=category_id,
+                )
+            )
+
+        set_ids = set_ids_task.result()
+        category = category_task.result()
+
+        if category is not None and set_ids:
+            logger.debug(
+                "Deleting features for category %s for set_ids: %s",
+                category.name,
+                set_ids,
+            )
+
+            await self._delete_set_features(
+                set_ids=set_ids,
+                filter_expr=Comparison(
+                    field="category_name",
+                    op="=",
+                    value=category.name,
+                ),
+            )
+        else:
+            logger.debug(
+                "No features found for category %s, nothing to delete",
+                category_id,
+            )
+
+        await self._semantic_config_storage.delete_category(category_id=category_id)
+
+    async def _delete_set_features(
+        self,
+        *,
+        set_ids: Sequence[SetIdT],
+        filter_expr: FilterExpr | None = None,
+    ) -> None:
+        logger.debug("Deleting filter feature set ids %s", set_ids)
+
+        await self._semantic_storage.delete_feature_set(
+            filter_expr=_with_has_set_ids(
+                set_ids=set_ids,
+                filter_expr=filter_expr,
+            ),
+        )
+
+    async def add_tag(
+        self,
+        *,
+        category_id: CategoryIdT,
+        tag_name: str,
+        tag_description: str,
+    ) -> TagIdT:
+        logger.info("Adding tag %s to category %s", tag_name, category_id)
+
+        return await self._semantic_config_storage.add_tag(
+            category_id=category_id,
+            tag_name=tag_name,
+            description=tag_description,
+        )
+
+    async def delete_tag(self, *, tag_id: TagIdT) -> None:
+        logger.info("Deleting tag %s", tag_id)
+
+        await self._semantic_config_storage.delete_tag(tag_id=tag_id)
+
+    @staticmethod
+    def _assert_session_data_implements_protocol(session_data: SessionData) -> None:
+        if not isinstance(session_data, SemanticService.SessionData):
+            raise TypeError(
+                "session_data must implement SemanticService.SessionData protocol"
+            )
+
     async def _set_id_resource(
         self,
         set_id: SetIdT,
@@ -566,237 +1225,6 @@ class SemanticService:
             language_model=llm_model,
             semantic_categories=categories,
         )
-
-    async def delete_set_id(self, *, set_ids: Sequence[SetIdT]) -> None:
-        logger.info("Deleting set ids %s", set_ids)
-
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(
-                self._semantic_storage.delete_feature_set(
-                    filter_expr=_with_has_set_ids(set_ids=set_ids, filter_expr=None),
-                )
-            )
-            tg.create_task(self._semantic_storage.reset_set_ids(set_ids=set_ids))
-
-    async def get_set_id_category_names(self, *, set_id: SetIdT) -> list[str]:
-        logger.debug("Getting category names for set id %s", set_id)
-
-        resources = await self._set_id_resource(set_id=set_id)
-
-        return list({c.name for c in resources.semantic_categories})
-
-    async def set_set_id_config(
-        self,
-        *,
-        set_id: SetIdT,
-        embedder_name: str | None = None,
-        llm_name: str | None = None,
-    ) -> None:
-        logger.info("Setting set id config for %s", set_id)
-
-        current_set_id_embedder_name = (
-            await self._semantic_config_storage.get_setid_config(set_id=set_id)
-        ).embedder_name
-
-        if embedder_name != current_set_id_embedder_name:
-            has_features = False
-            async for _ in self.get_set_features(set_ids=[set_id]):
-                has_features = True
-                break
-            valid_changing_embedder = (
-                current_set_id_embedder_name is None and not has_features
-            )
-            if not valid_changing_embedder:
-                raise InvalidSetIdConfigurationError(set_id=set_id)
-
-            # Reset any indexes that the set id may have referencing it.
-            await self.delete_set_id(set_ids=[set_id])
-
-        await self._semantic_config_storage.set_setid_config(
-            set_id=set_id, embedder_name=embedder_name, llm_name=llm_name
-        )
-
-    async def get_set_id_config(
-        self, *, set_id: SetIdT
-    ) -> SemanticConfigStorage.Config:
-        logger.debug("Getting set id config for %s", set_id)
-
-        return await self._semantic_config_storage.get_setid_config(set_id=set_id)
-
-    async def get_category(
-        self,
-        *,
-        category_id: CategoryIdT,
-    ) -> SemanticConfigStorage.Category | None:
-        logger.debug("Getting category %s", category_id)
-
-        return await self._semantic_config_storage.get_category(category_id=category_id)
-
-    async def add_new_category_to_set_id(
-        self,
-        *,
-        set_id: SetIdT,
-        category_name: str,
-        prompt: str,
-        description: str | None,
-    ) -> CategoryIdT:
-        logger.info("Adding new category %s to set %s", category_name, set_id)
-
-        category_id = await self._semantic_config_storage.create_category(
-            set_id=set_id,
-            category_name=category_name,
-            prompt=prompt,
-            description=description,
-        )
-
-        return category_id
-
-    async def add_new_category_to_set_type(
-        self,
-        *,
-        set_type_id: str,
-        category_name: str,
-        prompt: str,
-        description: str | None,
-    ) -> CategoryIdT:
-        logger.info("Adding new category %s to set type %s", category_name, set_type_id)
-
-        return await self._semantic_config_storage.create_set_type_category(
-            set_type_id=set_type_id,
-            category_name=category_name,
-            prompt=prompt,
-            description=description,
-        )
-
-    async def get_set_type_categories(
-        self, *, set_type_id: str
-    ) -> Sequence[SemanticCategory]:
-        logger.debug("Getting set type categories for %s", set_type_id)
-
-        return await self._semantic_config_storage.get_set_type_categories(
-            set_type_id=set_type_id
-        )
-
-    async def clone_category(
-        self,
-        *,
-        category_id: CategoryIdT,
-        new_set_id: SetIdT,
-        new_category_name: str,
-    ) -> CategoryIdT:
-        logger.info("Cloning category %s to %s", category_id, new_category_name)
-
-        return await self._semantic_config_storage.clone_category(
-            category_id=category_id,
-            new_set_id=new_set_id,
-            new_name=new_category_name,
-        )
-
-    async def disable_category(self, *, set_id: SetIdT, category_name: str) -> None:
-        logger.info("Disabling default category %s for set %s", category_name, set_id)
-
-        await self._semantic_config_storage.add_disabled_category_to_setid(
-            set_id=set_id,
-            category_name=category_name,
-        )
-
-    async def get_category_set_ids(
-        self,
-        *,
-        category_id: CategoryIdT,
-    ) -> Sequence[SetIdT]:
-        logger.debug("Getting set_ids for category %s", category_id)
-
-        return await self._semantic_config_storage.get_category_set_ids(
-            category_id=category_id
-        )
-
-    async def delete_category(
-        self,
-        *,
-        category_id: CategoryIdT,
-    ) -> None:
-        logger.info("Deleting category %s", category_id)
-
-        async with asyncio.TaskGroup() as tg:
-            set_ids_task = tg.create_task(
-                self._semantic_config_storage.get_category_set_ids(
-                    category_id=category_id,
-                )
-            )
-
-            category_task = tg.create_task(
-                self._semantic_config_storage.get_category(
-                    category_id=category_id,
-                )
-            )
-
-        set_ids = set_ids_task.result()
-        category = category_task.result()
-
-        if category is not None and set_ids:
-            logger.debug(
-                "Deleting features for category %s for set_ids: %s",
-                category.name,
-                set_ids,
-            )
-
-            await self.delete_feature_set(
-                set_ids=set_ids,
-                filter_expr=Comparison(
-                    field="category_name",
-                    op="=",
-                    value=category.name,
-                ),
-            )
-        else:
-            logger.debug(
-                "No features found for category %s, nothing to delete",
-                category_id,
-            )
-
-        await self._semantic_config_storage.delete_category(category_id=category_id)
-
-    async def add_tag(
-        self,
-        *,
-        category_id: CategoryIdT,
-        tag_name: str,
-        tag_description: str,
-    ) -> TagIdT:
-        logger.info("Adding tag %s to category %s", tag_name, category_id)
-
-        return await self._semantic_config_storage.add_tag(
-            category_id=category_id,
-            tag_name=tag_name,
-            description=tag_description,
-        )
-
-    async def update_tag(
-        self,
-        *,
-        tag_id: TagIdT,
-        tag_name: str,
-        tag_description: str,
-    ) -> None:
-        logger.info("Updating tag %s", tag_id)
-
-        await self._semantic_config_storage.update_tag(
-            tag_id=tag_id,
-            tag_name=tag_name,
-            tag_description=tag_description,
-        )
-
-    async def delete_tag(self, *, tag_id: TagIdT) -> None:
-        logger.info("Deleting tag %s", tag_id)
-
-        await self._semantic_config_storage.delete_tag(tag_id=tag_id)
-
-    async def list_set_id_starts_with(self, prefix: str) -> AsyncIterator[SetIdT]:
-        logger.debug("Listing set ids starts with %s", prefix)
-
-        async for set_id in self._semantic_storage.get_set_ids_starts_with(prefix):
-            yield set_id
 
     async def _interruptible_sleep(self, seconds: float) -> None:
         """Sleep that wakes early when shutdown is requested."""

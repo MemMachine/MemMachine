@@ -19,6 +19,7 @@ from memmachine_server.semantic_memory.semantic_model import (
 from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (
     SpyEmbedder,
     add_history,
+    register_history,
 )
 from server_tests.memmachine_server.semantic_memory.storage.in_memory_semantic_storage import (
     SemanticStorage,
@@ -112,6 +113,7 @@ async def test_background_age_trigger_uses_storage_clock(
 
 async def test_background_ingestion_handles_errors_gracefully(
     semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     monkeypatch,
 ):
@@ -125,7 +127,9 @@ async def test_background_ingestion_handles_errors_gracefully(
 
     msg1 = await add_history(history_storage=episode_storage, content="Test message 1")
     msg2 = await add_history(history_storage=episode_storage, content="Test message 2")
-    await semantic_service.add_messages(set_id="user-error", history_ids=[msg1, msg2])
+    await register_history(
+        semantic_storage, episode_storage, "user-error", [msg1, msg2]
+    )
 
     # Wait for background processing
     await asyncio.sleep(0.2)
@@ -175,7 +179,9 @@ async def test_consolidation_threshold_not_reached(
 
     # Add messages to trigger background processing
     msg_id = await add_history(history_storage=episode_storage, content="I like colors")
-    await semantic_service.add_messages(set_id="user-consolidate", history_ids=[msg_id])
+    await register_history(
+        semantic_storage, episode_storage, "user-consolidate", [msg_id]
+    )
 
     # Wait for processing
     await asyncio.sleep(0.2)
@@ -248,23 +254,23 @@ async def test_multiple_sets_processed_independently(
         history_storage=episode_storage,
         content="user-a message 1",
     )
-    await service.add_messages(set_id="user-a", history_ids=[msg_a1])
+    await register_history(semantic_storage, episode_storage, "user-a", [msg_a1])
     msg_a2 = await add_history(
         history_storage=episode_storage,
         content="user-a message 2",
     )
-    await service.add_messages(set_id="user-a", history_ids=[msg_a2])
+    await register_history(semantic_storage, episode_storage, "user-a", [msg_a2])
 
     msg_b1 = await add_history(
         history_storage=episode_storage,
         content="user-b message 1",
     )
-    await service.add_messages(set_id="user-b", history_ids=[msg_b1])
+    await register_history(semantic_storage, episode_storage, "user-b", [msg_b1])
     msg_b2 = await add_history(
         history_storage=episode_storage,
         content="user-b message 2",
     )
-    await service.add_messages(set_id="user-b", history_ids=[msg_b2])
+    await register_history(semantic_storage, episode_storage, "user-b", [msg_b2])
 
     # Wait for background processing
     async def wait_for_ingestion():

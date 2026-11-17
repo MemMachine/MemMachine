@@ -26,9 +26,7 @@ from memmachine_server.common.configuration.episodic_config import (
     ShortTermMemoryConfPartial,
 )
 from memmachine_server.common.configuration.reranker_conf import RerankersConf
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
-)
+from memmachine_server.semantic_memory.semantic_memory import SemanticService
 
 
 @pytest.fixture(scope="session")
@@ -308,11 +306,11 @@ async def session_data(memmachine: MemMachine):
         org_id="test_org",
         project_id="test_proj",
     )
-    semantic_session: SemanticSessionManager = (
-        await memmachine._resources.get_semantic_session_manager()
+    semantic_service: SemanticService = (
+        await memmachine._resources.get_semantic_service()
     )
 
-    await semantic_session.delete_feature_set(session_data=s_data)
+    await semantic_service.delete_feature_set(session_data=s_data)
 
     await memmachine.create_session(s_data.session_key)
 
@@ -320,5 +318,5 @@ async def session_data(memmachine: MemMachine):
 
     await asyncio.gather(
         memmachine.delete_session(session_data=s_data),
-        semantic_session.delete_feature_set(session_data=s_data),
+        semantic_service.delete_feature_set(session_data=s_data),
     )

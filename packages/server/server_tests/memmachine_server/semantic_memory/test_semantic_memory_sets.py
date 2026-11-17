@@ -1,12 +1,10 @@
-"""Unit tests for the SemanticSessionManager using in-memory storage."""
+"""Unit tests for how SemanticService resolves and manages the sets of a session."""
 
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
-import pytest_asyncio
 
 from memmachine_server.common.episode_store import Episode, EpisodeEntry, EpisodeStorage
 from memmachine_server.common.errors import (
@@ -18,11 +16,10 @@ from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
-)
 from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (
+    SessionData,
     SpyEmbedder,
+    get_set_id,
 )
 from server_tests.memmachine_server.semantic_memory.storage.in_memory_semantic_storage import (
     SemanticStorage,
@@ -35,11 +32,6 @@ async def _collect_async(iterator):
     return [item async for item in iterator]
 
 
-async def _aiter(items):
-    for item in items:
-        yield item
-
-
 async def _collect_feature_set(storage: SemanticStorage, **kwargs):
     return [item async for item in storage.get_feature_set(**kwargs)]
 
@@ -48,84 +40,7 @@ async def _collect_history_messages(storage: SemanticStorage, **kwargs):
     return [item async for item in storage.get_history_messages(**kwargs)]
 
 
-async def test_session_manager_registers_episode_time(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
-    session_data,
-):
-    created_at = datetime(2025, 1, 1, tzinfo=UTC)
-    episodes = [
-        Episode(
-            uid=UUID(f"{prefix}0000000-0000-4000-8000-000000000000"),
-            content=f"message-{index}",
-            session_key="sequence-session",
-            created_at=created_at,
-            producer_id="user",
-            producer_role="user",
-        )
-        for index, prefix in enumerate(("f", "0"))
-    ]
-
-    await mock_session_manager.add_message(episodes=episodes, session_data=session_data)
-
-    assert {
-        call.args[0]: call.kwargs["created_at"]
-        for call in mock_semantic_service.add_message_to_sets.await_args_list
-    } == {episode.uid: created_at for episode in episodes}
-
-
-@dataclass
-class _SessionData:
-    org_id: str
-    project_id: str
-
-
-@pytest.fixture
-def session_data():
-    return _SessionData(
-        org_id="test_org",
-        project_id="test_proj",
-    )
-
-
-@pytest_asyncio.fixture
-async def session_manager(
-    semantic_service: SemanticService,
-    semantic_config_storage: SemanticConfigStorage,
-) -> SemanticSessionManager:
-    return SemanticSessionManager(
-        semantic_service=semantic_service,
-        semantic_config_storage=semantic_config_storage,
-    )
-
-
-@pytest.fixture
-def mock_semantic_service() -> MagicMock:
-    service = MagicMock(spec=SemanticService)
-    service.add_message_to_sets = AsyncMock()
-    service.search = MagicMock(return_value=_aiter([]))
-    service.number_of_uningested = AsyncMock(return_value=0)
-    service.add_new_feature = AsyncMock(return_value=101)
-    service.get_feature = AsyncMock(return_value="feature")
-    service.update_feature = AsyncMock()
-    service.get_set_features = MagicMock(return_value=_aiter(["features"]))
-    return service
-
-
-@pytest_asyncio.fixture
-async def mock_session_manager(
-    mock_semantic_service: MagicMock,
-    semantic_storage: SemanticStorage,
-    semantic_config_storage: SemanticConfigStorage,
-) -> SemanticSessionManager:
-    return SemanticSessionManager(
-        semantic_service=mock_semantic_service,
-        semantic_config_storage=semantic_config_storage,
-    )
-
-
 async def test_add_message_records_history_and_uningested_counts(
-    session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
@@ -142,17 +57,10 @@ async def test_add_message_records_history_and_uningested_counts(
             )
         ],
     )
-    await session_manager.add_message(session_data=session_data, episodes=episodes)
+    await semantic_service.add_message(session_data=session_data, episodes=episodes)
 
-    profile_id = session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        metadata={},
-    )
-    session_id = session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
-    )
+    profile_id = await get_set_id(semantic_service, session_data, is_org_level=True)
+    session_id = await get_set_id(semantic_service, session_data)
 
     profile_messages = await _collect_history_messages(
         semantic_storage,
@@ -171,12 +79,16 @@ async def test_add_message_records_history_and_uningested_counts(
     assert isinstance(episodes[0].uid, UUID)
     assert list(profile_messages) == episode_ids
     assert list(session_messages) == episode_ids
-    assert await semantic_service.number_of_uningested([profile_id]) == 1
-    assert await semantic_service.number_of_uningested([session_id]) == 1
+    for set_id in (profile_id, session_id):
+        assert (
+            await semantic_storage.get_history_messages_count(
+                set_ids=[set_id], is_ingested=False
+            )
+            == 1
+        )
 
 
 async def test_add_message_orders_equal_timestamps_by_uuid(
-    session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
@@ -202,18 +114,15 @@ async def test_add_message_orders_equal_timestamps_by_uuid(
             )
         ],
     )
-    await session_manager.add_message(session_data=session_data, episodes=episodes)
+    await semantic_service.add_message(session_data=session_data, episodes=episodes)
 
-    profile_id = session_manager._generate_set_id(
-        org_id=session_data.org_id, metadata={}
-    )
+    profile_id = await get_set_id(semantic_service, session_data, is_org_level=True)
     assert await _collect_history_messages(
         semantic_storage, set_ids=[profile_id], is_ingested=False
     ) == sorted(episode.uid for episode in episodes)
 
 
 async def test_add_message_preserves_episode_time_at_storage(
-    session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
     semantic_storage: SemanticStorage,
     session_data,
@@ -232,7 +141,7 @@ async def test_add_message_preserves_episode_time_at_storage(
     add_history = AsyncMock(wraps=semantic_storage.add_history_to_set)
     monkeypatch.setattr(semantic_storage, "add_history_to_set", add_history)
 
-    await session_manager.add_message(episodes=[episode], session_data=session_data)
+    await semantic_service.add_message(episodes=[episode], session_data=session_data)
 
     assert add_history.await_count == 3
     for call in add_history.await_args_list:
@@ -258,29 +167,21 @@ async def test_add_message_preserves_episode_time_at_storage(
 
 
 async def test_search_returns_relevant_features(
-    session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
     spy_embedder: SpyEmbedder,
     session_data,
 ):
-    profile_id = session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        metadata={},
-    )
-    session_id = session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
-    )
+    profile_id = await get_set_id(semantic_service, session_data, is_org_level=True)
+    session_id = await get_set_id(semantic_service, session_data)
 
-    await semantic_service.add_new_feature(
+    await semantic_service.add_feature(
         set_id=profile_id,
         category_name="Profile",
         feature="alpha_fact",
         value="Alpha enjoys calm chats",
         tag="facts",
     )
-    await semantic_service.add_new_feature(
+    await semantic_service.add_feature(
         set_id=session_id,
         category_name="Profile",
         feature="beta_fact",
@@ -290,7 +191,7 @@ async def test_search_returns_relevant_features(
 
     # When searching with an alpha-focused query
     matches = await _collect_async(
-        session_manager.search(
+        semantic_service.search(
             message="Why does alpha stay calm?",
             session_data=session_data,
             min_distance=0.5,
@@ -305,15 +206,16 @@ async def test_search_returns_relevant_features(
 
 
 async def test_add_feature_isolation(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
     semantic_storage: SemanticStorage,
     spy_embedder: SpyEmbedder,
+    session_data,
 ):
-    set_id_a = "set_id_a"
-    set_id_b = "set_id_b"
+    set_id_a = await get_set_id(semantic_service, session_data, topic="a")
+    set_id_b = await get_set_id(semantic_service, session_data, topic="b")
 
     # Given an add feature to set_id_a
-    feature_id = await session_manager.add_feature(
+    feature_id = await semantic_service.add_feature(
         set_id=set_id_a,
         category_name="Profile",
         feature="tone",
@@ -343,30 +245,22 @@ async def test_add_feature_isolation(
 
 
 async def test_delete_feature_set_removes_filtered_entries(
-    session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
     semantic_storage: SemanticStorage,
     session_data,
 ):
     # Given profile and session features with distinct tags
-    set_type_id = session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        metadata={},
-    )
-    project_set_id = session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
-    )
+    set_type_id = await get_set_id(semantic_service, session_data, is_org_level=True)
+    project_set_id = await get_set_id(semantic_service, session_data)
 
-    await semantic_service.add_new_feature(
+    await semantic_service.add_feature(
         set_id=set_type_id,
         category_name="Profile",
         feature="favorite_color",
         value="Blue",
         tag="profile_tag",
     )
-    await semantic_service.add_new_feature(
+    await semantic_service.add_feature(
         set_id=project_set_id,
         category_name="Profile",
         feature="session_note",
@@ -376,7 +270,7 @@ async def test_delete_feature_set_removes_filtered_entries(
 
     # When deleting only the profile-tagged features
     property_filter = parse_filter("tag IN ('profile_tag')")
-    await session_manager.delete_feature_set(
+    await semantic_service.delete_feature_set(
         session_data=session_data,
         property_filter=property_filter,
     )
@@ -397,33 +291,20 @@ async def test_delete_feature_set_removes_filtered_entries(
 
 
 async def test_delete_features_deletes_features_in_sets_the_session_addresses(
-    session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
     session_data,
 ):
     # Given features in the org's sets and in the project's sets
     set_ids = [
-        session_manager._generate_set_id(
-            org_id=session_data.org_id,
-            metadata={},
+        await get_set_id(semantic_service, session_data, is_org_level=True),
+        await get_set_id(
+            semantic_service, session_data, is_org_level=True, producer_id="alice"
         ),
-        session_manager.generate_user_set_id(
-            org_id=session_data.org_id,
-            producer_id="alice",
-        ),
-        session_manager._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id,
-            metadata={},
-        ),
-        session_manager._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id,
-            metadata={"topic": "travel"},
-        ),
+        await get_set_id(semantic_service, session_data),
+        await get_set_id(semantic_service, session_data, topic="travel"),
     ]
     feature_ids = [
-        await semantic_service.add_new_feature(
+        await semantic_service.add_feature(
             set_id=set_id,
             category_name="Profile",
             feature="note",
@@ -434,16 +315,14 @@ async def test_delete_features_deletes_features_in_sets_the_session_addresses(
     ]
 
     # When deleting them through the session
-    await session_manager.delete_features(
+    await semantic_service.delete_features(
         session_data=session_data,
         feature_ids=feature_ids,
     )
 
     # Then every one is deleted
     for feature_id in feature_ids:
-        assert (
-            await semantic_service.get_feature(feature_id, load_citations=False) is None
-        )
+        assert await semantic_service.get_feature(feature_id) is None
 
 
 @pytest.mark.parametrize(
@@ -457,29 +336,24 @@ async def test_delete_features_deletes_features_in_sets_the_session_addresses(
     ],
 )
 async def test_delete_features_refuses_features_outside_the_sets_the_session_addresses(
-    session_manager: SemanticSessionManager,
     semantic_service: SemanticService,
     session_data,
     org_id: str,
     project_id: str | None,
 ):
     # Given a feature in the project's set and one in another project's or org's set
-    own_feature_id = await semantic_service.add_new_feature(
-        set_id=session_manager._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id,
-            metadata={},
-        ),
+    own_feature_id = await semantic_service.add_feature(
+        set_id=await get_set_id(semantic_service, session_data),
         category_name="Profile",
         feature="note",
         value="Likes trains",
         tag="facts",
     )
-    other_feature_id = await semantic_service.add_new_feature(
-        set_id=session_manager._generate_set_id(
-            org_id=org_id,
-            project_id=project_id,
-            metadata={},
+    other_feature_id = await semantic_service.add_feature(
+        set_id=await get_set_id(
+            semantic_service,
+            SessionData(org_id=org_id, project_id=project_id or "unused"),
+            is_org_level=project_id is None,
         ),
         category_name="Profile",
         feature="note",
@@ -489,27 +363,24 @@ async def test_delete_features_refuses_features_outside_the_sets_the_session_add
 
     # When deleting both through the session
     with pytest.raises(ResourceNotFoundError):
-        await session_manager.delete_features(
+        await semantic_service.delete_features(
             session_data=session_data,
             feature_ids=[own_feature_id, other_feature_id],
         )
 
     # Then neither is deleted
     for feature_id in (own_feature_id, other_feature_id):
-        assert (
-            await semantic_service.get_feature(feature_id, load_citations=False)
-            is not None
-        )
+        assert await semantic_service.get_feature(feature_id) is not None
 
 
 async def test_add_message_uses_all_isolations(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
+    semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
     session_data,
 ):
     history_id = UUID("550e8400-e29b-41d4-a716-446655440abc")
     created_at = datetime.now(tz=UTC)
-    await mock_session_manager.add_message(
+    await semantic_service.add_message(
         session_data=session_data,
         episodes=[
             Episode(
@@ -523,239 +394,31 @@ async def test_add_message_uses_all_isolations(
         ],
     )
 
-    session_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
-    )
-
-    profile_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        metadata={},
-    )
-
-    user_set_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=None,
-        metadata={"producer_id": "profile_id"},
-    )
-
-    mock_semantic_service.add_message_to_sets.assert_awaited_once()
-    args, kwargs = mock_semantic_service.add_message_to_sets.await_args
-    assert kwargs["created_at"] == created_at
-    assert "registered_at" not in kwargs
-
-    assert args[0] == history_id
-    assert set(args[1]) == {profile_id, session_id, user_set_id}
-
-
-async def test_add_message_with_session_only_isolation(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
-    session_data,
-):
-    created_at = datetime.now(tz=UTC)
-    await mock_session_manager.add_message(
-        episodes=[
-            Episode(
-                uid=UUID("550e8400-e29b-41d4-a716-446655440abc"),
-                content="Alpha memory",
-                producer_id="profile_id",
-                producer_role="dev",
-                session_key="session_id",
-                created_at=created_at,
-            ),
-        ],
-        session_data=session_data,
-    )
-
-    mock_semantic_service.add_message_to_sets.assert_awaited_once()
-    args, kwargs = mock_semantic_service.add_message_to_sets.await_args
-    assert kwargs["created_at"] == created_at
-    assert "registered_at" not in kwargs
-
-    project_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
-    )
-    set_type_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        metadata={},
-    )
-
-    user_set_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=None,
-        metadata={"producer_id": "profile_id"},
-    )
-    assert sorted(args[1]) == sorted([set_type_id, project_id, user_set_id])
-
-
-async def test_search_passes_set_ids_and_filters(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
-    session_data,
-):
-    mock_semantic_service.search.return_value = _aiter(["result"])
-
-    filter_str = "tag IN ('facts') AND feature_name IN ('alpha_fact')"
-    result = await _collect_async(
-        mock_session_manager.search(
-            message="Find alpha info",
-            session_data=session_data,
-            search_filter=parse_filter(filter_str),
-            limit=5,
-            load_citations=True,
-        )
-    )
-
-    mock_semantic_service.search.assert_called_once()
-    kwargs = mock_semantic_service.search.call_args.kwargs
-
-    set_type_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        metadata={},
-    )
-    session_set_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
-    )
-
-    assert sorted(kwargs["set_ids"]) == sorted([set_type_id, session_set_id])
-    assert kwargs["limit"] == 5
-    assert kwargs["load_citations"] is True
-    assert result == ["result"]
-
-
-async def test_number_of_uningested_messages_delegates(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
-    session_data,
-):
-    mock_semantic_service.number_of_uningested.return_value = 7
-
-    count = await mock_session_manager.number_of_uningested_messages(
-        session_data=session_data,
-    )
-
-    project_set_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        project_id=session_data.project_id,
-        metadata={},
-    )
-    set_type_id = mock_session_manager._generate_set_id(
-        org_id=session_data.org_id,
-        metadata={},
-    )
-
-    mock_semantic_service.number_of_uningested.assert_awaited_once()
-    _, kwargs = mock_semantic_service.number_of_uningested.await_args
-
-    assert sorted(kwargs["set_ids"]) == sorted([set_type_id, project_set_id])
-    assert count == 7
-
-
-async def test_add_feature_translates_to_single_set(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
-):
-    set_id = "test_set_id"
-
-    feature_id = await mock_session_manager.add_feature(
-        set_id=set_id,
-        category_name="Profile",
-        feature="tone",
-        value="Alpha calm",
-        tag="writing_style",
-        feature_metadata={"source": "test"},
-        citations=[UUID(int=1), UUID(int=2)],
-    )
-
-    mock_semantic_service.add_new_feature.assert_awaited_once()
-    _, kwargs = mock_semantic_service.add_new_feature.await_args
-    assert kwargs == {
-        "set_id": set_id,
-        "category_name": "Profile",
-        "feature": "tone",
-        "value": "Alpha calm",
-        "tag": "writing_style",
-        "metadata": {"source": "test"},
-        "citations": [UUID(int=1), UUID(int=2)],
+    set_ids = {
+        await get_set_id(semantic_service, session_data),
+        await get_set_id(semantic_service, session_data, is_org_level=True),
+        await get_set_id(
+            semantic_service, session_data, is_org_level=True, producer_id="profile_id"
+        ),
     }
-    assert feature_id == 101
-
-
-async def test_get_feature_proxies_call(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
-):
-    result = await mock_session_manager.get_feature("42", load_citations=True)
-
-    mock_semantic_service.get_feature.assert_awaited_once()
-    args, kwargs = mock_semantic_service.get_feature.await_args
-    assert args == ("42",)
-    assert kwargs == {"load_citations": True}
-    assert result == "feature"
-
-
-async def test_update_feature_forwards_arguments(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
-):
-    await mock_session_manager.update_feature(
-        "17",
-        category_name="Profile",
-        feature="tone",
-        value="calm",
-        tag="writing_style",
-        metadata={"updated": "true"},
-    )
-
-    mock_semantic_service.update_feature.assert_awaited_once()
-    args, kwargs = mock_semantic_service.update_feature.await_args
-    assert args == ("17",)
-    assert kwargs == {
-        "category_name": "Profile",
-        "feature": "tone",
-        "value": "calm",
-        "tag": "writing_style",
-        "metadata": {"updated": "true"},
-    }
-
-
-async def test_get_set_features_wraps_opts(
-    mock_session_manager: SemanticSessionManager,
-    mock_semantic_service: MagicMock,
-    session_data,
-):
-    filter_str = "tag IN ('facts') AND feature_name IN ('alpha_fact')"
-    result = await _collect_async(
-        mock_session_manager.get_set_features(
-            session_data=session_data,
-            search_filter=parse_filter(filter_str),
-            page_size=7,
-            load_citations=True,
-        )
-    )
-
-    mock_semantic_service.get_set_features.assert_called_once()
-    kwargs = mock_semantic_service.get_set_features.call_args.kwargs
-    assert kwargs["page_size"] == 7
-    assert kwargs["with_citations"] is True
-    assert result == ["features"]
+    assert {
+        set_id async for set_id in semantic_storage.get_history_set_ids()
+    } == set_ids
+    for set_id in set_ids:
+        assert await _collect_history_messages(semantic_storage, set_ids=[set_id]) == [
+            history_id
+        ]
 
 
 async def test_list_set_ids(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
     session_data,
 ):
     # Default org has 2 ids. Org level and project level set.
-    set_ids = list(await session_manager.list_sets(session_data=session_data))
+    set_ids = list(await semantic_service.list_set_ids(session_data=session_data))
     assert len(set_ids) == 2
 
-    expanded_session = _SessionData(
+    expanded_session = SessionData(
         org_id="test_org",
         project_id="test_proj",
     )
@@ -764,7 +427,7 @@ async def test_list_set_ids(
     }
 
     # Add user level isolation
-    await session_manager.create_set_type(
+    await semantic_service.create_set_type(
         session_data=session_data,
         is_org_level=True,
         metadata_tags=["user_id"],
@@ -772,7 +435,7 @@ async def test_list_set_ids(
 
     # Since session contains user_id it should apear on the list
     set_ids = list(
-        await session_manager.list_sets(
+        await semantic_service.list_set_ids(
             session_data=expanded_session,
             set_metadata=set_metadata,
         )
@@ -780,13 +443,13 @@ async def test_list_set_ids(
     assert len(set_ids) == 3
 
     # While if we create an isolation level that isn't covered by session_data it won't be included.
-    await session_manager.create_set_type(
+    await semantic_service.create_set_type(
         session_data=session_data,
         is_org_level=True,
         metadata_tags=["other_id"],
     )
     set_ids = list(
-        await session_manager.list_sets(
+        await semantic_service.list_set_ids(
             session_data=expanded_session,
             set_metadata=set_metadata,
         )
@@ -795,11 +458,11 @@ async def test_list_set_ids(
 
 
 async def test_list_set_ids_returns_set_details(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
     session_data,
 ):
     """Test that list_set_ids returns is_org_level, tags, name, and description."""
-    expanded_session = _SessionData(
+    expanded_session = SessionData(
         org_id="test_org",
         project_id="test_proj",
     )
@@ -809,7 +472,7 @@ async def test_list_set_ids_returns_set_details(
     }
 
     # Create set types with name and description
-    await session_manager.create_set_type(
+    await semantic_service.create_set_type(
         session_data=session_data,
         is_org_level=True,
         metadata_tags=["user_id"],
@@ -817,7 +480,7 @@ async def test_list_set_ids_returns_set_details(
         description="User-specific configuration",
     )
 
-    await session_manager.create_set_type(
+    await semantic_service.create_set_type(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["repo_id"],
@@ -827,7 +490,7 @@ async def test_list_set_ids_returns_set_details(
 
     # Get all set IDs
     sets = list(
-        await session_manager.list_sets(
+        await semantic_service.list_set_ids(
             session_data=expanded_session,
             set_metadata=set_metadata,
         )
@@ -864,25 +527,29 @@ async def test_list_set_ids_returns_set_details(
 
 
 async def test_default_sets_are_configurable(
-    session_manager: SemanticSessionManager, session_data
+    semantic_service: SemanticService,
+    semantic_config_storage: SemanticConfigStorage,
+    session_data,
 ):
-    sets = list(await session_manager.list_sets(session_data=session_data))
+    sets = list(await semantic_service.list_set_ids(session_data=session_data))
 
     assert len(sets) == 2
     org_set = next(s for s in sets if s.is_org_level)
     project_set = next(s for s in sets if not s.is_org_level)
 
-    await session_manager.configure_set(
+    await semantic_service.configure_set(
         set_id=org_set.id,
         llm_name="llm-org",
     )
-    await session_manager.configure_set(
+    await semantic_service.configure_set(
         set_id=project_set.id,
         llm_name="llm-project",
     )
 
-    org_config = await session_manager.get_set_id_config(set_id=org_set.id)
-    project_config = await session_manager.get_set_id_config(set_id=project_set.id)
+    org_config = await semantic_config_storage.get_setid_config(set_id=org_set.id)
+    project_config = await semantic_config_storage.get_setid_config(
+        set_id=project_set.id
+    )
     assert org_config is not None
     assert project_config is not None
 
@@ -891,20 +558,21 @@ async def test_default_sets_are_configurable(
 
 
 async def test_user_default_set_requires_producer_metadata_and_is_configurable(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
+    semantic_config_storage: SemanticConfigStorage,
     session_data,
 ):
-    base_sets = list(await session_manager.list_sets(session_data=session_data))
+    base_sets = list(await semantic_service.list_set_ids(session_data=session_data))
     assert len(base_sets) == 2
 
-    user_session = _SessionData(
+    user_session = SessionData(
         org_id=session_data.org_id,
         project_id=session_data.project_id,
     )
     set_metadata = {"producer_id": "user-123"}
 
     sets_with_user = list(
-        await session_manager.list_sets(
+        await semantic_service.list_set_ids(
             session_data=user_session,
             set_metadata=set_metadata,
         )
@@ -916,43 +584,34 @@ async def test_user_default_set_requires_producer_metadata_and_is_configurable(
     user_set = next(s for s in unique_sets.values() if s.tags == ["producer_id"])
     assert user_set.is_org_level is True
 
-    expected_user_id = SemanticSessionManager.generate_user_set_id(
-        org_id=user_session.org_id,
-        producer_id="user-123",
+    expected_user_id = await get_set_id(
+        semantic_service, user_session, is_org_level=True, producer_id="user-123"
     )
     assert user_set.id == expected_user_id
 
-    await session_manager.configure_set(
+    await semantic_service.configure_set(
         set_id=user_set.id,
         llm_name="llm-user",
     )
 
-    user_config = await session_manager.get_set_id_config(set_id=user_set.id)
+    user_config = await semantic_config_storage.get_setid_config(set_id=user_set.id)
     assert user_config is not None
     assert user_config.llm_name == "llm-user"
 
 
 async def test_list_sets_deduplicates_default_overrides(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
     session_data,
 ):
     base_set_ids = {
-        SemanticSessionManager._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=None,
-            metadata={},
-        ),
-        SemanticSessionManager._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id,
-            metadata={},
-        ),
+        await get_set_id(semantic_service, session_data, is_org_level=True),
+        await get_set_id(semantic_service, session_data),
     }
 
-    base_sets = list(await session_manager.list_sets(session_data=session_data))
+    base_sets = list(await semantic_service.list_set_ids(session_data=session_data))
     assert {s.id for s in base_sets} == base_set_ids
 
-    await session_manager.create_set_type(
+    await semantic_service.create_set_type(
         session_data=session_data,
         is_org_level=True,
         metadata_tags=[],
@@ -960,7 +619,7 @@ async def test_list_sets_deduplicates_default_overrides(
         description="Overrides default org set",
     )
 
-    await session_manager.create_set_type(
+    await semantic_service.create_set_type(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=[],
@@ -968,7 +627,7 @@ async def test_list_sets_deduplicates_default_overrides(
         description="Overrides default project set",
     )
 
-    deduped_sets = list(await session_manager.list_sets(session_data=session_data))
+    deduped_sets = list(await semantic_service.list_set_ids(session_data=session_data))
     assert len(deduped_sets) == 2
     assert {s.id for s in deduped_sets} == base_set_ids
 
@@ -980,17 +639,19 @@ async def test_list_sets_deduplicates_default_overrides(
 
 
 async def test_configure_set(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
+    semantic_config_storage: SemanticConfigStorage,
+    session_data,
 ):
-    set_id = "test_set"
+    set_id = await get_set_id(semantic_service, session_data)
 
-    await session_manager.configure_set(
+    await semantic_service.configure_set(
         set_id=set_id,
         llm_name="test_llm",
         embedder_name="test_embedder",
     )
 
-    config = await session_manager.get_set_id_config(set_id=set_id)
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
     assert config is not None
 
     assert config.llm_name == "test_llm"
@@ -998,16 +659,17 @@ async def test_configure_set(
 
 
 async def test_invalid_embedder_change_with_dirty_set(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
+    session_data,
 ):
-    set_id = "test_set"
-    await session_manager.configure_set(
+    set_id = await get_set_id(semantic_service, session_data)
+    await semantic_service.configure_set(
         set_id=set_id,
         llm_name="test_llm",
         embedder_name="test_embedder",
     )
 
-    await session_manager.add_feature(
+    await semantic_service.add_feature(
         set_id=set_id,
         category_name="Profile",
         feature="test_feature",
@@ -1016,42 +678,40 @@ async def test_invalid_embedder_change_with_dirty_set(
     )
 
     with pytest.raises(InvalidSetIdConfigurationError):
-        await session_manager.configure_set(
+        await semantic_service.configure_set(
             set_id=set_id,
             llm_name="test_llm_2",
             embedder_name="test_embedder_2",
         )
     with pytest.raises(InvalidSetIdConfigurationError):
-        await session_manager.configure_set(
+        await semantic_service.configure_set(
             set_id=set_id,
             llm_name="test_llm_2",
             embedder_name=None,
         )
 
 
-async def test_category_templates(
-    session_manager: SemanticSessionManager, session_data
-):
-    set_type_id = await session_manager.create_set_type(
+async def test_category_templates(semantic_service: SemanticService, session_data):
+    set_type_id = await semantic_service.create_set_type(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["repo"],
     )
-    c_id = await session_manager.add_category_template(
+    c_id = await semantic_service.add_category_template(
         set_type_id=set_type_id,
         category_name="test_category",
         description="test_description",
         prompt="test_prompt",
     )
 
-    await session_manager.add_tag(
+    await semantic_service.add_tag(
         category_id=c_id,
         tag_name="test_tag",
         tag_description="test_tag_description",
     )
 
     categories = list(
-        await session_manager.list_category_templates(set_type_id=set_type_id)
+        await semantic_service.list_category_templates(set_type_id=set_type_id)
     )
     assert len(categories) == 1
 
@@ -1060,10 +720,11 @@ async def test_category_templates(
 
 
 async def test_category_templates_are_visible_to_children(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
+    semantic_config_storage: SemanticConfigStorage,
     session_data,
 ):
-    expanded_session = _SessionData(
+    expanded_session = SessionData(
         org_id="test_org",
         project_id="test_proj",
     )
@@ -1071,32 +732,32 @@ async def test_category_templates_are_visible_to_children(
         "user_id": "test_user",
     }
 
-    set_type_id = await session_manager.create_set_type(
+    set_type_id = await semantic_service.create_set_type(
         session_data=session_data,
         is_org_level=False,
         metadata_tags=["user_id"],
     )
-    set_id = await session_manager.get_set_id(
+    set_id = await semantic_service.get_set_id(
         session_data=expanded_session,
         is_org_level=False,
         set_metadata_keys=["user_id"],
         set_metadata=set_metadata,
     )
 
-    c_id = await session_manager.add_category_template(
+    c_id = await semantic_service.add_category_template(
         set_type_id=set_type_id,
         category_name="test_category",
         description="test_description",
         prompt="test_prompt",
     )
 
-    await session_manager.add_tag(
+    await semantic_service.add_tag(
         category_id=c_id,
         tag_name="test_tag",
         tag_description="test_tag_description",
     )
 
-    config = await session_manager.get_set_id_config(set_id=set_id)
+    config = await semantic_config_storage.get_setid_config(set_id=set_id)
     assert config is not None
 
     categories = config.categories
@@ -1106,12 +767,12 @@ async def test_category_templates_are_visible_to_children(
 
 
 async def test_search_with_time_filter_str(
-    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
     session_data,
 ):
     filter_str = "created_at < date('2026-01-19T01:56:41.513342Z')"
     _ = await _collect_async(
-        session_manager.search(
+        semantic_service.search(
             message="Find alpha info",
             session_data=session_data,
             search_filter=parse_filter(filter_str),
@@ -1119,24 +780,21 @@ async def test_search_with_time_filter_str(
     )
 
     # Add features
-    set_id = await session_manager.get_set_id(
+    set_id = await semantic_service.get_set_id(
         session_data=session_data,
         set_metadata_keys=[],
     )
 
-    cat_iter = await session_manager.get_set_id_category_names(set_id=set_id)
-    cat_name = next(iter(cat_iter), "test")
-
-    await session_manager.add_feature(
+    await semantic_service.add_feature(
         set_id=set_id,
-        category_name=cat_name,
+        category_name="Profile",
         feature="alpha_fact",
         tag="alpha_tag",
         value="alpha_value",
     )
 
     _ = await _collect_async(
-        session_manager.search(
+        semantic_service.search(
             message="Find alpha info",
             session_data=session_data,
             search_filter=parse_filter(filter_str),

@@ -1,8 +1,22 @@
 import random
+from collections.abc import Sequence
+from dataclasses import dataclass
+from uuid import UUID
 
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeEntry, EpisodeStorage
+from memmachine_server.semantic_memory.semantic_memory import SemanticService
+from memmachine_server.semantic_memory.semantic_model import SetIdT
+from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+
+
+@dataclass(frozen=True)
+class SessionData:
+    """Org and project a semantic memory request acts for."""
+
+    org_id: str
+    project_id: str
 
 
 class SpyEmbedder(Embedder):
@@ -94,3 +108,35 @@ async def add_history(history_storage: EpisodeStorage, content: str):
         ],
     )
     return episodes[0].uid
+
+
+async def register_history(
+    semantic_storage: SemanticStorage,
+    episode_storage: EpisodeStorage,
+    set_id: SetIdT,
+    history_ids: Sequence[UUID],
+) -> None:
+    """Queue episodes for ingestion into a set, at their episode times."""
+    for history_id in history_ids:
+        episode = await episode_storage.get_episode(history_id)
+        await semantic_storage.add_history_to_set(
+            set_id=set_id,
+            history_id=history_id,
+            created_at=None if episode is None else episode.created_at,
+        )
+
+
+async def get_set_id(
+    semantic_service: SemanticService,
+    session_data: SessionData,
+    *,
+    is_org_level: bool = False,
+    **set_metadata: str,
+) -> SetIdT:
+    """Return the id of the session's set with the given set metadata."""
+    return await semantic_service.get_set_id(
+        session_data=session_data,
+        set_metadata_keys=list(set_metadata),
+        set_metadata=set_metadata,
+        is_org_level=is_org_level,
+    )

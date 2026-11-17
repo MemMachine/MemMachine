@@ -8,8 +8,8 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
+from memmachine_server.semantic_memory.semantic_memory import (
+    SemanticService,
 )
 from memmachine_server.semantic_memory.storage import (
     sqlalchemy_pgvector_semantic as storage_mod,
@@ -126,7 +126,7 @@ async def test_legacy_set_ids_are_transformed(
 
     await _run_upgrade(sqlalchemy_pg_engine, "head")
 
-    expected_set_id = SemanticSessionManager._generate_set_id(
+    expected_set_id = SemanticService._generate_set_id(
         org_id=org_id,
         project_id=project_id,
         metadata={},

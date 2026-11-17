@@ -59,6 +59,7 @@ from memmachine_server.retrieval_agent.common.agent_api import (
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )
+from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_model import (
     CategoryIdT,
     FeatureIdT,
@@ -67,9 +68,6 @@ from memmachine_server.semantic_memory.semantic_model import (
     SetIdT,
     SetTypeEntry,
     TagIdT,
-)
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
 )
 
 logger = logging.getLogger(__name__)
@@ -462,8 +460,8 @@ class MemMachine:
         await episodic_memory_manager.delete_episodic_session(session_key=session_key)
 
     async def _delete_session_semantic_memory(self, session: SessionData) -> None:
-        semantic_memory_manager = await self._resources.get_semantic_session_manager()
-        await semantic_memory_manager.delete_feature_set(session_data=session)
+        semantic_service = await self._resources.get_semantic_service()
+        await semantic_service.delete_feature_set(session_data=session)
 
     async def start(
         self, key_to_session: Callable[[str], SessionData] | None = None
@@ -820,7 +818,7 @@ class MemMachine:
         episode_ids = [e.uid for e in episodes]
 
         episodic_memory_manager = None
-        semantic_session_manager = None
+        semantic_service = None
 
         if MemoryType.Episodic in target_memories:
             episodic_memory_manager = (
@@ -839,9 +837,7 @@ class MemMachine:
                     await episodic_session.add_memory_episodes(episodes)
 
         if self._should_dispatch_to_semantic_memory(target_memories):
-            semantic_session_manager = (
-                await self._resources.get_semantic_session_manager()
-            )
+            semantic_service = await self._resources.get_semantic_service()
 
         tasks: list[Coroutine[Any, Any, object]] = [
             episode_storage.add_episodes(
@@ -855,9 +851,9 @@ class MemMachine:
             tasks.append(add_to_episodic_memory())
             task_names.append("episodic memory")
 
-        if semantic_session_manager is not None:
+        if semantic_service is not None:
             tasks.append(
-                semantic_session_manager.add_message(
+                semantic_service.add_message(
                     episodes=episodes,
                     session_data=session_data,
                 )
@@ -1133,12 +1129,12 @@ class MemMachine:
             )
 
         if self._should_dispatch_to_semantic_memory(target_memories):
-            semantic_session = await self._resources.get_semantic_session_manager()
+            semantic_service = await self._resources.get_semantic_service()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
                 return [
                     feature
-                    async for feature in semantic_session.search(
+                    async for feature in semantic_service.search(
                         message=query,
                         session_data=session_data,
                         set_metadata=set_metadata,
@@ -1210,12 +1206,12 @@ class MemMachine:
             )
 
         if self._should_dispatch_to_semantic_memory(target_memories):
-            semantic_session = await self._resources.get_semantic_session_manager()
+            semantic_service = await self._resources.get_semantic_service()
 
             async def _collect_semantic_results() -> list[SemanticFeature]:
                 return [
                     feature
-                    async for feature in semantic_session.get_set_features(
+                    async for feature in semantic_service.get_set_features(
                         session_data=session_data,
                         set_metadata=set_metadata,
                         search_filter=search_filter_expr,
@@ -1335,8 +1331,8 @@ class MemMachine:
             None.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
-        await semantic_session.delete_features(
+        semantic_service = await self._resources.get_semantic_service()
+        await semantic_service.delete_features(
             session_data=session_data,
             feature_ids=feature_ids,
         )
@@ -1368,9 +1364,9 @@ class MemMachine:
             The created feature ID.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.add_feature(
+        return await semantic_service.add_feature(
             set_id=set_id,
             feature_metadata=feature_metadata,
             category_name=category_name,
@@ -1396,8 +1392,8 @@ class MemMachine:
             The feature, or `None` if it does not exist.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
-        return await semantic_session.get_feature(
+        semantic_service = await self._resources.get_semantic_service()
+        return await semantic_service.get_feature(
             feature_id=feature_id,
             load_citations=load_citations,
         )
@@ -1429,9 +1425,9 @@ class MemMachine:
             None.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.update_feature(
+        return await semantic_service.update_feature(
             feature_id=feature_id,
             category_name=category_name,
             feature=feature,
@@ -1464,9 +1460,9 @@ class MemMachine:
             The created set type ID.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.create_set_type(
+        return await semantic_service.create_set_type(
             session_data=session_data,
             is_org_level=is_org_level,
             metadata_tags=metadata_tags,
@@ -1479,7 +1475,7 @@ class MemMachine:
         *,
         session_data: SessionData,
         set_metadata: Mapping[str, JsonValue] | None = None,
-    ) -> Iterable[SemanticSessionManager.Set]:
+    ) -> Iterable[SemanticService.Set]:
         """
         List set IDs for the given session data.
 
@@ -1491,9 +1487,9 @@ class MemMachine:
             List of set IDs matching the session data criteria.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.list_set_ids(
+        return await semantic_service.list_set_ids(
             session_data=session_data,
             set_metadata=set_metadata,
         )
@@ -1519,9 +1515,9 @@ class MemMachine:
             The set ID.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.get_set_id(
+        return await semantic_service.get_set_id(
             session_data=session_data,
             is_org_level=is_org_level,
             set_metadata_keys=metadata_tags,
@@ -1539,9 +1535,9 @@ class MemMachine:
             None.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.delete_set_type(
+        return await semantic_service.delete_set_type(
             set_type_id=set_type_id,
         )
 
@@ -1560,9 +1556,9 @@ class MemMachine:
             Available semantic set types for the context.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.list_set_types(
+        return await semantic_service.list_set_types(
             session_data=session_data,
         )
 
@@ -1585,9 +1581,9 @@ class MemMachine:
             None.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.configure_set(
+        return await semantic_service.configure_set(
             set_id=set_id,
             embedder_name=embedder_name,
             llm_name=llm_name,
@@ -1608,9 +1604,9 @@ class MemMachine:
             The category if found, otherwise None.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.get_category(category_id=category_id)
+        return await semantic_service.get_category(category_id=category_id)
 
     async def semantic_add_category(
         self,
@@ -1633,9 +1629,9 @@ class MemMachine:
             The created category ID.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.add_new_category(
+        return await semantic_service.add_new_category(
             set_id=set_id,
             category_name=category_name,
             prompt=prompt,
@@ -1664,9 +1660,9 @@ class MemMachine:
             The created category ID.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.add_category_template(
+        return await semantic_service.add_category_template(
             set_type_id=set_type_id,
             category_name=category_name,
             prompt=prompt,
@@ -1679,9 +1675,9 @@ class MemMachine:
         set_type_id: str,
     ) -> Iterable[SemanticCategory]:
         """List semantic categories defined on a set type."""
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.list_category_templates(set_type_id=set_type_id)
+        return await semantic_service.list_category_templates(set_type_id=set_type_id)
 
     async def semantic_disable_category(
         self,
@@ -1700,9 +1696,9 @@ class MemMachine:
             None.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.disable_category(
+        return await semantic_service.disable_category(
             set_id=set_id,
             category_name=category_name,
         )
@@ -1722,9 +1718,9 @@ class MemMachine:
             List of set_ids associated with the category.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.get_category_set_ids(
+        return await semantic_service.get_category_set_ids(
             category_id=category_id,
         )
 
@@ -1743,9 +1739,9 @@ class MemMachine:
             None.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.delete_category(
+        return await semantic_service.delete_category(
             category_id=category_id,
         )
 
@@ -1768,9 +1764,9 @@ class MemMachine:
             The created tag ID.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.add_tag(
+        return await semantic_service.add_tag(
             category_id=category_id,
             tag_name=tag_name,
             tag_description=tag_description,
@@ -1787,9 +1783,9 @@ class MemMachine:
             None.
 
         """
-        semantic_session = await self._resources.get_semantic_session_manager()
+        semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_session.delete_tag(tag_id=tag_id)
+        return await semantic_service.delete_tag(tag_id=tag_id)
 
     async def delete_all(self) -> None:
         """

@@ -50,9 +50,6 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
     SQLAlchemySegmentStoreParams,
 )
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -317,11 +314,6 @@ class ResourceManagerImpl:
                     )
         assert self._semantic_manager is not None
         return self._semantic_manager
-
-    async def get_semantic_session_manager(self) -> SemanticSessionManager:
-        """Return the semantic session manager."""
-        semantic_manager = await self.get_semantic_manager()
-        return await semantic_manager.get_semantic_session_manager()
 
     @staticmethod
     async def get_metrics_factory(name: str) -> MetricsFactory:
