@@ -258,11 +258,12 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
 
     def __init__(self, params: SQLAlchemyPartitionRegistryParams) -> None:
         """Initialize with the provided parameters."""
-        self._params = params
         self._engine = params.engine
         self._partition_namespace = params.partition_namespace
         self._tombstone_retention_seconds = params.tombstone_retention_seconds
         self._purge_lease_seconds = params.purge_lease_seconds
+        self._base_purge_retry_backoff_seconds = params.base_purge_retry_backoff_seconds
+        self._max_purge_retry_backoff_seconds = params.max_purge_retry_backoff_seconds
 
     @override
     async def startup(self) -> None:
@@ -432,8 +433,8 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                             + _purge_retry_backoff_seconds(
                                 self._engine.dialect.name,
                                 PurgeQueueRow.attempts_without_progress + 1,
-                                base_seconds=self._params.base_purge_retry_backoff_seconds,
-                                max_seconds=self._params.max_purge_retry_backoff_seconds,
+                                base_seconds=self._base_purge_retry_backoff_seconds,
+                                max_seconds=self._max_purge_retry_backoff_seconds,
                             ),
                         ),
                         claim_generation=PurgeQueueRow.claim_generation + 1,
@@ -458,7 +459,10 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             partition_uuid=row.partition_uuid,
             claim_generation=row.claim_generation,
             attempt=row.attempts_without_progress,
-            params=self._params,
+            engine=self._engine,
+            purge_lease_seconds=self._purge_lease_seconds,
+            base_purge_retry_backoff_seconds=self._base_purge_retry_backoff_seconds,
+            max_purge_retry_backoff_seconds=self._max_purge_retry_backoff_seconds,
         )
 
 
@@ -508,7 +512,10 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
     claim_generation: int
     # The claim's attempt number since the last progress, from 1.
     attempt: int
-    params: SQLAlchemyPartitionRegistryParams = field(repr=False, compare=False)
+    engine: AsyncEngine = field(repr=False, compare=False)
+    purge_lease_seconds: int = field(repr=False)
+    base_purge_retry_backoff_seconds: int = field(repr=False)
+    max_purge_retry_backoff_seconds: int = field(repr=False)
 
     @override
     async def finish(self, found_records: bool) -> None:
@@ -517,14 +524,14 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
         # Finding records ends the claim and resets its attempts without
         # progress, if the claim is the latest.
         if not found_records:
-            async with write_connection(self.params.engine) as connection:
+            async with write_connection(self.engine) as connection:
                 await connection.execute(
                     delete(PurgeQueueRow).where(
                         PurgeQueueRow.partition_uuid == self.partition_uuid
                     )
                 )
             return
-        async with write_connection(self.params.engine) as connection:
+        async with write_connection(self.engine) as connection:
             ended = await connection.execute(
                 update(PurgeQueueRow)
                 .where(
@@ -545,7 +552,7 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
             f"Purge round on partition {self.partition_uuid}, attempt "
             f"{self.attempt} of {_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS}"
         )
-        async with write_connection(self.params.engine) as connection:
+        async with write_connection(self.engine) as connection:
             ended = await connection.execute(
                 update(PurgeQueueRow)
                 .where(
@@ -554,12 +561,12 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                 )
                 .values(
                     claimable_at=_seconds_from_now(
-                        self.params.engine.dialect.name,
+                        self.engine.dialect.name,
                         _purge_retry_backoff_seconds(
-                            self.params.engine.dialect.name,
+                            self.engine.dialect.name,
                             PurgeQueueRow.attempts_without_progress,
-                            base_seconds=self.params.base_purge_retry_backoff_seconds,
-                            max_seconds=self.params.max_purge_retry_backoff_seconds,
+                            base_seconds=self.base_purge_retry_backoff_seconds,
+                            max_seconds=self.max_purge_retry_backoff_seconds,
                         ),
                     )
                 )
@@ -587,7 +594,7 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
             "tombstone was claimed again after this claim's %d s lease and "
             "backoff, or another round removed it",
             self.partition_uuid,
-            self.params.purge_lease_seconds,
+            self.purge_lease_seconds,
         )
 
 
