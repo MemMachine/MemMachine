@@ -159,11 +159,10 @@ class SegmentStore(PartitionedStore):
     """
     Abstract base class for a segment store.
 
-    The store holds each partition's segments under the partition's UUID; a
-    partition manager creates, purges, and drops partitions through its
-    `PartitionedStore` methods. A partition keeps the configuration it was
-    created with, which every handle on it uses: creating it again with
-    another raises SegmentStorePartitionConfigMismatchError.
+    The store holds each partition's segments under the partition's UUID. A
+    partition keeps the configuration it was created with, which every handle
+    on it uses: creating it again with another raises
+    SegmentStorePartitionConfigMismatchError.
     """
 
     @abstractmethod

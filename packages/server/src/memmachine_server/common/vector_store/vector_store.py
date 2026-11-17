@@ -142,9 +142,7 @@ class VectorStore(PartitionedStore):
     The schema is fixed for the life of the store's data: changing it is a
     migration.
 
-    The store holds each partition's records under the partition's UUID; a
-    partition manager creates, purges, and drops partitions through its
-    `PartitionedStore` methods.
+    The store holds each partition's records under the partition's UUID.
 
     Naming constraints:
         - Vector store names and property keys must match `[a-z0-9_]+`

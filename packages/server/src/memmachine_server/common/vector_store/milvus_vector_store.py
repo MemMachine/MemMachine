@@ -422,9 +422,9 @@ class MilvusVectorStoreParams(VectorStoreParams):
             VARCHAR field, at most the server's proxy.maxVarCharLength
             (default: 65535).
         purge_batch_size (int):
-            The most entities one purge round lists and deletes, at most the
-            server's quotaAndLimits.limits.maxQueryResultWindow (default:
-            10000).
+            The most entities one `purge_partition` call lists and deletes, at
+            most the server's quotaAndLimits.limits.maxQueryResultWindow
+            (default: 10000).
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
@@ -449,8 +449,8 @@ class MilvusVectorStoreParams(VectorStoreParams):
         10000,
         gt=0,
         description=(
-            "The most entities one purge round lists and deletes, at most the "
-            "server's quotaAndLimits.limits.maxQueryResultWindow"
+            "The most entities one purge_partition call lists and deletes, at most "
+            "the server's quotaAndLimits.limits.maxQueryResultWindow"
         ),
     )
     metrics_factory: InstanceOf[MetricsFactory] | None = Field(

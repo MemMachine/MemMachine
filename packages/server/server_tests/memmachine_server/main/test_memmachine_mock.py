@@ -395,7 +395,7 @@ def test_a_deployment_without_event_memory_refuses_an_event_project(
 def test_a_deployment_without_a_partition_registry_refuses_an_event_project(
     minimal_conf_factory, patched_resource_manager
 ):
-    """A session event memory cannot serve, or delete, is never created."""
+    """A deployment without a partition registry refuses an event session, whose event memory it could neither serve nor delete."""
     conf = minimal_conf_factory()
     conf.episodic_memory.long_term_memory = LongTermMemoryConfPartial(
         backend="event",

@@ -165,7 +165,7 @@ async def _created(store: SQLiteVectorStore) -> SQLiteVectorStorePartition:
 
 
 async def _purge_and_drop(store: SQLiteVectorStore, partition_uuid: UUID) -> None:
-    """Purge a partition until the store finds nothing of it, then drop it: a partition manager's purge rounds over this one store."""
+    """Purge a partition until a purge finds nothing, then drop it."""
     while await store.purge_partition(partition_uuid):
         pass
     await store.drop_partition(partition_uuid)
