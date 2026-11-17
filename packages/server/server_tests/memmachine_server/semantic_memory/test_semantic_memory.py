@@ -44,7 +44,9 @@ async def test_store_custom_embedder(
 ):
     set_id = await get_set_id(semantic_service, session_data)
 
-    await semantic_service.configure_set(set_id=set_id, embedder_name="embed-custom")
+    await semantic_service.configure_set(
+        session_data=session_data, set_id=set_id, embedder_name="embed-custom"
+    )
 
     conf = await semantic_config_storage.get_setid_config(set_id=set_id)
 
@@ -60,12 +62,15 @@ async def test_use_length_embedder(
 ):
     set_id = await get_set_id(semantic_service, session_data)
 
-    await semantic_service.configure_set(set_id=set_id, embedder_name="1234")
+    await semantic_service.configure_set(
+        session_data=session_data, set_id=set_id, embedder_name="1234"
+    )
 
     conf = await semantic_config_storage.get_setid_config(set_id=set_id)
     assert conf.embedder_name == "1234"
 
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="tone",
@@ -90,9 +95,12 @@ async def test_use_custom_embedder(
 ):
     set_id = await get_set_id(semantic_service, session_data)
 
-    await semantic_service.configure_set(set_id=set_id, embedder_name="1")
+    await semantic_service.configure_set(
+        session_data=session_data, set_id=set_id, embedder_name="1"
+    )
 
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="tone",
@@ -107,10 +115,14 @@ async def test_can_not_change_embedder(
 ):
     set_id = await get_set_id(semantic_service, session_data)
 
-    await semantic_service.configure_set(set_id=set_id, embedder_name="5")
+    await semantic_service.configure_set(
+        session_data=session_data, set_id=set_id, embedder_name="5"
+    )
 
     with pytest.raises(InvalidSetIdConfigurationError):
-        await semantic_service.configure_set(set_id=set_id, embedder_name="1234")
+        await semantic_service.configure_set(
+            session_data=session_data, set_id=set_id, embedder_name="1234"
+        )
 
 
 async def test_add_new_category_to_set_id_config(
@@ -121,6 +133,7 @@ async def test_add_new_category_to_set_id_config(
     set_id = await get_set_id(semantic_service, session_data)
     prompt = "Try to identify interests the user may have."
     c_id = await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="interests",
         prompt=prompt,
@@ -134,7 +147,9 @@ async def test_add_new_category_to_set_id_config(
     assert conf.categories[0].id == c_id
     assert prompt in conf.categories[0].prompt.update_prompt
 
-    category = await semantic_service.get_category(category_id=c_id)
+    category = await semantic_service.get_category(
+        session_data=session_data, category_id=c_id
+    )
 
     assert category is not None
     assert category.id == c_id
@@ -151,6 +166,7 @@ async def test_add_tags_to_category(
     set_id = await get_set_id(semantic_service, session_data)
     description = "Try to identify interests the user may have."
     c_id = await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="interests",
         prompt=description,
@@ -161,9 +177,13 @@ async def test_add_tags_to_category(
     tag_b_name = "Technology"
 
     tag_a_id = await semantic_service.add_tag(
-        category_id=c_id, tag_name=tag_a_name, tag_description=""
+        session_data=session_data,
+        category_id=c_id,
+        tag_name=tag_a_name,
+        tag_description="",
     )
     tag_b_id = await semantic_service.add_tag(
+        session_data=session_data,
         category_id=c_id,
         tag_name=tag_b_name,
         tag_description="",
@@ -185,6 +205,7 @@ async def test_add_feature_stores_entry(
     set_id = await get_set_id(semantic_service, session_data)
 
     feature_id = await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="tone",
@@ -213,6 +234,7 @@ async def test_get_set_features_filters_by_tag(
 ):
     set_id = await get_set_id(semantic_service, session_data)
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="tone",
@@ -220,6 +242,7 @@ async def test_get_set_features_filters_by_tag(
         tag="writing_style",
     )
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="favorite_color",
@@ -246,6 +269,7 @@ async def test_update_feature_changes_value_and_embedding(
 ):
     set_id = await get_set_id(semantic_service, session_data)
     feature_id = await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="tone",
@@ -254,13 +278,14 @@ async def test_update_feature_changes_value_and_embedding(
     )
 
     await semantic_service.update_feature(
+        session_data,
         feature_id,
         category_name="Profile",
         value="Alpha energetic",
         tag="writing_style",
     )
 
-    feature = await semantic_service.get_feature(feature_id)
+    feature = await semantic_service.get_feature(session_data, feature_id)
     assert feature is not None
     assert feature.value == "Alpha energetic"
     assert spy_embedder.ingest_calls == [["Alpha calm"], ["Alpha energetic"]]
@@ -272,6 +297,7 @@ async def test_delete_features_removes_selected_entries(
 ):
     set_id = await get_set_id(semantic_service, session_data)
     to_remove = await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="tone",
@@ -279,6 +305,7 @@ async def test_delete_features_removes_selected_entries(
         tag="writing_style",
     )
     to_keep = await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="hobby",
@@ -288,8 +315,8 @@ async def test_delete_features_removes_selected_entries(
 
     await semantic_service.delete_features(session_data, [to_remove])
 
-    assert await semantic_service.get_feature(to_remove) is None
-    assert await semantic_service.get_feature(to_keep) is not None
+    assert await semantic_service.get_feature(session_data, to_remove) is None
+    assert await semantic_service.get_feature(session_data, to_keep) is not None
 
 
 async def test_delete_feature_set_applies_filters(
@@ -298,6 +325,7 @@ async def test_delete_feature_set_applies_filters(
 ):
     set_id = await get_set_id(semantic_service, session_data)
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="tone",
@@ -305,6 +333,7 @@ async def test_delete_feature_set_applies_filters(
         tag="writing_style",
     )
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="favorite_color",
@@ -331,6 +360,7 @@ async def test_search_returns_matching_features(
 ):
     set_id = await get_set_id(semantic_service, session_data)
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="alpha_fact",
@@ -338,6 +368,7 @@ async def test_search_returns_matching_features(
         tag="facts",
     )
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Profile",
         feature="beta_fact",
@@ -370,6 +401,7 @@ async def test_delete_category_deletes_underlying_features(
     set_id = await get_set_id(semantic_service, session_data)
 
     category_id = await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="TestCategory",
         prompt="Test category prompt",
@@ -377,6 +409,7 @@ async def test_delete_category_deletes_underlying_features(
     )
 
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="TestCategory",
         feature="feature1",
@@ -384,6 +417,7 @@ async def test_delete_category_deletes_underlying_features(
         tag="tag1",
     )
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="TestCategory",
         feature="feature2",
@@ -393,12 +427,14 @@ async def test_delete_category_deletes_underlying_features(
 
     # Add a feature in a different category (should not be deleted)
     await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="OtherCategory",
         prompt="Other category prompt",
         description="Other description",
     )
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="OtherCategory",
         feature="other_feature",
@@ -419,9 +455,13 @@ async def test_delete_category_deletes_underlying_features(
     assert len(test_category_features) == 2
     assert len(other_category_features) == 1
 
-    await semantic_service.delete_category(category_id=category_id)
+    await semantic_service.delete_category(
+        session_data=session_data, category_id=category_id
+    )
 
-    category = await semantic_service.get_category(category_id=category_id)
+    category = await semantic_service.get_category(
+        session_data=session_data, category_id=category_id
+    )
     assert category is None
 
     features_after = await _collect_async(
@@ -445,6 +485,7 @@ async def test_delete_set_type_category_deletes_inherited_features(
     )
 
     category_id = await semantic_service.add_category_template(
+        session_data=session_data,
         set_type_id=set_type_id,
         category_name="SharedCategory",
         prompt="Shared category prompt",
@@ -457,6 +498,7 @@ async def test_delete_set_type_category_deletes_inherited_features(
     ]
     for index, set_id in enumerate(set_ids):
         await semantic_service.add_feature(
+            session_data=session_data,
             set_id=set_id,
             category_name="SharedCategory",
             feature=f"feature{index}",
@@ -468,7 +510,9 @@ async def test_delete_set_type_category_deletes_inherited_features(
     assert len(all_features) == 3
     assert all(f.category == "SharedCategory" for f in all_features)
 
-    await semantic_service.delete_category(category_id=category_id)
+    await semantic_service.delete_category(
+        session_data=session_data, category_id=category_id
+    )
 
     assert await _set_features(semantic_storage, set_ids) == []
 
@@ -486,6 +530,7 @@ async def test_delete_set_type_category_only_deletes_non_overridden_features(
     )
 
     set_type_category_id = await semantic_service.add_category_template(
+        session_data=session_data,
         set_type_id=set_type_id,
         category_name="OverridableCategory",
         prompt="Original org prompt",
@@ -496,6 +541,7 @@ async def test_delete_set_type_category_only_deletes_non_overridden_features(
     set_id_override = await get_set_id(semantic_service, session_data, repo="override")
 
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id_inherit,
         category_name="OverridableCategory",
         feature="inherited_feature",
@@ -503,6 +549,7 @@ async def test_delete_set_type_category_only_deletes_non_overridden_features(
         tag="tag1",
     )
     await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id_override,
         category_name="OverridableCategory",
         feature="override_feature",
@@ -512,6 +559,7 @@ async def test_delete_set_type_category_only_deletes_non_overridden_features(
 
     # Override the category in set_id_override
     local_category_id = await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id_override,
         category_name="OverridableCategory",
         prompt="Local override prompt",
@@ -521,14 +569,18 @@ async def test_delete_set_type_category_only_deletes_non_overridden_features(
     set_ids = [set_id_inherit, set_id_override]
     assert len(await _set_features(semantic_storage, set_ids)) == 2
 
-    await semantic_service.delete_category(category_id=set_type_category_id)
+    await semantic_service.delete_category(
+        session_data=session_data, category_id=set_type_category_id
+    )
 
     remaining_features = await _set_features(semantic_storage, set_ids)
     assert len(remaining_features) == 1
     assert remaining_features[0].set_id == set_id_override
     assert remaining_features[0].feature_name == "override_feature"
 
-    local_category = await semantic_service.get_category(category_id=local_category_id)
+    local_category = await semantic_service.get_category(
+        session_data=session_data, category_id=local_category_id
+    )
     assert local_category is not None
     assert local_category.name == "OverridableCategory"
 
@@ -542,6 +594,7 @@ async def test_add_feature_validates_category_exists(
 
     with pytest.raises(CategoryNotFoundError) as exc_info:
         await semantic_service.add_feature(
+            session_data=session_data,
             set_id=set_id,
             category_name="NonExistentCategory",
             feature="test_feature",
@@ -562,6 +615,7 @@ async def test_add_feature_succeeds_with_valid_category(
     set_id = await get_set_id(semantic_service, session_data)
 
     await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="ValidCategory",
         prompt="Test category prompt",
@@ -569,6 +623,7 @@ async def test_add_feature_succeeds_with_valid_category(
     )
 
     feature_id = await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="ValidCategory",
         feature="test_feature",
@@ -593,6 +648,7 @@ async def test_update_feature_validates_category_exists(
     set_id = await get_set_id(semantic_service, session_data)
 
     await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="OriginalCategory",
         prompt="Original prompt",
@@ -600,6 +656,7 @@ async def test_update_feature_validates_category_exists(
     )
 
     feature_id = await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="OriginalCategory",
         feature="test_feature",
@@ -609,6 +666,7 @@ async def test_update_feature_validates_category_exists(
 
     with pytest.raises(CategoryNotFoundError) as exc_info:
         await semantic_service.update_feature(
+            session_data,
             feature_id=feature_id,
             category_name="NonExistentCategory",
         )
@@ -625,12 +683,14 @@ async def test_update_feature_succeeds_with_valid_category(
     set_id = await get_set_id(semantic_service, session_data)
 
     await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="Category1",
         prompt="Category 1 prompt",
         description="Category 1 description",
     )
     await semantic_service.add_new_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="Category2",
         prompt="Category 2 prompt",
@@ -638,6 +698,7 @@ async def test_update_feature_succeeds_with_valid_category(
     )
 
     feature_id = await semantic_service.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="Category1",
         feature="test_feature",
@@ -646,10 +707,11 @@ async def test_update_feature_succeeds_with_valid_category(
     )
 
     await semantic_service.update_feature(
+        session_data,
         feature_id=feature_id,
         category_name="Category2",
     )
 
-    feature = await semantic_service.get_feature(feature_id)
+    feature = await semantic_service.get_feature(session_data, feature_id)
     assert feature is not None
     assert feature.category == "Category2"

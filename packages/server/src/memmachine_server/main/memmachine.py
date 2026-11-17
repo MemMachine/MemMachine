@@ -1320,12 +1320,11 @@ class MemMachine:
         session_data: SessionData,
     ) -> None:
         """
-        Delete semantic features by ID.
+        Delete semantic features by ID; IDs the project has no feature for are skipped.
 
         Args:
             feature_ids: Feature identifiers to delete.
-            session_data: Session context whose org-level and project sets
-                the features must be in.
+            session_data: Context used to locate the project/org scope.
 
         Returns:
             None.
@@ -1340,6 +1339,7 @@ class MemMachine:
     async def add_feature(
         self,
         *,
+        session_data: SessionData,
         set_id: SetIdT,
         category_name: str,
         tag: str,
@@ -1352,6 +1352,7 @@ class MemMachine:
         Add a semantic feature to the current semantic set.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             set_id: Set ID to add the feature to.
             feature_metadata: Optional metadata to store alongside the feature.
             category_name: Category name to attach the feature to.
@@ -1367,6 +1368,7 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.add_feature(
+            session_data=session_data,
             set_id=set_id,
             feature_metadata=feature_metadata,
             category_name=category_name,
@@ -1380,6 +1382,8 @@ class MemMachine:
         self,
         feature_id: FeatureIdT,
         load_citations: bool = False,
+        *,
+        session_data: SessionData,
     ) -> SemanticFeature | None:
         """
         Fetch a semantic feature by ID.
@@ -1387,13 +1391,15 @@ class MemMachine:
         Args:
             feature_id: Feature identifier.
             load_citations: Whether to load referenced episode IDs.
+            session_data: Context used to locate the project/org scope.
 
         Returns:
-            The feature, or `None` if it does not exist.
+            The feature, or `None` if the project has none with this ID.
 
         """
         semantic_service = await self._resources.get_semantic_service()
         return await semantic_service.get_feature(
+            session_data=session_data,
             feature_id=feature_id,
             load_citations=load_citations,
         )
@@ -1401,6 +1407,7 @@ class MemMachine:
     async def update_feature(
         self,
         *,
+        session_data: SessionData,
         feature_id: FeatureIdT,
         category_name: str | None = None,
         feature: str | None = None,
@@ -1414,6 +1421,7 @@ class MemMachine:
         Only fields that are not `None` are updated.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             feature_id: Feature identifier.
             category_name: New category name.
             feature: New feature name/key.
@@ -1428,6 +1436,7 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.update_feature(
+            session_data=session_data,
             feature_id=feature_id,
             category_name=category_name,
             feature=feature,
@@ -1524,11 +1533,17 @@ class MemMachine:
             set_metadata=set_metadata,
         )
 
-    async def delete_semantic_set_type(self, set_type_id: str) -> None:
+    async def delete_semantic_set_type(
+        self,
+        *,
+        session_data: SessionData,
+        set_type_id: str,
+    ) -> None:
         """
         Delete a semantic set type by ID.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             set_type_id: Set type identifier to delete.
 
         Returns:
@@ -1538,6 +1553,7 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.delete_set_type(
+            session_data=session_data,
             set_type_id=set_type_id,
         )
 
@@ -1565,6 +1581,7 @@ class MemMachine:
     async def configure_semantic_set(
         self,
         *,
+        session_data: SessionData,
         set_id: SetIdT,
         embedder_name: str | None = None,
         llm_name: str | None = None,
@@ -1573,6 +1590,7 @@ class MemMachine:
         Configure the semantic set used for feature extraction/storage.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             set_id: The set ID to configure.
             embedder_name: Optional embedder override for this set.
             llm_name: Optional LLM override for this set.
@@ -1584,6 +1602,7 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.configure_set(
+            session_data=session_data,
             set_id=set_id,
             embedder_name=embedder_name,
             llm_name=llm_name,
@@ -1592,12 +1611,14 @@ class MemMachine:
     async def semantic_get_category(
         self,
         *,
+        session_data: SessionData,
         category_id: CategoryIdT,
     ) -> SemanticConfigStorage.Category | None:
         """
         Get a semantic category by its ID.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             category_id: The ID of the category to retrieve.
 
         Returns:
@@ -1606,11 +1627,14 @@ class MemMachine:
         """
         semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_service.get_category(category_id=category_id)
+        return await semantic_service.get_category(
+            session_data=session_data, category_id=category_id
+        )
 
     async def semantic_add_category(
         self,
         *,
+        session_data: SessionData,
         set_id: str,
         category_name: str,
         prompt: str,
@@ -1620,6 +1644,7 @@ class MemMachine:
         Create a new semantic category within the configured set.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             set_id: Set ID to create the category in.
             category_name: Name of the category.
             prompt: Prompt to go with the category.
@@ -1632,6 +1657,7 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.add_new_category(
+            session_data=session_data,
             set_id=set_id,
             category_name=category_name,
             prompt=prompt,
@@ -1641,6 +1667,7 @@ class MemMachine:
     async def semantic_add_category_template(
         self,
         *,
+        session_data: SessionData,
         set_type_id: str,
         category_name: str,
         prompt: str,
@@ -1651,6 +1678,7 @@ class MemMachine:
         Categories created here are inherited by set_ids mapped to the set type.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             set_type_id: The set type identifier.
             category_name: Name of the category.
             prompt: Prompt to go with the category.
@@ -1663,6 +1691,7 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.add_category_template(
+            session_data=session_data,
             set_type_id=set_type_id,
             category_name=category_name,
             prompt=prompt,
@@ -1672,16 +1701,20 @@ class MemMachine:
     async def semantic_list_category_templates(
         self,
         *,
+        session_data: SessionData,
         set_type_id: str,
     ) -> Iterable[SemanticCategory]:
         """List semantic categories defined on a set type."""
         semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_service.list_category_templates(set_type_id=set_type_id)
+        return await semantic_service.list_category_templates(
+            session_data=session_data, set_type_id=set_type_id
+        )
 
     async def semantic_disable_category(
         self,
         *,
+        session_data: SessionData,
         set_id: SetIdT,
         category_name: str,
     ) -> None:
@@ -1689,6 +1722,7 @@ class MemMachine:
         Disable a default semantic category for the configured set.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             set_id: Set ID to disable the category in.
             category_name: Name of the default category to disable.
 
@@ -1699,6 +1733,7 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.disable_category(
+            session_data=session_data,
             set_id=set_id,
             category_name=category_name,
         )
@@ -1706,12 +1741,14 @@ class MemMachine:
     async def semantic_get_category_set_ids(
         self,
         *,
+        session_data: SessionData,
         category_id: CategoryIdT,
     ) -> Iterable[SetIdT]:
         """
         Get the set_ids associated with a semantic category.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             category_id: Category identifier to query.
 
         Returns:
@@ -1721,18 +1758,21 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.get_category_set_ids(
+            session_data=session_data,
             category_id=category_id,
         )
 
     async def semantic_delete_category(
         self,
         *,
+        session_data: SessionData,
         category_id: CategoryIdT,
     ) -> None:
         """
         Delete a semantic category and all its tags.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             category_id: Category identifier to delete.
 
         Returns:
@@ -1742,12 +1782,14 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.delete_category(
+            session_data=session_data,
             category_id=category_id,
         )
 
     async def semantic_add_tag_to_category(
         self,
         *,
+        session_data: SessionData,
         category_id: CategoryIdT,
         tag_name: str,
         tag_description: str,
@@ -1756,6 +1798,7 @@ class MemMachine:
         Add a tag to an existing semantic category.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             category_id: Category identifier.
             tag_name: Name of the new tag.
             tag_description: Human-readable description of the tag.
@@ -1767,16 +1810,20 @@ class MemMachine:
         semantic_service = await self._resources.get_semantic_service()
 
         return await semantic_service.add_tag(
+            session_data=session_data,
             category_id=category_id,
             tag_name=tag_name,
             tag_description=tag_description,
         )
 
-    async def semantic_delete_tag(self, *, tag_id: TagIdT) -> None:
+    async def semantic_delete_tag(
+        self, *, session_data: SessionData, tag_id: TagIdT
+    ) -> None:
         """
         Delete a semantic tag by ID.
 
         Args:
+            session_data: Context used to locate the project/org scope.
             tag_id: Tag identifier to delete.
 
         Returns:
@@ -1785,7 +1832,9 @@ class MemMachine:
         """
         semantic_service = await self._resources.get_semantic_service()
 
-        return await semantic_service.delete_tag(tag_id=tag_id)
+        return await semantic_service.delete_tag(
+            session_data=session_data, tag_id=tag_id
+        )
 
     async def delete_all(self) -> None:
         """

@@ -20,9 +20,6 @@ from memmachine_server.semantic_memory.semantic_memory import (
     ResourceManager,
     SemanticService,
 )
-from memmachine_server.semantic_memory.semantic_model import (
-    SetIdT,
-)
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from memmachine_server.server.prompt.coding_style_prompt import (
     CodingStyleSemanticCategory,
@@ -71,8 +68,8 @@ def default_session_categories(
         SemanticService.SetType.OtherSet: [],
     }
 
-    def get_cats(set_id: SetIdT):
-        isolation_type = SemanticService.get_default_set_id_type(set_id)
+    def get_cats(semantic_set: SemanticConfigStorage.Set):
+        isolation_type = SemanticService.get_set_type(semantic_set)
         return s_categories[isolation_type]
 
     return get_cats

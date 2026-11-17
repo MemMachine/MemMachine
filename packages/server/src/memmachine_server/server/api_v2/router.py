@@ -419,6 +419,10 @@ async def add_feature(
     """Add a semantic feature to a project."""
     try:
         feature_id = await memmachine.add_feature(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             set_id=spec.set_id,
             category_name=spec.category_name,
             tag=spec.tag,
@@ -427,6 +431,8 @@ async def add_feature(
             feature_metadata=spec.feature_metadata,
             citations=spec.citations,
         )
+    except ResourceNotFoundError as e:
+        raise RestError(code=404, message=str(e), ex=e) from e
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
     except Exception as e:
@@ -447,6 +453,10 @@ async def get_feature(
     """Get a semantic feature by ID."""
     try:
         feature = await memmachine.get_feature(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             feature_id=spec.feature_id,
             load_citations=spec.load_citations,
         )
@@ -489,6 +499,10 @@ async def update_feature(
     """Update a semantic feature."""
     try:
         await memmachine.update_feature(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             feature_id=spec.feature_id,
             category_name=spec.category_name,
             feature=spec.feature,
@@ -577,7 +591,13 @@ async def delete_semantic_set_type(
 ) -> None:
     """Delete a semantic set type."""
     try:
-        await memmachine.delete_semantic_set_type(set_type_id=spec.set_type_id)
+        await memmachine.delete_semantic_set_type(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
+            set_type_id=spec.set_type_id,
+        )
     except ResourceNotFoundError as e:
         raise RestError(code=404, message=str(e), ex=e) from e
     except ValueError as e:
@@ -659,6 +679,10 @@ async def configure_semantic_set(
     """Configure a semantic set."""
     try:
         await memmachine.configure_semantic_set(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             set_id=spec.set_id,
             embedder_name=spec.embedder_name,
             llm_name=spec.llm_name,
@@ -686,6 +710,10 @@ async def get_semantic_category(
     """Get a semantic category by ID."""
     try:
         category = await memmachine.semantic_get_category(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             category_id=spec.category_id,
         )
     except ValueError as e:
@@ -715,11 +743,17 @@ async def add_semantic_category(
     """Add a semantic category to a set."""
     try:
         category_id = await memmachine.semantic_add_category(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             set_id=spec.set_id,
             category_name=spec.category_name,
             prompt=spec.prompt,
             description=spec.description,
         )
+    except ResourceNotFoundError as e:
+        raise RestError(code=404, message=str(e), ex=e) from e
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
     except Exception as e:
@@ -740,11 +774,17 @@ async def add_semantic_category_template(
     """Add a semantic category template to a set type."""
     try:
         category_id = await memmachine.semantic_add_category_template(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             set_type_id=spec.set_type_id,
             category_name=spec.category_name,
             prompt=spec.prompt,
             description=spec.description,
         )
+    except ResourceNotFoundError as e:
+        raise RestError(code=404, message=str(e), ex=e) from e
     except ValueError as e:
         raise RestError(code=422, message="invalid argument", ex=e) from e
     except Exception as e:
@@ -766,6 +806,10 @@ async def list_semantic_category_templates(
     """List semantic category templates for a set type."""
     try:
         categories = await memmachine.semantic_list_category_templates(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             set_type_id=spec.set_type_id,
         )
         entries = [
@@ -798,6 +842,10 @@ async def disable_semantic_category(
     """Disable a semantic category for a set."""
     try:
         await memmachine.semantic_disable_category(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             set_id=spec.set_id,
             category_name=spec.category_name,
         )
@@ -821,6 +869,10 @@ async def get_semantic_category_set_ids(
     """Get set IDs associated with a category."""
     try:
         set_ids = await memmachine.semantic_get_category_set_ids(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             category_id=spec.category_id,
         )
     except ValueError as e:
@@ -843,6 +895,10 @@ async def delete_semantic_category(
     """Delete a semantic category."""
     try:
         await memmachine.semantic_delete_category(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             category_id=spec.category_id,
         )
     except ResourceNotFoundError as e:
@@ -869,6 +925,10 @@ async def add_semantic_tag(
     """Add a tag to a semantic category."""
     try:
         tag_id = await memmachine.semantic_add_tag_to_category(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             category_id=spec.category_id,
             tag_name=spec.tag_name,
             tag_description=spec.tag_description,
@@ -895,6 +955,10 @@ async def delete_semantic_tag(
     """Delete a semantic tag."""
     try:
         await memmachine.semantic_delete_tag(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             tag_id=spec.tag_id,
         )
     except ResourceNotFoundError as e:

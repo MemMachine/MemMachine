@@ -7,15 +7,13 @@ extracts features from them in the background, and serves those features.
 
 import asyncio
 import contextlib
-import hashlib
 import logging
-import re
 from asyncio import Task
 from collections.abc import (
     AsyncIterator,
     Callable,
+    Collection,
     Iterable,
-    Iterator,
     Mapping,
     MutableMapping,
     Sequence,
@@ -24,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import numpy as np
 from pydantic import BaseModel, Field, InstanceOf, JsonValue
@@ -68,7 +66,9 @@ def _consolidate_errors_and_raise(possible_errors: Sequence[Any], msg: str) -> N
         raise ExceptionGroup(msg, errors)
 
 
-DefaultCategoryRetriever = Callable[[SetIdT], Sequence[SemanticCategory]]
+DefaultCategoryRetriever = Callable[
+    [SemanticConfigStorage.Set], Sequence[SemanticCategory]
+]
 
 
 @runtime_checkable
@@ -81,12 +81,9 @@ class ResourceManager(Protocol):
 
 
 def _with_has_set_ids(
-    set_ids: Sequence[SetIdT],
+    set_ids: Collection[SetIdT],
     filter_expr: FilterExpr | None,
 ) -> FilterExpr:
-    if len(set_ids) == 0:
-        return filter_expr
-
     set_expr = In(
         field="set_id",
         values=list(set_ids),
@@ -97,22 +94,18 @@ def _with_has_set_ids(
     return And(left=set_expr, right=filter_expr)
 
 
-def _hash_tag_list(strings: Iterable[str]) -> str:
-    strings = sorted(strings)
-
-    h = hashlib.shake_256()
-    for s in strings:
-        h.update(s.encode("utf-8"))
-        h.update(b"\x00")
-    return h.hexdigest(6)
-
-
 class SemanticService:
-    """Ingests the messages of orgs and projects and serves semantic features."""
+    """
+    Ingests the messages of orgs and projects and serves semantic features.
+
+    Every operation acts for one project of an org. It reaches the sets of
+    that project and the sets of the whole org; any other set, and anything
+    in one, behaves as if it does not exist.
+    """
 
     @runtime_checkable
     class SessionData(Protocol):
-        """Protocol exposing the identifiers used to derive set_ids."""
+        """Org and project an operation acts for."""
 
         @property
         def org_id(self) -> str: ...
@@ -121,7 +114,7 @@ class SemanticService:
         def project_id(self) -> str: ...
 
     class SetType(Enum):
-        """Default set_id prefixes used by `SemanticService`."""
+        """Kinds of semantic sets, each with its own default categories."""
 
         OrgSet = "set_type"
         ProjectSet = "project_set"
@@ -178,9 +171,9 @@ class SemanticService:
         self._default_embedder: Embedder = params.default_embedder
         self._default_embedder_name: str = params.default_embedder_name
         self._default_language_model: LanguageModel = params.default_language_model
-        self._default_category_retriever: Callable[
-            [SetIdT], Sequence[SemanticCategory]
-        ] = params.default_category_retriever
+        self._default_category_retriever: DefaultCategoryRetriever = (
+            params.default_category_retriever
+        )
 
         self._consolidation_threshold = params.consolidation_threshold
         self._max_features_per_update = params.max_features_per_update
@@ -245,13 +238,13 @@ class SemanticService:
 
         episode_metadata.setdefault("producer_id", episode.producer_id)
 
-        set_ids = await self._get_set_ids_str_from_metadata(
+        set_ids = await self._add_set_ids(
             session_data=session_data,
             metadata=episode_metadata,
         )
         await self._add_message_to_sets(
             episode.uid,
-            list(set_ids),
+            set_ids,
             created_at=episode.created_at,
         )
 
@@ -300,15 +293,17 @@ class SemanticService:
     ) -> AsyncIterator[SemanticFeature]:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
-        set_ids = await self._get_set_ids_str_from_metadata(
+        set_ids = await self._find_set_ids(
             session_data=session_data,
             metadata=set_metadata,
         )
+        if not set_ids:
+            return
 
         logger.debug("Searching for %s in set ids %s", message, set_ids)
 
         embeddings: Mapping[str, Sequence[float]] = await self._set_ids_embed(
-            set_ids=list(set_ids),
+            set_ids=set_ids,
             query=message,
         )
 
@@ -429,6 +424,7 @@ class SemanticService:
     async def add_feature(
         self,
         *,
+        session_data: SessionData,
         set_id: SetIdT,
         feature_metadata: Mapping[str, JsonValue] | None = None,
         category_name: str,
@@ -437,6 +433,16 @@ class SemanticService:
         tag: str,
         citations: Sequence[UUID] | None = None,
     ) -> FeatureIdT:
+        """
+        Add a feature to a set of the session.
+
+        Raises:
+            ResourceNotFoundError: The session has no set with this id.
+            CategoryNotFoundError: The set has no category with this name.
+
+        """
+        await self._check_set_ids(session_data=session_data, set_ids=[set_id])
+
         logger.debug("Adding new feature %s to set %s", feature, set_id)
 
         metadata = (
@@ -469,20 +475,9 @@ class SemanticService:
 
         return f_id
 
-    async def get_feature(
-        self,
-        feature_id: FeatureIdT,
-        load_citations: bool = False,
-    ) -> SemanticFeature | None:
-        logger.debug("Getting feature %s", feature_id)
-
-        return await self._semantic_storage.get_feature(
-            feature_id,
-            load_citations=load_citations,
-        )
-
     async def update_feature(
         self,
+        session_data: SessionData,
         feature_id: FeatureIdT,
         *,
         category_name: str | None = None,
@@ -491,16 +486,25 @@ class SemanticService:
         tag: str | None = None,
         metadata: Mapping[str, str] | None = None,
     ) -> None:
+        """
+        Update a feature of the session; fields left `None` keep their value.
+
+        Raises:
+            ResourceNotFoundError: The session has no feature with this id.
+            CategoryNotFoundError: The feature's set has no category with
+                the new name.
+
+        """
+        original_feature = await self.get_feature(session_data, feature_id)
+        if original_feature is None or original_feature.set_id is None:
+            raise ResourceNotFoundError(
+                f"Semantic feature '{feature_id}' was not found in this project."
+            )
+
         logger.debug("Updating feature %s", feature_id)
         embedding = None
 
         if category_name is not None or value is not None:
-            original_feature = await self._semantic_storage.get_feature(feature_id)
-            if original_feature is None or original_feature.set_id is None:
-                raise ValueError(
-                    "Unable to deduce set_id, the feature_id may be incorrect. "
-                    "set_id is required to update a feature",
-                )
             set_id = original_feature.set_id
             resources = await self._set_id_resource(set_id=set_id)
 
@@ -526,42 +530,59 @@ class SemanticService:
             embedding=embedding,
         )
 
+    async def get_feature(
+        self,
+        session_data: SessionData,
+        feature_id: FeatureIdT,
+        load_citations: bool = False,
+    ) -> SemanticFeature | None:
+        """Return the session's feature with this id, or `None`."""
+        logger.debug("Getting feature %s", feature_id)
+
+        feature = await self._semantic_storage.get_feature(
+            feature_id,
+            load_citations=load_citations,
+        )
+        if feature is None or feature.set_id is None:
+            return None
+
+        if not await self._get_addressed_set_ids(
+            session_data=session_data, set_ids=[feature.set_id]
+        ):
+            return None
+
+        return feature
+
     async def delete_features(
         self,
         session_data: SessionData,
         feature_ids: Sequence[FeatureIdT],
     ) -> None:
-        """
-        Delete features in the sets the session addresses.
+        """Delete the session's features with these ids; other ids are skipped."""
+        features = {
+            feature_id: await self._semantic_storage.get_feature(feature_id)
+            for feature_id in feature_ids
+        }
+        set_ids = {
+            feature.set_id
+            for feature in features.values()
+            if feature is not None and feature.set_id is not None
+        }
+        addressed_set_ids = await self._get_addressed_set_ids(
+            session_data=session_data, set_ids=set_ids
+        )
 
-        Ids that name no feature are ignored.
+        deleted_ids = [
+            feature_id
+            for feature_id, feature in features.items()
+            if feature is not None and feature.set_id in addressed_set_ids
+        ]
+        if not deleted_ids:
+            return
 
-        Raises:
-            ResourceNotFoundError: A feature is in a set the session does not
-                address. Nothing is deleted.
+        logger.info("Deleting features ids %s", deleted_ids)
 
-        """
-        self._assert_session_data_implements_protocol(session_data=session_data)
-
-        for feature_id in feature_ids:
-            feature = await self._semantic_storage.get_feature(
-                feature_id,
-                load_citations=False,
-            )
-            if feature is not None and (
-                feature.set_id is None
-                or not self._session_addresses_set_id(
-                    session_data=session_data,
-                    set_id=feature.set_id,
-                )
-            ):
-                raise ResourceNotFoundError(
-                    f"Semantic feature '{feature_id}' was not found in this project."
-                )
-
-        logger.info("Deleting features ids %s", feature_ids)
-
-        await self._semantic_storage.delete_features(feature_ids)
+        await self._semantic_storage.delete_features(deleted_ids)
 
     async def get_set_features(
         self,
@@ -575,16 +596,18 @@ class SemanticService:
     ) -> AsyncIterator[SemanticFeature]:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
-        set_ids = await self._get_set_ids_str_from_metadata(
+        set_ids = await self._find_set_ids(
             session_data=session_data,
             metadata=set_metadata,
         )
+        if not set_ids:
+            return
 
         logger.debug("Getting features for set ids %s", set_ids)
 
         async for feature in self._semantic_storage.get_feature_set(
             filter_expr=_with_has_set_ids(
-                set_ids=list(set_ids),
+                set_ids=set_ids,
                 filter_expr=search_filter,
             ),
             page_size=page_size,
@@ -602,56 +625,52 @@ class SemanticService:
     ) -> None:
         self._assert_session_data_implements_protocol(session_data=session_data)
 
-        set_ids = await self._get_set_ids_str_from_metadata(
+        set_ids = await self._find_set_ids(
             session_data=session_data,
             metadata=set_metadata,
         )
 
         await self._delete_set_features(
-            set_ids=list(set_ids),
+            set_ids=set_ids,
             filter_expr=property_filter,
         )
 
-    async def _get_set_ids_str_from_metadata(
+    async def _find_set_ids(
         self,
         *,
         session_data: SessionData,
         metadata: Mapping[str, JsonValue] | None,
-    ) -> Iterable[SetIdT]:
-        normalized_metadata = self._normalize_metadata(metadata)
-
-        deduped: MutableMapping[SetIdT, None] = {}
-
-        async for entry in self._get_set_id_entries(
+    ) -> list[SetIdT]:
+        """Return the ids of the existing sets a message with this metadata reaches."""
+        entries = await self._get_set_id_entries(
             session_data=session_data,
             metadata=metadata,
-        ):
-            set_id = self._generate_set_id(
-                org_id=session_data.org_id,
-                project_id=session_data.project_id if not entry.is_org_level else None,
-                metadata=entry.tags,
-            )
-            if set_id not in deduped:
-                deduped[set_id] = None
-                await self._semantic_config_storage.register_set_id_set_type(
-                    set_id=set_id,
-                    set_type_id=entry.set_type_id,
-                )
+        )
+        found = await self._find_sets(session_data=session_data, entries=entries)
+        return [semantic_set.id for _, semantic_set in found]
 
-        for default in self._generate_default_sets(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id,
-            producer_id=normalized_metadata.get("producer_id"),
-        ):
-            deduped.setdefault(default.id, None)
+    async def _add_set_ids(
+        self,
+        *,
+        session_data: SessionData,
+        metadata: Mapping[str, JsonValue] | None,
+    ) -> list[SetIdT]:
+        """Return the ids of the sets a message with this metadata reaches, adding missing ones."""
+        if "producer_id" in self._normalize_metadata(metadata):
+            await self._ensure_user_set_type(org_id=session_data.org_id)
 
-        return tuple(deduped.keys())
+        entries = await self._get_set_id_entries(
+            session_data=session_data,
+            metadata=metadata,
+        )
+        added = await self._add_sets(session_data=session_data, entries=entries)
+        return [semantic_set.id for semantic_set in added]
 
     @dataclass(frozen=True, slots=True)
     class _SetIdEntry:
-        """Resolved set_id qualifiers for a session message."""
+        """A set a session reaches, and the set type it belongs to."""
 
-        set_type_id: str
+        set_type_id: str | None
         is_org_level: bool
         tags: Mapping[str, str]
 
@@ -659,12 +678,9 @@ class SemanticService:
         self,
         *,
         session_data: SessionData,
-        metadata: Mapping[str, JsonValue] | None = None,
-    ) -> AsyncIterator[_SetIdEntry]:
+        metadata: Mapping[str, JsonValue] | None,
+    ) -> list[_SetIdEntry]:
         normalized_metadata = self._normalize_metadata(metadata)
-
-        if "producer_id" in normalized_metadata:
-            await self._ensure_user_set_type(org_id=session_data.org_id)
 
         set_type_ids = await self._semantic_config_storage.list_set_type_ids(
             org_id=session_data.org_id
@@ -672,7 +688,7 @@ class SemanticService:
 
         metadata_tags = set(normalized_metadata.keys())
 
-        yielded = False
+        entries: MutableMapping[tuple, SemanticService._SetIdEntry] = {}
         for set_type in set_type_ids:
             if set_type.id is None:
                 continue
@@ -680,18 +696,102 @@ class SemanticService:
             if not metadata_tags.issuperset(set(set_type.tags)):
                 continue
 
-            yielded = True
-            yield self._SetIdEntry(
+            entry = self._SetIdEntry(
                 set_type_id=set_type.id,
                 is_org_level=set_type.is_org_level,
                 tags={tag: normalized_metadata[tag] for tag in set_type.tags},
             )
+            entries.setdefault(self._entry_key(entry), entry)
 
-        if not yielded:
-            logger.debug(
-                "No relevant set type ids found for metadata %s",
-                normalized_metadata,
+        default_tags: list[tuple[bool, Mapping[str, str]]] = [(True, {}), (False, {})]
+        if "producer_id" in normalized_metadata:
+            default_tags.append(
+                (True, {"producer_id": normalized_metadata["producer_id"]})
             )
+        for is_org_level, tags in default_tags:
+            entry = self._SetIdEntry(
+                set_type_id=None,
+                is_org_level=is_org_level,
+                tags=tags,
+            )
+            entries.setdefault(self._entry_key(entry), entry)
+
+        return list(entries.values())
+
+    async def _add_sets(
+        self,
+        *,
+        session_data: SessionData,
+        entries: Sequence[_SetIdEntry],
+    ) -> list[SemanticConfigStorage.Set]:
+        found = await self._find_sets(session_data=session_data, entries=entries)
+        if len(found) < len(entries):
+            found_keys = {self._entry_key(entry) for entry, _ in found}
+            await self._semantic_config_storage.add_sets(
+                sets=[
+                    SemanticConfigStorage.Set(
+                        id=SetIdT(uuid4()),
+                        org_id=session_data.org_id,
+                        project_id=None
+                        if entry.is_org_level
+                        else session_data.project_id,
+                        set_metadata=entry.tags,
+                    )
+                    for entry in entries
+                    if self._entry_key(entry) not in found_keys
+                ]
+            )
+            found = await self._find_sets(session_data=session_data, entries=entries)
+
+        for entry, semantic_set in found:
+            if entry.set_type_id is not None:
+                await self._semantic_config_storage.register_set_id_set_type(
+                    set_id=semantic_set.id,
+                    set_type_id=entry.set_type_id,
+                )
+
+        return [semantic_set for _, semantic_set in found]
+
+    async def _find_sets(
+        self,
+        *,
+        session_data: SessionData,
+        entries: Sequence[_SetIdEntry],
+    ) -> list[tuple[_SetIdEntry, SemanticConfigStorage.Set]]:
+        """Pair each entry with its existing set, skipping entries without one."""
+
+        async def find(is_org_level: bool) -> list[SemanticConfigStorage.Set]:
+            set_metadata = [e.tags for e in entries if e.is_org_level == is_org_level]
+            if not set_metadata:
+                return []
+            return await self._semantic_config_storage.find_sets(
+                org_id=session_data.org_id,
+                project_id=None if is_org_level else session_data.project_id,
+                set_metadata=set_metadata,
+            )
+
+        org_sets, project_sets = await asyncio.gather(find(True), find(False))
+        sets_by_key = {
+            self._set_key(semantic_set): semantic_set
+            for semantic_set in (*org_sets, *project_sets)
+        }
+
+        return [
+            (entry, sets_by_key[self._entry_key(entry)])
+            for entry in entries
+            if self._entry_key(entry) in sets_by_key
+        ]
+
+    @staticmethod
+    def _entry_key(entry: _SetIdEntry) -> tuple:
+        return entry.is_org_level, tuple(sorted(entry.tags.items()))
+
+    @staticmethod
+    def _set_key(semantic_set: SemanticConfigStorage.Set) -> tuple:
+        return (
+            semantic_set.project_id is None,
+            tuple(sorted(semantic_set.set_metadata.items())),
+        )
 
     @staticmethod
     def _normalize_metadata(
@@ -706,84 +806,17 @@ class SemanticService:
         }
 
     @staticmethod
-    def _org_set_id(
-        *,
-        org_id: str,
-        project_id: str | None = None,
-    ) -> SetIdT:
-        org_base = f"org_{org_id}"
+    def get_set_type(semantic_set: SemanticConfigStorage.Set) -> SetType:
+        """Return the kind of a set, which selects its default categories."""
+        tags = set(semantic_set.set_metadata.keys())
 
-        if project_id is not None:
-            org_project = f"{org_base}_project_{project_id}"
-        else:
-            org_project = org_base
-
-        return org_project
-
-    @classmethod
-    def _generate_set_id(
-        cls,
-        *,
-        org_id: str,
-        project_id: str | None = None,
-        metadata: Mapping[str, JsonValue],
-    ) -> SetIdT:
-        org_project = cls._org_set_id(org_id=org_id, project_id=project_id)
-
-        string_tags = [f"{k}_{v}" for k, v in metadata.items()]
-
-        metadata_keys = set(metadata.keys())
-
-        if len(string_tags) == 0:
-            if project_id is not None:
-                def_type = SemanticService.SetType.ProjectSet
-            else:
-                def_type = SemanticService.SetType.OrgSet
-        elif metadata_keys == {"producer_id"}:
-            def_type = SemanticService.SetType.UserSet
-        else:
-            def_type = SemanticService.SetType.OtherSet
-
-        return f"mem_{def_type.value}_{org_project}_{len(metadata)}_{_hash_tag_list(metadata.keys())}__{'_'.join(sorted(string_tags))}"
-
-    @classmethod
-    def _session_addresses_set_id(
-        cls,
-        *,
-        session_data: SessionData,
-        set_id: SetIdT,
-    ) -> bool:
-        """
-        Report whether `_generate_set_id` produces `set_id` for the session.
-
-        Those are the org-level sets of the session's org and the sets of
-        its project, with any metadata.
-        """
-        set_types = "|".join(re.escape(set_type.value) for set_type in cls.SetType)
-        org_projects = "|".join(
-            re.escape(
-                cls._org_set_id(org_id=session_data.org_id, project_id=project_id)
-            )
-            for project_id in (None, session_data.project_id)
-        )
-        return (
-            re.fullmatch(
-                rf"mem_(?:{set_types})_(?:{org_projects})_[0-9]+_[0-9a-f]+__.*",
-                set_id,
-                flags=re.DOTALL,
-            )
-            is not None
-        )
-
-    @staticmethod
-    def get_default_set_id_type(
-        set_id: SetIdT,
-    ) -> SetType:
-        for def_type in SemanticService.SetType:
-            if set_id.startswith(f"mem_{def_type.value}"):
-                return def_type
-
-        raise RuntimeError(f"Invalid set_id: {set_id}")
+        if not tags:
+            if semantic_set.project_id is not None:
+                return SemanticService.SetType.ProjectSet
+            return SemanticService.SetType.OrgSet
+        if tags == {"producer_id"}:
+            return SemanticService.SetType.UserSet
+        return SemanticService.SetType.OtherSet
 
     async def _ensure_user_set_type(self, *, org_id: str) -> None:
         set_types = await self._semantic_config_storage.list_set_type_ids(org_id=org_id)
@@ -821,8 +854,15 @@ class SemanticService:
     async def delete_set_type(
         self,
         *,
+        session_data: SessionData,
         set_type_id: str,
     ) -> None:
+        """Delete a set type of the session's org; other ids are skipped."""
+        if not await self._has_set_type(
+            session_data=session_data, set_type_id=set_type_id
+        ):
+            return
+
         await self._semantic_config_storage.delete_set_type_id(set_type_id=set_type_id)
 
     async def list_set_types(
@@ -839,10 +879,22 @@ class SemanticService:
     async def configure_set(
         self,
         *,
+        session_data: SessionData,
         set_id: SetIdT,
         embedder_name: str | None = None,
         llm_name: str | None = None,
     ) -> None:
+        """
+        Set the embedder and language model of a set of the session.
+
+        Raises:
+            ResourceNotFoundError: The session has no set with this id.
+            InvalidSetIdConfigurationError: The set already has an embedder
+                or features, and the embedder would change.
+
+        """
+        await self._check_set_ids(session_data=session_data, set_ids=[set_id])
+
         logger.info("Setting set id config for %s", set_id)
 
         current_set_id_embedder_name = (
@@ -884,6 +936,7 @@ class SemanticService:
         set_metadata: Mapping[str, JsonValue] | None = None,
         is_org_level: bool = False,
     ) -> SetIdT:
+        """Return the id of the session's set with this metadata, adding the set if missing."""
         self._assert_session_data_implements_protocol(session_data=session_data)
 
         metadata = (
@@ -898,32 +951,31 @@ class SemanticService:
         if "producer_id" in normalized_metadata:
             await self._ensure_user_set_type(org_id=session_data.org_id)
 
-        set_id = self._generate_set_id(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id if not is_org_level else None,
-            metadata=normalized_metadata,
-        )
-
         set_type_ids = await self._semantic_config_storage.list_set_type_ids(
             org_id=session_data.org_id
         )
-        for set_type in set_type_ids:
-            if set_type.id is None:
-                continue
+        set_type_id = next(
+            (
+                set_type.id
+                for set_type in set_type_ids
+                if set_type.id is not None
+                and set_type.is_org_level == is_org_level
+                and set(set_type.tags) == set(set_metadata_keys)
+            ),
+            None,
+        )
 
-            if set_type.is_org_level != is_org_level:
-                continue
-
-            if set(set_type.tags) != set(set_metadata_keys):
-                continue
-
-            await self._semantic_config_storage.register_set_id_set_type(
-                set_id=set_id,
-                set_type_id=set_type.id,
-            )
-            break
-
-        return set_id
+        [semantic_set] = await self._add_sets(
+            session_data=session_data,
+            entries=[
+                self._SetIdEntry(
+                    set_type_id=set_type_id,
+                    is_org_level=is_org_level,
+                    tags=normalized_metadata,
+                )
+            ],
+        )
+        return semantic_set.id
 
     async def list_set_ids(
         self,
@@ -931,119 +983,107 @@ class SemanticService:
         session_data: SessionData,
         set_metadata: Mapping[str, JsonValue] | None = None,
     ) -> Iterable[Set]:
+        """Return the existing sets a message with this metadata reaches."""
         self._assert_session_data_implements_protocol(session_data=session_data)
-
-        normalized_metadata = self._normalize_metadata(set_metadata)
 
         set_type_ids = await self._semantic_config_storage.list_set_type_ids(
             org_id=session_data.org_id
         )
         set_type_map = {sid.id: sid for sid in set_type_ids if sid.id is not None}
 
-        sets: MutableMapping[str, SemanticService.Set] = {}
-        async for sid in self._get_set_id_entries(
+        entries = await self._get_set_id_entries(
             session_data=session_data,
             metadata=set_metadata,
-        ):
-            set_id = self._generate_set_id(
-                org_id=session_data.org_id,
-                project_id=session_data.project_id if not sid.is_org_level else None,
-                metadata=sid.tags,
-            )
+        )
+        found = await self._find_sets(session_data=session_data, entries=entries)
 
-            set_type_entry = set_type_map.get(sid.set_type_id)
-            sets.setdefault(
-                set_id,
+        sets: list[SemanticService.Set] = []
+        for entry, semantic_set in found:
+            set_type_entry = (
+                set_type_map.get(entry.set_type_id)
+                if entry.set_type_id is not None
+                else None
+            )
+            sets.append(
                 SemanticService.Set(
-                    id=set_id,
-                    is_org_level=sid.is_org_level,
-                    tags=list(sid.tags.keys()),
+                    id=semantic_set.id,
+                    is_org_level=entry.is_org_level,
+                    tags=list(entry.tags.keys()),
                     name=set_type_entry.name if set_type_entry else None,
                     description=set_type_entry.description if set_type_entry else None,
-                ),
+                )
             )
 
-        for default in self._generate_default_sets(
-            org_id=session_data.org_id,
-            project_id=session_data.project_id,
-            producer_id=normalized_metadata.get("producer_id"),
-        ):
-            sets.setdefault(default.id, default)
-
-        return tuple(sets.values())
-
-    @classmethod
-    def _generate_default_sets(
-        cls,
-        *,
-        org_id: str,
-        project_id: str | None,
-        producer_id: str | None,
-    ) -> Iterator[Set]:
-        yield SemanticService.Set(
-            id=cls._generate_set_id(
-                org_id=org_id,
-                project_id=None,
-                metadata={},
-            ),
-            is_org_level=True,
-            tags=[],
-            name=None,
-            description=None,
-        )
-
-        if producer_id is not None:
-            yield SemanticService.Set(
-                id=cls._generate_set_id(
-                    org_id=org_id,
-                    project_id=None,
-                    metadata={"producer_id": producer_id},
-                ),
-                is_org_level=True,
-                tags=["producer_id"],
-                name=None,
-                description=None,
-            )
-
-        if project_id is not None:
-            yield SemanticService.Set(
-                id=cls._generate_set_id(
-                    org_id=org_id,
-                    project_id=project_id,
-                    metadata={},
-                ),
-                is_org_level=False,
-                tags=[],
-            )
+        return tuple(sets)
 
     async def get_category(
         self,
         *,
+        session_data: SessionData,
         category_id: CategoryIdT,
     ) -> SemanticConfigStorage.Category | None:
+        """Return the session's category with this id, or `None`."""
         logger.debug("Getting category %s", category_id)
 
-        return await self._semantic_config_storage.get_category(category_id=category_id)
+        category = await self._semantic_config_storage.get_category(
+            category_id=category_id
+        )
+        if category is None:
+            return None
+
+        if category.set_id is not None:
+            if not await self._get_addressed_set_ids(
+                session_data=session_data, set_ids=[category.set_id]
+            ):
+                return None
+        elif category.set_type_id is None or not await self._has_set_type(
+            session_data=session_data, set_type_id=category.set_type_id
+        ):
+            return None
+
+        return category
 
     async def get_category_set_ids(
         self,
         *,
+        session_data: SessionData,
         category_id: CategoryIdT,
     ) -> Sequence[SetIdT]:
+        """Return the session's sets that use the session's category with this id."""
         logger.debug("Getting set_ids for category %s", category_id)
 
-        return await self._semantic_config_storage.get_category_set_ids(
+        if (
+            await self.get_category(session_data=session_data, category_id=category_id)
+            is None
+        ):
+            return []
+
+        set_ids = await self._semantic_config_storage.get_category_set_ids(
             category_id=category_id
         )
+        addressed_set_ids = await self._get_addressed_set_ids(
+            session_data=session_data, set_ids=set_ids
+        )
+        return [set_id for set_id in set_ids if set_id in addressed_set_ids]
 
     async def add_new_category(
         self,
         *,
+        session_data: SessionData,
         set_id: SetIdT,
         category_name: str,
         prompt: str,
         description: str | None,
     ) -> CategoryIdT:
+        """
+        Add a category to a set of the session.
+
+        Raises:
+            ResourceNotFoundError: The session has no set with this id.
+
+        """
+        await self._check_set_ids(session_data=session_data, set_ids=[set_id])
+
         logger.info("Adding new category %s to set %s", category_name, set_id)
 
         return await self._semantic_config_storage.create_category(
@@ -1056,11 +1096,26 @@ class SemanticService:
     async def add_category_template(
         self,
         *,
+        session_data: SessionData,
         set_type_id: str,
         category_name: str,
         prompt: str,
         description: str | None,
     ) -> CategoryIdT:
+        """
+        Add a category to a set type of the session's org.
+
+        Raises:
+            ResourceNotFoundError: The org has no set type with this id.
+
+        """
+        if not await self._has_set_type(
+            session_data=session_data, set_type_id=set_type_id
+        ):
+            raise ResourceNotFoundError(
+                f"Semantic set type '{set_type_id}' was not found in this org."
+            )
+
         logger.info("Adding new category %s to set type %s", category_name, set_type_id)
 
         return await self._semantic_config_storage.create_set_type_category(
@@ -1071,20 +1126,50 @@ class SemanticService:
         )
 
     async def list_category_templates(
-        self, *, set_type_id: str
+        self,
+        *,
+        session_data: SessionData,
+        set_type_id: str,
     ) -> Iterable[SemanticCategory]:
+        """Return the categories of a set type of the session's org."""
         logger.debug("Getting set type categories for %s", set_type_id)
+
+        if not await self._has_set_type(
+            session_data=session_data, set_type_id=set_type_id
+        ):
+            return []
 
         return await self._semantic_config_storage.get_set_type_categories(
             set_type_id=set_type_id
         )
 
+    async def _has_set_type(
+        self,
+        *,
+        session_data: SessionData,
+        set_type_id: str,
+    ) -> bool:
+        set_types = await self._semantic_config_storage.list_set_type_ids(
+            org_id=session_data.org_id
+        )
+        return any(set_type.id == set_type_id for set_type in set_types)
+
     async def disable_category(
         self,
         *,
+        session_data: SessionData,
         set_id: SetIdT,
         category_name: str,
     ) -> None:
+        """
+        Disable a default category for a set of the session.
+
+        Raises:
+            ResourceNotFoundError: The session has no set with this id.
+
+        """
+        await self._check_set_ids(session_data=session_data, set_ids=[set_id])
+
         logger.info("Disabling default category %s for set %s", category_name, set_id)
 
         await self._semantic_config_storage.add_disabled_category_to_setid(
@@ -1095,55 +1180,53 @@ class SemanticService:
     async def delete_category(
         self,
         *,
+        session_data: SessionData,
         category_id: CategoryIdT,
     ) -> None:
+        """
+        Delete the session's category with this id, and its features.
+
+        Ids of other categories are skipped. A set type's category takes
+        its features with it from every set of the type that does not
+        override it.
+        """
+        category = await self.get_category(
+            session_data=session_data, category_id=category_id
+        )
+        if category is None:
+            return
+
         logger.info("Deleting category %s", category_id)
 
-        async with asyncio.TaskGroup() as tg:
-            set_ids_task = tg.create_task(
-                self._semantic_config_storage.get_category_set_ids(
-                    category_id=category_id,
-                )
-            )
+        set_ids = await self._semantic_config_storage.get_category_set_ids(
+            category_id=category_id
+        )
+        logger.debug(
+            "Deleting features for category %s for set_ids: %s",
+            category.name,
+            set_ids,
+        )
 
-            category_task = tg.create_task(
-                self._semantic_config_storage.get_category(
-                    category_id=category_id,
-                )
-            )
-
-        set_ids = set_ids_task.result()
-        category = category_task.result()
-
-        if category is not None and set_ids:
-            logger.debug(
-                "Deleting features for category %s for set_ids: %s",
-                category.name,
-                set_ids,
-            )
-
-            await self._delete_set_features(
-                set_ids=set_ids,
-                filter_expr=Comparison(
-                    field="category_name",
-                    op="=",
-                    value=category.name,
-                ),
-            )
-        else:
-            logger.debug(
-                "No features found for category %s, nothing to delete",
-                category_id,
-            )
+        await self._delete_set_features(
+            set_ids=set_ids,
+            filter_expr=Comparison(
+                field="category_name",
+                op="=",
+                value=category.name,
+            ),
+        )
 
         await self._semantic_config_storage.delete_category(category_id=category_id)
 
     async def _delete_set_features(
         self,
         *,
-        set_ids: Sequence[SetIdT],
+        set_ids: Collection[SetIdT],
         filter_expr: FilterExpr | None = None,
     ) -> None:
+        if not set_ids:
+            return
+
         logger.debug("Deleting filter feature set ids %s", set_ids)
 
         await self._semantic_storage.delete_feature_set(
@@ -1156,10 +1239,26 @@ class SemanticService:
     async def add_tag(
         self,
         *,
+        session_data: SessionData,
         category_id: CategoryIdT,
         tag_name: str,
         tag_description: str,
     ) -> TagIdT:
+        """
+        Add a tag to a category of the session.
+
+        Raises:
+            ResourceNotFoundError: The session has no category with this id.
+
+        """
+        if (
+            await self.get_category(session_data=session_data, category_id=category_id)
+            is None
+        ):
+            raise ResourceNotFoundError(
+                f"Semantic category '{category_id}' was not found in this project."
+            )
+
         logger.info("Adding tag %s to category %s", tag_name, category_id)
 
         return await self._semantic_config_storage.add_tag(
@@ -1168,10 +1267,53 @@ class SemanticService:
             description=tag_description,
         )
 
-    async def delete_tag(self, *, tag_id: TagIdT) -> None:
+    async def delete_tag(self, *, session_data: SessionData, tag_id: TagIdT) -> None:
+        """Delete a tag of a category of the session; other ids are skipped."""
+        tag = await self._semantic_config_storage.get_tag(tag_id=tag_id)
+        if (
+            tag is None
+            or await self.get_category(
+                session_data=session_data, category_id=tag.category_id
+            )
+            is None
+        ):
+            return
+
         logger.info("Deleting tag %s", tag_id)
 
         await self._semantic_config_storage.delete_tag(tag_id=tag_id)
+
+    async def _check_set_ids(
+        self,
+        *,
+        session_data: SessionData,
+        set_ids: Collection[SetIdT],
+    ) -> None:
+        addressed_set_ids = await self._get_addressed_set_ids(
+            session_data=session_data, set_ids=set_ids
+        )
+        for set_id in set_ids:
+            if set_id not in addressed_set_ids:
+                raise ResourceNotFoundError(
+                    f"Semantic set '{set_id}' was not found in this project."
+                )
+
+    async def _get_addressed_set_ids(
+        self,
+        *,
+        session_data: SessionData,
+        set_ids: Collection[SetIdT],
+    ) -> set[SetIdT]:
+        """Return the ids among `set_ids` of sets of the session's project or org."""
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        sets = await self._semantic_config_storage.get_sets(set_ids=set_ids)
+        return {
+            semantic_set.id
+            for semantic_set in sets
+            if semantic_set.org_id == session_data.org_id
+            and semantic_set.project_id in (None, session_data.project_id)
+        }
 
     @staticmethod
     def _assert_session_data_implements_protocol(session_data: SessionData) -> None:
@@ -1184,6 +1326,10 @@ class SemanticService:
         self,
         set_id: SetIdT,
     ) -> Resources:
+        sets = await self._semantic_config_storage.get_sets(set_ids=[set_id])
+        if not sets:
+            raise ResourceNotFoundError(f"Semantic set '{set_id}' does not exist.")
+
         config = await self._semantic_config_storage.get_setid_config(set_id=set_id)
 
         embedder: Embedder
@@ -1211,7 +1357,7 @@ class SemanticService:
 
         user_categories = config.categories
 
-        default_categories = self._default_category_retriever(set_id)
+        default_categories = self._default_category_retriever(sets[0])
         enabled_default = [
             category
             for category in default_categories
@@ -1246,7 +1392,7 @@ class SemanticService:
         backoff_sec = self._background_ingestion_interval_sec
 
         while not self._is_shutting_down:
-            dirty_sets = [
+            pending_sets = [
                 s
                 async for s in self._semantic_storage.get_history_set_ids(
                     min_uningested_messages=self._feature_update_message_limit,
@@ -1254,6 +1400,14 @@ class SemanticService:
                     - self._feature_time_limit,
                 )
             ]
+            # History of a set without an owner stays queued, never ingested.
+            registered_set_ids = {
+                semantic_set.id
+                for semantic_set in await self._semantic_config_storage.get_sets(
+                    set_ids=pending_sets
+                )
+            }
+            dirty_sets = [s for s in pending_sets if s in registered_set_ids]
 
             if len(dirty_sets) == 0:
                 # Reset backoff so prior error-induced backoff doesn't carry

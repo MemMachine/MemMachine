@@ -265,8 +265,8 @@ async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
     history_ids = episodes if same_timestamp else list(reversed(episodes))
     monkeypatch.setattr(
         semantic_service,
-        "_get_set_ids_str_from_metadata",
-        AsyncMock(return_value={"colors"}),
+        "_add_set_ids",
+        AsyncMock(return_value=["colors"]),
     )
     session_data = SimpleNamespace(org_id="org", project_id="project")
     for batch in (history_ids[:3], history_ids[3:]):

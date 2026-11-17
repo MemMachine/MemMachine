@@ -70,7 +70,7 @@ def semantic_category_retriever():
         prompt=prompt,
     )
 
-    def get_categories(_: str) -> list[SemanticCategory]:
+    def get_categories(_: SemanticConfigStorage.Set) -> list[SemanticCategory]:
         return [cat]
 
     return get_categories

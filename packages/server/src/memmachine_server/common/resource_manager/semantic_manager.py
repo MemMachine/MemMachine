@@ -31,7 +31,6 @@ from memmachine_server.semantic_memory.semantic_memory import (
 )
 from memmachine_server.semantic_memory.semantic_model import (
     SemanticCategory,
-    SetIdT,
 )
 from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
@@ -227,8 +226,10 @@ class SemanticResourceManager:
 
         semantic_categories_by_isolation = self._prompt_conf.default_semantic_categories
 
-        def get_default_categories(set_id: SetIdT) -> list[SemanticCategory]:
-            def_type = SemanticService.get_default_set_id_type(set_id)
+        def get_default_categories(
+            semantic_set: SemanticConfigStorage.Set,
+        ) -> list[SemanticCategory]:
+            def_type = SemanticService.get_set_type(semantic_set)
             return semantic_categories_by_isolation[def_type]
 
         embedder_name = self._get_default_embedder_name()

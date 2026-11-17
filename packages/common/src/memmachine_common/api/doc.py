@@ -794,8 +794,7 @@ class RouterDoc:
     memory or `semantic_ids` to delete multiple memories in one request.
     This action cannot be undone.
 
-    If any of the specified semantic memories do not exist, a not-found error
-    is returned for those entries.
+    IDs that name no semantic memory of the project are ignored.
     """
 
     METRICS_PROMETHEUS = """
@@ -1042,7 +1041,8 @@ class RouterDoc:
     Creates a new semantic feature with the specified category, tag, feature name,
     and value. Optional metadata and episode citations can be attached.
 
-    Returns the unique identifier of the created feature.
+    Returns the unique identifier of the created feature, or 404 if the
+    project has no set with the given ID.
     """
 
     GET_FEATURE = """
@@ -1051,7 +1051,7 @@ class RouterDoc:
     Retrieves a specific semantic feature using its unique identifier.
     Optionally includes episode citations if `load_citations` is true.
 
-    Returns 404 if the feature does not exist.
+    Returns 404 if the project has no feature with this ID.
     """
 
     UPDATE_FEATURE = """
@@ -1061,7 +1061,7 @@ class RouterDoc:
     provided in the request are updated; omitted fields retain their current
     values.
 
-    Returns 404 if the feature does not exist.
+    Returns 404 if the project has no feature with this ID.
     """
 
     UPDATE_LTM_CONFIG = """
@@ -1179,7 +1179,7 @@ class RouterDoc:
     Permanently removes the specified set type. This does not delete
     the sets or features associated with the set type.
 
-    Returns 404 if the set type does not exist.
+    IDs that name no set type of the organization are ignored.
     """
 
     GET_SEMANTIC_SET_ID = """
@@ -1188,17 +1188,15 @@ class RouterDoc:
     Returns the set ID for the given set type configuration and optional
     metadata. If the set does not exist, it is created.
 
-    The set ID is deterministically generated based on:
-    - Organization and project scope
-    - Set type (org-level or project-level)
-    - Metadata tags and values
+    The same organization or project, scope level, and metadata always give
+    the same set ID.
     """
 
     LIST_SEMANTIC_SET_IDS = """
     List all semantic sets.
 
-    Returns all sets for the organization/project context. Can be filtered
-    by metadata values.
+    Returns the existing sets for the organization/project context. Can be
+    filtered by metadata values.
     """
 
     CONFIGURE_SEMANTIC_SET = """
@@ -1209,6 +1207,8 @@ class RouterDoc:
     embedding on a per-set basis.
 
     If not configured, sets inherit the default embedder and language model.
+
+    Returns 404 if the project has no set with this ID.
     """
 
     # --- Semantic Category API Router Docs ---
@@ -1219,7 +1219,7 @@ class RouterDoc:
     Retrieves a specific category using its unique identifier.
     Returns the category name, prompt, and description.
 
-    Returns 404 if the category does not exist.
+    Returns 404 if the project has no category with this ID.
     """
 
     ADD_SEMANTIC_CATEGORY = """
@@ -1231,7 +1231,8 @@ class RouterDoc:
     - A prompt that drives LLM feature extraction
     - An optional description
 
-    Returns the unique identifier of the created category.
+    Returns the unique identifier of the created category, or 404 if the
+    project has no set with the given ID.
     """
 
     ADD_SEMANTIC_CATEGORY_TEMPLATE = """
@@ -1241,7 +1242,8 @@ class RouterDoc:
     set type. Template categories provide default extraction behavior
     that can be customized or disabled per-set.
 
-    Returns the unique identifier of the created category template.
+    Returns the unique identifier of the created category template, or 404
+    if the organization has no set type with the given ID.
     """
 
     LIST_SEMANTIC_CATEGORY_TEMPLATES = """
@@ -1259,12 +1261,14 @@ class RouterDoc:
     without deleting them.
 
     The category remains available for other sets.
+
+    Returns 404 if the project has no set with the given ID.
     """
 
     GET_SEMANTIC_CATEGORY_SET_IDS = """
     Get set IDs associated with a category.
 
-    Returns all set IDs that have features in the specified category.
+    Returns the IDs of the project's sets that use the specified category.
     Useful for understanding the scope of a category's usage.
     """
 
@@ -1274,7 +1278,7 @@ class RouterDoc:
     Permanently removes the category and all associated tags and features.
     This is a destructive operation that cannot be undone.
 
-    Returns 404 if the category does not exist.
+    IDs that name no category of the project are ignored.
     """
 
     # --- Semantic Tag API Router Docs ---
@@ -1287,7 +1291,8 @@ class RouterDoc:
     - A name for identification
     - A description explaining what the tag represents
 
-    Returns the unique identifier of the created tag.
+    Returns the unique identifier of the created tag, or 404 if the project
+    has no category with the given ID.
     """
 
     DELETE_SEMANTIC_TAG = """
@@ -1296,7 +1301,7 @@ class RouterDoc:
     Permanently removes the tag from its category. Features tagged with
     this tag may lose their tag association.
 
-    Returns 404 if the tag does not exist.
+    IDs that name no tag of the project are ignored.
     """
 
     # --- Episodic Memory Configuration Endpoints ---
