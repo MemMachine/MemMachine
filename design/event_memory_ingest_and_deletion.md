@@ -2,8 +2,8 @@
 
 Event memory keeps events, their segments, and the segments' derivatives in
 a SQL segment store, and the derivatives' vectors in a vector store. The
-two share no transaction. This document is how an ingest stays complete
-and a forget stays complete anyway.
+two share no transaction. This document is how an ingest completes once
+its events are stored, and how a forget completes once it commits.
 
 ## Requirements
 
@@ -17,8 +17,8 @@ and a forget stays complete anyway.
   landing more than R after its forget is outside this design, provided
   every vector store call ends within its client's configured timeouts and
   R exceeds them and any in-flight time by orders of magnitude.
-- **Self-recovery.** An event the server accepted is ingested in full even
-  if the process stops midway and the client never retries.
+- **Self-recovery.** An event its ingest stored is indexed in full even if
+  the process stops after that and the client never retries.
 - **Time bounds, not locks.** No lock is held across a vector store call,
   and no correctness argument rests on one.
 - **Horizontal scaling.** Any process serves any request and any process
@@ -107,9 +107,10 @@ store partition always has its vector store partition.
 
 ## Why it is safe
 
-A segmenter gives every segment, and a deriver every derivative, a UUID no
-other has, so a tombstone's deletes reach only the vectors of the events it
-forgot, and never those of an event added again under the same UUID.
+The design requires every segmenter to give each segment, and every deriver
+each derivative, a UUID no other has. A tombstone's deletes then reach only
+the vectors of the events it forgot, and never those of an event added
+again under the same UUID.
 
 Every vector write is one vector store call, made right after a moment
 its derivative was stored and its event not forgotten: an ingest's commit,
@@ -256,6 +257,9 @@ erasure. Removing any one piece above breaks one of them.
 
 ## Consequences
 
+- An ingest that fails before its events are stored, in the embedder, the
+  segmenter, or the deriver, stores nothing and raises; the caller adds the
+  events again.
 - An event is readable before its vectors exist, and searchable once they
   do. An ingest's success means its events are stored; when they are
   searchable is each derived index's delay, which no check reports.
