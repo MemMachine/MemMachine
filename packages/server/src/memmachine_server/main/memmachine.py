@@ -10,7 +10,7 @@ from typing import Any, Final, Protocol
 from uuid import UUID, uuid4
 
 from memmachine_common.api import MemoryType
-from pydantic import BaseModel, InstanceOf, JsonValue, ValidationError
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from memmachine_server.common.configuration import Configuration
 from memmachine_server.common.configuration.episodic_config import (
@@ -777,7 +777,7 @@ class MemMachine:
 
     async def add_episodes(
         self,
-        session_data: InstanceOf[SessionData],
+        session_data: SessionData,
         episode_entries: list[EpisodeEntry],
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
@@ -880,7 +880,7 @@ class MemMachine:
     async def _search_episodic_memory(
         self,
         *,
-        session_data: InstanceOf[SessionData],
+        session_data: SessionData,
         query: str,
         limit: int | None = None,
         expand_context: int = 0,
@@ -1084,7 +1084,7 @@ class MemMachine:
 
     async def query_search(
         self,
-        session_data: InstanceOf[SessionData],
+        session_data: SessionData,
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
         set_metadata: Mapping[str, JsonValue] | None = None,
@@ -1162,7 +1162,7 @@ class MemMachine:
 
     async def list_search(
         self,
-        session_data: InstanceOf[SessionData],
+        session_data: SessionData,
         *,
         target_memories: list[MemoryType] = ALL_MEMORY_TYPES,
         set_metadata: Mapping[str, JsonValue] | None = None,
@@ -1236,7 +1236,7 @@ class MemMachine:
 
     async def episodes_count(
         self,
-        session_data: InstanceOf[SessionData],
+        session_data: SessionData,
         *,
         search_filter: str | None = None,
     ) -> int:
@@ -1269,7 +1269,7 @@ class MemMachine:
     async def delete_episodes(
         self,
         episode_ids: list[UUID],
-        session_data: InstanceOf[SessionData],
+        session_data: SessionData,
     ) -> None:
         """
         Delete episodes from storage and memory backends.
@@ -1321,7 +1321,7 @@ class MemMachine:
     async def delete_features(
         self,
         feature_ids: list[FeatureIdT],
-        session_data: InstanceOf[SessionData],
+        session_data: SessionData,
     ) -> None:
         """
         Delete semantic features by ID.
