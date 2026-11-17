@@ -373,7 +373,7 @@ async def test_query_search_runs_targeted_memory_tasks(
 
     semantic_manager = MagicMock()
     semantic_manager.search = mock_search
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+    patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_manager
     )
 
@@ -630,7 +630,7 @@ async def test_query_search_skips_unrequested_memories(
 
     semantic_manager = MagicMock()
     semantic_manager.search = mock_search
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+    patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_manager
     )
 
@@ -703,7 +703,7 @@ async def test_add_episodes_dispatches_same_id_to_all_backends(
 
     semantic_manager = MagicMock()
     semantic_manager.add_message = AsyncMock()
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+    patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_manager
     )
 
@@ -855,7 +855,7 @@ async def test_add_episodes_writes_to_all_backends_concurrently(
 
     semantic_manager = MagicMock()
     semantic_manager.add_message = AsyncMock(side_effect=hold_semantic)
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+    patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_manager
     )
 
@@ -1030,7 +1030,7 @@ async def test_add_episodes_skips_memories_not_requested(
 
     semantic_manager = MagicMock()
     semantic_manager.add_message = AsyncMock()
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+    patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_manager
     )
 
@@ -1322,13 +1322,17 @@ async def test_delete_features_forwards_to_semantic_manager(
 
     semantic_manager = MagicMock()
     semantic_manager.delete_features = AsyncMock()
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+    patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_manager
     )
 
-    await memmachine.delete_features(["feat1", "feat2"])
+    session_data = DummySessionData("feature-session")
+    await memmachine.delete_features(["feat1", "feat2"], session_data=session_data)
 
-    semantic_manager.delete_features.assert_awaited_once_with(["feat1", "feat2"])
+    semantic_manager.delete_features.assert_awaited_once_with(
+        session_data=session_data,
+        feature_ids=["feat1", "feat2"],
+    )
 
 
 @pytest.mark.asyncio
@@ -1377,15 +1381,9 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
         return_value=episodic_manager
     )
 
-    # Mock SemanticSessionManager
-    semantic_manager = MagicMock()
-    semantic_manager.delete_feature_set = AsyncMock()
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
-        return_value=semantic_manager
-    )
-
     # Mock SemanticService
     semantic_service = MagicMock()
+    semantic_service.delete_project_sets = AsyncMock()
     semantic_service.start = AsyncMock()
     semantic_service.stop = AsyncMock()
     patched_resource_manager.get_semantic_service = AsyncMock(
@@ -1419,9 +1417,7 @@ async def test_start_deletes_marked_sessions(minimal_conf, patched_resource_mana
         session_key=session_key
     )
 
-    semantic_manager.delete_feature_set.assert_awaited_once_with(
-        session_data=test_session_data
-    )
+    semantic_service.delete_project_sets.assert_awaited_once_with(test_session_data)
 
     session_manager.delete_session.assert_awaited_once_with(session_key=session_key)
 
@@ -1851,11 +1847,11 @@ async def test_add_episodes_skips_semantic_memory_when_disabled(
     patched_resource_manager.get_episodic_memory_manager = AsyncMock(
         return_value=episodic_manager
     )
-    patched_resource_manager.get_semantic_session_manager = AsyncMock()
+    patched_resource_manager.get_semantic_service = AsyncMock()
 
     episode_ids = await memmachine.add_episodes(session, entries)
 
-    patched_resource_manager.get_semantic_session_manager.assert_not_called()
+    patched_resource_manager.get_semantic_service.assert_not_called()
     expected_episodes = [episodes[0].model_copy(update={"uid": minted_uid})]
     episodic_session.add_memory_episodes.assert_awaited_once_with(expected_episodes)
     assert episode_ids == [minted_uid]
@@ -1881,13 +1877,13 @@ async def test_query_search_skips_semantic_memory_when_disabled(
         )
     )
     monkeypatch.setattr(MemMachine, "_search_episodic_memory", async_episodic)
-    patched_resource_manager.get_semantic_session_manager = AsyncMock()
+    patched_resource_manager.get_semantic_service = AsyncMock()
 
     memmachine = MemMachine(minimal_conf, patched_resource_manager)
 
     result = await memmachine.query_search(dummy_session, query="find")
 
-    patched_resource_manager.get_semantic_session_manager.assert_not_called()
+    patched_resource_manager.get_semantic_service.assert_not_called()
     async_episodic.assert_awaited_once()
     assert result.semantic_memory is None
     assert result.episodic_memory is not None
@@ -1936,7 +1932,7 @@ async def test_query_search_uses_semantic_memory_when_enabled(
 
     semantic_manager = MagicMock()
     semantic_manager.search = mock_search
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+    patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_manager
     )
 
@@ -1944,7 +1940,7 @@ async def test_query_search_uses_semantic_memory_when_enabled(
 
     result = await memmachine.query_search(dummy_session, query="find")
 
-    patched_resource_manager.get_semantic_session_manager.assert_awaited_once()
+    patched_resource_manager.get_semantic_service.assert_awaited_once()
     assert result.semantic_memory == semantic_features
 
 
@@ -1963,11 +1959,11 @@ async def test_list_search_skips_semantic_memory_when_disabled(
     patched_resource_manager.get_episode_storage = AsyncMock(
         return_value=episode_storage
     )
-    patched_resource_manager.get_semantic_session_manager = AsyncMock()
+    patched_resource_manager.get_semantic_service = AsyncMock()
 
     result = await memmachine.list_search(session)
 
-    patched_resource_manager.get_semantic_session_manager.assert_not_called()
+    patched_resource_manager.get_semantic_service.assert_not_called()
     assert result.episodic_memory == episodes
     assert result.semantic_memory is None
 
@@ -2007,13 +2003,13 @@ async def test_list_search_uses_semantic_memory_when_enabled(
 
     semantic_manager = MagicMock()
     semantic_manager.get_set_features = mock_get_set_features
-    patched_resource_manager.get_semantic_session_manager = AsyncMock(
+    patched_resource_manager.get_semantic_service = AsyncMock(
         return_value=semantic_manager
     )
 
     result = await memmachine.list_search(session)
 
-    patched_resource_manager.get_semantic_session_manager.assert_awaited_once()
+    patched_resource_manager.get_semantic_service.assert_awaited_once()
     assert result.semantic_memory == semantic_features
 
 

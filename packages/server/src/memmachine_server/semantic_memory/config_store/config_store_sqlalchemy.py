@@ -1,15 +1,21 @@
 """SQLAlchemy-backed implementation of the semantic config storage."""
 
+import json
 import logging
+from collections.abc import Collection, Iterable, Mapping
+from itertools import batched
 
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
+    Index,
     Integer,
     UniqueConstraint,
     delete,
     insert,
     select,
+    text,
+    union,
     update,
 )
 from sqlalchemy.dialects.postgresql import Insert as PgInsert
@@ -45,6 +51,56 @@ logger = logging.getLogger(__name__)
 
 class BaseSemanticConfigStore(DeclarativeBase):
     """Declarative base class for Semantic Config Store."""
+
+
+class SemanticSet(BaseSemanticConfigStore):
+    """A semantic set and the org and project that own it."""
+
+    __tablename__ = "semantic_config_set"
+
+    id = mapped_column(String, primary_key=True)
+    org_id = mapped_column(String, nullable=False)
+    project_id = mapped_column(String, nullable=True)
+    set_metadata = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id",
+            "project_id",
+            "set_metadata",
+            name="semantic_config_set__or_pr_sm",
+        ),
+        # NULLs are distinct in unique constraints, so org sets need their own.
+        Index(
+            "semantic_config_set__or_sm",
+            "org_id",
+            "set_metadata",
+            unique=True,
+            postgresql_where=text("project_id IS NULL"),
+            sqlite_where=text("project_id IS NULL"),
+        ),
+    )
+
+    def to_typed_model(self) -> SemanticConfigStorage.Set:
+        return SemanticConfigStorage.Set(
+            id=SetIdT(self.id),
+            org_id=self.org_id,
+            project_id=self.project_id,
+            set_metadata=json.loads(self.set_metadata),
+        )
+
+
+# Rows or ids per statement, within every dialect's bound parameter limit.
+_BATCH_SIZE = 200
+
+
+def _encode_set_metadata(set_metadata: Mapping[str, str]) -> str:
+    return json.dumps(
+        dict(set_metadata),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 class SetIdResources(BaseSemanticConfigStore):
@@ -239,6 +295,8 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
 
     async def delete_all(self) -> None:
         async with self._create_session() as session:
+            result = await session.execute(delete(SemanticSet))
+            result.close()
             result = await session.execute(delete(SetIdResources))
             result.close()
             result = await session.execute(delete(SetIdSetType))
@@ -253,6 +311,109 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             result.close()
 
             await session.commit()
+
+    async def add_sets(self, *, sets: Iterable[SemanticConfigStorage.Set]) -> None:
+        values = [
+            {
+                "id": semantic_set.id,
+                "org_id": semantic_set.org_id,
+                "project_id": semantic_set.project_id,
+                "set_metadata": _encode_set_metadata(semantic_set.set_metadata),
+            }
+            for semantic_set in sets
+        ]
+        if not values:
+            return
+
+        dialect_name = self._engine.dialect.name
+        ins: PgInsert | SQliteInsert
+        if dialect_name == "postgresql":
+            ins = pg_insert(SemanticSet)
+        elif dialect_name == "sqlite":
+            ins = sqlite_insert(SemanticSet)
+        else:
+            raise NotImplementedError
+
+        async with self._create_session() as session:
+            for batch in batched(values, _BATCH_SIZE):
+                result = await session.execute(
+                    ins.values(list(batch)).on_conflict_do_nothing()
+                )
+                result.close()
+            await session.commit()
+
+    async def get_sets(
+        self, *, set_ids: Collection[SetIdT]
+    ) -> list[SemanticConfigStorage.Set]:
+        sets: list[SemanticConfigStorage.Set] = []
+        async with self._create_session() as session:
+            for batch in batched(set_ids, _BATCH_SIZE):
+                res = await session.execute(
+                    select(SemanticSet).where(SemanticSet.id.in_(batch))
+                )
+                sets.extend(row.to_typed_model() for row in res.scalars().all())
+        return sets
+
+    async def find_sets(
+        self,
+        *,
+        org_id: str,
+        project_id: str | None,
+        set_metadata: Collection[Mapping[str, str]] | None = None,
+        limit: int | None = None,
+    ) -> list[SemanticConfigStorage.Set]:
+        stmt = select(SemanticSet).where(
+            SemanticSet.org_id == org_id,
+            SemanticSet.project_id.is_(None)
+            if project_id is None
+            else SemanticSet.project_id == project_id,
+        )
+        if set_metadata is not None:
+            if not set_metadata:
+                return []
+            stmt = stmt.where(
+                SemanticSet.set_metadata.in_(
+                    {_encode_set_metadata(m) for m in set_metadata}
+                )
+            )
+        stmt = stmt.order_by(SemanticSet.id).limit(limit)
+
+        async with self._create_session() as session:
+            res = await session.execute(stmt)
+            return [row.to_typed_model() for row in res.scalars().all()]
+
+    async def delete_sets(self, *, set_ids: Collection[SetIdT]) -> None:
+        if not set_ids:
+            return
+
+        set_category_ids = select(Category.id).where(Category.set_id.in_(set_ids))
+
+        async with self._create_session() as session:
+            for stmt in (
+                delete(Tag).where(Tag.category_id.in_(set_category_ids)),
+                delete(Category).where(Category.set_id.in_(set_ids)),
+                delete(DisabledDefaultCategories).where(
+                    DisabledDefaultCategories.set_id.in_(set_ids)
+                ),
+                delete(SetIdResources).where(SetIdResources.set_id.in_(set_ids)),
+                delete(SetIdSetType).where(SetIdSetType.set_id.in_(set_ids)),
+                delete(SemanticSet).where(SemanticSet.id.in_(set_ids)),
+            ):
+                result = await session.execute(stmt)
+                result.close()
+
+            await session.commit()
+
+    async def get_configured_set_ids(self) -> list[SetIdT]:
+        stmt = union(
+            select(SetIdResources.set_id),
+            select(SetIdSetType.set_id),
+            select(Category.set_id).where(Category.set_id.is_not(None)),
+        )
+
+        async with self._create_session() as session:
+            res = await session.execute(stmt)
+            return [SetIdT(set_id) for set_id in res.scalars().all()]
 
     async def set_setid_config(
         self,
@@ -455,6 +616,10 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             name=category.name,
             prompt=category.prompt,
             description=category.description,
+            set_id=category.set_id,
+            set_type_id=None
+            if category.set_type_id is None
+            else str(category.set_type_id),
         )
 
     async def get_category_set_ids(
@@ -661,6 +826,7 @@ class SemanticConfigStorageSqlAlchemy(SemanticConfigStorage):
             id=str(tag_id_int),
             name=tag.name,
             description=tag.description,
+            category_id=CategoryIdT(tag.category_id),
         )
 
     async def add_tag(

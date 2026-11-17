@@ -36,10 +36,8 @@ from memmachine_server.common.errors import (
     LanguageModelNotFoundError,
     RerankerNotFoundError,
 )
+from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_model import SemanticCategory
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
-)
 from memmachine_server.server.prompt.default_prompts import (
     PREDEFINED_SEMANTIC_CATEGORIES,
 )
@@ -304,22 +302,22 @@ class PromptConf(YamlSerializableMixin):
     @property
     def default_semantic_categories(
         self,
-    ) -> dict[SemanticSessionManager.SetType, list[SemanticCategory]]:
+    ) -> dict[SemanticService.SetType, list[SemanticCategory]]:
         """Build the default semantic categories for each isolation type."""
         semantic_categories = PREDEFINED_SEMANTIC_CATEGORIES
 
         return {
-            SemanticSessionManager.SetType.OrgSet: [
+            SemanticService.SetType.OrgSet: [
                 semantic_categories[s_name] for s_name in self.default_org_categories
             ],
-            SemanticSessionManager.SetType.ProjectSet: [
+            SemanticService.SetType.ProjectSet: [
                 semantic_categories[s_name]
                 for s_name in self.default_project_categories
             ],
-            SemanticSessionManager.SetType.UserSet: [
+            SemanticService.SetType.UserSet: [
                 semantic_categories[s_name] for s_name in self.default_user_categories
             ],
-            SemanticSessionManager.SetType.OtherSet: [],
+            SemanticService.SetType.OtherSet: [],
         }
 
 

@@ -20,12 +20,6 @@ from memmachine_server.semantic_memory.semantic_memory import (
     ResourceManager,
     SemanticService,
 )
-from memmachine_server.semantic_memory.semantic_model import (
-    SetIdT,
-)
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
-)
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from memmachine_server.server.prompt.coding_style_prompt import (
     CodingStyleSemanticCategory,
@@ -68,14 +62,14 @@ def default_session_categories(
     profile_types,
 ):
     s_categories = {
-        SemanticSessionManager.SetType.OrgSet: session_types,
-        SemanticSessionManager.SetType.ProjectSet: profile_types,
-        SemanticSessionManager.SetType.UserSet: session_types,
-        SemanticSessionManager.SetType.OtherSet: [],
+        SemanticService.SetType.OrgSet: session_types,
+        SemanticService.SetType.ProjectSet: profile_types,
+        SemanticService.SetType.UserSet: session_types,
+        SemanticService.SetType.OtherSet: [],
     }
 
-    def get_cats(set_id: SetIdT):
-        isolation_type = SemanticSessionManager.get_default_set_id_type(set_id)
+    def get_cats(semantic_set: SemanticConfigStorage.Set):
+        isolation_type = SemanticService.get_set_type(semantic_set)
         return s_categories[isolation_type]
 
     return get_cats
@@ -130,22 +124,16 @@ async def semantic_service(
     await mem.stop()
 
 
-@pytest_asyncio.fixture
-async def semantic_memory(
-    semantic_service: SemanticService,
-    semantic_config_storage: SemanticConfigStorage,
-):
-    return SemanticSessionManager(
-        semantic_service=semantic_service,
-        semantic_config_storage=semantic_config_storage,
-    )
+@pytest.fixture
+def semantic_memory(semantic_service: SemanticService) -> SemanticService:
+    return semantic_service
 
 
 class TestLongMemEvalIngestion:
     @staticmethod
     async def ingest_question_convos(
-        session_data: SemanticSessionManager.SessionData,
-        semantic_memory: SemanticSessionManager,
+        session_data: SemanticService.SessionData,
+        semantic_memory: SemanticService,
         history_storage: EpisodeStorage,
         conversation_sessions: list[list[dict[str, str]]],
     ):
@@ -171,8 +159,8 @@ class TestLongMemEvalIngestion:
 
     @staticmethod
     async def eval_answer(
-        session_data: SemanticSessionManager.SessionData,
-        semantic_memory: SemanticSessionManager,
+        session_data: SemanticService.SessionData,
+        semantic_memory: SemanticService,
         question_str: str,
         llm_model: OpenAIResponsesLanguageModel,
     ):

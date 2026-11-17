@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Collection, Iterable, Mapping
 
 from memmachine_server.common import rw_locks
 from memmachine_server.semantic_memory.config_store.config_store import (
@@ -53,6 +54,36 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
     async def delete_all(self) -> None:
         await self._wrapped.delete_all()
         await self._clear_all_caches()
+
+    async def add_sets(self, *, sets: Iterable[SemanticConfigStorage.Set]) -> None:
+        await self._wrapped.add_sets(sets=sets)
+
+    async def get_sets(
+        self, *, set_ids: Collection[SetIdT]
+    ) -> list[SemanticConfigStorage.Set]:
+        return await self._wrapped.get_sets(set_ids=set_ids)
+
+    async def find_sets(
+        self,
+        *,
+        org_id: str,
+        project_id: str | None,
+        set_metadata: Collection[Mapping[str, str]] | None = None,
+        limit: int | None = None,
+    ) -> list[SemanticConfigStorage.Set]:
+        return await self._wrapped.find_sets(
+            org_id=org_id,
+            project_id=project_id,
+            set_metadata=set_metadata,
+            limit=limit,
+        )
+
+    async def delete_sets(self, *, set_ids: Collection[SetIdT]) -> None:
+        await self._wrapped.delete_sets(set_ids=set_ids)
+        await self._clear_all_caches()
+
+    async def get_configured_set_ids(self) -> list[SetIdT]:
+        return await self._wrapped.get_configured_set_ids()
 
     async def set_setid_config(
         self,
@@ -155,6 +186,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
             description=description,
         )
         await self._invalidate_set_id_config(set_id)
+        await self._invalidate_category(category_id)
         return category_id
 
     async def clone_category(
@@ -170,6 +202,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
             new_name=new_name,
         )
         await self._invalidate_set_id_config(new_set_id)
+        await self._invalidate_category(cloned_id)
         return cloned_id
 
     async def delete_category(self, *, category_id: CategoryIdT) -> None:
@@ -225,6 +258,7 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
 
         async with self._other_lock.write_lock():
             self._set_type_categories_cache.pop(set_type_id, None)
+            self._category_cache.pop(category_id, None)
 
         async with self._setid_global_lock.write_lock():
             self._setid_config_cache.clear()
@@ -339,6 +373,9 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
         async with self._other_lock.write_lock():
             self._set_type_categories_cache.pop(set_type_id, None)
             self._set_type_ids_cache.clear()
+            # Deleting a set type also deletes its categories and their tags.
+            self._category_cache.clear()
+            self._tag_cache.clear()
 
         async with self._setid_global_lock.write_lock():
             self._setid_config_cache.clear()
@@ -361,6 +398,10 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
             self._setid_locks[set_id].write_lock(),
         ):
             self._setid_config_cache.pop(set_id, None)
+
+    async def _invalidate_category(self, category_id: CategoryIdT) -> None:
+        async with self._other_lock.write_lock():
+            self._category_cache.pop(category_id, None)
 
     async def _invalidate_tags_and_setid_configs(self) -> None:
         async with self._setid_global_lock.write_lock():

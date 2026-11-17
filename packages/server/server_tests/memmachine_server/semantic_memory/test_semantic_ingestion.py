@@ -31,13 +31,13 @@ from memmachine_server.semantic_memory.semantic_model import (
     SemanticFeature,
     SemanticPrompt,
 )
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
-)
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from server_tests.memmachine_server.semantic_memory.mock_semantic_memory_objects import (
     MockEmbedder,
     MockResourceRetriever,
+)
+from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (
+    register_history,
 )
 
 
@@ -263,18 +263,14 @@ async def test_ingestion_keeps_latest_value_across_uuid_ordered_batches(
         ],
     )
     history_ids = episodes if same_timestamp else list(reversed(episodes))
-    session_manager = SemanticSessionManager(
-        semantic_service=semantic_service,
-        semantic_config_storage=semantic_config_storage,
-    )
     monkeypatch.setattr(
-        session_manager,
-        "_get_set_ids_str_from_metadata",
-        AsyncMock(return_value={"colors"}),
+        semantic_service,
+        "_add_set_ids",
+        AsyncMock(return_value=["colors"]),
     )
     session_data = SimpleNamespace(org_id="org", project_id="project")
     for batch in (history_ids[:3], history_ids[3:]):
-        await session_manager.add_message(episodes=batch, session_data=session_data)
+        await semantic_service.add_message(episodes=batch, session_data=session_data)
     seen_messages: list[str] = []
 
     async def update_color(*, message_content: str, **_kwargs) -> list[SemanticCommand]:
@@ -678,7 +674,9 @@ async def test_process_single_set_deletes_invalid_episode_ids(
     await semantic_service.stop()
     valid_id = await add_history(episode_storage, content="valid message")
     invalid_id = UUID("550e8400-e29b-41d4-a716-446655449999")
-    await semantic_service.add_messages("user-999", [valid_id, invalid_id])
+    await register_history(
+        semantic_storage, episode_storage, "user-999", [valid_id, invalid_id]
+    )
 
     commands = [
         SemanticCommand(
@@ -733,7 +731,9 @@ async def test_process_single_set_raises_in_debug_mode_for_invalid_ids(
     await semantic_service.stop()
     valid_id = await add_history(episode_storage, content="valid message")
     invalid_id = UUID("550e8400-e29b-41d4-a716-446655449999")
-    await semantic_service.add_messages("user-888", [valid_id, invalid_id])
+    await register_history(
+        semantic_storage, episode_storage, "user-888", [valid_id, invalid_id]
+    )
 
     ingestion_service = IngestionService(
         IngestionService.Params(

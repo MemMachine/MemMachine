@@ -663,7 +663,13 @@ def test_delete_semantic_memory(client, mock_memmachine):
     # Success
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 204
-    mock_memmachine.delete_features.assert_awaited_once_with(feature_ids=["sem1"])
+    mock_memmachine.delete_features.assert_awaited_once_with(
+        session_data=_SessionData(
+            org_id="test_org",
+            project_id="test_proj",
+        ),
+        feature_ids=["sem1"],
+    )
 
     # Invalid arg
     mock_memmachine.delete_features.reset_mock()
@@ -699,7 +705,11 @@ def test_delete_semantic_memories(client, mock_memmachine):
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 204
     mock_memmachine.delete_features.assert_awaited_once_with(
-        feature_ids=["sem1", "sem3"]
+        session_data=_SessionData(
+            org_id="test_org",
+            project_id="test_proj",
+        ),
+        feature_ids=["sem1", "sem3"],
     )
 
 
@@ -1126,7 +1136,8 @@ def test_delete_semantic_set_type(client, mock_memmachine):
     assert response.status_code == 204
 
     mock_memmachine.delete_semantic_set_type.assert_awaited_once_with(
-        set_type_id="st_123"
+        session_data=_SessionData(org_id="test_org", project_id="test_proj"),
+        set_type_id="st_123",
     )
 
 
@@ -2175,3 +2186,125 @@ def test_configure_long_term_memory_error(client, mock_memmachine):
     assert (
         "Unable to configure long-term memory" in response.json()["detail"]["message"]
     )
+
+
+_SEMANTIC_ID_ROUTES = [
+    (
+        "/api/v2/memories/semantic/feature",
+        "add_feature",
+        {
+            "set_id": "set_1",
+            "category_name": "preferences",
+            "tag": "food",
+            "feature": "favorite_food",
+            "value": "pizza",
+        },
+    ),
+    ("/api/v2/memories/semantic/feature/get", "get_feature", {"feature_id": "1"}),
+    ("/api/v2/memories/semantic/feature/update", "update_feature", {"feature_id": "1"}),
+    (
+        "/api/v2/memories/semantic/set_type/delete",
+        "delete_semantic_set_type",
+        {"set_type_id": "st_1"},
+    ),
+    (
+        "/api/v2/memories/semantic/set/configure",
+        "configure_semantic_set",
+        {"set_id": "set_1", "llm_name": "llm"},
+    ),
+    (
+        "/api/v2/memories/semantic/category/get",
+        "semantic_get_category",
+        {"category_id": "1"},
+    ),
+    (
+        "/api/v2/memories/semantic/category",
+        "semantic_add_category",
+        {"set_id": "set_1", "category_name": "hobbies", "prompt": "Hobbies"},
+    ),
+    (
+        "/api/v2/memories/semantic/category/template",
+        "semantic_add_category_template",
+        {"set_type_id": "st_1", "category_name": "hobbies", "prompt": "Hobbies"},
+    ),
+    (
+        "/api/v2/memories/semantic/category/template/list",
+        "semantic_list_category_templates",
+        {"set_type_id": "st_1"},
+    ),
+    (
+        "/api/v2/memories/semantic/category/disable",
+        "semantic_disable_category",
+        {"set_id": "set_1", "category_name": "profile"},
+    ),
+    (
+        "/api/v2/memories/semantic/category/set_ids/get",
+        "semantic_get_category_set_ids",
+        {"category_id": "1"},
+    ),
+    (
+        "/api/v2/memories/semantic/category/delete",
+        "semantic_delete_category",
+        {"category_id": "1"},
+    ),
+    (
+        "/api/v2/memories/semantic/category/tag",
+        "semantic_add_tag_to_category",
+        {"category_id": "1", "tag_name": "sport", "tag_description": "Sports"},
+    ),
+    (
+        "/api/v2/memories/semantic/category/tag/delete",
+        "semantic_delete_tag",
+        {"tag_id": "1"},
+    ),
+]
+
+
+@pytest.mark.parametrize(("route", "method", "fields"), _SEMANTIC_ID_ROUTES)
+def test_semantic_id_routes_act_for_the_request_project(
+    client, mock_memmachine, route, method, fields
+):
+    getattr(mock_memmachine, method).return_value = {
+        "add_feature": "1",
+        "semantic_add_category": "1",
+        "semantic_add_category_template": "1",
+        "semantic_add_tag_to_category": "1",
+        "semantic_list_category_templates": [],
+        "semantic_get_category_set_ids": [],
+    }.get(method)
+
+    client.post(route, json={"org_id": "test_org", "project_id": "test_proj", **fields})
+
+    getattr(mock_memmachine, method).assert_awaited_once()
+    assert getattr(mock_memmachine, method).call_args.kwargs[
+        "session_data"
+    ] == _SessionData(org_id="test_org", project_id="test_proj")
+
+
+@pytest.mark.parametrize(
+    ("route", "method", "fields"),
+    [
+        entry
+        for entry in _SEMANTIC_ID_ROUTES
+        if entry[1]
+        in {
+            "add_feature",
+            "update_feature",
+            "configure_semantic_set",
+            "semantic_add_category",
+            "semantic_add_category_template",
+            "semantic_disable_category",
+            "semantic_add_tag_to_category",
+        }
+    ],
+)
+def test_semantic_writes_to_ids_outside_the_project_answer_not_found(
+    client, mock_memmachine, route, method, fields
+):
+    getattr(mock_memmachine, method).side_effect = ResourceNotFoundError("Not found")
+
+    response = client.post(
+        route, json={"org_id": "test_org", "project_id": "test_proj", **fields}
+    )
+
+    assert response.status_code == 404

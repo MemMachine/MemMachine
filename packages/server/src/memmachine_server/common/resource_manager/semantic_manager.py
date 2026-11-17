@@ -25,16 +25,13 @@ from memmachine_server.semantic_memory.config_store.config_store import (
 from memmachine_server.semantic_memory.config_store.config_store_sqlalchemy import (
     SemanticConfigStorageSqlAlchemy,
 )
+from memmachine_server.semantic_memory.legacy_set_ids import register_legacy_set_ids
 from memmachine_server.semantic_memory.semantic_memory import (
     ResourceManager,
     SemanticService,
 )
 from memmachine_server.semantic_memory.semantic_model import (
     SemanticCategory,
-    SetIdT,
-)
-from memmachine_server.semantic_memory.semantic_session_manager import (
-    SemanticSessionManager,
 )
 from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
@@ -69,7 +66,6 @@ class SemanticResourceManager:
         self._episode_storage = episode_storage
 
         self._semantic_service: SemanticService | None = None
-        self._semantic_session_manager: SemanticSessionManager | None = None
 
     async def close(self) -> None:
         """Stop semantic services if they were started."""
@@ -231,8 +227,10 @@ class SemanticResourceManager:
 
         semantic_categories_by_isolation = self._prompt_conf.default_semantic_categories
 
-        def get_default_categories(set_id: SetIdT) -> list[SemanticCategory]:
-            def_type = SemanticSessionManager.get_default_set_id_type(set_id)
+        def get_default_categories(
+            semantic_set: SemanticConfigStorage.Set,
+        ) -> list[SemanticCategory]:
+            def_type = SemanticService.get_set_type(semantic_set)
             return semantic_categories_by_isolation[def_type]
 
         embedder_name = self._get_default_embedder_name()
@@ -240,6 +238,10 @@ class SemanticResourceManager:
         llm_model = await self._get_default_language_model()
 
         config_store = await self.get_semantic_config_storage()
+        await register_legacy_set_ids(
+            semantic_storage=semantic_storage,
+            semantic_config_storage=config_store,
+        )
 
         self._semantic_service = SemanticService(
             SemanticService.Params(
@@ -258,14 +260,3 @@ class SemanticResourceManager:
             ),
         )
         return self._semantic_service
-
-    async def get_semantic_session_manager(self) -> SemanticSessionManager:
-        """Return the semantic session manager, constructing if needed."""
-        if self._semantic_session_manager is not None:
-            return self._semantic_session_manager
-
-        self._semantic_session_manager = SemanticSessionManager(
-            semantic_service=await self.get_semantic_service(),
-            semantic_config_storage=await self.get_semantic_config_storage(),
-        )
-        return self._semantic_session_manager

@@ -347,12 +347,12 @@ async def initialize_resource() -> MemMachine:
     Initialize shared resources for profile and episodic memory.
 
     This is a temporary solution to unify ProfileMemory and Episodic Memory
-    configuration. It initializes SemanticSessionManager and EpisodicMemoryManager
+    configuration. It initializes SemanticService and EpisodicMemoryManager
     instances, and establishes necessary connections (e.g., to the database).
     These resources are cleaned up on shutdown.
 
     Returns:
-        A tuple containing the EpisodicMemoryManager, SemanticSessionManager,
+        A tuple containing the EpisodicMemoryManager, SemanticService,
         and SessionIdManager instances.
 
     """

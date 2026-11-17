@@ -117,6 +117,7 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
 
     feature_ids = [
         await memmachine.add_feature(
+            session_data=session_info,
             set_id=set_id,
             category_name="profile",
             feature="topic",
@@ -164,7 +165,7 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
             "semantic-4",
         ]
     finally:
-        await memmachine.delete_features(feature_ids)
+        await memmachine.delete_features(feature_ids, session_data=session_info)
         await memmachine.delete_session(session_info)
 
 
@@ -408,6 +409,7 @@ async def test_memmachine_delete_features_removes_semantic_entries(
     )
 
     feature_id = await memmachine.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="profile",
         feature="alias",
@@ -416,13 +418,18 @@ async def test_memmachine_delete_features_removes_semantic_entries(
     )
 
     try:
-        assert await memmachine.get_feature(feature_id) is not None
-        await memmachine.delete_features([feature_id])
-        assert await memmachine.get_feature(feature_id) is None
+        assert (
+            await memmachine.get_feature(feature_id, session_data=session_data)
+            is not None
+        )
+        await memmachine.delete_features([feature_id], session_data=session_data)
+        assert (
+            await memmachine.get_feature(feature_id, session_data=session_data) is None
+        )
     finally:
-        leftover = await memmachine.get_feature(feature_id)
+        leftover = await memmachine.get_feature(feature_id, session_data=session_data)
         if leftover is not None:
-            await memmachine.delete_features([feature_id])
+            await memmachine.delete_features([feature_id], session_data=session_data)
 
 
 @pytest.mark.asyncio
@@ -434,6 +441,7 @@ async def test_add_then_get_feature(memmachine: MemMachine, session_data):
     )
 
     feature_id = await memmachine.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="profile",
         feature="alias",
@@ -441,7 +449,7 @@ async def test_add_then_get_feature(memmachine: MemMachine, session_data):
         tag="facts",
     )
 
-    feature = await memmachine.get_feature(feature_id)
+    feature = await memmachine.get_feature(feature_id, session_data=session_data)
     assert feature is not None
     assert feature.value == "integration alias"
 
@@ -455,6 +463,7 @@ async def test_add_update_get_feature(memmachine: MemMachine, session_data):
     )
 
     feature_id = await memmachine.add_feature(
+        session_data=session_data,
         set_id=set_id,
         category_name="profile",
         feature="alias",
@@ -462,18 +471,21 @@ async def test_add_update_get_feature(memmachine: MemMachine, session_data):
         tag="facts",
     )
 
-    feature = await memmachine.get_feature(feature_id)
+    feature = await memmachine.get_feature(feature_id, session_data=session_data)
     assert feature is not None
     assert feature.value == "integration alias"
 
     await memmachine.update_feature(
+        session_data=session_data,
         feature_id=feature_id,
         category_name="profile",
         feature="alias",
         value="integration alias updated",
     )
 
-    updated_feature = await memmachine.get_feature(feature_id)
+    updated_feature = await memmachine.get_feature(
+        feature_id, session_data=session_data
+    )
     assert updated_feature is not None
     assert updated_feature.value == "integration alias updated"
 
@@ -506,7 +518,9 @@ async def test_create_and_delete_semantic_set_type(
 
     set_type_id = semantic_set_types[0].id
     assert set_type_id is not None
-    await memmachine.delete_semantic_set_type(set_type_id)
+    await memmachine.delete_semantic_set_type(
+        session_data=session_data, set_type_id=set_type_id
+    )
 
     semantic_set_types = list(
         await memmachine.list_semantic_set_type(session_data=session_data)
@@ -587,6 +601,7 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
     )
 
     category_id = await memmachine.semantic_add_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="profile",
         prompt="profile category",
@@ -594,6 +609,7 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
     )
 
     await memmachine.semantic_add_tag_to_category(
+        session_data=session_data,
         category_id=category_id,
         tag_name="alias",
         tag_description="profile alias",
@@ -620,9 +636,7 @@ async def test_custom_semantic_set_type_ingestion(memmachine: MemMachine, sessio
             )
             semantic_memory = search_response.semantic_memory or []
             user_id_features = [
-                feat
-                for feat in semantic_memory
-                if feat.set_id and "user_id" in feat.set_id
+                feat for feat in semantic_memory if feat.set_id == set_id
             ]
             if user_id_features:
                 break
@@ -654,6 +668,7 @@ async def test_memmachine_semantic_add_and_get_category(
     )
 
     category_id = await memmachine.semantic_add_category(
+        session_data=session_data,
         set_id=set_id,
         category_name="profile",
         prompt="profile category",
@@ -661,6 +676,7 @@ async def test_memmachine_semantic_add_and_get_category(
     )
 
     category = await memmachine.semantic_get_category(
+        session_data=session_data,
         category_id=category_id,
     )
 

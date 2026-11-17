@@ -1,5 +1,6 @@
 """Abstract interface for storing semantic configuration data."""
 
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -19,6 +20,59 @@ class SemanticConfigStorage(Protocol):
     async def startup(self) -> None: ...
 
     async def delete_all(self) -> None: ...
+
+    @dataclass(frozen=True)
+    class Set:
+        """A semantic set and the org and project that own it."""
+
+        id: SetIdT
+        org_id: str
+        project_id: str | None
+        """`None` for a set of the whole org."""
+        set_metadata: Mapping[str, str]
+
+    async def add_sets(self, *, sets: Iterable[Set]) -> None:
+        """
+        Add sets, keeping any existing set with the same id or key.
+
+        A set's key is its org, project and set metadata. Callers racing to
+        add one key keep a single set; `find_sets` returns it.
+        """
+        ...
+
+    async def get_sets(self, *, set_ids: Collection[SetIdT]) -> list[Set]:
+        """Return the sets with the given ids, in any order; unknown ids are skipped."""
+        ...
+
+    async def find_sets(
+        self,
+        *,
+        org_id: str,
+        project_id: str | None,
+        set_metadata: Collection[Mapping[str, str]] | None = None,
+        limit: int | None = None,
+    ) -> list[Set]:
+        """
+        Return the sets of one org and project with the given set metadata.
+
+        Args:
+            org_id: Org that owns the sets.
+            project_id: Project that owns the sets, or `None` for sets of
+                the whole org.
+            set_metadata: Set metadata to match, or `None` to match every
+                set of the org and project.
+            limit: Maximum number of sets to return.
+
+        """
+        ...
+
+    async def delete_sets(self, *, set_ids: Collection[SetIdT]) -> None:
+        """Delete the sets and the configuration of each."""
+        ...
+
+    async def get_configured_set_ids(self) -> list[SetIdT]:
+        """Return every set id that has configuration, registered or not."""
+        ...
 
     async def set_setid_config(
         self,
@@ -58,6 +112,10 @@ class SemanticConfigStorage(Protocol):
         name: str
         prompt: str
         description: str | None
+        set_id: SetIdT | None
+        """Set the category belongs to, or `None` for a set type's category."""
+        set_type_id: str | None
+        """Set type the category belongs to, or `None` for a set's category."""
 
     async def get_category(
         self,
@@ -130,6 +188,7 @@ class SemanticConfigStorage(Protocol):
         id: str
         name: str
         description: str
+        category_id: CategoryIdT
 
     async def get_tag(
         self,

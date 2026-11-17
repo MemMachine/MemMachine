@@ -17,8 +17,11 @@ from memmachine_server.semantic_memory.semantic_model import (
     SemanticCommandType,
 )
 from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (
+    SessionData,
     SpyEmbedder,
     add_history,
+    get_set_id,
+    register_history,
 )
 from server_tests.memmachine_server.semantic_memory.storage.in_memory_semantic_storage import (
     SemanticStorage,
@@ -112,7 +115,9 @@ async def test_background_age_trigger_uses_storage_clock(
 
 async def test_background_ingestion_handles_errors_gracefully(
     semantic_service: SemanticService,
+    semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
+    session_data: SessionData,
     monkeypatch,
 ):
     async def mock_llm_error(*args, **kwargs):
@@ -125,7 +130,8 @@ async def test_background_ingestion_handles_errors_gracefully(
 
     msg1 = await add_history(history_storage=episode_storage, content="Test message 1")
     msg2 = await add_history(history_storage=episode_storage, content="Test message 2")
-    await semantic_service.add_messages(set_id="user-error", history_ids=[msg1, msg2])
+    set_id = await get_set_id(semantic_service, session_data, user="error")
+    await register_history(semantic_storage, episode_storage, set_id, [msg1, msg2])
 
     # Wait for background processing
     await asyncio.sleep(0.2)
@@ -140,14 +146,16 @@ async def test_consolidation_threshold_not_reached(
     semantic_storage: SemanticStorage,
     episode_storage: EpisodeStorage,
     semantic_category_retriever,
+    session_data: SessionData,
 ):
     semantic_type = semantic_category_retriever("test")[0]
+    set_id = await get_set_id(semantic_service, session_data, user="consolidate")
 
     # Given a service with high consolidation threshold
 
     # Add a few features (less than threshold)
     await semantic_storage.add_feature(
-        set_id="user-consolidate",
+        set_id=set_id,
         category_name=semantic_type.name,
         feature="color1",
         value="red",
@@ -155,7 +163,7 @@ async def test_consolidation_threshold_not_reached(
         embedding=np.array([1.0, 0.0]),
     )
     await semantic_storage.add_feature(
-        set_id="user-consolidate",
+        set_id=set_id,
         category_name=semantic_type.name,
         feature="color2",
         value="blue",
@@ -164,9 +172,7 @@ async def test_consolidation_threshold_not_reached(
     )
 
     # Get initial count
-    filter_str = (
-        f"set_id IN ('user-consolidate') AND category_name IN ('{semantic_type.name}')"
-    )
+    filter_str = f"set_id IN ('{set_id}') AND category_name IN ('{semantic_type.name}')"
     features_before = await _collect_feature_set(
         semantic_storage,
         filter_expr=parse_filter(filter_str),
@@ -175,7 +181,7 @@ async def test_consolidation_threshold_not_reached(
 
     # Add messages to trigger background processing
     msg_id = await add_history(history_storage=episode_storage, content="I like colors")
-    await semantic_service.add_messages(set_id="user-consolidate", history_ids=[msg_id])
+    await register_history(semantic_storage, episode_storage, set_id, [msg_id])
 
     # Wait for processing
     await asyncio.sleep(0.2)
@@ -198,6 +204,7 @@ async def test_multiple_sets_processed_independently(
     semantic_resource_manager,
     mock_llm_model,
     spy_embedder: SpyEmbedder,
+    session_data: SessionData,
     monkeypatch,
 ):
     semantic_type = semantic_category_retriever("test")[0]
@@ -217,6 +224,8 @@ async def test_multiple_sets_processed_independently(
         default_category_retriever=semantic_category_retriever,
     )
     service = SemanticService(params)
+    set_a = await get_set_id(service, session_data, user="a")
+    set_b = await get_set_id(service, session_data, user="b")
     await service.start()
 
     async def mock_llm_update(*args, **kwargs):
@@ -248,34 +257,34 @@ async def test_multiple_sets_processed_independently(
         history_storage=episode_storage,
         content="user-a message 1",
     )
-    await service.add_messages(set_id="user-a", history_ids=[msg_a1])
+    await register_history(semantic_storage, episode_storage, set_a, [msg_a1])
     msg_a2 = await add_history(
         history_storage=episode_storage,
         content="user-a message 2",
     )
-    await service.add_messages(set_id="user-a", history_ids=[msg_a2])
+    await register_history(semantic_storage, episode_storage, set_a, [msg_a2])
 
     msg_b1 = await add_history(
         history_storage=episode_storage,
         content="user-b message 1",
     )
-    await service.add_messages(set_id="user-b", history_ids=[msg_b1])
+    await register_history(semantic_storage, episode_storage, set_b, [msg_b1])
     msg_b2 = await add_history(
         history_storage=episode_storage,
         content="user-b message 2",
     )
-    await service.add_messages(set_id="user-b", history_ids=[msg_b2])
+    await register_history(semantic_storage, episode_storage, set_b, [msg_b2])
 
     # Wait for background processing
     async def wait_for_ingestion():
         while (  # noqa: ASYNC110
             await semantic_storage.get_history_messages_count(
-                set_ids=["user-a"],
+                set_ids=[set_a],
                 is_ingested=False,
             )
             != 0
             or await semantic_storage.get_history_messages_count(
-                set_ids=["user-b"],
+                set_ids=[set_b],
                 is_ingested=False,
             )
             != 0
@@ -286,17 +295,17 @@ async def test_multiple_sets_processed_independently(
 
     # Verify that messages were ingested for both sets
     uningested_a = await semantic_storage.get_history_messages_count(
-        set_ids=["user-a"],
+        set_ids=[set_a],
         is_ingested=False,
     )
     uningested_b = await semantic_storage.get_history_messages_count(
-        set_ids=["user-b"],
+        set_ids=[set_b],
         is_ingested=False,
     )
 
     # Verify both sets were processed independently
-    filter_a = f"set_id IN ('user-a') AND category_name IN ('{semantic_type.name}')"
-    filter_b = f"set_id IN ('user-b') AND category_name IN ('{semantic_type.name}')"
+    filter_a = f"set_id IN ('{set_a}') AND category_name IN ('{semantic_type.name}')"
+    filter_b = f"set_id IN ('{set_b}') AND category_name IN ('{semantic_type.name}')"
     features_a = await _collect_feature_set(
         semantic_storage,
         filter_expr=parse_filter(filter_a),

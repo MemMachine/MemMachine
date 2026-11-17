@@ -15,8 +15,14 @@ from memmachine_server.semantic_memory.semantic_model import (
 from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
 from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (
     LengthEmbedder,
+    SessionData,
     SpyEmbedder,
 )
+
+
+@pytest.fixture
+def session_data() -> SessionData:
+    return SessionData(org_id="test_org", project_id="test_proj")
 
 
 @pytest.fixture
@@ -64,7 +70,7 @@ def semantic_category_retriever():
         prompt=prompt,
     )
 
-    def get_categories(_: str) -> list[SemanticCategory]:
+    def get_categories(_: SemanticConfigStorage.Set) -> list[SemanticCategory]:
         return [cat]
 
     return get_categories
