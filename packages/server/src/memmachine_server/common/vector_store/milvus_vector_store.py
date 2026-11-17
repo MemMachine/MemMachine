@@ -645,34 +645,31 @@ class MilvusVectorStore(VectorStore):
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:
         async with self._tracker("purge_partition"):
-            return await self._purge_partition(partition_uuid)
-
-    async def _purge_partition(self, partition_uuid: UUID) -> bool:
-        # Deletes the partition's entities by primary key, one listed batch
-        # per round, keeping each delete short for every tenant of the native
-        # collection.
-        if not await self._client.has_collection(
-            self._collection_name,
-            timeout=self._request_timeout_seconds,
-        ):
-            # The native collection is gone with everything in it.
-            return False
-        listed = await self._client.query(
-            collection_name=self._collection_name,
-            filter=_partition_filter(partition_uuid),
-            output_fields=[_ID_FIELD],
-            limit=self._purge_batch_size,
-            timeout=self._request_timeout_seconds,
-        )
-        primary_ids = [entity[_ID_FIELD] for entity in listed]
-        if primary_ids:
-            result = await self._client.delete(
+            # Deletes the partition's entities by primary key, one listed batch
+            # per round, keeping each delete short for every tenant of the native
+            # collection.
+            if not await self._client.has_collection(
+                self._collection_name,
+                timeout=self._request_timeout_seconds,
+            ):
+                # The native collection is gone with everything in it.
+                return False
+            listed = await self._client.query(
                 collection_name=self._collection_name,
-                ids=primary_ids,
+                filter=_partition_filter(partition_uuid),
+                output_fields=[_ID_FIELD],
+                limit=self._purge_batch_size,
                 timeout=self._request_timeout_seconds,
             )
-            _validate_every_key_accepted(result, len(primary_ids))
-        return bool(primary_ids)
+            primary_ids = [entity[_ID_FIELD] for entity in listed]
+            if primary_ids:
+                result = await self._client.delete(
+                    collection_name=self._collection_name,
+                    ids=primary_ids,
+                    timeout=self._request_timeout_seconds,
+                )
+                _validate_every_key_accepted(result, len(primary_ids))
+            return bool(primary_ids)
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:

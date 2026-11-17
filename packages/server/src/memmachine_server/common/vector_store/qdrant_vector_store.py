@@ -612,33 +612,30 @@ class QdrantVectorStore(VectorStore):
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:
         async with self._tracker("purge_partition"):
-            return await self._purge_partition(partition_uuid)
-
-    async def _purge_partition(self, partition_uuid: UUID) -> bool:
-        # If a point of the partition remains, one filter-delete removes them
-        # all.
-        try:
-            points, _ = await self._client.scroll(
-                collection_name=self._vector_store_name,
-                scroll_filter=_partition_filter(partition_uuid),
-                limit=1,
-                with_payload=False,
-                with_vectors=False,
-            )
-        except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
-            # The native collection is gone with everything in it.
-            if not QdrantVectorStore._is_not_found_error(e):
-                raise
-            points = []
-        if points:
-            await self._client.delete(
-                collection_name=self._vector_store_name,
-                points_selector=models.FilterSelector(
-                    filter=_partition_filter(partition_uuid),
-                ),
-                wait=True,
-            )
-        return bool(points)
+            # If a point of the partition remains, one filter-delete removes them
+            # all.
+            try:
+                points, _ = await self._client.scroll(
+                    collection_name=self._vector_store_name,
+                    scroll_filter=_partition_filter(partition_uuid),
+                    limit=1,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+            except (UnexpectedResponse, grpc.aio.AioRpcError) as e:
+                # The native collection is gone with everything in it.
+                if not QdrantVectorStore._is_not_found_error(e):
+                    raise
+                points = []
+            if points:
+                await self._client.delete(
+                    collection_name=self._vector_store_name,
+                    points_selector=models.FilterSelector(
+                        filter=_partition_filter(partition_uuid),
+                    ),
+                    wait=True,
+                )
+            return bool(points)
 
     @staticmethod
     def _is_not_found_error(error: Exception) -> bool:

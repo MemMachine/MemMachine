@@ -247,12 +247,6 @@ class EventMemory:
         registration = await self._partition_manager.resolve_partition(partition_name)
         if registration is None:
             return None
-        return await self._partition(registration)
-
-    async def _partition(
-        self, registration: Registration
-    ) -> "EventMemoryPartition | None":
-        """Build a handle on a registered partition from its handles in each store, or None when either store finds nothing under its UUID."""
         segment_store_partition = await self._params.segment_store.get_partition(
             registration.partition_uuid
         )
