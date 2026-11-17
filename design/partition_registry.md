@@ -170,7 +170,6 @@ class Registration:  # partition_name, partition_uuid
 class TombstoneClaim:  # partition_uuid
     async def finish(self, found_records: bool) -> None: ...
     async def fail(self, error: Exception) -> None: ...
-    async def release(self) -> None: ...
 
 
 class PartitionedStore(ABC):
@@ -222,7 +221,7 @@ or the claim a purge round holds.
 | `PartitionRegistry` | `reserve`, `resolve`, `unregister` (by name), `claim_tombstone` | |
 | `Reservation` | `confirm`, `cancel` | `reserve` |
 | `Registration` | `require_current` | `resolve` |
-| `TombstoneClaim` | `finish`, `fail`, `release` | `claim_tombstone` |
+| `TombstoneClaim` | `finish`, `fail` | `claim_tombstone` |
 
 - **Why handles.** Every operation on one partition needs its UUID:
   confirming it, cancelling it, checking that it was not deleted, and ending
@@ -243,11 +242,12 @@ or the claim a purge round holds.
   holder's operations and nothing else, and the wrong call is a type error.
 - **Why the manager holds the reservation and the claim.** Creation is
   reserve, create in every store, then confirm, or cancel when a step fails;
-  a purge round is claim, purge and drop, then finish, fail, or release. Both
-  sequences are written once, in the partition manager, for every owner, so
-  no owner can confirm a partition its stores never created, skip a cancel,
-  or leave a claim unended. A claim left unended is claimable again once its
-  lease and the backoff pass.
+  a purge round is claim, purge and drop, then finish, or fail when a step
+  raises. Both sequences are written once, in the partition manager, for
+  every owner, so no owner can confirm a partition its stores never created,
+  skip a cancel, or end a claim with the wrong outcome. A claim left unended,
+  by a cancelled round or a purger that died, keeps its attempt and is
+  claimable again once its lease and the backoff pass.
 - **Why role names, not state names.** A partition moves from pending to
   live only through its reservation's own `confirm`, but any caller can
   delete it at any time, through either handle's back. A name that states
@@ -257,8 +257,7 @@ or the claim a purge round holds.
   patterns: Try-Confirm/Cancel for the creation (reserve, then confirm or
   cancel), the stale handle for everyone else (`require_current`,
   `PartitionDeletedError`), and a leased work queue for a purge round (claim,
-  then finish, fail, or release). `cancel` undoes a reservation; `release`
-  gives a claim back without an outcome, so the two keep different words.
+  then finish or fail).
 - **Why no state fields.** A handle's fields (partition name and UUID) belong
   to its partition and never change. Whether the partition is pending, live,
   or deleted changes under every holder: a `live` field would be a snapshot,
@@ -314,8 +313,8 @@ keeps the schema static.
 | `partition_uuid` | UUID, primary key | The deleted partition whose records remain. |
 | `partition_namespace` | string | Whose purge claims the tombstone. |
 | `enqueued_at` | timestamp | When the deletion committed, on the database clock. |
-| `attempts_without_progress` | integer | Purge rounds claimed since a round last found records and deleted them, the open one included; a cancelled round's attempt is taken back. |
-| `claimable_at` | timestamp, nullable | When a claim may next take the tombstone, on the database clock: once the open claim's lease and the backoff pass, or the backoff after a raise; null until a claim or raise sets one, and again after progress or a cancelled round. |
+| `attempts_without_progress` | integer | Purge rounds claimed since a round last found records and deleted them, the open one included. |
+| `claimable_at` | timestamp, nullable | When a claim may next take the tombstone, on the database clock: once the open claim's lease and the backoff pass, or the backoff after a raise; null until a claim or raise sets one, and again after progress. |
 | `claim_generation` | integer | Incremented by each claim; a round's writes that end its claim are conditioned on it. |
 
 Index `partition_registry_gc__ns_ea` on (`partition_namespace`, `enqueued_at`)
@@ -369,9 +368,8 @@ when the confirmation committed but its answer was lost. Racing deleters
 serialize on the row's write lock and the loser deletes nothing, on PostgreSQL
 and SQLite alike, so a deletion is idempotent and queues one tombstone.
 
-**`claim_tombstone()`** and the claim's `finish`, `fail`, and `release` are
-described in [Deletion and purge](#deletion-and-purge) and
-[purge](vector_store_purge.md).
+**`claim_tombstone()`** and the claim's `finish` and `fail` are described in
+[Deletion and purge](#deletion-and-purge) and [purge](vector_store_purge.md).
 
 ### Creation
 
@@ -484,16 +482,16 @@ every store's `drop_partition` and finishes the claim having found nothing,
 and the registry deletes the tombstone. A round that raises fails the claim,
 so the registry's backoff applies, and after the registry's maximum of
 rounds without progress the tombstone is dead-lettered: kept, its UUID
-reserved, skipped by claims, and reported. A cancelled round releases the
-claim, which takes its attempt back and leaves the tombstone claimable at
-once. A store keeps whatever progress its purge needs between calls, such as
-the segment store's cursor, in the partition's own storage, which the drop
-removes.
+reserved, skipped by claims, and reported. A cancelled round ends no claim,
+as a purger that died ends none: its attempt counts, and the tombstone is
+claimable again once the lease and the backoff pass. A store keeps whatever
+progress its purge needs between calls, such as the segment store's cursor,
+in the partition's own storage, which the drop removes.
 
 A tombstone's lease and backoff are stored as one `claimable_at`, the
 earliest time a claim may take it again: a claim sets it to its lease end
 plus the backoff for its attempt, a failure to the backoff's end, and
-progress or a released claim clears it. The retention stays its own
+progress clears it. The retention stays its own
 condition, computed from `enqueued_at` when the claim runs, so a change to
 it reaches every queued tombstone and no retry schedule can shorten it. The
 claim keeps its one index range, oldest deletion first, and skips tombstones
@@ -578,7 +576,7 @@ differs where a store is remote:
   or predate another's, and no order between stores matters.
 - **The partition manager runs the lifecycle; the registry is the catalog.**
   Creation (reserve, create in every store, confirm or cancel) and the purge
-  round (claim, purge and drop in every store, then finish, fail, or release)
+  round (claim, purge and drop in every store, then finish or fail)
   are written once, in the manager, for every owner, so no owner repeats them
   or their cancellation handling, and no owner can miss or reorder a step. The
   registry holds names, UUIDs, and tombstones and calls no other code, so it
@@ -671,6 +669,11 @@ differs where a store is remote:
   claim. The registry answers handles for reservations and registrations, so
   one owner would learn two patterns, and a claim could be handed back to
   another registry.
+- **A release for a cancelled round's claim**, taking its attempt back and
+  leaving the tombstone claimable at once. A cancelled round otherwise
+  counts one attempt and delays its tombstone by the lease and the backoff,
+  which changes no outcome, and the ending can be added later on the same
+  columns.
 - **Namespaces fixed by each memory system.** A library user could then run
   only one owner of each memory system per registry database.
 - **The owner checking its registry's namespace.** It cannot see other

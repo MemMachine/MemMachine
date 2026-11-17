@@ -106,7 +106,7 @@ and runs it in three steps:
    found nothing removes the tombstone, which frees the UUID; a round that
    found records ends its claim, keeping the tombstone due, and resets its
    attempts without progress. A round that raised ends with the claim's
-   `fail`, and a cancelled one with its `release`.
+   `fail`; a cancelled one ends nothing, as a round whose purger died does.
 
 ### The lease
 
@@ -126,12 +126,10 @@ transaction, holding back vacuum or meeting
   tombstone, where without it they would all take the oldest. A repeated round
   costs Qdrant a scroll and a filter-delete that matches nothing; on Milvus it
   repeats a listing and deletes keys already deleted.
-- **A cancelled round takes back its attempt; a round whose purger died
-  keeps it.** A cancelled round releases its claim, which takes back the
-  attempt the claim counted, in a write shielded from the cancellation, so
-  its tombstone is claimable at once. A round whose purger died writes
-  nothing after its claim, which already counted the attempt; its tombstone
-  is claimed again once the lease, and then the backoff, have passed.
+- **A round that is cancelled, or whose purger died, keeps its attempt.**
+  Neither writes anything after its claim, which already counted the
+  attempt; its tombstone is claimed again once the lease, and then the
+  backoff, have passed.
 - **The lease should exceed a round.** A round's remote calls run one after
   another, each bounded by the store's request timeout. A round that outlasts
   its lease may run beside a later round on the same tombstone, which is

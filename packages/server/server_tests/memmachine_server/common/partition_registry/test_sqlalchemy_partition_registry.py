@@ -4,7 +4,7 @@ import asyncio
 import logging
 import random
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -39,7 +39,6 @@ from memmachine_server.common.partition_registry.sqlalchemy_partition_registry i
     PurgeQueueRow,
     SQLAlchemyPartitionRegistry,
     SQLAlchemyPartitionRegistryParams,
-    _SQLAlchemyTombstoneClaim,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 
@@ -204,10 +203,6 @@ async def _run_round(
     except Exception as error:
         await claim.fail(error)
         raise
-    except BaseException:
-        with suppress(Exception):
-            await claim.release()
-        raise
     await claim.finish(found_records)
     return True
 
@@ -222,21 +217,12 @@ async def _start_held_round(
     return held, task
 
 
-async def _abandon_claim(
-    registry: SQLAlchemyPartitionRegistry,
-    monkeypatch: pytest.MonkeyPatch,
-) -> UUID:
-    """Claim the oldest due tombstone and stop, as a purger that dies during its round: nothing after the claim reaches the database. The claimed partition UUID."""
+async def _abandon_claim(registry: SQLAlchemyPartitionRegistry) -> UUID:
+    """Claim the oldest due tombstone and stop, as a purger whose round is cancelled or that dies during it: nothing after the claim reaches the database. The claimed partition UUID."""
     held, task = await _start_held_round(registry)
-
-    async def lost(claim: _SQLAlchemyTombstoneClaim) -> None:
-        raise ConnectionError("the purger is gone")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(_SQLAlchemyTombstoneClaim, "_release", lost)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     return held.ran[0]
 
 
@@ -869,46 +855,21 @@ async def test_a_round_that_finds_records_resets_the_attempts_without_progress(
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_round_ends_its_claim_without_counting_it(
-    sqlalchemy_engine, partition_namespace, caplog
-):
-    """A cancelled round is not a failed round, and its tombstone is
-    claimable at once, without waiting out the lease."""
-    registry = await _registry(sqlalchemy_engine, partition_namespace)
-    partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.unregister("a")
-    await _age_deletion(registry, partition_uuid)
-
-    _, holding = await _start_held_round(registry)
-    holding.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await holding
-
-    assert await _attempts(registry, partition_uuid) == 0
-    with caplog.at_level(logging.WARNING):
-        assert await _round(registry, any_records_found=False) == partition_uuid
-    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
-
-
-@pytest.mark.asyncio
-async def test_a_round_cancelled_after_its_attempts_are_reset_leaves_them_at_zero(
+async def test_a_cancelled_round_keeps_its_attempt_and_its_claim(
     sqlalchemy_engine, partition_namespace
 ):
-    """An operator's reset of the attempts, made while a round runs, stands
-    when the round is cancelled: the attempts never go below zero, and the
-    tombstone is claimed again."""
+    """A cancelled round ends no claim: its attempt counts, and its tombstone
+    is claimed again only once the lease and the backoff have passed."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
-    _, holding = await _start_held_round(registry)
-    await _reset_attempts(registry, partition_uuid)
-    holding.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await holding
+    assert await _abandon_claim(registry) == partition_uuid
 
-    assert await _attempts(registry, partition_uuid) == 0
+    assert await _attempts(registry, partition_uuid) == 1
+    assert await _round(registry, any_records_found=False) is None
+    await _age_claimable_at(registry, partition_uuid)
     assert await _round(registry, any_records_found=False) == partition_uuid
 
 
@@ -949,7 +910,7 @@ async def _reset_attempts(
 
 @pytest.mark.asyncio
 async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backoff_pass(
-    sqlalchemy_engine, partition_namespace, monkeypatch, caplog
+    sqlalchemy_engine, partition_namespace, caplog
 ):
     """A purger that dies during its round writes nothing after its claim,
     which counted the attempt. The tombstone stays claimed until the lease
@@ -960,13 +921,7 @@ async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backof
     await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
-    with caplog.at_level(logging.ERROR):
-        assert await _abandon_claim(registry, monkeypatch) == partition_uuid
-    assert [
-        r
-        for r in caplog.records
-        if r.levelno == logging.ERROR and str(partition_uuid) in r.getMessage()
-    ], "the lost end of the claim was not reported"
+    assert await _abandon_claim(registry) == partition_uuid
     assert await _attempts(registry, partition_uuid) == 1
     assert await _round(registry, any_records_found=False) is None
 
@@ -992,7 +947,7 @@ async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backof
 
 @pytest.mark.asyncio
 async def test_rounds_that_never_end_dead_letter_the_tombstone(
-    sqlalchemy_engine, partition_namespace, monkeypatch, caplog
+    sqlalchemy_engine, partition_namespace, caplog
 ):
     """A tombstone whose rounds keep killing their purger is dead-lettered
     like one whose rounds keep raising, each retry logged with its attempt."""
@@ -1003,7 +958,7 @@ async def test_rounds_that_never_end_dead_letter_the_tombstone(
 
     with caplog.at_level(logging.WARNING):
         for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS):
-            assert await _abandon_claim(registry, monkeypatch) == partition_uuid
+            assert await _abandon_claim(registry) == partition_uuid
             await _age_claimable_at(registry, partition_uuid, timedelta(days=1))
 
     assert (
@@ -1023,31 +978,8 @@ async def test_rounds_that_never_end_dead_letter_the_tombstone(
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_retry_of_a_round_that_never_ended_leaves_it_claimable(
-    sqlalchemy_engine, partition_namespace, monkeypatch
-):
-    """A cancelled round takes back its attempt even when the attempt before
-    it never ended and no round ever raised, so the tombstone is claimable at
-    once."""
-    registry = await _registry(sqlalchemy_engine, partition_namespace)
-    partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.unregister("a")
-    await _age_deletion(registry, partition_uuid)
-
-    assert await _abandon_claim(registry, monkeypatch) == partition_uuid
-    await _age_claimable_at(registry, partition_uuid, timedelta(days=1))
-    _, holding = await _start_held_round(registry)
-    holding.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await holding
-
-    assert await _attempts(registry, partition_uuid) == 1
-    assert await _round(registry, any_records_found=False) == partition_uuid
-
-
-@pytest.mark.asyncio
 async def test_racing_purgers_retry_a_round_that_never_ended_once(
-    sqlalchemy_engine, partition_namespace, monkeypatch
+    sqlalchemy_engine, partition_namespace
 ):
     """Purgers on separate engines that find the same claim whose round never
     ended claim it once between them, as its next attempt."""
@@ -1060,7 +992,7 @@ async def test_racing_purgers_retry_a_round_that_never_ended_once(
         partition_uuid = (await purgers[0]._reserve("a")).partition_uuid
         await purgers[0].unregister("a")
         await _age_deletion(purgers[0], partition_uuid)
-        await _abandon_claim(purgers[0], monkeypatch)
+        await _abandon_claim(purgers[0])
         await _age_claimable_at(purgers[0], partition_uuid)
 
         # Finding nothing removes the tombstone, so a second claim would show.

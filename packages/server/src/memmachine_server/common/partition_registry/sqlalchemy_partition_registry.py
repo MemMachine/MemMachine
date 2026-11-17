@@ -115,13 +115,13 @@ class PurgeQueueRow(BasePartitionRegistry):
         DateTime(timezone=True), nullable=False
     )
     # Purge rounds claimed since a round last found something of the
-    # partition, the open one included; a cancelled round's attempt is taken back.
+    # partition, the open one included.
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
     # When a claim may next take the tombstone: once the open claim's lease
     # and the backoff pass, or the backoff after a raise; None until a claim
-    # sets it, and again after a round that found something or was cancelled.
+    # sets it, and again after a round that found something.
     claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -571,29 +571,6 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                 self.attempt,
                 error,
                 PurgeQueueRow.__tablename__,
-            )
-
-    @override
-    async def _release(self) -> None:
-        # The attempt is taken back, never below zero: an operator may reset
-        # the attempts while the round runs, and the reset stands.
-        async with write_connection(self.params.engine) as connection:
-            await connection.execute(
-                update(PurgeQueueRow)
-                .where(
-                    PurgeQueueRow.partition_uuid == self.partition_uuid,
-                    PurgeQueueRow.claim_generation == self.claim_generation,
-                )
-                .values(
-                    claimable_at=None,
-                    attempts_without_progress=case(
-                        (
-                            PurgeQueueRow.attempts_without_progress > 0,
-                            PurgeQueueRow.attempts_without_progress - 1,
-                        ),
-                        else_=0,
-                    ),
-                )
             )
 
     def _report_round_outlasting_its_claim(self) -> None:

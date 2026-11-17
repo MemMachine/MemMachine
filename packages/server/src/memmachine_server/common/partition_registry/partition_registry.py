@@ -16,8 +16,8 @@ A reservation holds a new partition's name while its owner creates the
 partition, until the reservation is confirmed or cancelled. Resolving a name
 answers a `Registration`, through which an owner checks that the partition has
 not been deleted. A tombstone claim holds a deleted partition's tombstone
-while its owner purges the partition, until the claim is finished, failed, or
-released. Each acts on one partition alone.
+while its owner purges the partition, until the claim is finished or failed.
+Each acts on one partition alone.
 """
 
 import asyncio
@@ -30,11 +30,9 @@ from .data_types import validate_partition_name
 
 logger = logging.getLogger(__name__)
 
-# The tasks cancelling reservations and releasing tombstone claims, each held
-# until done so the garbage collector cannot drop one whose caller stopped
-# awaiting it.
+# The tasks cancelling reservations, held until done so the garbage collector
+# cannot drop one whose caller stopped awaiting it.
 _reservation_cancellations: set[asyncio.Task[None]] = set()
-_tombstone_claim_releases: set[asyncio.Task[None]] = set()
 
 
 @dataclass(frozen=True)
@@ -153,12 +151,13 @@ class TombstoneClaim(ABC):
 
     The tombstone is due: the retention has passed since the partition's
     deletion. The claim's holder purges the partition's records and ends the
-    claim once: `finish` with the round's outcome, `fail` with what a round
-    that raised raised, or `release` after the round is cancelled. A claim
-    never ended is claimable again once its lease, and then the backoff, have
+    claim once: `finish` with the round's outcome, or `fail` with what a
+    round that raised raised. A claim never ended, such as a cancelled
+    round's or one whose purger died, keeps its attempt, and its tombstone is
+    claimable again once the claim's lease, and then the backoff, have
     passed, so a round must be safe to repeat, also on two purgers at once. A
-    registry implementation supplies `finish`, `fail`, and `_release`, each of
-    which writes the registry.
+    registry implementation supplies the methods, each of which writes the
+    registry.
     """
 
     partition_uuid: UUID
@@ -192,46 +191,6 @@ class TombstoneClaim(ABC):
         Args:
             error (Exception):
                 What the round raised.
-        """
-        raise NotImplementedError
-
-    async def release(self) -> None:
-        """
-        End the claim of a cancelled round without counting the round, if the claim is the latest on its tombstone.
-
-        The tombstone is claimable again at once. The release runs in a task
-        of its own, shielded, so a cancellation of the caller does not cut it
-        short, and the task logs its own failure, since a caller cancelled
-        again stops awaiting it.
-
-        Raises:
-            Exception:
-                Whatever the registry raised. The tombstone is then claimable
-                once the claim's lease and the backoff have passed.
-        """
-        release = asyncio.create_task(self._release())
-        _tombstone_claim_releases.add(release)
-
-        def finish(task: asyncio.Task[None]) -> None:
-            _tombstone_claim_releases.discard(task)
-            if not task.cancelled() and task.exception() is not None:
-                logger.error(
-                    "Could not release the claim of a cancelled purge round on "
-                    "partition %s; its tombstone is claimable once the lease "
-                    "and the backoff pass",
-                    self.partition_uuid,
-                    exc_info=task.exception(),
-                )
-
-        release.add_done_callback(finish)
-        await asyncio.shield(release)
-
-    @abstractmethod
-    async def _release(self) -> None:
-        """
-        End the claim and take back the round's attempt, if the claim is the latest on its tombstone.
-
-        Called by `release`, in a task of its own.
         """
         raise NotImplementedError
 

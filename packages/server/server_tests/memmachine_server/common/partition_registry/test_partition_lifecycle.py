@@ -442,8 +442,9 @@ async def test_a_failed_drop_keeps_the_tombstone(registry, manager, store):
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_purge_round_releases_its_claim(registry, manager, store):
-    """Released, the tombstone is claimable at once, not once the lease passes."""
+async def test_a_cancelled_purge_round_leaves_its_claim_to_its_lease(
+    registry, manager, store
+):
     await manager.create_partition(NAME)
     await manager.delete_partition(NAME)
     started = asyncio.Event()
@@ -459,13 +460,11 @@ async def test_a_cancelled_purge_round_releases_its_claim(registry, manager, sto
     purging.cancel()
     with pytest.raises(asyncio.CancelledError):
         await purging
-    await asyncio.wait_for(
-        asyncio.gather(*partition_registry_module._tombstone_claim_releases), 5
-    )
 
-    store.purge_partition.side_effect = None
-    assert await manager.run_purge_round() is True
-    assert await _queued(registry) == 0
+    assert await manager.run_purge_round() is False
+    assert store.purge_partition.await_count == 1
+    store.drop_partition.assert_not_awaited()
+    assert await _queued(registry) == 1
 
 
 @pytest.mark.asyncio
