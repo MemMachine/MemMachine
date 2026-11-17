@@ -33,6 +33,7 @@ from sqlalchemy import (
     Uuid,
     and_,
     bindparam,
+    case,
     delete,
     func,
     insert,
@@ -2112,8 +2113,12 @@ class SQLAlchemySegmentStore(SegmentStore):
         self, attempts: ColumnElement[int] | InstrumentedAttribute[int]
     ) -> ColumnElement[int]:
         """The claim retry backoff in seconds after `attempts` claims, computed by the database."""
-        # 1 << (a - 1) is 2 ** (a - 1) on both dialects.
-        doublings = literal(1, Integer).op("<<")(attempts - 1)
+        # 1 << (a - 1) is 2 ** (a - 1) on both dialects. The shift is clamped
+        # at 0: an operator may reset a record's attempts while a claim on it
+        # is open, and PostgreSQL leaves a negative shift undefined.
+        doublings = literal(1, Integer).op("<<")(
+            case((attempts > 0, attempts - 1), else_=0)
+        )
         smaller = func.min if self._is_sqlite else func.least
         return smaller(
             self._base_claim_retry_backoff_seconds * doublings,

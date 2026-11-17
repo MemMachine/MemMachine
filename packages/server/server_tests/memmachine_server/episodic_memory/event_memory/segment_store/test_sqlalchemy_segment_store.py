@@ -1863,6 +1863,56 @@ async def test_failed_claim_backs_off_doubling_up_to_the_cap(
 
 @pytest.mark.asyncio
 @_CLAIMED_TABLES
+async def test_a_failed_claim_after_an_operator_reset_its_attempts_backs_off_the_base_wait(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+    table: type[IndexingJobRow | TombstoneRow],
+) -> None:
+    """An operator may reset a record's attempts while a claim on it is open; the claim's failure still waits the base backoff."""
+    monkeypatch.setattr(store, "_base_claim_retry_backoff_seconds", 60)
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    await _add_claimable_record(partition, table)
+    claim = await _claim(store, table)
+    assert claim is not None
+    await _reset_attempts(store, table)
+
+    await _fail_claim(store, claim)
+
+    assert await _claim(store, table) is None
+    await _shift_earlier(store, table.claimable_at, timedelta(seconds=45))
+    assert await _claim(store, table) is None
+    await _shift_earlier(store, table.claimable_at, timedelta(seconds=30))
+    assert await _claim(store, table) is not None
+
+
+@pytest.mark.asyncio
+async def test_renewing_a_claim_after_an_operator_reset_its_attempts_holds_it(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY, _plaintext_partition_config()
+    )
+    await _add_claimable_record(partition, IndexingJobRow)
+    claim = await store.claim_indexing_job(lease_seconds=60)
+    assert claim is not None
+    await _reset_attempts(store, IndexingJobRow)
+
+    assert await store.renew_indexing_job_claim(claim, lease_seconds=60)
+
+
+async def _reset_attempts(
+    store: SQLAlchemySegmentStore,
+    table: type[IndexingJobRow | TombstoneRow],
+) -> None:
+    """Set every record's attempts to 0, as an operator retrying a record does."""
+    async with store._create_session() as session, session.begin():
+        await session.execute(update(table).values(attempts_without_progress=0))
+
+
+@pytest.mark.asyncio
+@_CLAIMED_TABLES
 async def test_record_is_no_longer_claimed_after_the_maximum_failed_claims(
     store: SQLAlchemySegmentStore,
     caplog: pytest.LogCaptureFixture,
