@@ -41,11 +41,6 @@ from memmachine_server.common.configuration.language_model_conf import (
     OpenAIResponsesLanguageModelConf,
 )
 from memmachine_server.common.configuration.reranker_conf import EmbedderRerankerConf
-from memmachine_server.common.errors import (
-    InvalidEmbedderError,
-    InvalidLanguageModelError,
-    InvalidRerankerError,
-)
 from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.partition_registry import (
     PartitionedStore,
@@ -139,24 +134,6 @@ def invalid_configure() -> Configuration:
 @pytest.fixture
 def invalid_resource_manager(invalid_configure) -> CommonResourceManager:
     return ResourceManagerImpl(invalid_configure)
-
-
-@pytest.mark.asyncio
-async def test_invalid_reranker(invalid_resource_manager):
-    with pytest.raises(InvalidRerankerError, match="AuthenticationError"):
-        _ = await invalid_resource_manager.get_reranker(RERANKER_ID, validate=True)
-
-
-@pytest.mark.asyncio
-async def test_invalid_embedder(invalid_resource_manager):
-    with pytest.raises(InvalidEmbedderError, match="AuthenticationError"):
-        _ = await invalid_resource_manager.get_embedder(EMBEDDER_ID, validate=True)
-
-
-@pytest.mark.asyncio
-async def test_invalid_language_model(invalid_resource_manager):
-    with pytest.raises(InvalidLanguageModelError, match="AuthenticationError"):
-        _ = await invalid_resource_manager.get_language_model(MODEL_ID, validate=True)
 
 
 @pytest.mark.asyncio

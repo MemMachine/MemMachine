@@ -107,17 +107,15 @@ class CommonResourceManager(Protocol):
         """Build a registry of a partition namespace in a database, neither started nor running purge rounds."""
         raise NotImplementedError
 
-    async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
+    async def get_embedder(self, name: str) -> Embedder:
         """Return the embedder by name."""
         raise NotImplementedError
 
-    async def get_language_model(
-        self, name: str, validate: bool = False
-    ) -> LanguageModel:
+    async def get_language_model(self, name: str) -> LanguageModel:
         """Return the language model by name."""
         raise NotImplementedError
 
-    async def get_reranker(self, name: str, validate: bool = False) -> Reranker:
+    async def get_reranker(self, name: str) -> Reranker:
         """Return the reranker by name."""
         raise NotImplementedError
 

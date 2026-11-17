@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
@@ -15,8 +14,6 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.errors import InvalidRerankerError
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager.base_manager import BaseResourceManager
-
-logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -88,25 +85,15 @@ class RerankerManager(BaseResourceManager[Reranker]):
         """Check if a reranker with the given name exists."""
         return name in self._rerankers
 
-    async def get_reranker(self, name: str, validate: bool = False) -> Reranker:
+    async def get_reranker(self, name: str) -> Reranker:
         """Return a named reranker, building it on first access."""
-        return await self._get_resource_with_locking(name, validate=validate)
+        return await self._get_resource_with_locking(name)
 
-    async def _build_resource(self, name: str, validate: bool = False) -> Reranker:
+    async def _build_resource(self, name: str) -> Reranker:
         """Build a reranker by name."""
-        return await self._build_reranker(name, validate=validate)
+        return await self._build_reranker(name)
 
-    @staticmethod
-    async def _validate_reranker(name: str, reranker: Reranker) -> None:
-        """Validate that the reranker is working."""
-        try:
-            logger.info("Validating reranker %s is working.", name)
-            _ = await reranker.rerank("a", ["a", "b"])
-            logger.info("Reranker %s is working.", name)
-        except Exception as e:
-            raise InvalidRerankerError(f"reranker '{name}' is invalid. {e}") from e
-
-    async def _build_reranker(self, name: str, validate: bool = False) -> Reranker:
+    async def _build_reranker(self, name: str) -> Reranker:
         """Create a reranker based on provider-specific configuration."""
         ret: Reranker | None = None
         if name in self.conf.bm25:
@@ -125,8 +112,6 @@ class RerankerManager(BaseResourceManager[Reranker]):
             ret = await self._build_rrf_hybrid_reranker(name)
         if ret is None:
             raise InvalidRerankerError(f"Reranker with name {name} not found.")
-        if validate:
-            await self._validate_reranker(name, ret)
         return ret
 
     async def _build_bm25_reranker(self, name: str) -> Reranker:
