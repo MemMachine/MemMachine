@@ -320,13 +320,11 @@ class SemanticResourceManager:
 
     async def _get_default_embedder(self) -> Embedder:
         embedder_name = self._get_default_embedder_name()
-        return await self._resource_manager.get_embedder(embedder_name, validate=True)
+        return await self._resource_manager.get_embedder(embedder_name)
 
     async def _get_default_language_model(self) -> LanguageModel:
         language_model_name = self._get_default_language_model_name()
-        return await self._resource_manager.get_language_model(
-            language_model_name, validate=True
-        )
+        return await self._resource_manager.get_language_model(language_model_name)
 
     async def get_semantic_service(self) -> SemanticService:
         """Return the semantic service, constructing it if needed."""

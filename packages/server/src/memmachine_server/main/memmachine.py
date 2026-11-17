@@ -348,14 +348,8 @@ class MemMachine:
             if self._retrieval_agent is not None:
                 return self._retrieval_agent
             try:
-                llm_model = await self._resources.get_language_model(
-                    conf.llm_model,
-                    validate=True,
-                )
-                reranker = await self._resources.get_reranker(
-                    conf.reranker,
-                    validate=True,
-                )
+                llm_model = await self._resources.get_language_model(conf.llm_model)
+                reranker = await self._resources.get_reranker(conf.reranker)
             except Exception:
                 logger.exception("Failed to initialize retrieval agent resources.")
                 return None
