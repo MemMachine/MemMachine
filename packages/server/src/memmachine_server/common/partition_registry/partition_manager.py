@@ -179,8 +179,13 @@ async def _on_every_store[T](
     step: str, partition_uuid: UUID, calls: Sequence[Awaitable[T]]
 ) -> list[T]:
     """Run one step of a partition's lifecycle on every store at once, and raise the first error once every store has finished."""
-    results = await asyncio.gather(*calls, return_exceptions=True)
-    errors = [result for result in results if isinstance(result, BaseException)]
+    values: list[T] = []
+    errors: list[BaseException] = []
+    for result in await asyncio.gather(*calls, return_exceptions=True):
+        if isinstance(result, BaseException):
+            errors.append(result)
+        else:
+            values.append(result)
     for error in errors:
         logger.error(
             "A store failed to %s partition %s",
@@ -190,4 +195,4 @@ async def _on_every_store[T](
         )
     if errors:
         raise errors[0]
-    return [result for result in results if not isinstance(result, BaseException)]
+    return values
