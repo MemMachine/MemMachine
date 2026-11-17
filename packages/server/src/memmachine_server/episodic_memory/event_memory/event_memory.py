@@ -86,8 +86,7 @@ class EventMemoryParams(BaseModel):
         partition_registry (PartitionRegistry):
             Registry of the partition namespace event memory's partitions are
             registered in, shared by every process serving it. Started by the
-            caller, which runs the namespace's purge rounds over the same
-            stores.
+            caller.
         segmenter (Segmenter):
             Segmenter that segments events into segments.
         deriver (Deriver):
@@ -116,7 +115,7 @@ class EventMemoryParams(BaseModel):
         description=(
             "Registry of the partition namespace event memory's partitions are "
             "registered in, shared by every process serving it. Started by the "
-            "caller, which runs the namespace's purge rounds over the same stores"
+            "caller"
         ),
     )
     segmenter: InstanceOf[Segmenter] = Field(
