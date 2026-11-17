@@ -747,3 +747,189 @@ async def test_get_category_set_ids_for_set_type_category_with_different_categor
     assert len(config_2.categories) == 2
     category_names = {c.name for c in config_2.categories}
     assert category_names == {"org-category", "different-category"}
+
+
+def _set(set_id: str, project_id: str | None, **set_metadata: str):
+    return SemanticConfigStorage.Set(
+        id=set_id,
+        org_id="org",
+        project_id=project_id,
+        set_metadata=set_metadata,
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_sets_keeps_the_first_set_of_each_key(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    await semantic_config_storage.add_sets(
+        sets=[_set("org-a", None), _set("project-a", "project", topic="travel")]
+    )
+
+    await semantic_config_storage.add_sets(
+        sets=[
+            _set("org-b", None),
+            _set("project-b", "project", topic="travel"),
+            _set("org-a", "project", topic="food"),
+        ]
+    )
+
+    found = await semantic_config_storage.get_sets(
+        set_ids=["org-a", "org-b", "project-a", "project-b"]
+    )
+    assert sorted(found, key=lambda s: s.id) == [
+        _set("org-a", None),
+        _set("project-a", "project", topic="travel"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_find_sets_matches_org_project_and_set_metadata(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    await semantic_config_storage.add_sets(
+        sets=[
+            _set("org", None),
+            _set("org-alice", None, producer_id="alice"),
+            _set("project", "project"),
+            _set("project-travel", "project", topic="travel"),
+            _set("other-project", "other"),
+        ]
+    )
+
+    async def find(project_id, set_metadata=None, limit=None):
+        sets = await semantic_config_storage.find_sets(
+            org_id="org",
+            project_id=project_id,
+            set_metadata=set_metadata,
+            limit=limit,
+        )
+        return sorted(s.id for s in sets)
+
+    assert await find(None, [{}, {"producer_id": "alice"}]) == ["org", "org-alice"]
+    assert await find("project", [{}, {"producer_id": "alice"}]) == ["project"]
+    assert await find("project", [{"topic": "travel"}]) == ["project-travel"]
+    assert await find("project") == ["project", "project-travel"]
+    assert await find("project", limit=1) in (["project"], ["project-travel"])
+    assert await find("project", []) == []
+    assert (
+        await semantic_config_storage.find_sets(
+            org_id="other-org", project_id=None, set_metadata=[{}]
+        )
+        == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_sets_deletes_their_configuration(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    await semantic_config_storage.add_sets(
+        sets=[_set("gone", None), _set("kept", None, a="b")]
+    )
+    set_type_id = await semantic_config_storage.add_set_type_id(
+        org_id="org", metadata_tags=["a"]
+    )
+    for set_id in ("gone", "kept"):
+        await semantic_config_storage.set_setid_config(
+            set_id=set_id, embedder_name="embedder"
+        )
+        await semantic_config_storage.add_disabled_category_to_setid(
+            set_id=set_id, category_name="profile"
+        )
+        await semantic_config_storage.register_set_id_set_type(
+            set_id=set_id, set_type_id=set_type_id
+        )
+        category_id = await semantic_config_storage.create_category(
+            set_id=set_id, category_name="hobbies", prompt="Hobbies"
+        )
+        await semantic_config_storage.add_tag(
+            category_id=category_id, tag_name="sport", description="Sports"
+        )
+
+    await semantic_config_storage.delete_sets(set_ids=["gone"])
+
+    assert await semantic_config_storage.get_sets(set_ids=["gone", "kept"]) == [
+        _set("kept", None, a="b")
+    ]
+    assert await semantic_config_storage.get_configured_set_ids() == ["kept"]
+    gone = await semantic_config_storage.get_setid_config(set_id="gone")
+    assert gone.embedder_name is None
+    assert gone.disabled_categories is None
+    assert [c.name for c in gone.categories] == []
+    kept = await semantic_config_storage.get_setid_config(set_id="kept")
+    assert kept.embedder_name == "embedder"
+    assert kept.disabled_categories == ["profile"]
+    assert [c.name for c in kept.categories] == ["hobbies"]
+
+
+@pytest.mark.asyncio
+async def test_get_configured_set_ids_lists_every_configured_set_id(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    set_type_id = await semantic_config_storage.add_set_type_id(
+        org_id="org", metadata_tags=["a"]
+    )
+    await semantic_config_storage.set_setid_config(set_id="configured")
+    await semantic_config_storage.register_set_id_set_type(
+        set_id="typed", set_type_id=set_type_id
+    )
+    await semantic_config_storage.create_category(
+        set_id="categorized", category_name="hobbies", prompt="Hobbies"
+    )
+    await semantic_config_storage.create_set_type_category(
+        set_type_id=set_type_id, category_name="hobbies", prompt="Hobbies"
+    )
+
+    assert sorted(await semantic_config_storage.get_configured_set_ids()) == [
+        "categorized",
+        "configured",
+        "typed",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_category_and_tag_name_what_they_belong_to(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    set_type_id = await semantic_config_storage.add_set_type_id(
+        org_id="org", metadata_tags=["a"]
+    )
+    set_category_id = await semantic_config_storage.create_category(
+        set_id="set", category_name="hobbies", prompt="Hobbies"
+    )
+    type_category_id = await semantic_config_storage.create_set_type_category(
+        set_type_id=set_type_id, category_name="hobbies", prompt="Hobbies"
+    )
+    tag_id = await semantic_config_storage.add_tag(
+        category_id=set_category_id, tag_name="sport", description="Sports"
+    )
+
+    set_category = await semantic_config_storage.get_category(
+        category_id=set_category_id
+    )
+    type_category = await semantic_config_storage.get_category(
+        category_id=type_category_id
+    )
+    tag = await semantic_config_storage.get_tag(tag_id=tag_id)
+
+    assert set_category is not None
+    assert (set_category.set_id, set_category.set_type_id) == ("set", None)
+    assert type_category is not None
+    assert (type_category.set_id, type_category.set_type_id) == (None, set_type_id)
+    assert tag is not None
+    assert tag.category_id == set_category_id
+
+
+@pytest.mark.asyncio
+async def test_sets_round_trip_beyond_one_statement(
+    semantic_config_storage: SemanticConfigStorage,
+):
+    sets = [_set(f"set-{index}", None, n=str(index)) for index in range(1201)]
+
+    await semantic_config_storage.add_sets(sets=sets)
+
+    found = await semantic_config_storage.get_sets(
+        set_ids=[semantic_set.id for semantic_set in sets]
+    )
+    assert sorted(found, key=lambda s: s.id) == sorted(sets, key=lambda s: s.id)

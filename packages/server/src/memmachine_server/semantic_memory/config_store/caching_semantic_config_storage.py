@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Collection, Iterable, Mapping
 
 from memmachine_server.common import rw_locks
 from memmachine_server.semantic_memory.config_store.config_store import (
@@ -53,6 +54,36 @@ class CachingSemanticConfigStorage(SemanticConfigStorage):
     async def delete_all(self) -> None:
         await self._wrapped.delete_all()
         await self._clear_all_caches()
+
+    async def add_sets(self, *, sets: Iterable[SemanticConfigStorage.Set]) -> None:
+        await self._wrapped.add_sets(sets=sets)
+
+    async def get_sets(
+        self, *, set_ids: Collection[SetIdT]
+    ) -> list[SemanticConfigStorage.Set]:
+        return await self._wrapped.get_sets(set_ids=set_ids)
+
+    async def find_sets(
+        self,
+        *,
+        org_id: str,
+        project_id: str | None,
+        set_metadata: Collection[Mapping[str, str]] | None = None,
+        limit: int | None = None,
+    ) -> list[SemanticConfigStorage.Set]:
+        return await self._wrapped.find_sets(
+            org_id=org_id,
+            project_id=project_id,
+            set_metadata=set_metadata,
+            limit=limit,
+        )
+
+    async def delete_sets(self, *, set_ids: Collection[SetIdT]) -> None:
+        await self._wrapped.delete_sets(set_ids=set_ids)
+        await self._clear_all_caches()
+
+    async def get_configured_set_ids(self) -> list[SetIdT]:
+        return await self._wrapped.get_configured_set_ids()
 
     async def set_setid_config(
         self,
