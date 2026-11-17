@@ -3,8 +3,8 @@
 import asyncio
 import logging
 import random
-from collections.abc import AsyncGenerator, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager, suppress
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -29,6 +29,8 @@ from memmachine_server.common.partition_registry import (
     PartitionDeletedError,
     PartitionPendingError,
     Registration,
+)
+from memmachine_server.common.partition_registry.partition_registry import (
     Reservation,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
@@ -37,7 +39,7 @@ from memmachine_server.common.partition_registry.sqlalchemy_partition_registry i
     PurgeQueueRow,
     SQLAlchemyPartitionRegistry,
     SQLAlchemyPartitionRegistryParams,
-    _TombstoneClaim,
+    _SQLAlchemyTombstoneClaim,
 )
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 
@@ -189,12 +191,33 @@ class _HeldRound:
         self._outcome.set_exception(error)
 
 
+async def _run_round(
+    registry: SQLAlchemyPartitionRegistry,
+    purge_round: Callable[[UUID], Awaitable[bool]],
+) -> bool:
+    """Run one purge round as a partition manager does: claim the tombstone that came due first, run `purge_round` on it, and end the claim; whether one was claimed."""
+    claim = await registry.claim_tombstone()
+    if claim is None:
+        return False
+    try:
+        found_records = await purge_round(claim.partition_uuid)
+    except Exception as error:
+        await claim.fail(error)
+        raise
+    except BaseException:
+        with suppress(Exception):
+            await claim.release()
+        raise
+    await claim.finish(found_records)
+    return True
+
+
 async def _start_held_round(
     registry: SQLAlchemyPartitionRegistry,
 ) -> tuple[_HeldRound, asyncio.Task[bool]]:
     """A purge round started on the oldest due tombstone, held until released."""
     held = _HeldRound()
-    task = asyncio.create_task(registry.run_purge_round(held))
+    task = asyncio.create_task(_run_round(registry, held))
     await asyncio.wait_for(held.running.wait(), 30)
     return held, task
 
@@ -206,11 +229,11 @@ async def _abandon_claim(
     """Claim the oldest due tombstone and stop, as a purger that dies during its round: nothing after the claim reaches the database. The claimed partition UUID."""
     held, task = await _start_held_round(registry)
 
-    async def lost(claim: _TombstoneClaim) -> None:
+    async def lost(claim: _SQLAlchemyTombstoneClaim) -> None:
         raise ConnectionError("the purger is gone")
 
     with monkeypatch.context() as patch:
-        patch.setattr(registry, "_end_tombstone_claim", lost)
+        patch.setattr(_SQLAlchemyTombstoneClaim, "_release", lost)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -241,8 +264,15 @@ def _failing_statement(
         event.remove(engine.sync_engine, "before_cursor_execute", on_statement)
 
 
-async def _provision_nothing(partition_uuid: UUID) -> None:
-    """Provision a partition its owner keeps nothing for."""
+async def _created(
+    registry: SQLAlchemyPartitionRegistry, partition_name: str
+) -> Registration:
+    """Reserve and confirm a partition under a name, and answer its registration."""
+    reservation = await registry.reserve(partition_name)
+    await reservation.confirm()
+    registration = await registry.resolve(partition_name)
+    assert registration is not None
+    return registration
 
 
 async def _no_round(partition_uuid: UUID) -> bool:
@@ -258,7 +288,7 @@ async def _failing_round(registry: SQLAlchemyPartitionRegistry) -> UUID:
         raise RuntimeError("the backend refused")
 
     with pytest.raises(RuntimeError, match="the backend refused"):
-        await registry.run_purge_round(refused)
+        await _run_round(registry, refused)
     return ran[0]
 
 
@@ -272,7 +302,7 @@ async def _round(
         ran.append(partition_uuid)
         return any_records_found
 
-    if not await registry.run_purge_round(purge_round):
+    if not await _run_round(registry, purge_round):
         return None
     return ran[0]
 
@@ -286,10 +316,10 @@ async def test_a_confirmed_reservations_partition_is_gotten_by_its_name(
     pending = await registry._reserve("c")
     await pending.confirm()
 
-    resolved = await registry.get_partition("c")
+    resolved = await registry.resolve("c")
     assert resolved is not None
     assert resolved.partition_uuid == pending.partition_uuid
-    assert await registry.get_partition("d") is None
+    assert await registry.resolve("d") is None
 
 
 @pytest.mark.asyncio
@@ -301,10 +331,10 @@ async def test_a_partition_is_pending_until_its_reservation_is_confirmed(
     pending = await registry._reserve("c")
 
     with pytest.raises(PartitionPendingError) as resolved:
-        await registry.get_partition("c")
+        await registry.resolve("c")
     assert resolved.value.registered_at.tzinfo is not None
     await pending.confirm()
-    live = await registry.get_partition("c")
+    live = await registry.resolve("c")
     assert live is not None
     assert live.partition_uuid == pending.partition_uuid
     with pytest.raises(PartitionDeletedError):
@@ -319,7 +349,7 @@ async def test_only_the_reserved_partition_is_confirmed(
     created cannot confirm a partition reserved under the name since."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     deleted = await registry._reserve("c")
-    await registry.delete_partition("c")
+    await registry.unregister("c")
     with pytest.raises(PartitionDeletedError):
         await deleted.confirm()
 
@@ -328,9 +358,9 @@ async def test_only_the_reserved_partition_is_confirmed(
     with pytest.raises(PartitionDeletedError):
         await deleted.confirm()
     with pytest.raises(PartitionPendingError):
-        await registry.get_partition("c")
+        await registry.resolve("c")
     await reserved_since.confirm()
-    live = await registry.get_partition("c")
+    live = await registry.resolve("c")
     assert live is not None
     assert live.partition_uuid == reserved_since.partition_uuid
 
@@ -341,17 +371,17 @@ async def test_cancelling_a_reservation_spares_the_name_reserved_since(
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     old = await registry._reserve("c")
-    await registry.delete_partition("c")
+    await registry.unregister("c")
     since = await registry._reserve("c")
 
     await old.cancel()
     with pytest.raises(PartitionPendingError):
-        await registry.get_partition("c")
+        await registry.resolve("c")
     assert await _queued(registry) == [old.partition_uuid]
 
     await since.cancel()
     await since.cancel()
-    assert await registry.get_partition("c") is None
+    assert await registry.resolve("c") is None
     assert sorted(await _queued(registry)) == sorted(
         [old.partition_uuid, since.partition_uuid]
     )
@@ -368,7 +398,7 @@ async def test_cancelling_a_confirmed_reservation_leaves_the_partition_live(
     await reservation.confirm()
 
     await reservation.cancel()
-    live = await registry.get_partition("c")
+    live = await registry.resolve("c")
     assert live is not None
     assert live.partition_uuid == reservation.partition_uuid
     assert await _queued(registry) == []
@@ -379,14 +409,14 @@ async def test_a_registration_is_current_until_its_partition_is_deleted(
     sqlalchemy_engine, partition_namespace
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
-    live = await registry.create_partition("c", _provision_nothing)
+    live = await _created(registry, "c")
     await live.require_current()
 
-    await registry.delete_partition("c")
+    await registry.unregister("c")
     with pytest.raises(PartitionDeletedError):
         await live.require_current()
 
-    await registry.create_partition("c", _provision_nothing)
+    await _created(registry, "c")
     with pytest.raises(PartitionDeletedError):
         await live.require_current()
 
@@ -411,15 +441,13 @@ async def test_a_partition_name_of_any_characters_and_the_longest_length_is_kept
     sqlalchemy_engine, partition_namespace
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
-    registration = await registry.create_partition(
-        ANY_CHARACTERS_NAME, _provision_nothing
-    )
+    registration = await _created(registry, ANY_CHARACTERS_NAME)
 
-    resolved = await registry.get_partition(ANY_CHARACTERS_NAME)
+    resolved = await registry.resolve(ANY_CHARACTERS_NAME)
     assert resolved is not None
     assert resolved.partition_uuid == registration.partition_uuid
-    await registry.delete_partition(ANY_CHARACTERS_NAME)
-    assert await registry.get_partition(ANY_CHARACTERS_NAME) is None
+    await registry.unregister(ANY_CHARACTERS_NAME)
+    assert await registry.resolve(ANY_CHARACTERS_NAME) is None
 
 
 @pytest.mark.parametrize("invalid_name", ["", "with_nul\x00", "x" * 33, "ü" * 17])
@@ -496,20 +524,20 @@ async def test_registries_of_two_namespaces_share_a_database_and_nothing_else(
     first = await _registry(sqlalchemy_engine, f"{partition_namespace}_a")
     second = await _registry(sqlalchemy_engine, f"{partition_namespace}_b")
 
-    one = await first.create_partition("c", _provision_nothing)
-    two = await second.create_partition("c", _provision_nothing)
+    one = await _created(first, "c")
+    two = await _created(second, "c")
     assert one.partition_uuid != two.partition_uuid
-    in_first = await first.get_partition("c")
-    in_second = await second.get_partition("c")
+    in_first = await first.resolve("c")
+    in_second = await second.resolve("c")
     assert in_first is not None
     assert in_second is not None
     assert in_first.partition_uuid == one.partition_uuid
     assert in_second.partition_uuid == two.partition_uuid
 
-    await first.delete_partition("c")
+    await first.unregister("c")
     await _age_deletion(first, one.partition_uuid)
-    assert await first.get_partition("c") is None
-    still_in_second = await second.get_partition("c")
+    assert await first.resolve("c") is None
+    still_in_second = await second.resolve("c")
     assert still_in_second is not None
     assert still_in_second.partition_uuid == two.partition_uuid
     await two.require_current()
@@ -542,7 +570,7 @@ async def test_concurrent_creators_get_one_winner(
     assert len(winners) == 1
     assert len(losers) == 5
     await winners[0].confirm()
-    resolved = await first.get_partition("c")
+    resolved = await first.resolve("c")
     assert resolved is not None
     assert resolved.partition_uuid == winners[0].partition_uuid
 
@@ -554,12 +582,12 @@ async def test_delete_queues_the_partition_uuid_and_is_idempotent(
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("c")).partition_uuid
 
-    await registry.delete_partition("c")
+    await registry.unregister("c")
 
-    assert await registry.get_partition("c") is None
+    assert await registry.resolve("c") is None
     assert await _queued(registry) == [partition_uuid]
-    await registry.delete_partition("c")
-    await registry.delete_partition("never")
+    await registry.unregister("c")
+    await registry.unregister("never")
     assert await _queued(registry) == [partition_uuid]
 
 
@@ -569,12 +597,12 @@ async def test_a_recreated_name_gets_a_new_partition_uuid(
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     old = (await registry._reserve("c")).partition_uuid
-    await registry.delete_partition("c")
+    await registry.unregister("c")
 
-    new = (await registry.create_partition("c", _provision_nothing)).partition_uuid
+    new = (await _created(registry, "c")).partition_uuid
 
     assert new != old
-    resolved = await registry.get_partition("c")
+    resolved = await registry.resolve("c")
     assert resolved is not None
     assert resolved.partition_uuid == new
 
@@ -586,7 +614,7 @@ async def test_a_round_is_given_where_the_records_are(
     """The round is given the partition UUID the deleted partition's records carry."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("c")).partition_uuid
-    await registry.delete_partition("c")
+    await registry.unregister("c")
     await _age_deletion(registry, partition_uuid)
     given: list[UUID] = []
 
@@ -594,7 +622,7 @@ async def test_a_round_is_given_where_the_records_are(
         given.append(claimed)
         return False
 
-    assert await registry.run_purge_round(purge_round)
+    assert await _run_round(registry, purge_round)
     assert given == [partition_uuid]
 
 
@@ -604,7 +632,7 @@ async def test_a_tombstone_is_not_due_before_the_retention(
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
 
     assert await _round(registry, any_records_found=False) is None
     assert await _queued(registry) == [partition_uuid]
@@ -622,8 +650,8 @@ async def test_due_tombstones_are_claimed_oldest_deletion_first_until_a_round_fi
     )
     first = (await registry._reserve("a")).partition_uuid
     second = (await registry._reserve("b")).partition_uuid
-    await registry.delete_partition("a")
-    await registry.delete_partition("b")
+    await registry.unregister("a")
+    await registry.unregister("b")
     # The later deletion, with the larger partition UUID, is made the older, so
     # only the ordering by deletion can put it first.
     await _age_deletion(registry, first)
@@ -649,7 +677,7 @@ async def test_a_tombstone_queued_by_a_real_deletion_comes_due_by_the_database_c
         sqlalchemy_engine, partition_namespace, tombstone_retention_seconds=0
     )
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
 
     assert await _round(registry, any_records_found=False) == partition_uuid
 
@@ -664,7 +692,7 @@ async def test_a_changed_retention_applies_to_tombstones_already_queued(
     claim is decided applies, including to tombstones queued under another."""
     queued_under_a_day = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await queued_under_a_day._reserve("a")).partition_uuid
-    await queued_under_a_day.delete_partition("a")
+    await queued_under_a_day.unregister("a")
     assert await _round(queued_under_a_day, any_records_found=False) is None
 
     no_retention = await _registry(
@@ -680,7 +708,7 @@ async def test_a_round_that_raises_keeps_the_tombstone_and_names_it_in_the_error
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     async def refused(claimed: UUID) -> bool:
@@ -688,7 +716,7 @@ async def test_a_round_that_raises_keeps_the_tombstone_and_names_it_in_the_error
         raise RuntimeError("the backend refused")
 
     with pytest.raises(RuntimeError) as raised:
-        await registry.run_purge_round(refused)
+        await _run_round(registry, refused)
 
     assert [
         note
@@ -710,10 +738,10 @@ async def test_a_failed_tombstone_backs_off_while_the_ones_behind_it_are_claimed
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     failing = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, failing, extra=timedelta(hours=1))
     later = (await registry._reserve("b")).partition_uuid
-    await registry.delete_partition("b")
+    await registry.unregister("b")
     await _age_deletion(registry, later)
 
     assert await _failing_round(registry) == failing
@@ -726,7 +754,7 @@ async def test_the_backoff_doubles_with_each_failure_and_runs_from_the_last_one(
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     # Due for days: the backoff still runs from the last failure, not from
     # when the tombstone came due.
     await _age_deletion(registry, partition_uuid, extra=timedelta(days=3))
@@ -756,7 +784,7 @@ async def test_the_backoff_stops_doubling_at_its_maximum(
     )
     await registry.startup()
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     for _ in range(5):
@@ -775,10 +803,10 @@ async def test_a_tombstone_whose_rounds_keep_failing_is_dead_lettered_and_report
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     failing = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, failing, extra=timedelta(hours=1))
     later = (await registry._reserve("b")).partition_uuid
-    await registry.delete_partition("b")
+    await registry.unregister("b")
     await _age_deletion(registry, later)
 
     with caplog.at_level(logging.ERROR):
@@ -807,7 +835,7 @@ async def test_resetting_a_dead_lettered_tombstones_attempts_returns_it_to_the_p
     once, its last failure just now."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
     for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS):
         await _age_claimable_at(registry, partition_uuid, timedelta(days=1))
@@ -830,7 +858,7 @@ async def test_a_round_that_finds_records_resets_the_attempts_without_progress(
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS - 1):
@@ -848,7 +876,7 @@ async def test_a_cancelled_round_ends_its_claim_without_counting_it(
     claimable at once, without waiting out the lease."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     _, holding = await _start_held_round(registry)
@@ -871,7 +899,7 @@ async def test_a_round_cancelled_after_its_attempts_are_reset_leaves_them_at_zer
     tombstone is claimed again."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     _, holding = await _start_held_round(registry)
@@ -893,7 +921,7 @@ async def test_a_round_failing_after_its_attempts_are_reset_backs_off_one_attemp
     negative shift."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     held, holding = await _start_held_round(registry)
@@ -929,7 +957,7 @@ async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backof
     is logged as a retry."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     with caplog.at_level(logging.ERROR):
@@ -970,7 +998,7 @@ async def test_rounds_that_never_end_dead_letter_the_tombstone(
     like one whose rounds keep raising, each retry logged with its attempt."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     with caplog.at_level(logging.WARNING):
@@ -1003,7 +1031,7 @@ async def test_a_cancelled_retry_of_a_round_that_never_ended_leaves_it_claimable
     once."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     assert await _abandon_claim(registry, monkeypatch) == partition_uuid
@@ -1030,7 +1058,7 @@ async def test_racing_purgers_retry_a_round_that_never_ended_once(
     try:
         purgers = [await _registry(engine, partition_namespace) for engine in engines]
         partition_uuid = (await purgers[0]._reserve("a")).partition_uuid
-        await purgers[0].delete_partition("a")
+        await purgers[0].unregister("a")
         await _age_deletion(purgers[0], partition_uuid)
         await _abandon_claim(purgers[0], monkeypatch)
         await _age_claimable_at(purgers[0], partition_uuid)
@@ -1041,9 +1069,7 @@ async def test_racing_purgers_retry_a_round_that_never_ended_once(
             return False
 
         await asyncio.wait_for(
-            asyncio.gather(
-                *(purger.run_purge_round(found_nothing) for purger in purgers)
-            ),
+            asyncio.gather(*(_run_round(purger, found_nothing) for purger in purgers)),
             30,
         )
     finally:
@@ -1062,8 +1088,8 @@ async def test_a_claimed_tombstone_is_skipped_while_its_round_runs(
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     older = (await registry._reserve("older")).partition_uuid
     newer = (await registry._reserve("newer")).partition_uuid
-    await registry.delete_partition("older")
-    await registry.delete_partition("newer")
+    await registry.unregister("older")
+    await registry.unregister("newer")
     await _age_deletion(registry, older, extra=timedelta(minutes=1))
     await _age_deletion(registry, newer)
 
@@ -1093,7 +1119,7 @@ async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
     nothing: the later claim holds, and each round counts once."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     stale, stale_task = await _start_held_round(registry)
@@ -1138,7 +1164,7 @@ async def test_a_round_that_finds_nothing_removes_the_tombstone_under_any_claim(
     that outlasted its lease still removes the tombstone it found empty."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     stale, stale_task = await _start_held_round(registry)
@@ -1178,7 +1204,7 @@ async def test_concurrent_purgers_claim_each_tombstone_once(
         for index in range(12):
             name = f"c{index}"
             partition_uuids.append((await purgers[0]._reserve(name)).partition_uuid)
-            await purgers[0].delete_partition(name)
+            await purgers[0].unregister(name)
         ran: list[UUID] = []
 
         async def purge_round(partition_uuid: UUID) -> bool:
@@ -1187,7 +1213,7 @@ async def test_concurrent_purgers_claim_each_tombstone_once(
             return False
 
         async def drain(purger: SQLAlchemyPartitionRegistry) -> None:
-            while await purger.run_purge_round(purge_round):
+            while await _run_round(purger, purge_round):
                 pass
 
         await asyncio.wait_for(asyncio.gather(*(drain(p) for p in purgers)), 60)
@@ -1205,7 +1231,7 @@ async def test_a_partition_uuid_awaiting_purge_is_never_reminted(
     """A minted partition UUID colliding with a queued tombstone is rejected and re-minted."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     dead = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     minted = iter([dead, uuid4()])
     monkeypatch.setattr(
         "memmachine_server.common.partition_registry.sqlalchemy_partition_registry.uuid4",
@@ -1224,7 +1250,7 @@ async def test_creation_that_never_mints_a_free_partition_uuid_gives_up(
 ):
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     dead = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     monkeypatch.setattr(
         "memmachine_server.common.partition_registry.sqlalchemy_partition_registry.uuid4",
         lambda: dead,
@@ -1232,7 +1258,7 @@ async def test_creation_that_never_mints_a_free_partition_uuid_gives_up(
 
     with pytest.raises(PartitionCreateAttemptsExhaustedError):
         await registry._reserve("b")
-    assert await registry.get_partition("b") is None
+    assert await registry.resolve("b") is None
 
 
 @asynccontextmanager
@@ -1279,7 +1305,7 @@ async def test_purge_rounds_keep_time_by_the_database_clock(
     async with _engine_ten_days_behind(sqlalchemy_engine) as skewed_engine:
         registry = await _registry(skewed_engine, partition_namespace)
         partition_uuid = (await registry._reserve("a")).partition_uuid
-        await registry.delete_partition("a")
+        await registry.unregister("a")
 
         async with skewed_engine.connect() as connection:
             row = (
@@ -1310,7 +1336,7 @@ async def test_a_purge_lease_runs_by_the_database_clock(
             skewed_engine, partition_namespace, tombstone_retention_seconds=0
         )
         partition_uuid = (await registry._reserve("a")).partition_uuid
-        await registry.delete_partition("a")
+        await registry.unregister("a")
 
         held, holding = await _start_held_round(registry)
         try:
@@ -1344,7 +1370,7 @@ async def test_no_transaction_is_open_while_a_round_runs(
         sqlalchemy_engine, partition_namespace, tombstone_retention_seconds=0
     )
     await registry._reserve("a")
-    await registry.delete_partition("a")
+    await registry.unregister("a")
 
     held, holding = await _start_held_round(registry)
     try:
@@ -1377,8 +1403,8 @@ async def test_a_claim_skips_a_tombstone_another_purger_holds(
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     held = (await registry._reserve("held")).partition_uuid
     free = (await registry._reserve("free")).partition_uuid
-    await registry.delete_partition("held")
-    await registry.delete_partition("free")
+    await registry.unregister("held")
+    await registry.unregister("free")
     await _age_deletion(registry, held, extra=timedelta(minutes=1))
     await _age_deletion(registry, free)
 
@@ -1416,16 +1442,16 @@ async def test_sqlite_stays_writable_while_a_round_runs(tmp_path, partition_name
         impatient = await _registry(impatient_engine, partition_namespace)
         older = (await purger._reserve("older")).partition_uuid
         newer = (await purger._reserve("newer")).partition_uuid
-        await purger.delete_partition("older")
-        await purger.delete_partition("newer")
+        await purger.unregister("older")
+        await purger.unregister("newer")
         await _age_deletion(purger, older, extra=timedelta(minutes=1))
         await _age_deletion(purger, newer)
 
         held, holding = await _start_held_round(purger)
         try:
             assert held.ran == [older]
-            await impatient.create_partition("c", _provision_nothing)
-            await impatient.delete_partition("c")
+            await _created(impatient, "c")
+            await impatient.unregister("c")
             assert await _round(impatient, any_records_found=False) == newer
             held.end(any_records_found=False)
             assert await asyncio.wait_for(holding, 30)
@@ -1450,9 +1476,9 @@ async def test_racing_deletions_of_a_partition_queue_one_tombstone(
     for cycle in range(10):
         await registries[0]._reserve("c")
         await asyncio.wait_for(
-            asyncio.gather(*(r.delete_partition("c") for r in registries)), 30
+            asyncio.gather(*(r.unregister("c") for r in registries)), 30
         )
-        assert await registries[0].get_partition("c") is None
+        assert await registries[0].resolve("c") is None
         assert len(await _queued(registries[0])) == cycle + 1
     await registries[0]._reserve("c")
 
@@ -1484,7 +1510,7 @@ async def test_a_deletion_racing_another_waits_and_queues_nothing_more(
                     enqueued_at=func.now(),
                 )
             )
-            local = asyncio.create_task(registry.delete_partition("c"))
+            local = asyncio.create_task(registry.unregister("c"))
             assert await _blocked_or_done(sqlalchemy_engine, local) == "blocked"
         await asyncio.wait_for(local, 30)
     finally:
@@ -1501,7 +1527,7 @@ async def test_a_partition_uuid_colliding_with_a_live_partitions_is_reminted(
     """A mint rejected by the partition's unique constraint, with the name
     free, is a collision to mint again, not a taken name."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
-    live = (await registry.create_partition("live", _provision_nothing)).partition_uuid
+    live = (await _created(registry, "live")).partition_uuid
     minted = iter([live, uuid4()])
     monkeypatch.setattr(
         "memmachine_server.common.partition_registry.sqlalchemy_partition_registry.uuid4",
@@ -1511,7 +1537,7 @@ async def test_a_partition_uuid_colliding_with_a_live_partitions_is_reminted(
     fresh = (await registry._reserve("fresh")).partition_uuid
 
     assert fresh != live
-    resolved = await registry.get_partition("live")
+    resolved = await registry.resolve("live")
     assert resolved is not None
     assert resolved.partition_uuid == live
 
@@ -1580,7 +1606,7 @@ async def test_a_round_claims_one_tombstone(sqlalchemy_engine, partition_namespa
     )
     for name in ("a", "b", "c"):
         await registry._reserve(name)
-        await registry.delete_partition(name)
+        await registry.unregister(name)
 
     assert await _round(registry, any_records_found=False) is not None
 
@@ -1621,13 +1647,13 @@ async def test_a_claim_holds_for_the_lease_it_was_taken_under(
         sqlalchemy_engine, partition_namespace, purge_lease_seconds=60
     )
     partition_uuid = (await five_minutes._reserve("a")).partition_uuid
-    await five_minutes.delete_partition("a")
+    await five_minutes.unregister("a")
     await _age_deletion(five_minutes, partition_uuid)
 
     held, holding = await _start_held_round(five_minutes)
     try:
         await _age_claimable_at(five_minutes, partition_uuid, timedelta(seconds=100))
-        assert not await one_minute.run_purge_round(_no_round)
+        assert not await _run_round(one_minute, _no_round)
         await _age_claimable_at(five_minutes, partition_uuid, PURGE_LEASE)
         assert await _round(one_minute, any_records_found=True) == partition_uuid
         held.end(any_records_found=True)
@@ -1647,7 +1673,7 @@ async def test_the_first_purge_backoff_comes_from_its_parameter(
         sqlalchemy_engine, partition_namespace, base_purge_retry_backoff_seconds=10
     )
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     assert await _failing_round(registry) == partition_uuid
@@ -1669,7 +1695,7 @@ async def test_a_deletion_whose_tombstone_cannot_be_queued_changes_nothing(
     tombstone fails, the partition stays registered and nothing is queued,
     so no deleted partition UUID is ever left without a tombstone."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
-    live = await registry.create_partition("c", _provision_nothing)
+    live = await _created(registry, "c")
 
     with (
         _failing_statement(
@@ -1677,16 +1703,16 @@ async def test_a_deletion_whose_tombstone_cannot_be_queued_changes_nothing(
         ),
         pytest.raises(_InjectedFailureError),
     ):
-        await registry.delete_partition("c")
+        await registry.unregister("c")
 
-    resolved = await registry.get_partition("c")
+    resolved = await registry.resolve("c")
     assert resolved is not None
     assert resolved.partition_uuid == live.partition_uuid
     await live.require_current()
     assert await _queued(registry) == []
 
-    await registry.delete_partition("c")
-    assert await registry.get_partition("c") is None
+    await registry.unregister("c")
+    assert await registry.resolve("c") is None
     assert await _queued(registry) == [live.partition_uuid]
 
 
@@ -1704,8 +1730,8 @@ async def test_a_reservation_whose_queue_check_fails_leaves_the_name_free(
     ):
         await registry._reserve("c")
 
-    assert await registry.get_partition("c") is None
-    await registry.create_partition("c", _provision_nothing)
+    assert await registry.resolve("c") is None
+    await _created(registry, "c")
 
 
 @pytest.mark.asyncio
@@ -1717,7 +1743,7 @@ async def test_a_round_whose_outcome_cannot_be_written_is_retried_once_its_lease
     backoff pass, and the tombstone is then claimed as the next attempt."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.delete_partition("a")
+    await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
     ran = False
 
@@ -1732,7 +1758,7 @@ async def test_a_round_whose_outcome_cannot_be_written_is_retried_once_its_lease
         ),
         pytest.raises(_InjectedFailureError),
     ):
-        await registry.run_purge_round(found_records)
+        await _run_round(registry, found_records)
 
     assert await _attempts(registry, partition_uuid) == 1
     assert await _round(registry, any_records_found=False) is None
@@ -1750,7 +1776,7 @@ async def test_a_reservation_colliding_with_a_tombstone_under_purge_does_not_wai
     collision and mints again at once, on PostgreSQL and SQLite alike."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     dead = (await registry._reserve("dead")).partition_uuid
-    await registry.delete_partition("dead")
+    await registry.unregister("dead")
     await _age_deletion(registry, dead)
 
     held, holding = await _start_held_round(registry)
@@ -1814,13 +1840,13 @@ async def _churn(
                 else:
                     await reservation.cancel()
             elif choice < 0.6:
-                await registry.delete_partition(name)
+                await registry.unregister(name)
             elif choice < 0.8:
-                registration = await registry.get_partition(name)
+                registration = await registry.resolve(name)
                 if registration is not None:
                     await registration.require_current()
             else:
-                await registry.run_purge_round(purge_round)
+                await _run_round(registry, purge_round)
         except _REFUSALS:
             pass
 
@@ -1871,7 +1897,7 @@ async def test_mixed_operations_across_engines_finish_cleanly_and_strand_nothing
         assert not registered & set(await _queued(registries[0]))
 
         for _ in range(1000):
-            if not await registries[0].run_purge_round(_found_nothing):
+            if not await _run_round(registries[0], _found_nothing):
                 break
         assert await _queued(registries[0]) == []
     finally:
@@ -1942,20 +1968,20 @@ class _ModelCheckedRegistry:
             self.backing_off[reservation.partition_uuid] = False
 
     async def delete_partition(self, name: str) -> None:
-        await self.registry.delete_partition(name)
+        await self.registry.unregister(name)
         if name in self.partitions:
             self.backing_off[self.partitions.pop(name)[0]] = False
 
     async def get_partition(self, name: str) -> None:
         if name not in self.partitions:
-            assert await self.registry.get_partition(name) is None
+            assert await self.registry.resolve(name) is None
             return
         partition_uuid, live = self.partitions[name]
         if not live:
             with pytest.raises(PartitionPendingError):
-                await self.registry.get_partition(name)
+                await self.registry.resolve(name)
             return
-        registration = await self.registry.get_partition(name)
+        registration = await self.registry.resolve(name)
         assert registration is not None
         assert registration.partition_uuid == partition_uuid
         self.registrations.append(registration)
@@ -1985,14 +2011,14 @@ class _ModelCheckedRegistry:
 
         claimable = {i for i, backs_off in self.backing_off.items() if not backs_off}
         if not claimable:
-            assert not await self.registry.run_purge_round(purge_round)
+            assert not await _run_round(self.registry, purge_round)
             assert claimed == []
             return
         if outcome == "raise":
             with pytest.raises(RuntimeError):
-                await self.registry.run_purge_round(purge_round)
+                await _run_round(self.registry, purge_round)
         else:
-            assert await self.registry.run_purge_round(purge_round)
+            assert await _run_round(self.registry, purge_round)
         assert len(claimed) == 1
         assert claimed[0] in claimable
         if outcome == "nothing":

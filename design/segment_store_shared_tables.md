@@ -77,9 +77,9 @@ with a new UUID.
   invisible to the successor even while its purge is still sweeping them.
 - **Purge and drop**: `purge_partition(partition_uuid) -> bool` and
   `drop_partition(partition_uuid)`, the `PartitionedStore` steps. The
-  owner's purge rounds, which its registry runs, call the purge for a
-  deleted partition once the retention has passed, until it returns False,
-  and then the drop, which
+  owner's partition manager calls the purge for a deleted partition once
+  the retention has passed, until it returns False, and then the drop,
+  which
   deletes the partition's row; how much one call does is the store's
   choice. This store bounds each call so that it does not noticeably
   degrade concurrent request serving, and every bound below exists for
@@ -121,7 +121,7 @@ with a new UUID.
     before the lock is taken, a second purger could plan its batch from a
     cursor the first has since advanced and read again the rows the first
     deleted.
-  - The store never schedules purging; the owner's purge rounds call it,
+  - The store never schedules purging; its owner's purge rounds call it,
     and the server's resource manager runs those rounds (see
     [the sweeper](vector_store_purge.md#the-sweeper)).
   - Pacing, not deletion speed, bounds how fast a backlog drains: a call

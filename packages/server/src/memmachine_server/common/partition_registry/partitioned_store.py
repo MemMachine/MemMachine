@@ -1,28 +1,26 @@
 """
-The interface of a store whose records are divided into partitions by the UUIDs a partition registry mints, and the purge round of an owner with one such store.
+The interface of a store whose records are divided into partitions by the UUIDs a partition registry mints.
 
-A store is one kind of resource an owner partitions by its registry's UUIDs.
+Imports nothing from this package; the partition manager builds on it.
 """
 
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from .partition_registry import PurgeRound
 
-
-class PartitionedStore[PartitionT](ABC):
+class PartitionedStore(ABC):
     """
     A store whose records are divided into partitions, each identified by the UUID its owner's partition registry mints.
 
     The store holds no partition names and decides nothing about which
-    partition is live. Its owner calls these methods, for each partition:
-    `create_partition` once, as it provisions the partition before the
-    registry confirms it, and `get_partition` whenever the owner answers the
+    partition is live. A partition manager calls these methods, for each
+    partition: `create_partition` once, before the registry confirms the
     partition; then, once the partition is deleted or its creation cancelled
-    and the retention has passed, in the purge rounds the registry runs,
-    `purge_partition` until it returns False, then `drop_partition`.
-    Partitions are isolated from one another, including partitions created
-    under the same name: records written to one are never read from another.
+    and the retention has passed, `purge_partition` until it returns False,
+    then `drop_partition`. Partitions are isolated from one another,
+    including partitions created under the same name: records written to one
+    are never read from another. How a partition's records are read and
+    written is the store's own.
     """
 
     @abstractmethod
@@ -35,33 +33,13 @@ class PartitionedStore[PartitionT](ABC):
         their storage has nothing to create. Safe to repeat, and to run on
         several processes at once.
 
-        A call that raises fails the partition's creation: the registry
-        cancels it, and the partition's purge rounds reclaim whatever the call
+        A call that raises fails the partition's creation: its reservation is
+        cancelled, and the partition's purge rounds reclaim whatever the call
         created.
 
         Args:
             partition_uuid (UUID):
                 The partition's UUID, minted by the registry.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_partition(self, partition_uuid: UUID) -> PartitionT | None:
-        """
-        Get a handle on a created partition.
-
-        The handle reads and writes the partition's records alone, whether
-        or not the partition is still live.
-
-        Args:
-            partition_uuid (UUID):
-                The partition's UUID.
-
-        Returns:
-            PartitionT | None:
-                A handle bound to the partition, or None when the store finds
-                nothing under the UUID: the partition was never created, or was
-                dropped. A store that cannot tell answers a handle.
         """
         raise NotImplementedError
 
@@ -106,17 +84,3 @@ class PartitionedStore[PartitionT](ABC):
                 The deleted partition's UUID.
         """
         raise NotImplementedError
-
-
-def single_store_purge_round[PartitionT](
-    partitioned_store: PartitionedStore[PartitionT],
-) -> PurgeRound:
-    """The purge round of a namespace whose partitions one store holds: purge the store and, once its purge finds nothing, drop the partition from it."""
-
-    async def purge_round(partition_uuid: UUID) -> bool:
-        if await partitioned_store.purge_partition(partition_uuid):
-            return True
-        await partitioned_store.drop_partition(partition_uuid)
-        return False
-
-    return purge_round

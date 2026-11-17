@@ -82,12 +82,13 @@ removes the storage the partition keeps for itself. Qdrant and Milvus purge
 records (per backend, below) and have nothing to drop; both SQLite stores
 find nothing to purge and drop the partition's tables at once.
 
-`PartitionRegistry.run_purge_round(purge_round)` returns whether it ran a round,
-`False` once no due tombstone is claimable, so a caller drains the queue by
-calling it until `False`. A call is one round on the tombstone that came due
-first, and runs it in three steps:
+`PartitionManager.run_purge_round()` returns whether it ran a round, `False`
+once no due tombstone is claimable, so a caller drains the queue by calling
+it until `False`. A call is one round on the tombstone that came due first,
+and runs it in three steps:
 
-1. **Claim.** One `UPDATE ... RETURNING`, committed at once, takes the oldest
+1. **Claim.** The registry's `claim_tombstone()`: one `UPDATE ... RETURNING`,
+   committed at once, takes the oldest
    due tombstone that is neither backing off, dead-lettered, nor held by another
    claim: it counts an attempt without progress, sets the tombstone's
    `claimable_at` to when its lease and then the backoff will have passed, and
@@ -97,15 +98,15 @@ first, and runs it in three steps:
    claim is taking and purgers on every process split a backlog without
    coordinating. SQLite drops the locking clause; there the claim's write
    serializes claims, for one statement.
-2. **Round.** With no transaction open, the registry runs the owner's purge
-   round on the tombstone's partition: the owner's stores' `purge_partition`,
-   and once none finds anything, their `drop_partition`. The round answers
-   whether any purge found records (see [partition
+2. **Round.** With no transaction open, the manager runs every store's
+   `purge_partition` on the tombstone's partition, and once none finds
+   anything, every store's `drop_partition` (see [partition
    registry](partition_registry.md#deletion-and-purge)).
-3. **Record.** In a short transaction: a round that found nothing removes the
-   tombstone, which frees the UUID; a round that found records ends its
-   claim, keeping the tombstone due, and resets its attempts without
-   progress.
+3. **Record.** The claim's `finish`, in a short transaction: a round that
+   found nothing removes the tombstone, which frees the UUID; a round that
+   found records ends its claim, keeping the tombstone due, and resets its
+   attempts without progress. A round that raised ends with the claim's
+   `fail`, and a cancelled one with its `release`.
 
 ### The lease
 
@@ -126,11 +127,11 @@ transaction, holding back vacuum or meeting
   costs Qdrant a scroll and a filter-delete that matches nothing; on Milvus it
   repeats a listing and deletes keys already deleted.
 - **A cancelled round takes back its attempt; a round whose purger died
-  keeps it.** A cancelled round ends its claim and takes back the attempt its
-  claim counted, in a write shielded from the cancellation, so its tombstone
-  is claimable at once. A round whose purger died writes nothing after its
-  claim, which already counted the attempt; its tombstone is claimed again
-  once the lease, and then the backoff, have passed.
+  keeps it.** A cancelled round releases its claim, which takes back the
+  attempt the claim counted, in a write shielded from the cancellation, so
+  its tombstone is claimable at once. A round whose purger died writes
+  nothing after its claim, which already counted the attempt; its tombstone
+  is claimed again once the lease, and then the backoff, have passed.
 - **The lease should exceed a round.** A round's remote calls run one after
   another, each bounded by the store's request timeout. A round that outlasts
   its lease may run beside a later round on the same tombstone, which is
@@ -204,8 +205,8 @@ holds nothing: the store's purge finds nothing there.
 
 The store never schedules its own purge. The resource manager starts one
 sweeper task per partition registry the first time it builds the registry,
-with the owner's purge round that build is given, and `close()` cancels
-them. A sweeper calls `run_purge_round` again after
+running a partition manager over the stores that build is given, and
+`close()` cancels them. A sweeper calls `run_purge_round` again after
 1 s when it ran a round and after 60 s when it ran none; a round that raises
 is logged and retried a tick later. Sweepers on other processes need no
 coordination: the claim arbitrates.

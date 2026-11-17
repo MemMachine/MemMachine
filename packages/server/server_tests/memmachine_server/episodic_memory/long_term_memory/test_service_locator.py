@@ -131,7 +131,7 @@ def _deployment_resource_manager(
     registration = create_autospec(Registration, instance=True)
     registration.partition_uuid = uuid4()
     partition_registry = create_autospec(PartitionRegistry, instance=True)
-    partition_registry.get_partition.return_value = registration
+    partition_registry.resolve.return_value = registration
     resource_manager.get_partition_registry.return_value = partition_registry
     resource_manager.get_embedder.return_value = embedder
     resource_manager.get_episode_storage.return_value = create_autospec(
@@ -164,8 +164,8 @@ async def test_event_params_get_the_session_partition_from_the_event_store():
     assert isinstance(partition, EventMemoryPartition)
     assert partition.similarity_metric is SimilarityMetric.COSINE
     partition_registry = resource_manager.get_partition_registry.return_value
-    partition_registry.get_partition.assert_awaited_once_with("raced")
-    partition_uuid = partition_registry.get_partition.return_value.partition_uuid
+    partition_registry.resolve.assert_awaited_once_with("raced")
+    partition_uuid = partition_registry.resolve.return_value.partition_uuid
     segment_store.get_partition.assert_awaited_once_with(partition_uuid)
     vector_store.get_partition.assert_awaited_once_with(partition_uuid)
     assert partition._segment_store_partition is (
@@ -178,11 +178,7 @@ async def test_event_params_get_the_session_partition_from_the_event_store():
     assert registry_call.kwargs["partition_namespace"] == "event_memory"
     assert registry_call.kwargs["tombstone_retention_seconds"] == 86400
     # The namespace's purge rounds run over the stores the partition is in.
-    deleted_uuid = uuid4()
-    assert await registry_call.kwargs["purge_round"](deleted_uuid) is False
-    for store in (segment_store, vector_store):
-        store.purge_partition.assert_awaited_once_with(deleted_uuid)
-        store.drop_partition.assert_awaited_once_with(deleted_uuid)
+    assert registry_call.kwargs["partitioned_stores"] == [segment_store, vector_store]
     resource_manager.get_vector_store.assert_awaited_once_with(
         "vs",
         vector_store_name="event_memory",
@@ -251,9 +247,9 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partition_without_
     partition_registry = resource_manager.get_partition_registry.return_value
     vector_store = resource_manager.get_vector_store.return_value
     segment_store = resource_manager.get_segment_store.return_value
-    partition_registry.delete_partition.assert_awaited_once_with("s")
-    partition_registry.get_partition.assert_not_awaited()
-    partition_registry.create_partition.assert_not_awaited()
+    partition_registry.unregister.assert_awaited_once_with("s")
+    partition_registry.resolve.assert_not_awaited()
+    partition_registry.reserve.assert_not_awaited()
     vector_store.create_partition.assert_not_awaited()
     segment_store.create_partition.assert_not_awaited()
     # Reclamation is the purge rounds'; the delete path never purges.
@@ -318,23 +314,30 @@ def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _event_memory() -> NonCallableMagicMock:
-    """An event memory in which no partition holds any name and every creation succeeds."""
+    """An event memory in which no partition holds any name until a creation, and every creation succeeds."""
     event_memory = create_autospec(EventMemory, instance=True)
-    event_memory.get_partition.return_value = None
-    event_memory.create_partition.return_value = sentinel.created
+    created = False
+
+    async def get_partition(partition_name: str) -> object:
+        return sentinel.created if created else None
+
+    async def create_partition(partition_name: str) -> None:
+        nonlocal created
+        created = True
+
+    event_memory.get_partition.side_effect = get_partition
+    event_memory.create_partition.side_effect = create_partition
     return event_memory
 
 
 def _pending() -> PartitionPendingError:
-    return PartitionPendingError(
-        EventMemory.PARTITION_NAMESPACE, "p", datetime.now(UTC)
-    )
+    return PartitionPendingError("event_memory", "p", datetime.now(UTC))
 
 
 @pytest.mark.asyncio
 async def test_get_or_create_answers_a_live_partition_without_creating():
     event_memory = _event_memory()
-    event_memory.get_partition.return_value = sentinel.live
+    event_memory.get_partition.side_effect = [sentinel.live]
 
     partition = await service_locator._get_or_create_event_memory_partition(
         event_memory, "p"
@@ -354,6 +357,7 @@ async def test_get_or_create_creates_the_partition_when_no_partition_holds_the_n
 
     assert partition is sentinel.created
     event_memory.create_partition.assert_awaited_once_with("p")
+    assert event_memory.get_partition.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -393,10 +397,17 @@ async def test_get_or_create_reports_a_partition_that_stays_pending():
 @pytest.mark.usefixtures("no_retry_delay")
 async def test_get_or_create_creates_again_after_a_deletion_during_creation():
     event_memory = _event_memory()
-    event_memory.create_partition.side_effect = [
-        PartitionDeletedError(EventMemory.PARTITION_NAMESPACE, "p", uuid4()),
-        sentinel.created,
-    ]
+    create_partition = event_memory.create_partition.side_effect
+    attempts = 0
+
+    async def deleted_once(partition_name: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PartitionDeletedError("event_memory", "p", uuid4())
+        await create_partition(partition_name)
+
+    event_memory.create_partition.side_effect = deleted_once
 
     partition = await service_locator._get_or_create_event_memory_partition(
         event_memory, "p"
@@ -410,7 +421,7 @@ async def test_get_or_create_creates_again_after_a_deletion_during_creation():
 @pytest.mark.usefixtures("no_retry_delay")
 async def test_get_or_create_gives_up_from_the_race_it_last_lost():
     event_memory = _event_memory()
-    lost = PartitionAlreadyExistsError(EventMemory.PARTITION_NAMESPACE, "p")
+    lost = PartitionAlreadyExistsError("event_memory", "p")
     event_memory.create_partition.side_effect = lost
 
     with pytest.raises(
@@ -419,3 +430,18 @@ async def test_get_or_create_gives_up_from_the_race_it_last_lost():
         await service_locator._get_or_create_event_memory_partition(event_memory, "p")
 
     assert gave_up.value.__cause__ is lost
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_creates_again_when_its_partition_is_gone_before_it_is_read():
+    """A partition deleted and dropped between its creation and the read after it."""
+    event_memory = _event_memory()
+    event_memory.get_partition.side_effect = [None, None, None, sentinel.created]
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.created
+    assert event_memory.create_partition.await_count == 2

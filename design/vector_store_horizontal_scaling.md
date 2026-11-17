@@ -61,13 +61,13 @@ behind its choices.
 ## Lifecycle of a partition
 
 1. **Create.** The owner, such as event memory, creates the partition by
-   name through its registry, which reserves the name, inserting a pending
-   row under a freshly minted UUID, runs the owner's provisioning, which
-   creates the partition in each store (on Qdrant and Milvus, nothing: its
-   records go into the store's one native collection, which startup
-   prepared), and confirms the reservation, which marks the row live. A
-   racing creator loses at the registry's primary key, and a pending
-   partition is not answered.
+   name through its partition manager, which reserves the name in the
+   registry, inserting a pending row under a freshly minted UUID, creates
+   the partition in each store (on Qdrant and Milvus, nothing: its records
+   go into the store's one native collection, which startup prepared), and
+   confirms the reservation, which marks the row live. A racing creator
+   loses at the registry's primary key, and a pending partition is not
+   answered.
 2. **Get.** The registry resolves the partition name to the live partition
    and answers its registration, and the owner gets each store's handle on
    the partition's UUID.
@@ -79,10 +79,10 @@ behind its choices.
    queues a tombstone. Every operation of the owner on that partition raises
    from then on, in every process.
 5. **Purge.** Once the retention (a day by default) has passed, sweepers in
-   every process claim tombstones oldest first and run the owner's purge
-   round on each, which purges the partition's records from the owner's
-   stores, a round at a time; once no store finds any, the round drops the
-   partition from the stores, and the registry deletes its tombstone.
+   every process claim tombstones oldest first and purge each partition's
+   records from the owner's stores, a round at a time; once no store finds
+   any, the round drops the partition from the stores, and the registry
+   deletes its tombstone.
 
 ## Guarantees by store
 

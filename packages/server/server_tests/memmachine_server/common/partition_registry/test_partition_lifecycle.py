@@ -1,8 +1,8 @@
-"""Tests of the registry running its owner's steps in its partitions' lifecycle, and of the one-store purge round."""
+"""Tests of the partition manager running a namespace's partitions' lifecycle over its stores, on a SQLite registry."""
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, NonCallableMagicMock, create_autospec
+from unittest.mock import NonCallableMagicMock, create_autospec
 from uuid import UUID
 
 import pytest
@@ -14,9 +14,8 @@ from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionDeletedError,
     PartitionedStore,
+    PartitionManager,
     PartitionPendingError,
-    PurgeRound,
-    single_store_purge_round,
     sqlalchemy_partition_registry,
 )
 from memmachine_server.common.partition_registry import (
@@ -32,26 +31,24 @@ from memmachine_server.common.sql import enable_sqlite_explicit_begin
 NAME = "p"
 
 
-@pytest.fixture
-def store() -> NonCallableMagicMock:
+def _store() -> NonCallableMagicMock:
     store = create_autospec(PartitionedStore, instance=True)
     store.purge_partition.return_value = False
     return store
 
 
 @pytest.fixture
-def provision() -> AsyncMock:
-    """The owner's step provisioning a partition."""
-    return AsyncMock()
+def store() -> NonCallableMagicMock:
+    return _store()
 
 
 @pytest.fixture
-def purge_round(store) -> PurgeRound:
-    return single_store_purge_round(store)
+def other_store() -> NonCallableMagicMock:
+    return _store()
 
 
 @pytest_asyncio.fixture
-async def registry(tmp_path, store):
+async def registry(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
     enable_sqlite_explicit_begin(engine)
     registry = SQLAlchemyPartitionRegistry(
@@ -66,6 +63,21 @@ async def registry(tmp_path, store):
     await engine.dispose()
 
 
+@pytest.fixture
+def manager(registry, store) -> PartitionManager:
+    return PartitionManager(registry, [store])
+
+
+async def _created(
+    manager: PartitionManager, registry: SQLAlchemyPartitionRegistry
+) -> UUID:
+    """Create the partition named NAME, and answer its UUID."""
+    await manager.create_partition(NAME)
+    registration = await registry.resolve(NAME)
+    assert registration is not None
+    return registration.partition_uuid
+
+
 async def _purged(registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
     """Partition UUIDs the purge rounds claim, running rounds that find nothing until none is due."""
     purged: list[UUID] = []
@@ -74,8 +86,8 @@ async def _purged(registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
         purged.append(partition_uuid)
         return False
 
-    while await registry.run_purge_round(purge):
-        pass
+    while (claim := await registry.claim_tombstone()) is not None:
+        await claim.finish(await purge(claim.partition_uuid))
     return purged
 
 
@@ -87,21 +99,18 @@ async def _queued(registry: SQLAlchemyPartitionRegistry) -> int:
 
 
 @pytest.mark.asyncio
-async def test_a_partition_is_provisioned_while_pending_then_confirmed(
-    registry, provision
+async def test_a_partition_is_created_in_the_store_while_pending_then_confirmed(
+    registry, manager, store
 ):
     async def pending_while_created(partition_uuid: UUID) -> None:
         with pytest.raises(PartitionPendingError):
-            await registry.get_partition(NAME)
+            await registry.resolve(NAME)
 
-    provision.side_effect = pending_while_created
+    store.create_partition.side_effect = pending_while_created
 
-    created = await registry.create_partition(NAME, provision)
+    partition_uuid = await _created(manager, registry)
 
-    provision.assert_awaited_once_with(created.partition_uuid)
-    gotten = await registry.get_partition(NAME)
-    assert gotten is not None
-    assert gotten.partition_uuid == created.partition_uuid
+    store.create_partition.assert_awaited_once_with(partition_uuid)
 
 
 @pytest.mark.asyncio
@@ -111,30 +120,32 @@ async def test_a_partition_is_provisioned_while_pending_then_confirmed(
     ids=["empty", "nul", "too_long", "too_many_bytes"],
 )
 async def test_an_invalid_name_is_refused_by_every_by_name_operation(
-    registry, provision, partition_name
+    registry, manager, store, partition_name
 ):
     with pytest.raises(ValueError, match="Partition name"):
-        await registry.create_partition(partition_name, provision)
+        await registry.reserve(partition_name)
     with pytest.raises(ValueError, match="Partition name"):
-        await registry.get_partition(partition_name)
+        await registry.resolve(partition_name)
     with pytest.raises(ValueError, match="Partition name"):
-        await registry.delete_partition(partition_name)
-    provision.assert_not_awaited()
+        await registry.unregister(partition_name)
+    with pytest.raises(ValueError, match="Partition name"):
+        await manager.create_partition(partition_name)
+    store.create_partition.assert_not_awaited()
     assert await _queued(registry) == 0
 
 
 @pytest.mark.asyncio
-async def test_a_taken_name_is_refused_before_it_is_provisioned(registry, provision):
-    await registry.create_partition(NAME, provision)
+async def test_a_taken_name_is_refused_before_the_store_creates(manager, store):
+    await manager.create_partition(NAME)
 
     with pytest.raises(PartitionAlreadyExistsError):
-        await registry.create_partition(NAME, provision)
-    assert provision.await_count == 1
+        await manager.create_partition(NAME)
+    assert store.create_partition.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_a_failed_provisioning_frees_the_name_and_queues_the_partition(
-    registry, provision
+async def test_a_failed_store_creation_frees_the_name_and_queues_the_partition(
+    registry, manager, store
 ):
     created: list[UUID] = []
 
@@ -142,41 +153,40 @@ async def test_a_failed_provisioning_frees_the_name_and_queues_the_partition(
         created.append(partition_uuid)
         raise RuntimeError("the backend refused")
 
-    provision.side_effect = refused
+    store.create_partition.side_effect = refused
 
     with pytest.raises(RuntimeError, match="refused"):
-        await registry.create_partition(NAME, provision)
+        await manager.create_partition(NAME)
 
-    assert await registry.get_partition(NAME) is None
+    assert await registry.resolve(NAME) is None
     assert await _purged(registry) == created
-    provision.side_effect = None
-    again = await registry.create_partition(NAME, provision)
-    assert again.partition_uuid not in created
+    store.create_partition.side_effect = None
+    assert await _created(manager, registry) not in created
 
 
 @pytest.mark.asyncio
-async def test_a_partition_deleted_while_it_is_provisioned_is_not_confirmed(
-    registry, provision
+async def test_a_partition_deleted_while_the_store_creates_it_is_not_confirmed(
+    registry, manager, store
 ):
     created: list[UUID] = []
 
     async def deleted_meanwhile(partition_uuid: UUID) -> None:
         created.append(partition_uuid)
-        await registry.delete_partition(NAME)
+        await manager.delete_partition(NAME)
 
-    provision.side_effect = deleted_meanwhile
+    store.create_partition.side_effect = deleted_meanwhile
 
     with pytest.raises(PartitionDeletedError) as deleted:
-        await registry.create_partition(NAME, provision)
+        await manager.create_partition(NAME)
 
     assert deleted.value.partition_uuid == created[0]
-    assert await registry.get_partition(NAME) is None
+    assert await registry.resolve(NAME) is None
     assert await _purged(registry) == created
 
 
 @pytest.mark.asyncio
 async def test_a_cancelled_creation_frees_the_name_and_queues_the_partition(
-    registry, provision
+    registry, manager, store
 ):
     started = asyncio.Event()
     created: list[UUID] = []
@@ -186,26 +196,26 @@ async def test_a_cancelled_creation_frees_the_name_and_queues_the_partition(
         started.set()
         await asyncio.Event().wait()
 
-    provision.side_effect = hangs
-    creating = asyncio.create_task(registry.create_partition(NAME, provision))
+    store.create_partition.side_effect = hangs
+    creating = asyncio.create_task(manager.create_partition(NAME))
     await started.wait()
     creating.cancel()
     with pytest.raises(asyncio.CancelledError):
         await creating
 
-    assert await registry.get_partition(NAME) is None
+    assert await registry.resolve(NAME) is None
     assert await _purged(registry) == created
 
 
 @pytest.mark.asyncio
 async def test_cancelling_the_reservation_after_a_cancelled_creation_survives_another_cancellation(
-    registry, provision, monkeypatch
+    registry, manager, store, monkeypatch
 ):
     started = asyncio.Event()
     cancelling = asyncio.Event()
     release = asyncio.Event()
     reservation_type = sqlalchemy_partition_registry._SQLAlchemyReservation
-    cancel = reservation_type.cancel
+    cancel = reservation_type._cancel
 
     async def hangs(partition_uuid: UUID) -> None:
         started.set()
@@ -216,9 +226,9 @@ async def test_cancelling_the_reservation_after_a_cancelled_creation_survives_an
         await release.wait()
         await cancel(reservation)
 
-    provision.side_effect = hangs
-    monkeypatch.setattr(reservation_type, "cancel", slow)
-    creating = asyncio.create_task(registry.create_partition(NAME, provision))
+    store.create_partition.side_effect = hangs
+    monkeypatch.setattr(reservation_type, "_cancel", slow)
+    creating = asyncio.create_task(manager.create_partition(NAME))
     await started.wait()
     creating.cancel()
     await asyncio.wait_for(cancelling.wait(), 5)
@@ -230,12 +240,12 @@ async def test_cancelling_the_reservation_after_a_cancelled_creation_survives_an
     await asyncio.wait_for(
         asyncio.gather(*partition_registry_module._reservation_cancellations), 5
     )
-    assert await registry.get_partition(NAME) is None
+    assert await registry.resolve(NAME) is None
 
 
 @pytest.mark.asyncio
 async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_reported(
-    registry, provision, monkeypatch, caplog
+    manager, store, monkeypatch, caplog
 ):
     """A creation cancelled again stops awaiting the reservation's cancel; the
     cancel's failure is still logged, naming the partition."""
@@ -252,11 +262,11 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
         await release.wait()
         raise ConnectionError("the registry is unreachable")
 
-    provision.side_effect = hangs
+    store.create_partition.side_effect = hangs
     monkeypatch.setattr(
-        sqlalchemy_partition_registry._SQLAlchemyReservation, "cancel", fails_late
+        sqlalchemy_partition_registry._SQLAlchemyReservation, "_cancel", fails_late
     )
-    creating = asyncio.create_task(registry.create_partition(NAME, provision))
+    creating = asyncio.create_task(manager.create_partition(NAME))
     await started.wait()
     creating.cancel()
     await asyncio.wait_for(cancelling.wait(), 5)
@@ -286,9 +296,7 @@ async def test_a_cancel_that_fails_after_its_creation_stopped_waiting_is_still_r
 
 
 @pytest.mark.asyncio
-async def test_a_confirmation_that_fails_frees_the_name(
-    registry, provision, monkeypatch
-):
+async def test_a_confirmation_that_fails_frees_the_name(registry, manager, monkeypatch):
     async def unreachable(reservation) -> None:
         raise ConnectionError("the registry is unreachable")
 
@@ -299,16 +307,14 @@ async def test_a_confirmation_that_fails_frees_the_name(
             unreachable,
         )
         with pytest.raises(ConnectionError):
-            await registry.create_partition(NAME, provision)
+            await manager.create_partition(NAME)
 
-    assert await registry.get_partition(NAME) is None
-    assert await registry.create_partition(NAME, provision) is not None
+    assert await registry.resolve(NAME) is None
+    await _created(manager, registry)
 
 
 @pytest.mark.asyncio
-async def test_a_cancelled_confirmation_frees_the_name(
-    registry, provision, monkeypatch
-):
+async def test_a_cancelled_confirmation_frees_the_name(registry, manager, monkeypatch):
     confirming = asyncio.Event()
 
     async def hangs(reservation) -> None:
@@ -320,7 +326,7 @@ async def test_a_cancelled_confirmation_frees_the_name(
         patched.setattr(
             sqlalchemy_partition_registry._SQLAlchemyReservation, "confirm", hangs
         )
-        creating = asyncio.create_task(registry.create_partition(NAME, provision))
+        creating = asyncio.create_task(manager.create_partition(NAME))
         await confirming.wait()
         creating.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -329,12 +335,12 @@ async def test_a_cancelled_confirmation_frees_the_name(
             asyncio.gather(*partition_registry_module._reservation_cancellations), 5
         )
 
-    assert await registry.get_partition(NAME) is None
+    assert await registry.resolve(NAME) is None
 
 
 @pytest.mark.asyncio
 async def test_a_confirmation_that_committed_before_failing_stands(
-    registry, provision, monkeypatch
+    registry, manager, monkeypatch
 ):
     """The cancel acts only on a pending partition, so a creation whose
     confirmation committed but whose reply was lost leaves it live."""
@@ -351,14 +357,14 @@ async def test_a_confirmation_that_committed_before_failing_stands(
             commits_then_fails,
         )
         with pytest.raises(ConnectionError):
-            await registry.create_partition(NAME, provision)
+            await manager.create_partition(NAME)
 
-    assert await registry.get_partition(NAME) is not None
+    assert await registry.resolve(NAME) is not None
 
 
 @pytest.mark.asyncio
 async def test_a_failed_creation_the_registry_cannot_undo_stays_pending_until_deleted(
-    registry, provision, monkeypatch
+    registry, manager, store, monkeypatch
 ):
     async def refused(partition_uuid: UUID) -> None:
         raise RuntimeError("the backend refused")
@@ -366,80 +372,190 @@ async def test_a_failed_creation_the_registry_cannot_undo_stays_pending_until_de
     async def unreachable(reservation) -> None:
         raise ConnectionError("the registry is unreachable")
 
-    provision.side_effect = refused
+    store.create_partition.side_effect = refused
     with monkeypatch.context() as unregistration:
         unregistration.setattr(
             sqlalchemy_partition_registry._SQLAlchemyReservation,
-            "cancel",
+            "_cancel",
             unreachable,
         )
         with pytest.raises(RuntimeError, match="refused"):
-            await registry.create_partition(NAME, provision)
+            await manager.create_partition(NAME)
 
-    provision.side_effect = None
+    store.create_partition.side_effect = None
     with pytest.raises(PartitionPendingError):
-        await registry.get_partition(NAME)
+        await registry.resolve(NAME)
 
-    await registry.delete_partition(NAME)
-    assert await registry.create_partition(NAME, provision) is not None
+    await manager.delete_partition(NAME)
+    await _created(manager, registry)
 
 
 @pytest.mark.asyncio
-async def test_a_single_store_purge_round_purges_the_store_and_drops_once_it_finds_no_records(
-    registry, provision, store, purge_round
+async def test_a_purge_round_purges_the_store_and_drops_once_it_finds_no_records(
+    registry, manager, store
 ):
-    created = await registry.create_partition(NAME, provision)
-    await registry.delete_partition(NAME)
-    partition_uuid = created.partition_uuid
+    partition_uuid = await _created(manager, registry)
+    await manager.delete_partition(NAME)
     store.purge_partition.side_effect = [True, False]
 
     # The store found records: the tombstone stays due, and nothing is
     # dropped.
-    assert await registry.run_purge_round(purge_round) is True
+    assert await manager.run_purge_round() is True
     store.purge_partition.assert_awaited_once_with(partition_uuid)
     store.drop_partition.assert_not_awaited()
 
     # The store finds none: the round drops the partition and then deletes
     # the tombstone.
-    assert await registry.run_purge_round(purge_round) is True
+    assert await manager.run_purge_round() is True
     assert store.purge_partition.await_count == 2
     store.drop_partition.assert_awaited_once_with(partition_uuid)
     assert await _queued(registry) == 0
-    assert await registry.run_purge_round(purge_round) is False
+    assert await manager.run_purge_round() is False
 
 
 @pytest.mark.asyncio
 async def test_a_failed_purge_keeps_the_tombstone_and_drops_nothing(
-    registry, provision, store, purge_round
+    registry, manager, store
 ):
-    await registry.create_partition(NAME, provision)
-    await registry.delete_partition(NAME)
+    await manager.create_partition(NAME)
+    await manager.delete_partition(NAME)
     store.purge_partition.side_effect = ConnectionError("the store is down")
 
     with pytest.raises(ConnectionError):
-        await registry.run_purge_round(purge_round)
+        await manager.run_purge_round()
 
     store.drop_partition.assert_not_awaited()
     assert await _queued(registry) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_failed_drop_keeps_the_tombstone(
-    registry, provision, store, purge_round
-):
-    created = await registry.create_partition(NAME, provision)
-    await registry.delete_partition(NAME)
+async def test_a_failed_drop_keeps_the_tombstone(registry, manager, store):
+    partition_uuid = await _created(manager, registry)
+    await manager.delete_partition(NAME)
     store.drop_partition.side_effect = ConnectionError("the store is down")
 
     with pytest.raises(ConnectionError):
-        await registry.run_purge_round(purge_round)
+        await manager.run_purge_round()
 
-    store.drop_partition.assert_awaited_once_with(created.partition_uuid)
+    store.drop_partition.assert_awaited_once_with(partition_uuid)
     assert await _queued(registry) == 1
 
 
 @pytest.mark.asyncio
-async def test_a_round_with_nothing_due_calls_no_store(registry, store, purge_round):
-    assert await registry.run_purge_round(purge_round) is False
+async def test_a_cancelled_purge_round_releases_its_claim(registry, manager, store):
+    """Released, the tombstone is claimable at once, not once the lease passes."""
+    await manager.create_partition(NAME)
+    await manager.delete_partition(NAME)
+    started = asyncio.Event()
+
+    async def hangs(partition_uuid: UUID) -> bool:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    store.purge_partition.side_effect = hangs
+    purging = asyncio.create_task(manager.run_purge_round())
+    await started.wait()
+    purging.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await purging
+    await asyncio.wait_for(
+        asyncio.gather(*partition_registry_module._tombstone_claim_releases), 5
+    )
+
+    store.purge_partition.side_effect = None
+    assert await manager.run_purge_round() is True
+    assert await _queued(registry) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_round_with_nothing_due_calls_no_store(manager, store):
+    assert await manager.run_purge_round() is False
     store.purge_partition.assert_not_awaited()
     store.drop_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_partition_is_created_in_every_store(registry, store, other_store):
+    manager = PartitionManager(registry, [store, other_store])
+
+    partition_uuid = await _created(manager, registry)
+
+    store.create_partition.assert_awaited_once_with(partition_uuid)
+    other_store.create_partition.assert_awaited_once_with(partition_uuid)
+
+
+@pytest.mark.asyncio
+async def test_every_store_finishes_creating_before_the_first_error_is_raised(
+    registry, store, other_store
+):
+    manager = PartitionManager(registry, [store, other_store])
+    finished = asyncio.Event()
+
+    async def slow(partition_uuid: UUID) -> None:
+        await asyncio.sleep(0.05)
+        finished.set()
+
+    store.create_partition.side_effect = RuntimeError("the backend refused")
+    other_store.create_partition.side_effect = slow
+
+    with pytest.raises(RuntimeError, match="refused"):
+        await manager.create_partition(NAME)
+    assert finished.is_set()
+    assert await registry.resolve(NAME) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("in_store", "in_other_store"),
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+async def test_a_purge_round_finds_records_when_any_store_does_and_drops_once_none_does(
+    registry, store, other_store, in_store, in_other_store
+):
+    manager = PartitionManager(registry, [store, other_store])
+    partition_uuid = await _created(manager, registry)
+    await manager.delete_partition(NAME)
+    store.purge_partition.return_value = in_store
+    other_store.purge_partition.return_value = in_other_store
+    found = in_store or in_other_store
+
+    assert await manager.run_purge_round() is True
+    for partitioned_store in (store, other_store):
+        partitioned_store.purge_partition.assert_awaited_once_with(partition_uuid)
+        if found:
+            partitioned_store.drop_partition.assert_not_awaited()
+        else:
+            partitioned_store.drop_partition.assert_awaited_once_with(partition_uuid)
+    assert await _queued(registry) == (1 if found else 0)
+
+
+@pytest.mark.asyncio
+async def test_every_store_purges_before_the_first_error_is_raised(
+    registry, store, other_store
+):
+    manager = PartitionManager(registry, [store, other_store])
+    partition_uuid = await _created(manager, registry)
+    await manager.delete_partition(NAME)
+    store.purge_partition.side_effect = ConnectionError("the store is down")
+
+    with pytest.raises(ConnectionError):
+        await manager.run_purge_round()
+    other_store.purge_partition.assert_awaited_once_with(partition_uuid)
+    store.drop_partition.assert_not_awaited()
+    other_store.drop_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_every_store_drops_before_the_first_error_is_raised(
+    registry, store, other_store
+):
+    manager = PartitionManager(registry, [store, other_store])
+    partition_uuid = await _created(manager, registry)
+    await manager.delete_partition(NAME)
+    store.drop_partition.side_effect = ConnectionError("the store is down")
+
+    with pytest.raises(ConnectionError):
+        await manager.run_purge_round()
+    other_store.drop_partition.assert_awaited_once_with(partition_uuid)
+    assert await _queued(registry) == 1

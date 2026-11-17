@@ -1,28 +1,28 @@
 """
 Abstract base classes for a partition registry, its reservations, and registrations.
 
-A partition registry names the partitions of one partition namespace and
-orders each partition's lifecycle, running the steps the namespace's owner
-supplies at their places in it. A partition has a name, which its owner
-chooses and may reuse, and a UUID, which the registry mints for it alone; the
-owner keeps the partition's data under the UUID, in whatever resources it
-partitions. The registry's methods address partitions by name, as the
-owner's steps address them by UUID. Its calls are arbitrated across every process sharing it: a
-reservation mints a UUID no registered or queued partition carries, a deletion
-makes the partition unreachable when it returns, and a purge round runs on a
-due tombstone, possibly on two purgers at once.
+A partition registry is the catalog of one partition namespace. A partition
+has a name, which its owner chooses and may reuse, and a UUID, which the
+registry mints for it alone; the owner keeps the partition's data under the
+UUID. The registry records each partition's name, its UUID, and whether it is
+pending or live, and holds none of the partition's data. Its calls are
+arbitrated across every process sharing it: a reservation mints a UUID no
+registered or queued partition carries, a deletion makes the partition
+unreachable when it returns, and a claim on a deleted partition's tombstone
+holds it under a lease, possibly taken again by a second purger once the
+lease passes.
 
-Creating a partition, or getting one by name, answers a `Registration`, which
-carries the partition's UUID and through which an owner checks that the
-partition has not been deleted. A registration acts on one partition alone,
-and a deletion by name voids it.
+A reservation holds a new partition's name while its owner creates the
+partition, until the reservation is confirmed or cancelled. Resolving a name
+answers a `Registration`, through which an owner checks that the partition has
+not been deleted. A tombstone claim holds a deleted partition's tombstone
+while its owner purges the partition, until the claim is finished, failed, or
+released. Each acts on one partition alone.
 """
 
 import asyncio
-import contextlib
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -30,18 +30,21 @@ from .data_types import validate_partition_name
 
 logger = logging.getLogger(__name__)
 
-# The tasks cancelling failed creations' reservations, held until done so the
-# garbage collector cannot drop one whose creation stopped awaiting it.
+# The tasks cancelling reservations and releasing tombstone claims, each held
+# until done so the garbage collector cannot drop one whose caller stopped
+# awaiting it.
 _reservation_cancellations: set[asyncio.Task[None]] = set()
+_tombstone_claim_releases: set[asyncio.Task[None]] = set()
 
 
 @dataclass(frozen=True)
 class Reservation(ABC):
     """
-    A pending partition's hold on its name, kept while the partition is provisioned.
+    A pending partition's hold on its name, kept while its owner creates the partition.
 
     The partition is pending until the reservation is confirmed. A registry
-    implementation supplies the methods, each of which writes the registry.
+    implementation supplies `confirm` and `_cancel`, each of which writes the
+    registry.
     """
 
     partition_name: str
@@ -52,7 +55,7 @@ class Reservation(ABC):
         """
         Confirm this reservation, marking the pending partition live.
 
-        Called once, when the partition is provisioned. A concurrent
+        Called once, when the owner has created the partition. A concurrent
         deletion of the partition either follows the confirmation or makes it
         raise.
 
@@ -62,23 +65,54 @@ class Reservation(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
     async def cancel(self) -> None:
         """
         Cancel this reservation, unregistering its partition while it is pending and queuing the partition's UUID for purge.
 
-        Called by the registry's creation, in a task of its own, when
-        provisioning the partition or confirming it raised or was cancelled;
-        it may follow a confirmation that committed before its failure was
-        observed, and race a deletion by name. The pending partition is
-        unreachable when this returns, and purge rounds reclaim its data
-        later. Once the reservation is confirmed, cancelling it
-        does nothing: only a deletion by name ends a live partition. A
-        partition reserved since under the same name is another partition
-        and stays. Idempotent.
+        Called when creating the partition or confirming it raised or was
+        cancelled; it may follow a confirmation that committed before its
+        failure was observed, and race a deletion by name. The pending
+        partition is unreachable when this returns, and purge rounds reclaim
+        its data later. Once the reservation is confirmed, cancelling it does
+        nothing: only a deletion by name ends a live partition. A partition
+        reserved since under the same name is another partition and stays.
+        Idempotent.
 
-        A call that raises leaves the partition pending until it is deleted
-        by name.
+        The cancellation runs in a task of its own, shielded, so a
+        cancellation of the caller does not cut it short, and the task logs
+        its own failure, since a caller cancelled again stops awaiting it.
+
+        Raises:
+            Exception:
+                Whatever the registry raised. The partition then stays
+                pending until it is deleted by name.
+        """
+        cancellation = asyncio.create_task(self._cancel())
+        _reservation_cancellations.add(cancellation)
+
+        def finish(task: asyncio.Task[None]) -> None:
+            _reservation_cancellations.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                logger.error(
+                    "Could not cancel the reservation of partition %r; it stays "
+                    "pending until deleted",
+                    self.partition_name,
+                    exc_info=task.exception(),
+                )
+
+        cancellation.add_done_callback(finish)
+        await asyncio.shield(cancellation)
+
+    @abstractmethod
+    async def _cancel(self) -> None:
+        """
+        Unregister this reservation's partition while it is pending, and queue its UUID for purge, in one transaction.
+
+        Called by `cancel`, in a task of its own. Conditional on the
+        partition being pending under this reservation's UUID, so a confirmed
+        partition, or one reserved since under the same name, stays.
+        Idempotent. A call that raises either committed both writes or
+        neither.
         """
         raise NotImplementedError
 
@@ -112,14 +146,94 @@ class Registration(ABC):
         raise NotImplementedError
 
 
-type PurgeRound = Callable[[UUID], Awaitable[bool]]
-"""
-A purge round of a deleted partition, given its UUID: removes some or all of what its owner keeps for the partition.
+@dataclass(frozen=True)
+class TombstoneClaim(ABC):
+    """
+    A purge round's claim on a deleted partition's tombstone, held under a lease while the round runs.
 
-Returns whether the round found anything of the partition: False once
-nothing of it remains, True when a later round may find more. Safe to
-repeat, and to run on several processes at once.
-"""
+    The tombstone is due: the retention has passed since the partition's
+    deletion. The claim's holder purges the partition's records and ends the
+    claim once: `finish` with the round's outcome, `fail` with what a round
+    that raised raised, or `release` after the round is cancelled. A claim
+    never ended is claimable again once its lease, and then the backoff, have
+    passed, so a round must be safe to repeat, also on two purgers at once. A
+    registry implementation supplies `finish`, `fail`, and `_release`, each of
+    which writes the registry.
+    """
+
+    partition_uuid: UUID
+
+    @abstractmethod
+    async def finish(self, found_records: bool) -> None:
+        """
+        Record the round's outcome.
+
+        A round that found none of the partition's records left ends the
+        tombstone: the registry deletes it and frees the partition's UUID.
+        One that found records keeps the tombstone due, and ends the claim if
+        it is the latest on the tombstone.
+
+        Args:
+            found_records (bool):
+                Whether the round found any of the partition's records.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def fail(self, error: Exception) -> None:
+        """
+        End the claim of a round that raised, if the claim is the latest on its tombstone.
+
+        The tombstone is claimable again once a backoff has passed that grows
+        with each failed round in a row. After the registry's maximum, it is
+        no longer claimed and the partition's records stay: the registry
+        reports it. The registry notes the round's attempt on the error.
+
+        Args:
+            error (Exception):
+                What the round raised.
+        """
+        raise NotImplementedError
+
+    async def release(self) -> None:
+        """
+        End the claim of a cancelled round without counting the round, if the claim is the latest on its tombstone.
+
+        The tombstone is claimable again at once. The release runs in a task
+        of its own, shielded, so a cancellation of the caller does not cut it
+        short, and the task logs its own failure, since a caller cancelled
+        again stops awaiting it.
+
+        Raises:
+            Exception:
+                Whatever the registry raised. The tombstone is then claimable
+                once the claim's lease and the backoff have passed.
+        """
+        release = asyncio.create_task(self._release())
+        _tombstone_claim_releases.add(release)
+
+        def finish(task: asyncio.Task[None]) -> None:
+            _tombstone_claim_releases.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                logger.error(
+                    "Could not release the claim of a cancelled purge round on "
+                    "partition %s; its tombstone is claimable once the lease "
+                    "and the backoff pass",
+                    self.partition_uuid,
+                    exc_info=task.exception(),
+                )
+
+        release.add_done_callback(finish)
+        await asyncio.shield(release)
+
+    @abstractmethod
+    async def _release(self) -> None:
+        """
+        End the claim and take back the round's attempt, if the claim is the latest on its tombstone.
+
+        Called by `release`, in a task of its own.
+        """
+        raise NotImplementedError
 
 
 class PartitionRegistry(ABC):
@@ -130,19 +244,13 @@ class PartitionRegistry(ABC):
     checked as live before the deletion can land after it, so a tombstone's
     purge starts once a retention, longer than any write can be in flight,
     has passed since the deletion. The registry deletes the tombstone once a
-    purge round finds nothing of the partition left, and its UUID is not
-    minted again before then.
+    purge round finds none of the partition's records left, and its UUID is
+    not minted again before then.
 
     A registry implementation supplies the catalog: `_reserve`, `_resolve`,
-    `_registration`, `_unregister`, and `run_purge_round`. The registry's
-    public methods run the owner's steps between the catalog's, in order.
+    `_registration`, `_unregister`, and `claim_tombstone`. The methods that
+    take a partition name check it before the catalog is read or written.
     """
-
-    @property
-    @abstractmethod
-    def partition_namespace(self) -> str:
-        """The partition namespace the registry serves."""
-        raise NotImplementedError
 
     @abstractmethod
     async def startup(self) -> None:
@@ -153,30 +261,19 @@ class PartitionRegistry(ABC):
         """
         raise NotImplementedError
 
-    async def create_partition(
-        self,
-        partition_name: str,
-        provision_partition: Callable[[UUID], Awaitable[None]],
-    ) -> Registration:
+    async def reserve(self, partition_name: str) -> Reservation:
         """
-        Create a partition under a name: reserve the name, provision the partition, and confirm the reservation.
+        Reserve a partition name for a new pending partition under a freshly minted UUID.
 
-        The partition is pending, holding its name, until it is confirmed. A
-        creation that raises or is cancelled cancels its reservation, shielded,
-        so the name is freed and the partition's purge rounds reclaim whatever
-        was provisioned. The cancel acts only on a pending partition, so a
-        confirmation that committed before its failure or cancellation was
-        observed stands. A partition whose reservation the registry cannot
-        cancel stays pending until it is deleted.
+        The partition is pending, holding its name, until its reservation is
+        confirmed: its owner creates the partition meanwhile, and cancels the
+        reservation if that or the confirmation raises or is cancelled.
 
         Args:
             partition_name (str): The name of the partition.
-            provision_partition (Callable[[UUID], Awaitable[None]]):
-                Provisions what the owner keeps for the partition, given its
-                UUID. Called once, before the reservation is confirmed.
 
         Returns:
-            Registration: The new partition's registration.
+            Reservation: The new partition's reservation.
 
         Raises:
             ValueError:
@@ -186,51 +283,21 @@ class PartitionRegistry(ABC):
             PartitionCreateAttemptsExhaustedError:
                 If the registry gave up after repeated attempts to reserve
                 the free name failed.
-            PartitionDeletedError:
-                If the partition was deleted while it was provisioned.
-            Exception:
-                Whatever `provision_partition` raised.
         """
         validate_partition_name(partition_name)
-        reservation = await self._reserve(partition_name)
-        try:
-            await provision_partition(reservation.partition_uuid)
-            await reservation.confirm()
-        except BaseException:
-            # Shielded, so a cancelled creation still frees the name. The task
-            # reports its own failure, since a creation cancelled again stops
-            # awaiting it before it ends.
-            cancellation = asyncio.create_task(reservation.cancel())
-            _reservation_cancellations.add(cancellation)
-
-            def finish(task: asyncio.Task[None]) -> None:
-                _reservation_cancellations.discard(task)
-                if not task.cancelled() and task.exception() is not None:
-                    logger.exception(
-                        "Could not cancel the reservation of partition %r after "
-                        "its creation failed or was cancelled; it stays pending "
-                        "until deleted",
-                        reservation.partition_name,
-                        exc_info=task.exception(),
-                    )
-
-            cancellation.add_done_callback(finish)
-            with contextlib.suppress(Exception):
-                await asyncio.shield(cancellation)
-            raise
-        return self._registration(partition_name, reservation.partition_uuid)
+        return await self._reserve(partition_name)
 
     @abstractmethod
     async def _reserve(self, partition_name: str) -> Reservation:
         """
         Reserve a partition name for a new pending partition under a freshly minted UUID.
 
-        Called by `create_partition` with a valid name, concurrently with
-        any other call on any process. The partition name is arbitrated
-        across processes, and the UUID is one no registered or queued
-        partition carries, so the new partition starts empty and no purge
-        reclaims its data. The partition is pending until its reservation
-        is confirmed, and holds its name meanwhile.
+        Called by `reserve` with a valid name, concurrently with any other
+        call on any process. The partition name is arbitrated across
+        processes, and the UUID is one no registered or queued partition
+        carries, so the new partition starts empty and no purge reclaims its
+        data. The partition is pending until its reservation is confirmed,
+        and holds its name meanwhile.
 
         Args:
             partition_name (str): The name of the partition.
@@ -248,9 +315,9 @@ class PartitionRegistry(ABC):
         """
         raise NotImplementedError
 
-    async def get_partition(self, partition_name: str) -> Registration | None:
+    async def resolve(self, partition_name: str) -> Registration | None:
         """
-        Get the live partition registered under a name.
+        Resolve a partition name to the live partition registered under it.
 
         One read of the registry decides the outcome.
 
@@ -279,11 +346,11 @@ class PartitionRegistry(ABC):
         """
         Resolve a partition name to the UUID of the live partition registered under it, or None when no partition holds the name.
 
-        Called by `get_partition` with a valid name, concurrently with any
-        other call on any process. One read of the registry decides the
-        outcome: a creation, confirmation, or deletion committed before the
-        read is reflected, and one committed after is not. It only reads, so
-        a call that raises changes nothing.
+        Called by `resolve` with a valid name, concurrently with any other
+        call on any process. One read of the registry decides the outcome: a
+        reservation, confirmation, or deletion committed before the read is
+        reflected, and one committed after is not. It only reads, so a call
+        that raises changes nothing.
 
         Args:
             partition_name (str): The name of the partition.
@@ -304,10 +371,9 @@ class PartitionRegistry(ABC):
         """
         Build the registration of a live partition.
 
-        Called by `create_partition` once the partition is confirmed, and by
-        `get_partition` once `_resolve` answered it. It builds the object
-        alone, reading and writing nothing, so a partition deleted since is
-        reported by the registration's `require_current`.
+        Called by `resolve` once `_resolve` answered the partition. It builds
+        the object alone, reading and writing nothing, so a partition deleted
+        since is reported by the registration's `require_current`.
 
         Args:
             partition_name (str): The name the partition is registered under.
@@ -318,7 +384,7 @@ class PartitionRegistry(ABC):
         """
         raise NotImplementedError
 
-    async def delete_partition(self, partition_name: str) -> None:
+    async def unregister(self, partition_name: str) -> None:
         """
         Delete the partition registered under a name, pending or live, and queue its UUID for purge.
 
@@ -341,14 +407,14 @@ class PartitionRegistry(ABC):
         """
         Unregister the partition under a name, pending or live, and queue its UUID for purge, in one transaction.
 
-        Called by `delete_partition` with a valid name, concurrently with
-        any other call on any process. Once it returns, the partition's
-        reservation cannot be confirmed, its registrations' `require_current`
-        raises, and its tombstone is queued as of the deletion, so its purge
-        starts once the retention has passed. Idempotent: racing deletions
-        of one partition queue one tombstone, and a name no partition holds
-        is left as it is. A call that raises either committed both writes or
-        neither, so the caller may call again.
+        Called by `unregister` with a valid name, concurrently with any other
+        call on any process. Once it returns, the partition's reservation
+        cannot be confirmed, its registrations' `require_current` raises, and
+        its tombstone is queued as of the deletion, so its purge starts once
+        the retention has passed. Idempotent: racing deletions of one
+        partition queue one tombstone, and a name no partition holds is left
+        as it is. A call that raises either committed both writes or neither,
+        so the caller may call again.
 
         Args:
             partition_name (str): The name of the partition.
@@ -356,29 +422,18 @@ class PartitionRegistry(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def run_purge_round(self, purge_round: PurgeRound) -> bool:
+    async def claim_tombstone(self) -> TombstoneClaim | None:
         """
-        Run `purge_round` on the tombstone that came due first, and return whether it ran one.
+        Claim the tombstone that came due first.
 
-        A tombstone is due once the retention has passed since its deletion.
-        The registry claims it, calls `purge_round` with its partition UUID,
-        and records the outcome under the claim: a round that returns False
-        found nothing of the partition left, so the registry deletes the
-        tombstone and frees its UUID; one that returns True keeps the
-        tombstone due. A round that raises is a failed round and its error
-        propagates: the tombstone stays for a later call, and a registry may
-        delay a failed tombstone's next round, or stop running one whose
-        rounds keep failing, leaving the partition's data in place.
-        A registry may run one tombstone's round on two purgers at once.
-
-        Args:
-            purge_round (PurgeRound):
-                The owner's purge round.
+        A tombstone is due once the retention has passed since its
+        deletion, and claimable unless a claim on it holds its lease, its
+        last round failed and the backoff has not passed, or its rounds
+        failed the registry's maximum number of times in a row. Safe to call
+        from several processes at once.
 
         Returns:
-            bool:
-                Whether a round ran: False also when every due tombstone is
-                claimed by another round, delayed after failed rounds, or no
-                longer run.
+            TombstoneClaim | None:
+                The claim, or None when no tombstone is claimable.
         """
         raise NotImplementedError

@@ -1,17 +1,17 @@
-"""Tests of event memory's steps in its partitions' lifecycle: each runs on every store."""
+"""Tests of event memory over its two stores: its partitions are created and purged in both, and a handle pairs both stores' handles."""
 
-import asyncio
-from collections.abc import Awaitable, Callable
 from unittest.mock import NonCallableMagicMock, create_autospec, sentinel
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
 from memmachine_server.common.partition_registry import (
-    PartitionDeletedError,
     PartitionRegistry,
-    PurgeRound,
     Registration,
+)
+from memmachine_server.common.partition_registry.partition_registry import (
+    Reservation,
+    TombstoneClaim,
 )
 from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.event_memory.deriver import Deriver
@@ -55,22 +55,19 @@ def vector_store() -> NonCallableMagicMock:
 
 @pytest.fixture
 def partition_registry() -> NonCallableMagicMock:
-    """A registry that runs a creation's provisioning step and answers one partition's registration."""
+    """A registry that reserves, resolves, and claims the tombstone of one partition."""
+    reservation = create_autospec(Reservation, instance=True)
+    reservation.partition_name = NAME
+    reservation.partition_uuid = PARTITION_UUID
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = NAME
     registration.partition_uuid = PARTITION_UUID
     registry = create_autospec(PartitionRegistry, instance=True)
-    registry.partition_namespace = EventMemory.PARTITION_NAMESPACE
-
-    async def create_partition(
-        partition_name: str,
-        provision_partition: Callable[[UUID], Awaitable[None]],
-    ) -> Registration:
-        await provision_partition(PARTITION_UUID)
-        return registration
-
-    registry.create_partition.side_effect = create_partition
-    registry.get_partition.return_value = registration
+    registry.reserve.return_value = reservation
+    registry.resolve.return_value = registration
+    claim = create_autospec(TombstoneClaim, instance=True)
+    claim.partition_uuid = PARTITION_UUID
+    registry.claim_tombstone.return_value = claim
     return registry
 
 
@@ -88,41 +85,33 @@ def event_memory(segment_store, vector_store, partition_registry) -> EventMemory
     )
 
 
-@pytest.fixture
-def purge_round(segment_store, vector_store) -> PurgeRound:
-    return EventMemory.purge_round(segment_store, vector_store)
-
-
 @pytest.mark.asyncio
-async def test_a_partition_is_provisioned_in_every_store(
-    event_memory, segment_store, vector_store
+async def test_a_partition_is_created_in_both_stores(
+    event_memory, segment_store, vector_store, partition_registry
 ):
     await event_memory.create_partition(NAME)
 
     segment_store.create_partition.assert_awaited_once_with(PARTITION_UUID)
     vector_store.create_partition.assert_awaited_once_with(PARTITION_UUID)
+    partition_registry.reserve.return_value.confirm.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_every_store_finishes_creating_before_the_first_error_is_raised(
-    event_memory, segment_store, vector_store
+async def test_a_deleted_partition_is_purged_and_dropped_from_both_stores(
+    event_memory, segment_store, vector_store, partition_registry
 ):
-    finished = asyncio.Event()
+    assert await event_memory._partition_manager.run_purge_round() is True
 
-    async def slow(partition_uuid) -> None:
-        await asyncio.sleep(0.05)
-        finished.set()
-
-    segment_store.create_partition.side_effect = RuntimeError("the backend refused")
-    vector_store.create_partition.side_effect = slow
-
-    with pytest.raises(RuntimeError, match="refused"):
-        await event_memory.create_partition(NAME)
-    assert finished.is_set()
+    for store in (segment_store, vector_store):
+        store.purge_partition.assert_awaited_once_with(PARTITION_UUID)
+        store.drop_partition.assert_awaited_once_with(PARTITION_UUID)
+    partition_registry.claim_tombstone.return_value.finish.assert_awaited_once_with(
+        False
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_partition_gets_a_handle_from_every_store(
+async def test_a_partition_gets_a_handle_from_each_store(
     event_memory, segment_store, vector_store
 ):
     partition = await event_memory.get_partition(NAME)
@@ -155,62 +144,10 @@ async def test_a_partition_the_vector_store_holds_nothing_of_is_none(
 
 
 @pytest.mark.asyncio
-async def test_a_created_partition_a_store_holds_nothing_of_was_deleted(
-    event_memory, segment_store
+async def test_a_name_no_partition_holds_is_none(
+    event_memory, partition_registry, segment_store
 ):
-    segment_store.get_partition.return_value = None
+    partition_registry.resolve.return_value = None
 
-    with pytest.raises(PartitionDeletedError) as deleted:
-        await event_memory.create_partition(NAME)
-    assert deleted.value.partition_name == NAME
-    assert deleted.value.partition_uuid == PARTITION_UUID
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("in_segment_store", "in_vector_store"),
-    [(False, False), (True, False), (False, True), (True, True)],
-)
-async def test_a_purge_round_finds_records_when_any_store_does_and_drops_once_none_does(
-    purge_round,
-    segment_store,
-    vector_store,
-    in_segment_store,
-    in_vector_store,
-):
-    segment_store.purge_partition.return_value = in_segment_store
-    vector_store.purge_partition.return_value = in_vector_store
-    found = in_segment_store or in_vector_store
-
-    assert await purge_round(PARTITION_UUID) is found
-    segment_store.purge_partition.assert_awaited_once_with(PARTITION_UUID)
-    vector_store.purge_partition.assert_awaited_once_with(PARTITION_UUID)
-    for store in (segment_store, vector_store):
-        if found:
-            store.drop_partition.assert_not_awaited()
-        else:
-            store.drop_partition.assert_awaited_once_with(PARTITION_UUID)
-
-
-@pytest.mark.asyncio
-async def test_every_store_purges_before_the_first_error_is_raised(
-    purge_round, segment_store, vector_store
-):
-    segment_store.purge_partition.side_effect = ConnectionError("the store is down")
-
-    with pytest.raises(ConnectionError):
-        await purge_round(PARTITION_UUID)
-    vector_store.purge_partition.assert_awaited_once_with(PARTITION_UUID)
-    segment_store.drop_partition.assert_not_awaited()
-    vector_store.drop_partition.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_every_store_drops_before_the_first_error_is_raised(
-    purge_round, segment_store, vector_store
-):
-    segment_store.drop_partition.side_effect = ConnectionError("the store is down")
-
-    with pytest.raises(ConnectionError):
-        await purge_round(PARTITION_UUID)
-    vector_store.drop_partition.assert_awaited_once_with(PARTITION_UUID)
+    assert await event_memory.get_partition(NAME) is None
+    segment_store.get_partition.assert_not_awaited()

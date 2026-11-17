@@ -210,7 +210,7 @@ async def _event_long_term_memory(
     registration.partition_name = "sess1"
     registration.partition_uuid = uuid4()
     partition_registry = create_autospec(PartitionRegistry, instance=True)
-    partition_registry.create_partition.return_value = registration
+    partition_registry.resolve.return_value = registration
     segment_store.get_partition.return_value = segment_store_partition
     vector_store.get_partition.return_value = vector_store_partition
     event_memory = EventMemory(
@@ -223,10 +223,9 @@ async def _event_long_term_memory(
             embedder=embedder,
         )
     )
-    return LongTermMemory(
-        await event_memory.create_partition("sess1"),
-        episode_storage=episode_storage,
-    )
+    partition = await event_memory.get_partition("sess1")
+    assert partition is not None
+    return LongTermMemory(partition, episode_storage=episode_storage)
 
 
 @pytest_asyncio.fixture

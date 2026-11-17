@@ -231,7 +231,7 @@ async def create_event_memory_partition(
     registration.partition_name = "partition"
     registration.partition_uuid = uuid4()
     partition_registry = create_autospec(PartitionRegistry, instance=True)
-    partition_registry.create_partition.return_value = registration
+    partition_registry.resolve.return_value = registration
     segment_store = create_autospec(SegmentStore, instance=True)
     segment_store.get_partition.return_value = segment_store_partition
     vector_store = create_autospec(VectorStore, instance=True)
@@ -249,7 +249,9 @@ async def create_event_memory_partition(
             metrics_factory=metrics_factory,
         )
     )
-    return await event_memory.create_partition("partition")
+    partition = await event_memory.get_partition("partition")
+    assert partition is not None
+    return partition
 
 
 # ---------------------------------------------------------------------------

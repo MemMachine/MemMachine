@@ -18,9 +18,8 @@ from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
     PartitionDeletedError,
+    PartitionManager,
     PartitionPendingError,
-    PartitionRegistry,
-    single_store_purge_round,
 )
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_store import (
@@ -202,10 +201,10 @@ class SemanticResourceManager:
             feature_store_name,
             partition_namespace=_PARTITION_NAMESPACE,
             tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
-            purge_round=single_store_purge_round(vector_store),
+            partitioned_stores=[vector_store],
         )
         partition = await SemanticResourceManager._get_or_create_partition(
-            partition_registry, vector_store
+            PartitionManager(partition_registry, [vector_store]), vector_store
         )
         storage = VectorStoreSemanticStorage(sql_engine, partition)
         await storage.startup()
@@ -213,7 +212,7 @@ class SemanticResourceManager:
 
     @staticmethod
     async def _get_or_create_partition(
-        partition_registry: PartitionRegistry,
+        partition_manager: PartitionManager,
         vector_store: VectorStore,
     ) -> VectorStorePartition:
         """
@@ -221,11 +220,11 @@ class SemanticResourceManager:
 
         Read-then-create, retried a bounded number of times: a live partition
         is answered; a pending one is another process's creation, so the call
-        waits for it; no partition means create. The call tries again when a
-        creation finds the name taken by another process meanwhile, or the
-        partition deleted while the store created it, and when the store
-        finds nothing under the partition's UUID: the partition was deleted
-        and dropped since.
+        waits for it; no partition means create, then read again. The call
+        tries again when a creation finds the name taken by another process
+        meanwhile, or the partition deleted while the store created it, and
+        when the partition is gone by the time it is read or its handle got:
+        it was deleted since.
         """
         pending_error: PartitionPendingError | None = None
         lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
@@ -233,19 +232,24 @@ class SemanticResourceManager:
             if attempt:
                 await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
             try:
-                registration = await partition_registry.get_partition(_PARTITION_NAME)
+                registration = await partition_manager.resolve_partition(
+                    _PARTITION_NAME
+                )
+                if registration is None:
+                    await partition_manager.create_partition(_PARTITION_NAME)
+                    registration = await partition_manager.resolve_partition(
+                        _PARTITION_NAME
+                    )
             except PartitionPendingError as err:
                 pending_error = err
                 continue
+            except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
+                pending_error = None
+                lost_race = err
+                continue
             pending_error = None
             if registration is None:
-                try:
-                    registration = await partition_registry.create_partition(
-                        _PARTITION_NAME, vector_store.create_partition
-                    )
-                except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
-                    lost_race = err
-                    continue
+                continue
             partition = await vector_store.get_partition(registration.partition_uuid)
             if partition is not None:
                 return partition

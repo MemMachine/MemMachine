@@ -66,7 +66,7 @@ async def partition_registry(
     registry = SQLAlchemyPartitionRegistry(
         SQLAlchemyPartitionRegistryParams(
             engine=sqlalchemy_sqlite_engine,
-            partition_namespace=EventMemory.PARTITION_NAMESPACE,
+            partition_namespace="event_memory",
             tombstone_retention_seconds=0,
         ),
     )
@@ -121,11 +121,17 @@ def event_memory(
     )
 
 
+async def _created(event_memory: EventMemory) -> EventMemoryPartition:
+    """Create the partition named NAME, and get it."""
+    await event_memory.create_partition(NAME)
+    partition = await event_memory.get_partition(NAME)
+    assert partition is not None
+    return partition
+
+
 async def _purge(event_memory: EventMemory) -> None:
     """Run the namespace's purge rounds until none is due."""
-    params = event_memory._params
-    purge_round = EventMemory.purge_round(params.segment_store, params.vector_store)
-    while await params.partition_registry.run_purge_round(purge_round):
+    while await event_memory._partition_manager.run_purge_round():
         pass
 
 
@@ -140,7 +146,7 @@ async def test_a_created_partition_is_gotten_by_its_name(
     vector_store: NonCallableMagicMock,
 ) -> None:
     assert await event_memory.get_partition(NAME) is None
-    created = await event_memory.create_partition(NAME)
+    created = await _created(event_memory)
     event = _event("remember the milk")
     await created.encode_events([event])
 
@@ -179,7 +185,7 @@ async def test_getting_a_pending_partition_raises(
 async def test_a_deleted_partitions_handle_refuses_every_operation(
     event_memory: EventMemory,
 ) -> None:
-    partition = await event_memory.create_partition(NAME)
+    partition = await _created(event_memory)
     event = _event("remember the milk")
     await partition.encode_events([event])
 
@@ -202,7 +208,7 @@ async def test_a_deleted_partitions_handle_refuses_every_operation(
 async def test_an_encode_checks_its_events_before_its_partition(
     event_memory: EventMemory,
 ) -> None:
-    partition = await event_memory.create_partition(NAME)
+    partition = await _created(event_memory)
     await event_memory.delete_partition(NAME)
     reserved = _event("remember the milk").model_copy(
         update={"properties": {EVENT_TIMESTAMP_KEY: "reserved"}}
@@ -218,7 +224,7 @@ async def test_an_encode_that_outlives_its_partition_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The check after the writes reports a partition deleted during them."""
-    partition = await event_memory.create_partition(NAME)
+    partition = await _created(event_memory)
     add_segments = partition._segment_store_partition.add_segments
 
     async def deleted_meanwhile(segments_to_derivative_uuids) -> None:
@@ -238,12 +244,12 @@ async def test_a_name_created_again_names_a_new_partition_that_starts_empty(
     event_memory: EventMemory,
     segment_store: SQLAlchemySegmentStore,
 ) -> None:
-    old = await event_memory.create_partition(NAME)
+    old = await _created(event_memory)
     event = _event("remember the milk")
     await old.encode_events([event])
     await event_memory.delete_partition(NAME)
 
-    new = await event_memory.create_partition(NAME)
+    new = await _created(event_memory)
 
     assert _partition_uuid(new) != _partition_uuid(old)
     segments = await segment_store.get_partition(_partition_uuid(new))
@@ -257,10 +263,10 @@ async def test_the_purge_round_reclaims_a_deleted_partition_from_every_store(
     segment_store: SQLAlchemySegmentStore,
     vector_store: NonCallableMagicMock,
 ) -> None:
-    deleted = await event_memory.create_partition(NAME)
+    deleted = await _created(event_memory)
     await deleted.encode_events([_event("remember the milk")])
     await event_memory.delete_partition(NAME)
-    kept = await event_memory.create_partition(NAME)
+    kept = await _created(event_memory)
     kept_event = _event("buy bread")
     await kept.encode_events([kept_event])
 

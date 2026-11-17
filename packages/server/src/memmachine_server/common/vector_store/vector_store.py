@@ -132,7 +132,7 @@ class VectorStorePartition(ABC):
         raise NotImplementedError
 
 
-class VectorStore(PartitionedStore[VectorStorePartition]):
+class VectorStore(PartitionedStore):
     """
     Abstract base class for a vector store.
 
@@ -144,8 +144,8 @@ class VectorStore(PartitionedStore[VectorStorePartition]):
     migration.
 
     The store holds each partition's records under the partition's UUID. Its
-    `PartitionedStore` methods create, get, purge, and drop partitions, in the
-    lifecycle its owner's partition registry orders.
+    `PartitionedStore` methods create, purge, and drop partitions, as its
+    owner's partition manager runs them.
 
     Naming constraints:
         - Vector store names and property keys must match `[a-z0-9_]+`
@@ -167,6 +167,26 @@ class VectorStore(PartitionedStore[VectorStorePartition]):
     @abstractmethod
     async def shutdown(self) -> None:
         """Shutdown."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_partition(self, partition_uuid: UUID) -> VectorStorePartition | None:
+        """
+        Get a handle on a created partition.
+
+        The handle reads and writes the partition's records alone, whether or
+        not the partition is still live.
+
+        Args:
+            partition_uuid (UUID):
+                The partition's UUID.
+
+        Returns:
+            VectorStorePartition | None:
+                A handle bound to the partition, or None when the store finds
+                nothing under the UUID: the partition was never created, or
+                was dropped. A store that cannot tell answers a handle.
+        """
         raise NotImplementedError
 
 

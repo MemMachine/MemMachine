@@ -68,6 +68,11 @@ _EVENT_MEMORY_VECTOR_STORE_NAME = "event_memory"
 
 Fixed, because the name locates the store's data.
 """
+_EVENT_MEMORY_PARTITION_NAMESPACE = "event_memory"
+"""The partition namespace of every session's event memory partition.
+
+Fixed, because the namespace locates the partitions' registrations.
+"""
 
 # Attempts getting or creating a session's partition makes,
 # _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
@@ -114,10 +119,10 @@ async def _get_or_create_event_memory_partition(
 
     Read-then-create, retried a bounded number of times: a live partition is
     answered; a pending one is another creator's, so the call waits for it;
-    no partition means create; a creation that finds the name taken lost it
-    to another creator meanwhile; and one that finds the partition deleted
-    lost it to a deleter while the stores created it, so the call tries
-    again.
+    no partition means create, then read again. The call tries again when a
+    creation finds the name taken by another creator meanwhile, or the
+    partition deleted while the stores created it, and when the read after
+    a creation finds no partition: it was deleted since.
 
     Raises:
         PartitionPendingError:
@@ -135,17 +140,19 @@ async def _get_or_create_event_memory_partition(
             await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
         try:
             partition = await event_memory.get_partition(partition_name)
+            if partition is None:
+                await event_memory.create_partition(partition_name)
+                partition = await event_memory.get_partition(partition_name)
         except PartitionPendingError as err:
             pending_error = err
+            continue
+        except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
+            pending_error = None
+            lost_race = err
             continue
         pending_error = None
         if partition is not None:
             return partition
-        try:
-            return await event_memory.create_partition(partition_name)
-        except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
-            lost_race = err
-            continue
     # The last lookup found the partition pending.
     if pending_error is not None:
         raise pending_error
@@ -242,6 +249,9 @@ async def _event_memory_partition_registry(
     """
     The registry of event memory's partition namespace, whose purge rounds run over event memory's stores in the background.
 
+    The stores must be the ones event memory is built over, so the purge
+    rounds reach every store holding the namespace's partitions.
+
     Raises:
         ConfigurationError: If the deployment configures no event memory.
 
@@ -251,9 +261,9 @@ async def _event_memory_partition_registry(
         raise ConfigurationError("The deployment configures no event memory")
     return await resource_manager.get_partition_registry(
         deployment.partition_registry,
-        partition_namespace=EventMemory.PARTITION_NAMESPACE,
+        partition_namespace=_EVENT_MEMORY_PARTITION_NAMESPACE,
         tombstone_retention_seconds=deployment.tombstone_retention_seconds,
-        purge_round=EventMemory.purge_round(segment_store, vector_store),
+        partitioned_stores=[segment_store, vector_store],
     )
 
 

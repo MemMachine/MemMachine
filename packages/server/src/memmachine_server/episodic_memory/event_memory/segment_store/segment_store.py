@@ -157,17 +157,16 @@ class SegmentStorePartition(ABC):
         raise NotImplementedError
 
 
-class SegmentStore(PartitionedStore[SegmentStorePartition]):
+class SegmentStore(PartitionedStore):
     """
     Abstract base class for a segment store.
 
     The store holds each partition's segments under the partition's UUID. Its
-    `PartitionedStore` methods create, get, purge, and drop partitions, in the
-    lifecycle its owner's partition registry orders. A partition keeps the
-    configuration it was created with, which every handle on it uses:
-    creating it again with another raises
-    SegmentStorePartitionConfigMismatchError. A purge call commits what it
-    did or nothing.
+    `PartitionedStore` methods create, purge, and drop partitions, as its
+    owner's partition manager runs them. A partition keeps the configuration
+    it was created with, which every handle on it uses: creating it again
+    with another raises SegmentStorePartitionConfigMismatchError. A purge
+    call commits what it did or nothing.
     """
 
     @abstractmethod
@@ -178,4 +177,23 @@ class SegmentStore(PartitionedStore[SegmentStorePartition]):
     @abstractmethod
     async def shutdown(self) -> None:
         """Shutdown."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_partition(self, partition_uuid: UUID) -> SegmentStorePartition | None:
+        """
+        Get a handle on a created partition.
+
+        The handle reads and writes the partition's segments alone, whether
+        or not the partition is still live.
+
+        Args:
+            partition_uuid (UUID):
+                The partition's UUID.
+
+        Returns:
+            SegmentStorePartition | None:
+                A handle bound to the partition, or None when the store has
+                no such partition: it was never created, or was dropped.
+        """
         raise NotImplementedError

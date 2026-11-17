@@ -7,24 +7,18 @@ from .data_types import (
     PartitionPendingError,
     validate_partition_name,
 )
-from .partition_registry import (
-    PartitionRegistry,
-    PurgeRound,
-    Registration,
-    Reservation,
-)
-from .partitioned_store import PartitionedStore, single_store_purge_round
+from .partition_manager import PartitionManager
+from .partition_registry import PartitionRegistry, Registration
+from .partitioned_store import PartitionedStore
 
 __all__ = [
     "PartitionAlreadyExistsError",
     "PartitionCreateAttemptsExhaustedError",
     "PartitionDeletedError",
+    "PartitionManager",
     "PartitionPendingError",
     "PartitionRegistry",
     "PartitionedStore",
-    "PurgeRound",
     "Registration",
-    "Reservation",
-    "single_store_purge_round",
     "validate_partition_name",
 ]
