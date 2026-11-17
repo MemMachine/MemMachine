@@ -194,7 +194,7 @@ stores hold no names. `create_partition` creates the storage a partition
 keeps for itself, raises when it cannot, and is safe to repeat.
 `purge_partition` deletes some or all of a deleted partition's records from
 storage it shares with other partitions, is safe to repeat and to run on two
-processes at once, and returns False only when none remains there.
+processes at once, and returns False only when it finds none there.
 `drop_partition` removes the storage the partition keeps for itself, with
 any records still in it, and is idempotent. A store that keeps a
 partition's records only in storage of its own finds nothing to purge and
@@ -603,7 +603,7 @@ differs where a store is remote:
   wiring.
 - **Purge and drop are separate steps.** A purge deletes records from
   storage the partition shares with other partitions, over one call or many,
-  until none remains; a drop removes the storage the partition keeps for
+  until a call finds none; a drop removes the storage the partition keeps for
   itself. A purge round drops only after no store's purge finds records, so a
   round that drops proves the partition gone from every store.
 - **The owner fences each operation by its registration.** One liveness and

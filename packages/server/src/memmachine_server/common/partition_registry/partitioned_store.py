@@ -60,8 +60,9 @@ class PartitionedStore(ABC):
 
         Returns:
             bool:
-                False when none of the partition's records remains in the
-                shared storage; True when a later call may find some.
+                False when the call found none of the partition's records in
+                the shared storage; True when it found some, or when a later
+                call may.
         """
         raise NotImplementedError
 
