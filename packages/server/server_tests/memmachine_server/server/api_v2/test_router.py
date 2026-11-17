@@ -663,7 +663,13 @@ def test_delete_semantic_memory(client, mock_memmachine):
     # Success
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 204
-    mock_memmachine.delete_features.assert_awaited_once_with(feature_ids=["sem1"])
+    mock_memmachine.delete_features.assert_awaited_once_with(
+        session_data=_SessionData(
+            org_id="test_org",
+            project_id="test_proj",
+        ),
+        feature_ids=["sem1"],
+    )
 
     # Invalid arg
     mock_memmachine.delete_features.reset_mock()
@@ -699,7 +705,11 @@ def test_delete_semantic_memories(client, mock_memmachine):
     response = client.post("/api/v2/memories/semantic/delete", json=payload)
     assert response.status_code == 204
     mock_memmachine.delete_features.assert_awaited_once_with(
-        feature_ids=["sem1", "sem3"]
+        session_data=_SessionData(
+            org_id="test_org",
+            project_id="test_proj",
+        ),
+        feature_ids=["sem1", "sem3"],
     )
 
 

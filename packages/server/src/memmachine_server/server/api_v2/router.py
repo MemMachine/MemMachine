@@ -390,6 +390,10 @@ async def delete_semantic_memory(
     """Delete semantic memories in a project."""
     try:
         await memmachine.delete_features(
+            session_data=_SessionData(
+                org_id=spec.org_id,
+                project_id=spec.project_id,
+            ),
             feature_ids=spec.get_ids(),
         )
     except ValueError as e:

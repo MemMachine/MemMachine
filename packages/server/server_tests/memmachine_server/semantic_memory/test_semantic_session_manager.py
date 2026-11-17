@@ -9,7 +9,10 @@ import pytest
 import pytest_asyncio
 
 from memmachine_server.common.episode_store import Episode, EpisodeEntry, EpisodeStorage
-from memmachine_server.common.errors import InvalidSetIdConfigurationError
+from memmachine_server.common.errors import (
+    InvalidSetIdConfigurationError,
+    ResourceNotFoundError,
+)
 from memmachine_server.common.filter.filter_parser import parse_filter
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
@@ -391,6 +394,112 @@ async def test_delete_feature_set_removes_filtered_entries(
     assert org_features == []
     assert len(project_features) == 1
     assert project_features[0].feature_name == "session_note"
+
+
+async def test_delete_features_deletes_features_in_sets_the_session_addresses(
+    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
+    session_data,
+):
+    # Given features in the org's sets and in the project's sets
+    set_ids = [
+        session_manager._generate_set_id(
+            org_id=session_data.org_id,
+            metadata={},
+        ),
+        session_manager.generate_user_set_id(
+            org_id=session_data.org_id,
+            producer_id="alice",
+        ),
+        session_manager._generate_set_id(
+            org_id=session_data.org_id,
+            project_id=session_data.project_id,
+            metadata={},
+        ),
+        session_manager._generate_set_id(
+            org_id=session_data.org_id,
+            project_id=session_data.project_id,
+            metadata={"topic": "travel"},
+        ),
+    ]
+    feature_ids = [
+        await semantic_service.add_new_feature(
+            set_id=set_id,
+            category_name="Profile",
+            feature="note",
+            value="Likes trains",
+            tag="facts",
+        )
+        for set_id in set_ids
+    ]
+
+    # When deleting them through the session
+    await session_manager.delete_features(
+        session_data=session_data,
+        feature_ids=feature_ids,
+    )
+
+    # Then every one is deleted
+    for feature_id in feature_ids:
+        assert (
+            await semantic_service.get_feature(feature_id, load_citations=False) is None
+        )
+
+
+@pytest.mark.parametrize(
+    ("org_id", "project_id"),
+    [
+        ("test_org", "other_proj"),
+        ("test_org", "test_proj_1"),
+        ("other_org", "test_proj"),
+        ("other_org", None),
+        ("test_org_1", None),
+    ],
+)
+async def test_delete_features_refuses_features_outside_the_sets_the_session_addresses(
+    session_manager: SemanticSessionManager,
+    semantic_service: SemanticService,
+    session_data,
+    org_id: str,
+    project_id: str | None,
+):
+    # Given a feature in the project's set and one in another project's or org's set
+    own_feature_id = await semantic_service.add_new_feature(
+        set_id=session_manager._generate_set_id(
+            org_id=session_data.org_id,
+            project_id=session_data.project_id,
+            metadata={},
+        ),
+        category_name="Profile",
+        feature="note",
+        value="Likes trains",
+        tag="facts",
+    )
+    other_feature_id = await semantic_service.add_new_feature(
+        set_id=session_manager._generate_set_id(
+            org_id=org_id,
+            project_id=project_id,
+            metadata={},
+        ),
+        category_name="Profile",
+        feature="note",
+        value="Likes boats",
+        tag="facts",
+    )
+
+    # When deleting both through the session
+    with pytest.raises(ResourceNotFoundError):
+        await session_manager.delete_features(
+            session_data=session_data,
+            feature_ids=[own_feature_id, other_feature_id],
+        )
+
+    # Then neither is deleted
+    for feature_id in (own_feature_id, other_feature_id):
+        assert (
+            await semantic_service.get_feature(feature_id, load_citations=False)
+            is not None
+        )
 
 
 async def test_add_message_uses_all_isolations(

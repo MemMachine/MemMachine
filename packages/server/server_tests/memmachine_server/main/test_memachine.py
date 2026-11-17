@@ -164,7 +164,7 @@ async def test_memmachine_list_search_paginates_semantic(memmachine: MemMachine)
             "semantic-4",
         ]
     finally:
-        await memmachine.delete_features(feature_ids)
+        await memmachine.delete_features(feature_ids, session_data=session_info)
         await memmachine.delete_session(session_info)
 
 
@@ -417,12 +417,12 @@ async def test_memmachine_delete_features_removes_semantic_entries(
 
     try:
         assert await memmachine.get_feature(feature_id) is not None
-        await memmachine.delete_features([feature_id])
+        await memmachine.delete_features([feature_id], session_data=session_data)
         assert await memmachine.get_feature(feature_id) is None
     finally:
         leftover = await memmachine.get_feature(feature_id)
         if leftover is not None:
-            await memmachine.delete_features([feature_id])
+            await memmachine.delete_features([feature_id], session_data=session_data)
 
 
 @pytest.mark.asyncio

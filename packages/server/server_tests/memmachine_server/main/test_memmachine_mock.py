@@ -1326,9 +1326,13 @@ async def test_delete_features_forwards_to_semantic_manager(
         return_value=semantic_manager
     )
 
-    await memmachine.delete_features(["feat1", "feat2"])
+    session_data = DummySessionData("feature-session")
+    await memmachine.delete_features(["feat1", "feat2"], session_data=session_data)
 
-    semantic_manager.delete_features.assert_awaited_once_with(["feat1", "feat2"])
+    semantic_manager.delete_features.assert_awaited_once_with(
+        session_data=session_data,
+        feature_ids=["feat1", "feat2"],
+    )
 
 
 @pytest.mark.asyncio

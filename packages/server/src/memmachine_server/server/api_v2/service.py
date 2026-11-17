@@ -92,6 +92,10 @@ async def _delete_memories(
         episode_ids=spec.episodic_memory_uids,
     )
     delete_semantics = memmachine.delete_features(
+        session_data=_SessionData(
+            org_id=spec.org_id,
+            project_id=spec.project_id,
+        ),
         feature_ids=spec.semantic_memory_uids,
     )
     await asyncio.gather(delete_episodes, delete_semantics)

@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import logging
+import re
 from collections.abc import (
     AsyncIterator,
     Iterable,
@@ -19,6 +20,7 @@ from uuid import UUID
 from pydantic import BaseModel, JsonValue
 
 from memmachine_server.common.episode_store import Episode
+from memmachine_server.common.errors import ResourceNotFoundError
 from memmachine_server.common.filter.filter_parser import FilterExpr
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage as ESemanticConfigStorage,
@@ -259,7 +261,39 @@ class SemanticSessionManager:
             metadata=metadata,
         )
 
-    async def delete_features(self, feature_ids: Sequence[FeatureIdT]) -> None:
+    async def delete_features(
+        self,
+        session_data: SessionData,
+        feature_ids: Sequence[FeatureIdT],
+    ) -> None:
+        """
+        Delete features in the sets the session addresses.
+
+        Ids that name no feature are ignored.
+
+        Raises:
+            ResourceNotFoundError: A feature is in a set the session does not
+                address. Nothing is deleted.
+
+        """
+        self._assert_session_data_implements_protocol(session_data=session_data)
+
+        for feature_id in feature_ids:
+            feature = await self._semantic_service.get_feature(
+                feature_id,
+                load_citations=False,
+            )
+            if feature is not None and (
+                feature.set_id is None
+                or not self._session_addresses_set_id(
+                    session_data=session_data,
+                    set_id=feature.set_id,
+                )
+            ):
+                raise ResourceNotFoundError(
+                    f"Semantic feature '{feature_id}' was not found in this project."
+                )
+
         await self._semantic_service.delete_features(feature_ids)
 
     async def get_set_features(
@@ -458,6 +492,35 @@ class SemanticSessionManager:
             def_type = SemanticSessionManager.SetType.OtherSet
 
         return f"mem_{def_type.value}_{org_project}_{len(metadata)}_{_hash_tag_list(metadata.keys())}__{'_'.join(sorted(string_tags))}"
+
+    @classmethod
+    def _session_addresses_set_id(
+        cls,
+        *,
+        session_data: SessionData,
+        set_id: SetIdT,
+    ) -> bool:
+        """
+        Report whether `_generate_set_id` produces `set_id` for the session.
+
+        Those are the org-level sets of the session's org and the sets of
+        its project, with any metadata.
+        """
+        set_types = "|".join(re.escape(set_type.value) for set_type in cls.SetType)
+        org_projects = "|".join(
+            re.escape(
+                cls._org_set_id(org_id=session_data.org_id, project_id=project_id)
+            )
+            for project_id in (None, session_data.project_id)
+        )
+        return (
+            re.fullmatch(
+                rf"mem_(?:{set_types})_(?:{org_projects})_[0-9]+_[0-9a-f]+__.*",
+                set_id,
+                flags=re.DOTALL,
+            )
+            is not None
+        )
 
     @classmethod
     def generate_user_set_id(

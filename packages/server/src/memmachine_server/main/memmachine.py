@@ -1321,19 +1321,25 @@ class MemMachine:
     async def delete_features(
         self,
         feature_ids: list[FeatureIdT],
+        session_data: InstanceOf[SessionData],
     ) -> None:
         """
         Delete semantic features by ID.
 
         Args:
             feature_ids: Feature identifiers to delete.
+            session_data: Session context whose org-level and project sets
+                the features must be in.
 
         Returns:
             None.
 
         """
         semantic_session = await self._resources.get_semantic_session_manager()
-        await semantic_session.delete_features(feature_ids)
+        await semantic_session.delete_features(
+            session_data=session_data,
+            feature_ids=feature_ids,
+        )
 
     async def add_feature(
         self,
