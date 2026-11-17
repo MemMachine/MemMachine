@@ -400,7 +400,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             .where(
                 PurgeQueueRow.partition_namespace == self._partition_namespace,
                 _has_elapsed(
-                    self._params,
+                    self._engine.dialect.name,
                     self._tombstone_retention_seconds,
                     since=PurgeQueueRow.enqueued_at,
                 ),
@@ -427,11 +427,13 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                             PurgeQueueRow.attempts_without_progress + 1
                         ),
                         claimable_at=_seconds_from_now(
-                            self._params,
+                            self._engine.dialect.name,
                             self._purge_lease_seconds
                             + _purge_retry_backoff_seconds(
-                                self._params,
+                                self._engine.dialect.name,
                                 PurgeQueueRow.attempts_without_progress + 1,
+                                base_seconds=self._params.base_purge_retry_backoff_seconds,
+                                max_seconds=self._params.max_purge_retry_backoff_seconds,
                             ),
                         ),
                         claim_generation=PurgeQueueRow.claim_generation + 1,
@@ -552,9 +554,12 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
                 )
                 .values(
                     claimable_at=_seconds_from_now(
-                        self.params,
+                        self.params.engine.dialect.name,
                         _purge_retry_backoff_seconds(
-                            self.params, PurgeQueueRow.attempts_without_progress
+                            self.params.engine.dialect.name,
+                            PurgeQueueRow.attempts_without_progress,
+                            base_seconds=self.params.base_purge_retry_backoff_seconds,
+                            max_seconds=self.params.max_purge_retry_backoff_seconds,
                         ),
                     )
                 )
@@ -642,13 +647,13 @@ async def _unregister_where(
 
 
 def _has_elapsed(
-    params: SQLAlchemyPartitionRegistryParams,
+    dialect_name: str,
     seconds: int | ColumnElement[int],
     *,
     since: InstrumentedAttribute[datetime] | InstrumentedAttribute[datetime | None],
 ) -> ColumnElement[bool]:
     """Whether `seconds` have passed since `since`, on the database clock."""
-    if params.engine.dialect.name == "sqlite":
+    if dialect_name == "sqlite":
         # datetime() emits CURRENT_TIMESTAMP's text form, so stored stamps
         # compare with it in time order.
         cutoff = func.datetime(
@@ -662,10 +667,10 @@ def _has_elapsed(
 
 
 def _seconds_from_now(
-    params: SQLAlchemyPartitionRegistryParams, seconds: int | ColumnElement[int]
+    dialect_name: str, seconds: int | ColumnElement[int]
 ) -> ColumnElement[datetime]:
     """The time `seconds` from now, on the database clock."""
-    if params.engine.dialect.name == "sqlite":
+    if dialect_name == "sqlite":
         return func.datetime(
             "now",
             func.printf("+%d seconds", seconds),
@@ -675,19 +680,18 @@ def _seconds_from_now(
 
 
 def _purge_retry_backoff_seconds(
-    params: SQLAlchemyPartitionRegistryParams,
+    dialect_name: str,
     attempts: ColumnElement[int] | InstrumentedAttribute[int],
+    *,
+    base_seconds: int,
+    max_seconds: int,
 ) -> ColumnElement[int]:
-    """The purge retry backoff in seconds after `attempts` attempts, computed by the database."""
+    """The purge retry backoff in seconds after `attempts` attempts, computed by the database: `base_seconds` doubled for each attempt after the first, at most `max_seconds`."""
     # 1 << (a - 1) is 2 ** (a - 1) on both dialects. The shift is clamped at
     # 0: an operator may reset a tombstone's attempts while a round on it
     # runs, and PostgreSQL leaves a negative shift undefined.
     doublings = literal(1, Integer).op("<<")(
         case((attempts > 0, attempts - 1), else_=0)
     )
-    smaller = func.min if params.engine.dialect.name == "sqlite" else func.least
-    return smaller(
-        params.base_purge_retry_backoff_seconds * doublings,
-        params.max_purge_retry_backoff_seconds,
-        type_=Integer,
-    )
+    smaller = func.min if dialect_name == "sqlite" else func.least
+    return smaller(base_seconds * doublings, max_seconds, type_=Integer)
