@@ -1328,14 +1328,10 @@ async def test_overlapping_segment_deletes_do_not_deadlock(
 ) -> None:
     """Overlapping concurrent `delete_segments` stay deadlock-free.
 
-    Regression canary rather than a lock-necessity proof: ablating the
-    ordered pre-lock does not make this fail on PostgreSQL, whose current
-    executor happens to acquire row locks in consistent orders for
-    identical DELETE shapes (scalar array probes are sorted; bitmap scans
-    lock in TID order). That consistency is engine behavior, not a
-    guarantee any database documents, so the pre-lock imposes the order
-    deliberately; this test catches the AB/BA cycle wherever an engine or
-    plan change ever produces divergent orders.
+    A deletion runs one statement per segment, so it takes its row locks in
+    the order of its statements, and deleting in UUID order makes that one
+    order for every deletion. Without that order this test deadlocks on
+    PostgreSQL.
     """
     partition = await _created(store, uuid4())
 

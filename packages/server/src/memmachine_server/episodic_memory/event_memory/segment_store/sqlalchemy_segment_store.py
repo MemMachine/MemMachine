@@ -734,26 +734,23 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             self._tracker("delete_segments"),
             write_session(self._create_session) as session,
         ):
-            if not self._is_sqlite:
-                # Lock rows in deterministic order to prevent deadlocks
-                # from concurrent deletions with overlapping UUID sets.
-                # SQLite relies on write serialization by the database.
-                await session.execute(
-                    select(SegmentRow.uuid)
-                    .where(
-                        SegmentRow.partition_uuid == self._partition_uuid,
-                        SegmentRow.uuid.in_(segment_uuids),
-                    )
-                    .order_by(SegmentRow.uuid)
-                    .with_for_update()
-                )
-
-            # CASCADE deletes derivatives via FK.
-            await session.execute(
+            # One statement per segment, in UUID order. Each locks the row
+            # it deletes, so concurrent deletions of overlapping segments
+            # take their locks in one order and cannot deadlock. Each also
+            # names one key, which the planner looks up the same way in a
+            # partition of any size (see `_restrict_to_keys`).
+            # CASCADE deletes derivatives via FK. Run on the connection: a
+            # session does not execute a DELETE with a list of parameter
+            # sets.
+            await (await session.connection()).execute(
                 delete(SegmentRow).where(
                     SegmentRow.partition_uuid == self._partition_uuid,
-                    SegmentRow.uuid.in_(segment_uuids),
-                )
+                    SegmentRow.uuid == bindparam("segment_uuid"),
+                ),
+                [
+                    {"segment_uuid": segment_uuid}
+                    for segment_uuid in sorted(segment_uuids)
+                ],
             )
 
     # Helpers

@@ -138,9 +138,10 @@ reclaimed by the purge, which starts only after the retention.
 ### Locking model
 
 Row locks only. Writers lock nothing beyond the rows they write;
-`delete_segments` locks its segment rows in key order on PostgreSQL; the
-purge takes `FOR UPDATE` on its partition's row, which only the purgers and
-the drop of the same partition contend for. No table-level lock, no DDL,
+`delete_segments` deletes its segments one statement each in key order, so
+every deletion takes its row locks in that order; the purge takes
+`FOR UPDATE` on its partition's row, which only the purgers and the drop of
+the same partition contend for. No table-level lock, no DDL,
 and no lock upgrade anywhere in the store, which removes the measured
 deadlock classes at the root: reclamation touches only rows of a partition
 no request can reach. On SQLite, which drops locking clauses, every write
@@ -155,6 +156,7 @@ by UUID, segments by event UUID, links by segment UUID or by derivative
 UUID) looks each key up on its own on PostgreSQL. The keys are one array
 parameter, and each joins a `LATERAL` subquery selecting that key's rows,
 whose `OFFSET 0` keeps the planner from merging it into the statement.
+`delete_segments` runs one `DELETE` per segment on every dialect.
 
 Given the keys as one `IN` list, PostgreSQL chooses between an index lookup
 per key and one scan of the partition's whole range of an index led by the
@@ -243,9 +245,7 @@ requirement excludes.
   tenant's size take a form with one plan (see [lookups by
   key](#lookups-by-key)), and no plan-mode tuning is needed.
 - One architecture on every dialect. The remaining dialect splits are the
-  LATERAL-vs-loop read strategy, the lookup per key on PostgreSQL, the
-  PostgreSQL-only ordered row locks in `delete_segments` (SQLAlchemy drops
-  locking clauses on SQLite), and
+  LATERAL-vs-loop read strategy, the lookup per key on PostgreSQL, and
   SQLite's engine setup: the foreign-key pragma, and transactions begun
   explicitly, a write transaction with `BEGIN IMMEDIATE`. Both are
   per-connection state that the engine's owner registers at engine
