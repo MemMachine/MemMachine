@@ -270,19 +270,17 @@ class ResourceManagerImpl:
                     )
         return registry
 
-    async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
+    async def get_embedder(self, name: str) -> Embedder:
         """Return an embedder by name."""
-        return await self._embedder_manager.get_embedder(name, validate=validate)
+        return await self._embedder_manager.get_embedder(name)
 
-    async def get_language_model(
-        self, name: str, validate: bool = False
-    ) -> LanguageModel:
+    async def get_language_model(self, name: str) -> LanguageModel:
         """Return a language model by name."""
-        return await self._model_manager.get_language_model(name, validate=validate)
+        return await self._model_manager.get_language_model(name)
 
-    async def get_reranker(self, name: str, validate: bool = False) -> Reranker:
+    async def get_reranker(self, name: str) -> Reranker:
         """Return a reranker by name."""
-        return await self._reranker_manager.get_reranker(name, validate=validate)
+        return await self._reranker_manager.get_reranker(name)
 
     @property
     def config(self) -> Configuration:

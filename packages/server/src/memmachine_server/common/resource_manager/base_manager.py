@@ -22,7 +22,7 @@ class BaseResourceManager[ResourceT](ABC):
 
     Subclasses must implement:
     - `_is_configured(name)`: Check if a resource is configured
-    - `_get_resource(name, validate)`: Build/retrieve a resource
+    - `_get_resource(name)`: Build/retrieve a resource
     - `_get_not_found_error(name)`: Return the appropriate error for unknown resources
     - `get_all_names()`: Return all configured resource names
     """
@@ -40,7 +40,7 @@ class BaseResourceManager[ResourceT](ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def _build_resource(self, name: str, validate: bool = False) -> ResourceT:
+    async def _build_resource(self, name: str) -> ResourceT:
         """Build a resource by name. Called within the locking context."""
         raise NotImplementedError
 
@@ -84,9 +84,7 @@ class BaseResourceManager[ResourceT](ABC):
             )
             self._build_errors[name] = e
 
-    async def _get_resource_with_locking(
-        self, name: str, validate: bool = False
-    ) -> ResourceT:
+    async def _get_resource_with_locking(self, name: str) -> ResourceT:
         """
         Get a resource with proper locking and error checking.
 
@@ -128,11 +126,11 @@ class BaseResourceManager[ResourceT](ABC):
                 )
 
             # Build the resource
-            resource = await self._build_resource(name, validate=validate)
+            resource = await self._build_resource(name)
             self._resources[name] = resource
             return resource
 
-    async def retry_build(self, name: str, validate: bool = False) -> ResourceT:
+    async def retry_build(self, name: str) -> ResourceT:
         """
         Retry building a failed resource.
 
@@ -146,7 +144,7 @@ class BaseResourceManager[ResourceT](ABC):
             raise self._get_not_found_error(name)
         # Clear error to allow retry
         self._build_errors.pop(name, None)
-        return await self._get_resource_with_locking(name, validate=validate)
+        return await self._get_resource_with_locking(name)
 
     async def build_all_with_error_tracking(
         self, names: set[str] | list[str]
