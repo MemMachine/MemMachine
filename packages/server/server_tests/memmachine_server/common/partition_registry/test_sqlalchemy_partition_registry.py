@@ -45,7 +45,8 @@ from memmachine_server.common.sql import enable_sqlite_explicit_begin
 RETENTION = timedelta(days=1)
 RETENTION_SECONDS = int(RETENTION.total_seconds())
 PURGE_LEASE = timedelta(minutes=5)
-# A partition name of the longest length, with characters no identifier allows.
+# A partition name of the maximum length in bytes, with characters no
+# identifier allows.
 ANY_CHARACTERS_NAME = "Session/ID-1 ü".ljust(254, "x")
 
 
@@ -87,7 +88,7 @@ async def _queued(registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
 
 
 def _database_time_ago(engine: AsyncEngine, delta: timedelta) -> ColumnElement:
-    """The database clock's now less `delta`, written by the database in the form of its own stamps."""
+    """The database clock's now less `delta`, written by the database in the form of its stamps."""
     if engine.dialect.name == "sqlite":
         return func.datetime("now", f"-{int(delta.total_seconds())} seconds")
     return func.now() - delta
@@ -114,7 +115,7 @@ async def _age_deletion(
 async def _blocked_or_done(engine: AsyncEngine, task: asyncio.Task) -> str:
     """Wait until `task` finishes ("done") or another backend waits on a lock ("blocked").
 
-    Decided by the database's own state (pg_stat_activity); raises TimeoutError
+    Decided by the database's state (pg_stat_activity); raises TimeoutError
     if neither happens within 30 seconds.
     """
     deadline = asyncio.get_running_loop().time() + 30
@@ -155,7 +156,7 @@ async def _age_claimable_at(
     partition_uuid: UUID,
     by: timedelta = PURGE_LEASE + timedelta(minutes=1),
 ) -> None:
-    """Move the tombstone's claimable time back by `by`, as if that much more time had passed since the claim or raise that set it, past the purge lease and the first backoff unless given."""
+    """Move the tombstone's claimable time back by `by`, as if that much more time had passed since the claim or failure that set it; the default passes the purge lease and the first backoff."""
     if registry._engine.dialect.name == "sqlite":
         earlier = func.datetime(
             PurgeQueueRow.claimable_at, f"-{int(by.total_seconds())} seconds"
@@ -194,7 +195,7 @@ async def _run_round(
     registry: SQLAlchemyPartitionRegistry,
     purge_round: Callable[[UUID], Awaitable[bool]],
 ) -> bool:
-    """Run one purge round like a partition manager's: claim the tombstone that came due first, run `purge_round` on it, and end the claim. Return whether a tombstone was claimed."""
+    """Run one purge round: claim the claimable tombstone that came due first, run `purge_round` on it, and end the claim. Return whether a tombstone was claimed."""
     claim = await registry.claim_tombstone()
     if claim is None:
         return False
@@ -210,7 +211,7 @@ async def _run_round(
 async def _start_held_round(
     registry: SQLAlchemyPartitionRegistry,
 ) -> tuple[_HeldRound, asyncio.Task[bool]]:
-    """A purge round started on the oldest due tombstone, held until released."""
+    """A purge round started on the oldest claimable tombstone, held until released."""
     held = _HeldRound()
     task = asyncio.create_task(_run_round(registry, held))
     await asyncio.wait_for(held.running.wait(), 30)
@@ -218,7 +219,7 @@ async def _start_held_round(
 
 
 async def _abandon_claim(registry: SQLAlchemyPartitionRegistry) -> UUID:
-    """Claim the oldest due tombstone and stop, as a purger whose round is canceled or that dies during it: nothing after the claim reaches the database. The claimed partition UUID."""
+    """Claim the oldest claimable tombstone and cancel the round, so nothing after the claim reaches the database, like a purger that dies mid-round; return the claimed partition UUID."""
     held, task = await _start_held_round(registry)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -281,7 +282,7 @@ async def _failing_round(registry: SQLAlchemyPartitionRegistry) -> UUID:
 async def _round(
     registry: SQLAlchemyPartitionRegistry, any_records_found: bool
 ) -> UUID | None:
-    """One purge round on the oldest due tombstone, reporting `any_records_found`; its partition UUID, or None."""
+    """One purge round on the oldest claimable tombstone, reporting `any_records_found`; its partition UUID, or None."""
     ran: list[UUID] = []
 
     async def purge_round(partition_uuid: UUID) -> bool:
@@ -331,8 +332,8 @@ async def test_a_partition_is_pending_until_its_reservation_is_confirmed(
 async def test_only_the_reserved_partition_is_confirmed(
     sqlalchemy_engine, partition_namespace
 ):
-    """A creation whose partition was deleted while its storage was
-    created cannot confirm a partition reserved under the name since."""
+    """A reservation whose partition was deleted cannot confirm a partition
+    reserved under the name since."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     deleted = await registry._reserve("c")
     await registry.unregister("c")
@@ -377,8 +378,8 @@ async def test_canceling_a_reservation_spares_the_name_reserved_since(
 async def test_canceling_a_confirmed_reservation_leaves_the_partition_live(
     sqlalchemy_engine, partition_namespace
 ):
-    """Only a deletion by name ends a live partition, so a creator that
-    cancels after a confirmation it did not see succeed takes nothing back."""
+    """Only a deletion by name ends a live partition, so a cancel after a
+    confirmation that committed takes nothing back."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     reservation = await registry._reserve("c")
     await reservation.confirm()
@@ -506,7 +507,7 @@ async def test_registries_of_two_namespaces_share_a_database_and_nothing_else(
 ):
     """The same name in two namespaces' registries is two partitions: each
     resolves, deletes, and purges apart from the other, and a purge round
-    claims only its own registry's tombstones."""
+    claims only its registry's tombstones."""
     first = await _registry(sqlalchemy_engine, f"{partition_namespace}_a")
     second = await _registry(sqlalchemy_engine, f"{partition_namespace}_b")
 
@@ -597,7 +598,7 @@ async def test_a_recreated_name_gets_a_new_partition_uuid(
 async def test_a_round_is_given_where_the_records_are(
     sqlalchemy_engine, partition_namespace
 ):
-    """The round is given the partition UUID the deleted partition's records carry."""
+    """The round is given the UUID the registry minted for the deleted partition."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("c")).partition_uuid
     await registry.unregister("c")
@@ -656,9 +657,9 @@ async def test_due_tombstones_are_claimed_oldest_deletion_first_until_a_round_fi
 async def test_a_tombstone_queued_by_a_real_deletion_comes_due_by_the_database_clock(
     sqlalchemy_engine, partition_namespace
 ):
-    """The claim compares the stamp the database clock wrote, by the
-    database's arithmetic: with no retention the first round claims the
-    tombstone, and no stamp is rewritten by the test."""
+    """The claim compares, by the database's arithmetic, the stamp the
+    database clock wrote: with no retention, the first round claims the
+    tombstone, and the test rewrites no stamp."""
     registry = await _registry(
         sqlalchemy_engine, partition_namespace, tombstone_retention_seconds=0
     )
@@ -741,8 +742,8 @@ async def test_the_backoff_doubles_with_each_failure_and_runs_from_the_last_one(
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
-    # Due for days: the backoff still runs from the last failure, not from
-    # when the tombstone came due.
+    # Due for days: the backoff runs from the last failure, not from when
+    # the tombstone came due.
     await _age_deletion(registry, partition_uuid, extra=timedelta(days=3))
 
     await _failing_round(registry)
@@ -818,7 +819,7 @@ async def test_resetting_a_dead_lettered_tombstones_attempts_returns_it_to_the_p
 ):
     """Setting the attempts without progress back to 0 and the claimable time
     to NULL, as the dead-letter report says, makes the tombstone claimable at
-    once, its last failure just now."""
+    once, right after its last failure."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
@@ -859,7 +860,7 @@ async def test_a_canceled_round_keeps_its_attempt_and_its_claim(
     sqlalchemy_engine, partition_namespace
 ):
     """A canceled round ends no claim: its attempt counts, and its tombstone
-    is claimed again only once the lease and the backoff have passed."""
+    is claimable again once the lease, and then the backoff, have passed."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
@@ -878,8 +879,8 @@ async def test_a_round_failing_after_its_attempts_are_reset_backs_off_one_attemp
     sqlalchemy_engine, partition_namespace
 ):
     """A round that fails after an operator reset its tombstone's attempts
-    backs off like a first attempt: the backoff is never computed from a
-    negative shift."""
+    backs off like a first attempt, since the backoff clamps its shift at
+    zero."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
@@ -899,7 +900,7 @@ async def test_a_round_failing_after_its_attempts_are_reset_backs_off_one_attemp
 async def _reset_attempts(
     registry: SQLAlchemyPartitionRegistry, partition_uuid: UUID
 ) -> None:
-    """Reset a tombstone's attempts, as the dead-letter log tells an operator to."""
+    """Reset a tombstone's attempts and claimable time, as the dead-letter log instructs."""
     async with registry._engine.begin() as connection:
         await connection.execute(
             update(PurgeQueueRow)
@@ -981,7 +982,7 @@ async def test_rounds_that_never_end_dead_letter_the_tombstone(
 async def test_racing_purgers_retry_a_round_that_never_ended_once(
     sqlalchemy_engine, partition_namespace
 ):
-    """Purgers on separate engines that find the same claim whose round never
+    """Purgers on separate engines racing for a tombstone whose claim never
     ended claim it once between them, as its next attempt."""
     engines = [create_async_engine(sqlalchemy_engine.url) for _ in range(4)]
     for engine in engines:
@@ -995,7 +996,7 @@ async def test_racing_purgers_retry_a_round_that_never_ended_once(
         await _abandon_claim(purgers[0])
         await _age_claimable_at(purgers[0], partition_uuid)
 
-        # Finding nothing removes the tombstone, so a second claim would show.
+        # Finding nothing removes the tombstone, so `ran` records every claim.
         async def found_nothing(claimed: UUID) -> bool:
             ran.append(claimed)
             return False
@@ -1016,7 +1017,8 @@ async def test_a_claimed_tombstone_is_skipped_while_its_round_runs(
     sqlalchemy_engine, partition_namespace
 ):
     """A second purger takes the next due tombstone, and finds none once the
-    rest are taken; the claimed one is not claimed again until its round ends."""
+    rest are taken; the held tombstone is claimable again once its round ends
+    with records found."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     older = (await registry._reserve("older")).partition_uuid
     newer = (await registry._reserve("newer")).partition_uuid
@@ -1036,7 +1038,8 @@ async def test_a_claimed_tombstone_is_skipped_while_its_round_runs(
         if not holding.done():
             holding.cancel()
 
-    # Ended with records found: the claim is over, and the tombstone is due.
+    # Ended with records found: the claim is over, and the tombstone is
+    # claimable.
     assert await _round(registry, any_records_found=False) == older
     assert await _queued(registry) == []
 
@@ -1093,7 +1096,7 @@ async def test_a_round_that_finds_nothing_removes_the_tombstone_under_any_claim(
     sqlalchemy_engine, partition_namespace
 ):
     """A partition UUID found empty after the retention stays empty, so a round
-    that outlasted its lease still removes the tombstone it found empty."""
+    that outlasted its lease removes the tombstone it found empty."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
@@ -1225,12 +1228,13 @@ async def _engine_ten_days_behind(
 async def test_purge_rounds_keep_time_by_the_database_clock(
     sqlalchemy_engine, partition_namespace
 ):
-    """Every time the queue stores, and the retention's cutoff, come from the
-    database's clock, never the client's.
+    """Every timestamp the queue stores, and the retention's cutoff, come from
+    the database's clock, never the client's.
 
-    The database's now() is shadowed by one running ten days behind the
-    real clock: the tombstone's deletion is stamped by it, and a retention
-    of a day, long past by the real clock, has not passed by it.
+    The database's now() is shadowed by a function running ten days behind
+    the real clock, which stamps the tombstone's deletion; by that clock a
+    retention of a day has not passed, though by the real clock it passed
+    days ago.
     """
     if sqlalchemy_engine.dialect.name != "postgresql":
         pytest.skip("SQLite's clock cannot be shadowed")
@@ -1294,8 +1298,8 @@ async def test_a_purge_lease_runs_by_the_database_clock(
 async def test_no_transaction_is_open_while_a_round_runs(
     sqlalchemy_engine, partition_namespace
 ):
-    """The claim commits before the round, so no backend sits idle in a
-    transaction, holding a row lock or vacuum's horizon, during its remote calls."""
+    """The claim commits before the round starts, so no backend sits idle in a
+    transaction, holding a row lock or vacuum's horizon, while the round runs."""
     if sqlalchemy_engine.dialect.name != "postgresql":
         pytest.skip("pg_stat_activity is PostgreSQL's")
     registry = await _registry(
@@ -1329,7 +1333,7 @@ async def test_no_transaction_is_open_while_a_round_runs(
 async def test_a_claim_skips_a_tombstone_another_purger_holds(
     sqlalchemy_engine, partition_namespace
 ):
-    """A purger never waits on a claim another purger is taking: it takes the next due tombstone."""
+    """A purger skips a tombstone another purger is claiming, and takes the next due tombstone."""
     if sqlalchemy_engine.dialect.name != "postgresql":
         pytest.skip("SQLite holds no row locks to skip")
     registry = await _registry(sqlalchemy_engine, partition_namespace)
@@ -1480,12 +1484,12 @@ async def test_a_mint_checks_the_queue_after_its_insert(
 ):
     """A mint colliding with a deletion in flight sees the deletion's tombstone.
 
-    The deletion frees the partition's row and queues its tombstone in one
-    uncommitted transaction; the colliding mint waits on it, at its insert,
-    or on SQLite, where its transaction takes the write lock, at BEGIN. Only
-    a queue check made after the insert sees the tombstone once the deletion
-    commits: one made before reads the queue too early and registers a
-    partition under a partition UUID awaiting purge.
+    The deletion deletes the partition's row and queues its tombstone in one
+    uncommitted transaction. The colliding mint waits for that transaction at
+    its insert, or at BEGIN on SQLite, where a write transaction takes the
+    write lock. Only a queue check made after the insert sees the tombstone
+    once the deletion commits; a check made before reads the queue too early
+    and registers a partition under a partition UUID awaiting purge.
     """
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     victim = (await registry._reserve("victim")).partition_uuid
@@ -1550,7 +1554,7 @@ async def test_a_persistent_database_error_surfaces_with_its_cause(
     sqlalchemy_engine, partition_namespace, monkeypatch
 ):
     """A rejected insert is retried a bounded number of times, then the
-    database's own error is chained to the one that gives up."""
+    error raised on giving up carries the database's error as its cause."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     # A NOT NULL violation stands in for a cause that is not a collision.
     monkeypatch.setattr(
@@ -1625,7 +1629,7 @@ async def test_a_deletion_whose_tombstone_cannot_be_queued_changes_nothing(
 ):
     """A deletion and its tombstone commit together: when queuing the
     tombstone fails, the partition stays registered and nothing is queued,
-    so no deleted partition UUID is ever left without a tombstone."""
+    so every deleted partition UUID has a tombstone."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     live = await _created(registry, "c")
 
@@ -1652,8 +1656,8 @@ async def test_a_deletion_whose_tombstone_cannot_be_queued_changes_nothing(
 async def test_a_reservation_whose_queue_check_fails_leaves_the_name_free(
     sqlalchemy_engine, partition_namespace
 ):
-    """A reservation and its check of the purge queue commit together: when
-    the check fails, no pending partition holds the name."""
+    """A reservation and its check of the purge queue run in one transaction:
+    when the check fails, the name stays free."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
 
     with (
@@ -1730,7 +1734,7 @@ async def test_a_reservation_colliding_with_a_tombstone_under_purge_does_not_wai
 
 
 class _OverlapWatch:
-    """A purge round that records any round started on a tombstone whose round is still running."""
+    """A purge round that records each round started on a tombstone while another round on it runs."""
 
     def __init__(self) -> None:
         self.overlapping: list[UUID] = []

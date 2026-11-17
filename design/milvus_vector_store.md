@@ -173,20 +173,21 @@ Session consistency. Listing by the partition UUID field took 57-63 ms per round
 of 10,000 against 70-75 ms by primary-key range (1.4M rows, Milvus 2.6.24).
 
 The listing reads at Bounded, like every other read, and is correct there: a
-Bounded read is at most `common.gracefulTime` (5 s by default) behind and waits
-rather than read staler, far inside the tombstone retention, so a round that
-lists nothing has found the partition empty. When the query node keeps up, a
-Bounded read waits for nothing, so a round can list entities the previous round
-deleted but the node has not applied yet, and delete them again. With one
-purging process and no concurrent writes, the resource manager's one-second
-pause after a busy round left nothing to list again. Under concurrent writes
-the node can apply a delete more than a second late, and sweepers in several
-processes can claim consecutive rounds of one partition with no pause between
-them, so a round can still list entities already deleted and delete them again:
-repeated work, never a wrong result. Measured with one purger and no writers
-(Milvus 2.6.24, 4 CPUs / 5 GB; one deleted partition of 200,000 entities among
-50 live tenants of 2,000, 128 dimensions; rounds of 10,000 on the async client
-while 4 tasks search live tenants; two runs each):
+Bounded read is at most `common.gracefulTime` (5 s by default) behind, far
+inside the tombstone retention, and waits rather than read staler, so a round
+that lists nothing has found the partition empty. When the query node keeps
+up, a Bounded read waits for nothing, so a round can list entities whose
+deletion by the previous round the node has not applied yet, and delete them
+again. With one purging process and no concurrent writes, the resource
+manager's one-second pause after a busy round left nothing to list again.
+Under concurrent writes the node can apply a delete more than a second late,
+and sweepers in several processes can claim consecutive rounds of one
+partition with no pause between them, so a round can still list entities
+already deleted and delete them again: repeated work, never a wrong result.
+Measured with one purger and no writers (Milvus 2.6.24, 4 CPUs / 5 GB; one
+deleted partition of 200,000 entities among 50 live tenants of 2,000, 128
+dimensions; rounds of 10,000 on the async client while 4 tasks search live
+tenants; two runs each):
 
 | Listing level | Pause | Rounds | Entities listed again | Wall | Search p99 |
 |---|---|---|---|---|---|

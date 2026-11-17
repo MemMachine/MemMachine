@@ -74,9 +74,9 @@ _EVENT_MEMORY_PARTITION_NAMESPACE = "event_memory"
 Fixed, because the namespace locates the partitions' registrations.
 """
 
-# Attempts getting or creating a session's partition makes,
-# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
-# partition that stays pending or a name it keeps losing.
+# The attempts `_get_or_create_event_memory_partition` makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before giving up on a partition
+# that stays pending or a name other creators keep taking.
 _MAX_GET_OR_CREATE_ATTEMPTS = 10
 _GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
@@ -118,11 +118,11 @@ async def _get_or_create_event_memory_partition(
     Get the live event memory partition under a name, creating it if no partition holds the name.
 
     Read-then-create, retried a bounded number of times: a live partition is
-    returned; a pending one is another creator's, so the call waits for it;
-    no partition means create, then read again. The call also retries when a
-    creation finds the name taken by another creator meanwhile or the
-    partition deleted while the stores created it, and when the partition
-    was deleted before the read after its creation.
+    returned; a pending one is another creator's, which the call waits for;
+    no partition means create, then read again. The call retries when the
+    creation finds the name taken or the partition deleted while the stores
+    created it, and when the partition is deleted before the read after the
+    creation.
 
     Raises:
         PartitionPendingError:
@@ -275,9 +275,9 @@ def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str,
     partition registry.
 
     Raises:
-        ConfigurationError: If the deployment configures no event memory:
-            it leaves any of its vector store, segment store, partition
-            registry, and embedder unset.
+        ConfigurationError: If the deployment configures no event memory,
+            or leaves its vector store, segment store, partition registry, or
+            embedder unset.
 
     """
     deployment = configuration.episodic_memory.long_term_memory

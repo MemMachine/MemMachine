@@ -61,13 +61,13 @@ behind its choices.
 ## Lifecycle of a partition
 
 1. **Create.** The owner, such as event memory, creates the partition by
-   name through its partition manager, which reserves the name in the
-   registry, inserting a pending row under a freshly minted UUID, creates
-   the partition in each store (on Qdrant and Milvus, nothing: its records
-   go into the store's one native collection, which startup prepared), and
-   confirms the reservation, which marks the row live. A racing creator
-   loses at the registry's primary key, and a pending partition is not
-   answered.
+   name through its partition manager. The manager reserves the name in the
+   registry, which inserts a pending row under a freshly minted UUID, then
+   creates the partition in each store and confirms the reservation, which
+   marks the row live. On Qdrant and Milvus, creating the partition does
+   nothing, since its records go into the store's one native collection,
+   which startup prepared. A racing creator loses at the registry's primary
+   key, and a pending partition is not answered.
 2. **Get.** The registry resolves the partition name to the live partition
    and answers its registration, and the owner gets each store's handle on
    the partition's UUID.
@@ -76,8 +76,8 @@ behind its choices.
    reads, and after each of its writes and deletes, the owner checks that
    the partition is still live.
 4. **Delete.** One registry transaction removes the partition's row and
-   queues a tombstone. Every operation of the owner on that partition raises
-   from then on, in every process.
+   queues a tombstone. Every operation the owner begins on that partition
+   afterwards raises, in every process.
 5. **Purge.** Once the retention (a day by default) has passed, sweepers in
    every process claim tombstones oldest first and purge each partition's
    records from the owner's stores, a round at a time; once no store finds

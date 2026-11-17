@@ -754,7 +754,7 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_stores_on_one_engine_are_isolated(self, store):
-        """Two stores over one engine, each with its own partition UUID, never see each other's rows."""
+        """Two stores over one engine, each with its own partition UUID, see only their own rows."""
         other = await _store_with(store, "other_store")
         partition_a = await _created(store)
         partition_b = await _created(other)

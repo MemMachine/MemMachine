@@ -249,7 +249,7 @@ class MilvusVectorStorePartition(VectorStorePartition):
         """Upsert entities, halving a batch refused as too large.
 
         Milvus refuses a request over its proxy's gRPC receive limit with
-        RESOURCE_EXHAUSTED, before writing any of it. A batch refused so is
+        RESOURCE_EXHAUSTED, before writing any of it. A refused batch is
         halved until the halves fit or a single entity is refused. Any other
         error raises at once.
         """
@@ -462,9 +462,8 @@ class MilvusVectorStoreParams(VectorStoreParams):
 class MilvusVectorStore(VectorStore):
     """Asynchronous Milvus-based implementation of VectorStore.
 
-    The store is one native Milvus collection, named at construction, in
-    which a partition is the entities carrying its partition UUID in the
-    partition-key field.
+    The store is one native Milvus collection, named at construction. A
+    partition is the entities carrying its UUID in the partition-key field.
 
     Reads run at Bounded, the consistency level the store creates its
     native collection at: a query reflects every write that returned at
@@ -516,7 +515,7 @@ class MilvusVectorStore(VectorStore):
             await self._prepare_storage()
 
     async def _prepare_storage(self) -> None:
-        """Prepare the collection every partition lives in, its indexes, and its load, each step idempotent."""
+        """Prepare and load the collection every partition lives in, with its indexes, each step idempotent."""
         # Each step runs when it is missing, and the collection is loaded, so
         # the next startup completes one that failed part way.
         index_params = self._client.prepare_index_params()
@@ -623,7 +622,8 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def shutdown(self) -> None:
-        # The caller owns the client's lifecycle.
+        # Stores of different names may share the client, so shutdown leaves
+        # it open.
         pass
 
     @override
@@ -646,8 +646,8 @@ class MilvusVectorStore(VectorStore):
     async def purge_partition(self, partition_uuid: UUID) -> bool:
         async with self._tracker("purge_partition"):
             # Deletes the partition's entities by primary key, one listed batch
-            # per round, keeping each delete short for every tenant of the native
-            # collection.
+            # per call, keeping each delete short for every partition in the
+            # native collection.
             if not await self._client.has_collection(
                 self._collection_name,
                 timeout=self._request_timeout_seconds,

@@ -66,24 +66,23 @@ with a new UUID.
 - **Create**: insert the partition's row with the store's codec config. No
   DDL, no lock beyond the row. Creating again with the same config changes
   nothing; a different config raises the config-mismatch error.
-- **Get**: read the partition's row. The handle captures the
-  partition's UUID and the codec.
-- **Delete** is the owner's: deleting the tenant's name in its
-  registry is O(1) regardless of tenant size, and the tenant is unreachable
-  at once. The store is not called.
+- **Get**: read the partition's row. The handle captures the partition's
+  UUID and the codec.
+- **Delete** is the owner's: deleting the tenant's name in its registry is
+  O(1) regardless of tenant size, and the tenant is unreachable at once. The
+  store is not called.
 - **Re-create**: the owner creates a new partition under the name, under a
   fresh UUID its registry mints, safe at any time; the old partition's rows
-  are invisible to the successor even while its purge is still sweeping them.
+  are invisible to the new partition even while the purge sweeps them.
 - **Purge and drop**: `purge_partition(partition_uuid) -> bool` and
   `drop_partition(partition_uuid)`, the `PartitionedStore` steps. The
   owner's partition manager calls the purge for a deleted partition once
-  the retention has passed, until it returns False, and then the drop,
-  which
-  deletes the partition's row; how much one call does is the store's
-  choice. This store bounds each call so that it does not noticeably
-  degrade concurrent request serving, and every bound below exists for
-  that. The deletion contract is "unreachable immediately, erased
-  asynchronously".
+  the retention has passed, round after round, and calls the drop, which
+  deletes the partition's row, once no store's purge finds records. How much
+  one call does is the store's choice. This store bounds each call so that
+  it does not noticeably degrade concurrent request serving, and every bound
+  below exists for that. The deletion contract is "unreachable immediately,
+  erased asynchronously".
 
   - One transaction per call, committing its progress or nothing, so
     committed progress survives interruption.
@@ -125,7 +124,7 @@ with a new UUID.
     [the sweeper](vector_store_purge.md#the-sweeper)).
   - Pacing, not deletion speed, bounds how fast a backlog drains: a call
     deletes at most `purge_max_segments` segment rows and the resource
-    manager pauses between busy rounds, so one process drains fewer than
+    manager pauses between busy rounds, so one process drains at most
     `purge_max_segments` rows per pause.
 
 ### Fencing
@@ -147,7 +146,7 @@ deadlock classes at the root: reclamation touches only rows of a partition
 no request can reach. On SQLite, which drops locking clauses, every write
 transaction of the store takes the database's write lock at BEGIN
 (`BEGIN IMMEDIATE`, through the `enable_sqlite_explicit_begin` setup the
-store requires of its engine), which stands in for all of them.
+store requires of its engine), which stands in for the row locks.
 
 ## Alternatives considered
 

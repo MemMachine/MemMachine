@@ -72,7 +72,7 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
     )
     # The store is semantic memory's one store, whatever its embedder,
     # built with the keys the storage writes; the partition is the manager's
-    # own, registered in a namespace of its own in the storage's database.
+    # own, registered in semantic memory's namespace in the storage's database.
     resource_manager.get_vector_store.assert_awaited_once_with(
         "semantic_vectors",
         vector_store_name="semantic_memory",

@@ -87,9 +87,9 @@ async def _count_stored(store: QdrantVectorStore) -> int:
     return result.count
 
 
-# Purge calls `_purge` makes before it fails the test: far more than the
-# purging a test's records takes, so only a purge that keeps finding records
-# reaches it.
+# Purge calls `_purge` makes before failing the test: far more than purging
+# a test's records takes, so only a purge that keeps finding records reaches
+# the limit.
 _MAX_PURGE_CALLS = 1000
 
 
@@ -1517,10 +1517,10 @@ class TestAgainstAModel:
     ):
         """Two partitions of one store take a seeded sequence of upserts
         (re-upserts change or drop properties), deletes (of their own, the
-        other partition's and absent UUIDs), filtered queries, replacement by
+        other partition's, and absent UUIDs), filtered queries, replacement by
         a fresh partition UUID under the same key, and drains that purge the
         replaced partition UUIDs. After each step the records stored, a query's
-        matches and a drain's count agree with a model that holds each
+        matches, and a drain's count agree with a model that holds each
         partition's records."""
         store = QdrantVectorStore(
             _params(
@@ -1607,8 +1607,8 @@ class TestCollectionProvisioningAcrossWorkers:
     """Startup has to survive more than one worker.
 
     Stores of one name on separate clients share one native collection, so
-    two can start up and prepare it at the same moment, and one can find it
-    already there without its indexes.
+    two stores can prepare the collection at the same moment, and a store can
+    find the collection already there without its indexes.
     """
 
     @pytest.mark.asyncio

@@ -15,10 +15,11 @@ registry](partition_registry.md),
   collection-wide graph is built; each value of an indexed payload field gets
   its own graph once it has enough points in a segment, so a search filtered
   on one tenant walks that tenant's graph.
-- **The partition UUID:** payload field `sys-partition_uuid`, a keyword index with
-  `is_tenant=true`, which also has Qdrant keep a tenant's points together.
-  A handle's searches filter on it, as do the purge's scrolls and deletes. A
-  handle's deletes name its points' ids instead (see [Point ids](#point-ids)).
+- **The partition UUID:** payload field `sys-partition_uuid`, a keyword
+  index with `is_tenant=true`, which also has Qdrant keep a tenant's points
+  together. A handle's searches, and the purge's scrolls and deletes, filter
+  on it. A handle's deletes name its points' ids instead (see [Point
+  ids](#point-ids)).
 - **Declared properties:** a payload index per property the store declares,
   typed by the property's type. A record or a filter naming any other key is
   refused.
@@ -49,10 +50,11 @@ registry](partition_registry.md),
 
 ## Point ids
 
-A point's id is `uuid5(partition UUID, record UUID)`, and the record UUID is kept
-in the payload, `sys-record_uuid`. A search returns that one payload field to
-answer each match's record UUID; a delete names the derived ids directly;
-someone inspecting a collection finds a record by filtering on the field.
+A point's id is `uuid5(partition UUID, record UUID)`, and the record UUID is
+kept in the payload, `sys-record_uuid`. A search returns that one payload
+field to answer each match's record UUID; a delete names the derived ids
+directly; someone inspecting a collection finds a record by filtering on the
+field.
 
 The id space is the native collection's, shared by the store's partitions,
 and Qdrant's upsert replaces a whole point, vectors and payload alike
@@ -61,8 +63,8 @@ the point id, an upsert of a UUID another partition's point held replaced
 that point and moved it to the writer's partition UUID. Derived ids differ
 between partitions whatever record UUIDs they carry, so the store keeps the
 [isolation](vector_store_isolation.md) guarantee without a rule on callers,
-and a partition created again under the same name writes ids its deleted
-predecessor's points, awaiting purge, cannot collide with.
+and a partition created again under the same name writes ids that cannot
+collide with its deleted predecessor's points awaiting purge.
 
 Measured on Qdrant 1.19.1 (4 CPUs / 4 GB, gRPC; 300 tenants x 1,000 points of
 128 dimensions in this layout; searches filtered on a tenant, top 10; one idle
@@ -102,11 +104,12 @@ registry directly, where isolation is moot anyway.
 **Why not reversible ids.** A point id the store can invert, such as the
 record UUID XOR the partition UUID, would let a search recover the record UUID
 from the point id and return no payload. But whatever lets the store invert
-the mapping lets anyone holding the partition UUIDs aim it: with the target's
-partition UUID, their own, and the target's record UUID, an attacker computes the
-colliding UUID directly (`record ^ partition_uuid_A ^ partition_uuid_B`), and a
-write of it through an ingestion path that passes a caller's UUID through
-replaces the target's point, which then disappears from its partition.
+the mapping lets anyone holding the partition UUIDs aim it: an attacker who
+knows the target's partition UUID, their own, and the target's record UUID
+computes the colliding UUID directly
+(`record ^ partition_uuid_A ^ partition_uuid_B`), and a write of it through
+an ingestion path that passes a caller's UUID through replaces the target's
+point, which then disappears from its partition.
 Partition UUIDs are not guarded as secrets: the registry logs them in its
 warnings and dead-letter errors, and they are in its tables and any backup, as
 record UUIDs are in any Qdrant snapshot. So a read-level leak plus an ordinary
@@ -118,8 +121,8 @@ UUIDv8 fixes 6 of its 128 bits, leaving 122 free, too few to hold an arbitrary
 record UUID's 122 random bits and 4 version bits reversibly.
 
 **Why not a conditional upsert.** Qdrant 1.16 added `update_filter`
-(qdrant/qdrant#7006): an upsert filtered on the writer's partition UUID leaves a
-point under another partition UUID as it is and skips the writer's point without
+(qdrant/qdrant#7006): an upsert filtered on the writer's partition UUID
+leaves another partition's point as it is and skips the writer's point without
 an error. It kept bare ids, but a reused UUID's record was silently dropped,
 callers still needed a uniqueness rule, and its cost stayed with the writer
 (Qdrant 1.19.1, same setup):
@@ -153,7 +156,7 @@ shipped: it has no graphless layout or exact-search workaround.
 One filter-delete of the whole partition per round: the round scrolls for
 one point of the partition and, when it finds one, deletes by filter.
 Measured (Qdrant 1.18.3, 1.19.0 and 1.19.1; 2.11M points in this layout, dead
-partition UUIDs of 10k to 1M among live tenants under search, upsert, and scroll
+partitions of 10k to 1M among live tenants under search, upsert, and scroll
 traffic; 2 CPUs / 4 GB): the delete stalls writes and scrolls on the shard,
 never searches, for its duration, about 1.3 s per 1M points on 1.19.1 at 3
 segments per shard (7.3 s at 101), with no errors. Deleting in batches instead

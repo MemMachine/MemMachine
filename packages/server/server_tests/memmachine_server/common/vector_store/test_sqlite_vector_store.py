@@ -248,8 +248,8 @@ class TestPartitionLifecycle:
         baseline = await _table_names(engine)
         partition = await _created(store)
         partition_uuid = partition._partition_uuid
-        # Two operations reach the save threshold and write the index file;
-        # a third stays pending.
+        # The first upsert's operations reach the save threshold and write
+        # the index file; the second upsert's operation stays pending.
         await partition.upsert(
             records=[
                 _make_record(vector=_normalize([1.0, 0.0, 0.0])),
@@ -856,7 +856,7 @@ class TestPartitionIsolation:
 
     @pytest.mark.asyncio
     async def test_dropping_a_partition_does_not_affect_sibling(self, store):
-        """Dropping one partition doesn't break a sibling sharing the store's tables."""
+        """Dropping one partition leaves a sibling's records searchable."""
         partition_a = await _created(store)
         partition_b = await _created(store)
 
@@ -1576,8 +1576,8 @@ class TestIndexFileDurability:
         assert len(idx_files) == 1
         idx_files[0].unlink()
 
-        # Restart: get_partition must surface the failure, not
-        # return an engine silently rebuilt empty.
+        # Restart: get_partition raises the load failure instead of
+        # returning an engine rebuilt empty.
         store2, engine2 = await _fresh_store(db_path, tmp_path)
         with pytest.raises(IndexLoadError) as exc_info:
             await store2.get_partition(partition._partition_uuid)

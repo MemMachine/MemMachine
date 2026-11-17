@@ -84,9 +84,9 @@ class EventMemoryParams(BaseModel):
         vector_store (VectorStore):
             Vector store holding the derivatives' vectors.
         partition_registry (PartitionRegistry):
-            Registry of the partition namespace event memory's partitions are
-            registered in, shared by every process serving it. Started by the
-            caller.
+            Registry of the partition namespace holding event memory's
+            partitions, shared by every process that serves them; already
+            started.
         segmenter (Segmenter):
             Segmenter that segments events into segments.
         deriver (Deriver):
@@ -113,9 +113,9 @@ class EventMemoryParams(BaseModel):
     partition_registry: InstanceOf[PartitionRegistry] = Field(
         ...,
         description=(
-            "Registry of the partition namespace event memory's partitions are "
-            "registered in, shared by every process serving it. Started by the "
-            "caller"
+            "Registry of the partition namespace holding event memory's "
+            "partitions, shared by every process that serves them; already "
+            "started"
         ),
     )
     segmenter: InstanceOf[Segmenter] = Field(
@@ -145,13 +145,13 @@ class EventMemory:
     """
     Event memory over a segment store and a vector store.
 
-    Its registry registers each partition under a name and mints its UUID,
-    and each store holds a partition's records under the UUID. A name
-    deleted and created again names a new partition. A partition manager
-    over both stores creates, purges, and drops each partition in both.
-    Getting a partition answers None when either store finds nothing under
-    its UUID: a purge round drops a deleted partition from both stores, and
-    one store's drop may land before the other's.
+    The registry registers each partition under a name and mints the
+    partition's UUID, and each store holds a partition's records under the
+    UUID. A name deleted and created again names a new partition. A
+    partition manager over both stores creates, purges, and drops each
+    partition in both. Getting a partition answers None when either store
+    finds nothing under its UUID: a purge round drops a deleted partition
+    from both stores, and one store's drop may land before the other's.
     """
 
     @classmethod
@@ -640,9 +640,9 @@ class EventMemoryPartition:
         async with self._tracker("encode_events"):
             events = list(events)
             self._validate_events(events)
-            # Checked before and after the writes: a write that completed
-            # to a partition deleted meanwhile raises instead of reporting
-            # success, and the purge reclaims what it wrote.
+            # Checked before and after the writes: when the partition is
+            # deleted meanwhile, the call raises instead of reporting success,
+            # and the purge reclaims the writes.
             await self._registration.require_current()
             await self._encode_events(events, format_options=format_options)
             await self._registration.require_current()
@@ -825,12 +825,11 @@ class EventMemoryPartition:
         Raises:
             PartitionDeletedError:
                 If the partition was deleted before the query began.
-
         """
         async with self._tracker("query"):
-            # A read in flight when the deletion commits answers from before
-            # it, since the purge waits out a retention, so it is checked
-            # only before.
+            # Checked before the read only: the purge waits out a retention
+            # after the deletion, so a read in flight when the deletion
+            # commits still finds the partition's records.
             await self._registration.require_current()
             return await self._query(
                 query,

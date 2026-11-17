@@ -142,9 +142,9 @@ class QdrantVectorStorePartition(VectorStorePartition):
         error raises at once.
         """
         try:
-            # Waiting for Qdrant to apply the write keeps the writes it has
-            # accepted but not applied to those in flight, whose callers see
-            # the wait as latency, and reports a failure to apply.
+            # Waiting for Qdrant to apply the write bounds its accepted but
+            # unapplied writes to those in flight, whose callers see the wait
+            # as latency, and reports a failure to apply.
             await self._client.upsert(
                 collection_name=self._vector_store_name,
                 points=points,
@@ -391,7 +391,7 @@ class QdrantVectorStorePartition(VectorStorePartition):
 
     def _qdrant_score_threshold(self, score_threshold: float | None) -> float | None:
         """
-        The threshold a query sends for the caller's, keeping every point that meets the caller's.
+        The threshold a query sends to Qdrant, which admits every point that meets the caller's threshold.
 
         Qdrant keeps only scores strictly better than its threshold, compared
         in single precision, so the query sends the next single-precision
@@ -473,9 +473,8 @@ class QdrantVectorStoreParams(VectorStoreParams):
 class QdrantVectorStore(VectorStore):
     """Asynchronous Qdrant-based implementation of VectorStore.
 
-    The store is one native Qdrant collection, named at construction, in
-    which a partition is the points carrying its partition UUID in their
-    payload.
+    The store is one native Qdrant collection, named at construction. A
+    partition is the points carrying its UUID in their payload.
     """
 
     _SIMILARITY_METRIC_TO_QDRANT_DISTANCE: ClassVar[
@@ -591,7 +590,8 @@ class QdrantVectorStore(VectorStore):
 
     @override
     async def shutdown(self) -> None:
-        # The caller owns the client's lifecycle.
+        # Stores of different names may share the client, so shutdown leaves
+        # it open.
         pass
 
     @override
@@ -612,8 +612,8 @@ class QdrantVectorStore(VectorStore):
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:
         async with self._tracker("purge_partition"):
-            # If a point of the partition remains, one filter-delete removes them
-            # all.
+            # When the scroll finds a point of the partition, one filter-delete
+            # removes all the partition's points.
             try:
                 points, _ = await self._client.scroll(
                     collection_name=self._vector_store_name,

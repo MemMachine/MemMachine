@@ -77,10 +77,10 @@ async def _run_purge_rounds_forever(
 ) -> None:
     """Run a partition namespace's purge rounds for as long as the task runs.
 
-    A call that ran a round is followed after a short pause, and one that
-    ran none or raised after the idle interval; a raise is logged. Sweepers
-    in other processes may run the same namespace's purge rounds at the
-    same time.
+    The next call follows after a short pause when a round ran, and after the
+    idle interval when none ran or the call raised; a raise is logged.
+    Sweepers in other processes may run the same namespace's purge rounds at
+    the same time.
 
     A module-level coroutine on purpose: the event loop keeps a pending task
     alive while it sleeps, so the task pins whatever its frame references.

@@ -1,4 +1,4 @@
-"""Tests of event memory over its two stores: its partitions are created and purged in both, and a handle pairs both stores' handles."""
+"""Tests of event memory over its two stores: partitions are created, purged, and dropped in both, and a handle pairs both stores' handles."""
 
 from unittest.mock import NonCallableMagicMock, create_autospec, sentinel
 from uuid import uuid4

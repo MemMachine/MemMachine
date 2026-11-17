@@ -205,7 +205,7 @@ async def _event_long_term_memory(
     embedder: Embedder,
     segmenter: Segmenter,
 ) -> LongTermMemory:
-    """A LongTermMemory on session `sess1`'s partition, whose stores answer the given partitions."""
+    """A LongTermMemory on session `sess1`'s partition, with the stores answering the given partitions."""
     registration = create_autospec(Registration, instance=True)
     registration.partition_name = "sess1"
     registration.partition_uuid = uuid4()

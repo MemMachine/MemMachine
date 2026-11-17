@@ -36,16 +36,16 @@ Milvus collection is named `sys_` followed by the vector store name. Event
 memory keeps the registry of its partitions in the relational database that
 `episodic_memory.long_term_memory.partition_registry` names, so any number of
 server processes can share one Qdrant or Milvus backend; the SQLite stores are
-bound to one node. The registry mints each partition's UUID, a random
-UUID under which the vector store and the segment store keep the partition's
-data, so every process that shares event memory's stores names the same
+bound to one node. The registry mints each partition's UUID, a random UUID
+under which the vector store and the segment store keep the partition's data,
+so every process that shares event memory's stores must name the same
 registry database, and deployments with separate registries can share a
 backend without sharing data. Deployments that name the same registry
-database must also configure the same vector store and segment store for
-event memory: a deployment with other stores needs a registry database of its
-own, which one database server can hold. Otherwise a deployment's purge of a
-deleted session, finding nothing of another deployment's data in its own
-stores, would leave that data in place.
+database must configure the same vector store and segment store for event
+memory: any of them may purge a session another deleted, and a purge that
+finds nothing of that session in its own stores leaves the other
+deployment's data in place. A deployment with other stores needs a registry
+database of its own, which one database server can hold.
 
 Milvus supports two deployment shapes through the same configuration fields:
 

@@ -23,10 +23,10 @@ class PartitionManager:
     the stores that answer keep their progress while another is down.
 
     Every partition manager of a namespace, in any process, must be given the
-    same stores: any of them may run the namespace's purge rounds, and a
-    round purges only the stores its manager was given. Processes that share
-    partitions must use the same namespace: the same name in two namespaces
-    is two separate partitions.
+    same stores, since any of the managers may run the namespace's purge
+    rounds, and a round purges only the stores its manager was given.
+    Processes that share partitions must use the same namespace, since the
+    same name in two namespaces is two separate partitions.
     """
 
     def __init__(
@@ -42,12 +42,13 @@ class PartitionManager:
         """
         Create a partition under a name: reserve the name, create the partition in every store, and confirm the reservation.
 
-        The partition is pending, holding its name, until it is confirmed. A
-        creation that raises or is canceled cancels its reservation, freeing
-        the name, and the partition's purge rounds reclaim whatever the stores
-        created; a confirmation that committed before its failure or
-        cancellation was observed stands. A partition whose reservation cannot
-        be canceled stays pending until it is deleted.
+        The partition is pending, holding its name, until its reservation is
+        confirmed. A creation that raises or is canceled cancels its
+        reservation, freeing the name, and the partition's purge rounds
+        reclaim whatever the stores created; a confirmation that committed
+        before its failure or cancellation was observed stands. A partition
+        whose reservation cannot be canceled stays pending until it is
+        deleted.
 
         Args:
             partition_name (str): The name of the partition.
@@ -77,7 +78,7 @@ class PartitionManager:
             )
             await reservation.confirm()
         except BaseException:
-            # The cancel logs its own failure; the creation's error is raised.
+            # The cancel logs its failure; the creation's error is raised.
             with contextlib.suppress(Exception):
                 await reservation.cancel()
             raise
@@ -124,7 +125,7 @@ class PartitionManager:
 
     async def run_purge_round(self) -> bool:
         """
-        Run one purge round on the tombstone that came due first.
+        Run one purge round on the claimable tombstone that came due first.
 
         The round claims the tombstone, purges the deleted partition from
         every store and, once no store's purge finds records, drops it from

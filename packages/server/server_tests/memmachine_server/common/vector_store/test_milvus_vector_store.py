@@ -70,9 +70,9 @@ INDEXED_PROPERTIES: dict[str, PropertyType] = {
 REQUEST_TIMEOUT_SECONDS = 17
 MAX_VARCHAR_LENGTH = 1024
 PURGE_BATCH_SIZE = 5000
-# Purge calls `_purge` makes before it fails the test: far more than the
-# purging a test's records takes, so only a purge that keeps finding records
-# reaches it.
+# Purge calls `_purge` makes before failing the test: far more than purging
+# a test's records takes, so only a purge that keeps finding records reaches
+# the limit.
 _MAX_PURGE_CALLS = 1000
 
 
@@ -1204,7 +1204,7 @@ class _ModelPartitions:
             self.records[partition_name].pop(record_uuid, None)
 
     async def recreate(self, partition_name: str) -> None:
-        """Move the partition to a fresh partition UUID, leaving its current one dead."""
+        """Move the partition to a fresh partition UUID, leaving the current UUID dead."""
         self.dead_partition_uuids.append(self.handles[partition_name]._partition_uuid)
         self.handles[partition_name] = await _created(self.store)
         self.records[partition_name] = {}
@@ -1760,7 +1760,7 @@ class TestPurgeBatches:
         while await store.purge_partition(partition_uuid):
             await _settle(partition)
             left_after_each_round.append(await left_of_the_partition())
-        # Batches of 2, until a round finds nothing.
+        # One batch per call, until a call finds nothing.
         assert left_after_each_round == [3, 1, 0]
 
 
@@ -1785,8 +1785,8 @@ class TestPurge:
     async def test_purgers_on_two_stores_reclaim_the_deleted_partitions_alone(
         self, store, other_store
     ):
-        """Purgers on two stores, purging the deleted partitions' partition UUIDs
-        at once in small batches, reclaim every one's records and leave the
+        """Purgers on two stores, purging the deleted partitions at once in
+        small batches, reclaim each deleted partition's records and leave the
         live partition's."""
         handles = []
         for _ in range(5):

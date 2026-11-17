@@ -7,8 +7,8 @@ Imports nothing from this package.
 from datetime import datetime
 from uuid import UUID
 
-# The longest partition namespace and partition name, in bytes, a registry
-# holds.
+# The longest partition namespace and partition name a registry holds, in
+# bytes.
 _PARTITION_NAMESPACE_MAX_BYTES = 32
 _PARTITION_NAME_MAX_BYTES = 255
 

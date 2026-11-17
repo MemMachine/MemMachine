@@ -1,8 +1,8 @@
 """
 Vector store backed by SQLite + sqlite-vec.
 
-Each partition gets its own records table and vec0 virtual table,
-since sqlite-vec's ANN indexes may not support partition keys.
+Each partition gets its own records table and vec0 virtual table, since
+sqlite-vec's ANN indexes may not support partition keys.
 
 A partition's records table carries one typed, indexed column per declared
 property, and a filtered query hands the KNN an allowlist of the rows the
@@ -389,9 +389,9 @@ class SQLiteVecVectorStore(VectorStore):
     """
     Vector store backed by SQLite + sqlite-vec.
 
-    Each partition gets its own records table and vec0 virtual
-    table. The database is a local file, so the processes sharing a partition
-    must run on one host.
+    Each partition gets its own records table and vec0 virtual table. The
+    database is a local file, so the processes sharing a partition must run
+    on one host.
     """
 
     _SIMILARITY_METRIC_TO_SQLITE_VEC_DISTANCE: ClassVar[dict[SimilarityMetric, str]] = {

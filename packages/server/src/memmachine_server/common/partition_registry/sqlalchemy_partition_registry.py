@@ -1,12 +1,13 @@
 """
 A partition registry in a relational database, through SQLAlchemy.
 
-The registry keeps a table of registered partitions, keyed by namespace and
-partition name, each with its UUID and whether it is live, and a queue of
-deleted partitions' UUIDs, claimed in the order they come due. The primary key
-arbitrates registration across processes, a conditional update confirms a
-reservation, unregistration is one transaction, and a purge claim is a lease
-on a tombstone that one short write takes and another ends.
+The registry keeps a table of registered partitions and a queue of deleted
+partitions' UUIDs. A registered partition is keyed by namespace and partition
+name, and holds its UUID and whether it is live; queued UUIDs are claimed in
+the order they come due. The primary key arbitrates registration across
+processes, a conditional update confirms a reservation, unregistration is one
+transaction, and a purge claim is a lease on a tombstone, taken by one short
+write and ended by another.
 """
 
 import logging
@@ -115,18 +116,20 @@ class PurgeQueueRow(BasePartitionRegistry):
     enqueued_at: MappedColumn[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    # Purge rounds claimed since a round last found records of the partition,
-    # the open one included.
+    # Claims taken since a round that held the latest claim found records of
+    # the partition, the open claim included.
     attempts_without_progress: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    # When a claim may next take the tombstone: once the open claim's lease
-    # and the backoff pass, or the backoff after a raise; None until a claim
-    # sets it, and again after a round that found records.
+    # When a claim may next take the tombstone: after the open claim's lease
+    # and then the backoff, or after the backoff from a failed round. None
+    # before the first claim and after the latest claim's round found
+    # records, so a claim may take the tombstone at once.
     claimable_at: MappedColumn[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Incremented by each claim; a round ends only its own claim.
+    # Incremented by each claim; a round ends its claim only while the claim
+    # is the latest.
     claim_generation: MappedColumn[int] = mapped_column(
         Integer, nullable=False, default=0
     )
@@ -153,17 +156,17 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             The namespace the registry serves: registry objects with the same
             namespace on the same database are one registry.
         tombstone_retention_seconds (int):
-            Seconds a deleted partition's data is kept before its purge
-            starts, on the database clock. It must exceed, by a wide margin,
-            the longest a write to the owner's resources can be in
-            flight and the delay before their reads reflect a write.
+            Seconds from a partition's deletion until its tombstone comes due,
+            on the database clock. It must exceed, by a wide margin, the
+            longest a write to a partition's records can be in flight and the
+            delay before a read reflects a write.
         purge_lease_seconds (int):
             Seconds a purge round's claim holds its tombstone, on the database
             clock; it should exceed the longest round (default: 300).
         base_purge_retry_backoff_seconds (int):
-            Seconds before a tombstone is claimed again after a failed purge
-            round, or after the lease of a round that never ended, doubled for
-            each further attempt without progress (default: 30).
+            Seconds before a tombstone is claimable again after a failed purge
+            round, or after the lease of a claim never ended, doubled for each
+            further attempt without progress (default: 30).
         max_purge_retry_backoff_seconds (int):
             The longest the purge retry backoff grows to (default: 3600).
     """
@@ -187,10 +190,10 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         ...,
         ge=0,
         description=(
-            "Seconds a deleted partition's data is kept before its purge "
-            "starts, on the database clock. It must exceed, by a wide margin, "
-            "the longest a write to the owner's resources can be in "
-            "flight and the delay before their reads reflect a write"
+            "Seconds from a partition's deletion until its tombstone comes due, "
+            "on the database clock. It must exceed, by a wide margin, the "
+            "longest a write to a partition's records can be in flight and the "
+            "delay before a read reflects a write"
         ),
     )
     purge_lease_seconds: int = Field(
@@ -205,9 +208,9 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         30,
         gt=0,
         description=(
-            "Seconds before a tombstone is claimed again after a failed purge "
-            "round, or after the lease of a round that never ended, doubled for "
-            "each further attempt without progress"
+            "Seconds before a tombstone is claimable again after a failed purge "
+            "round, or after the lease of a claim never ended, doubled for each "
+            "further attempt without progress"
         ),
     )
     max_purge_retry_backoff_seconds: int = Field(
@@ -222,7 +225,8 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
                 f"Engine uses the {engine.dialect.name} dialect, which the "
                 "registry does not support. Use PostgreSQL or SQLite."
             )
-        # The registry's arbitration rests on transactions of their own.
+        # The registry's arbitration needs every transaction on its own
+        # connection to one database.
         validate_engine_connections(engine)
         if (
             engine.dialect.name == "sqlite"
@@ -305,9 +309,10 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     async def _insert_pending_partition(
         self, partition_name: str, partition_uuid: UUID
     ) -> None:
-        # The queue check runs after the insert, so a concurrent deletion
-        # queuing a colliding partition UUID, which the insert waited on, is
-        # visible to it; the locking read sees the latest committed state.
+        # The queue check runs after the insert, which waits for a concurrent
+        # deletion of a partition with the same UUID to commit, so the check
+        # sees that deletion's tombstone; the locking read sees the latest
+        # committed state.
         try:
             async with write_connection(self._engine) as connection:
                 await connection.execute(
@@ -391,11 +396,11 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
 
     @override
     async def claim_tombstone(self) -> TombstoneClaim | None:
-        # One committed write claims the oldest due tombstone and counts the
-        # attempt; the round then runs with no transaction open. The lease
-        # only spreads the work, since rounds are safe to repeat. A claim
-        # whose round never ended is taken again once its lease, and then
-        # the backoff, have passed.
+        # One committed write claims the oldest claimable tombstone and counts
+        # the attempt; the round then runs with no transaction open. The lease
+        # only spreads the work, since rounds are safe to repeat. The
+        # tombstone of a claim never ended is claimable again once the claim's
+        # lease, and then the backoff, have passed.
         oldest_due = (
             select(PurgeQueueRow.partition_uuid)
             .where(
@@ -476,7 +481,8 @@ class _SQLAlchemyReservation(Reservation):
     @override
     async def confirm(self) -> None:
         # Conditional on the UUID and on the row being pending, so a
-        # creation marks live only the partition it reserved.
+        # confirmation marks live only the pending partition this reservation
+        # reserved.
         async with write_connection(self.engine) as connection:
             result = await connection.execute(
                 update(PartitionRow)
@@ -521,8 +527,8 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
     async def finish(self, found_records: bool) -> None:
         # Finding nothing removes the tombstone under any claim, since a
         # partition found empty after the retention needs no more rounds.
-        # Finding records ends the claim and resets its attempts without
-        # progress, if the claim is the latest.
+        # Finding records ends the claim and resets the tombstone's attempts
+        # without progress, if the claim is the latest.
         if not found_records:
             async with write_connection(self.engine) as connection:
                 await connection.execute(
@@ -661,8 +667,8 @@ def _has_elapsed(
 ) -> ColumnElement[bool]:
     """Whether `seconds` have passed since `since`, on the database clock."""
     if dialect_name == "sqlite":
-        # datetime() emits CURRENT_TIMESTAMP's text form, so stored stamps
-        # compare with it in time order.
+        # datetime() emits CURRENT_TIMESTAMP's text form, so stored stamps and
+        # the cutoff compare in time order.
         cutoff = func.datetime(
             "now",
             func.printf("-%d seconds", seconds),

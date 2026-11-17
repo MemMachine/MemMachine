@@ -1,4 +1,4 @@
-"""Tests of the partition manager running a namespace's partitions' lifecycle over its stores, on a SQLite registry."""
+"""Tests of the partition manager running the lifecycle of a namespace's partitions over its stores, on a SQLite registry."""
 
 import asyncio
 import logging
@@ -79,7 +79,7 @@ async def _created(
 
 
 async def _purged(registry: SQLAlchemyPartitionRegistry) -> list[UUID]:
-    """Partition UUIDs the purge rounds claim, running rounds that find nothing until none is due."""
+    """Claim tombstones until none is claimable, finishing each as a round that found nothing, and return their partition UUIDs."""
     purged: list[UUID] = []
 
     async def purge(partition_uuid: UUID) -> bool:
@@ -343,7 +343,7 @@ async def test_a_confirmation_that_committed_before_failing_stands(
     registry, manager, monkeypatch
 ):
     """The cancel acts only on a pending partition, so a creation whose
-    confirmation committed but whose reply was lost leaves it live."""
+    confirmation committed but whose reply was lost leaves the partition live."""
     confirm = sqlalchemy_partition_registry._SQLAlchemyReservation.confirm
 
     async def commits_then_fails(reservation) -> None:
@@ -398,7 +398,7 @@ async def test_a_purge_round_purges_the_store_and_drops_once_it_finds_no_records
     await manager.delete_partition(NAME)
     store.purge_partition.side_effect = [True, False]
 
-    # The store found records: the tombstone stays due, and nothing is
+    # The store finds records: the tombstone stays due, and nothing is
     # dropped.
     assert await manager.run_purge_round() is True
     store.purge_partition.assert_awaited_once_with(partition_uuid)

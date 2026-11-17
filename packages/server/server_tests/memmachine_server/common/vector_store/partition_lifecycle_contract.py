@@ -6,7 +6,7 @@ and supplies a `store` fixture and three hooks: `count_stored` and
 `stored_uuids` read the backend directly, and `settle` returns once the
 store's reads reflect every write so far. The backend may persist across
 tests, so each test uses fresh partition UUIDs and counts against the records
-the store held when it began.
+the store held when the test began.
 """
 
 import math
@@ -16,9 +16,9 @@ import pytest
 
 from memmachine_server.common.vector_store import Record
 
-# Purge calls a drain makes before it fails the test: far more than the
-# purging a test's records takes, so only a purge that keeps finding records
-# reaches it.
+# Purge calls a drain makes before failing the test: far more than purging a
+# test's records takes, so only a purge that keeps finding records reaches the
+# limit.
 _MAX_PURGE_CALLS = 1000
 
 
@@ -41,7 +41,7 @@ async def _created(store, partition_uuid: UUID):
 
 
 async def _purge(store, partition_uuid: UUID) -> int:
-    """Purge a partition until the store finds nothing of it; the calls that found something."""
+    """Purge a partition until the store finds nothing of it, and return the number of calls that found something."""
     for calls in range(_MAX_PURGE_CALLS):
         if not await store.purge_partition(partition_uuid):
             return calls
@@ -52,11 +52,11 @@ async def _purge(store, partition_uuid: UUID) -> int:
 
 
 class PartitionLifecycleContract:
-    """Mixed into a store's test class, which supplies a `store` fixture and the `count_stored`, `stored_uuids` and `settle` hooks."""
+    """Mixed into a store's test class, which supplies a `store` fixture and the `count_stored`, `stored_uuids`, and `settle` hooks."""
 
     @staticmethod
     async def count_stored(store) -> int:
-        """Records the backend holds for the store, purged partition UUIDs' leftovers included."""
+        """Count the records the backend holds for the store under every partition UUID, purged ones included."""
         raise NotImplementedError
 
     @staticmethod

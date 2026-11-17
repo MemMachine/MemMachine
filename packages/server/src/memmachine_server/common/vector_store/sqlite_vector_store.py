@@ -1,10 +1,10 @@
 """
 Vector store backed by SQLite + pluggable vector search engine.
 
-Each partition gets its own records table, vector search engine,
-and index file. A pending operations table tracks search engine operations
-for crash recovery: on a store's startup, its partitions' unfinalized
-operations are replayed.
+Each partition gets its own records table, vector search engine, and index
+file. A pending operations table tracks search engine operations for crash
+recovery: on a store's startup, its partitions' unfinalized operations are
+replayed.
 """
 
 import asyncio
@@ -166,9 +166,9 @@ async def _save_partition_index(
     await search_engine.save(path)
 
     async with write_session(create_session) as session:
-        # The write lock holds a drop off until this commits, and the drop
-        # then unlinks the file; no match means a drop committed first, so
-        # this unlinks the file it wrote.
+        # The write lock holds off a drop until this transaction commits, and
+        # the drop then unlinks the file; no matching row means a drop
+        # committed first, so the save unlinks the file it wrote.
         saved = await (await session.connection()).execute(
             update(_PartitionRow)
             .where(
@@ -621,10 +621,10 @@ class SQLiteVectorStore(VectorStore):
     """
     Vector store backed by SQLite + a pluggable vector search engine.
 
-    Each partition gets its own records table and engine
-    instance. A declared property is a typed, indexed column of the records
-    table. The engine and its index file live in the process that got the
-    partition's handle, so one process at a time may use a partition.
+    Each partition gets its own records table and engine instance. A
+    declared property is a typed, indexed column of the records table. The
+    engine and its index file live in the process that got the partition's
+    handle, so one process at a time may use a partition.
     """
 
     def __init__(self, params: SQLiteVectorStoreParams) -> None:
@@ -837,7 +837,7 @@ class SQLiteVectorStore(VectorStore):
         self._sa_metadata.remove(records_table)
         self._search_engines.pop(partition_uuid, None)
 
-        # A save this drop overtakes unlinks the file it writes.
+        # A save that this drop overtakes unlinks its own file.
         index_path = self._index_path(partition_uuid)
         if index_path is not None:
             await asyncio.to_thread(index_path.unlink, missing_ok=True)
@@ -848,9 +848,9 @@ class SQLiteVectorStore(VectorStore):
         """
         Unique prefix for the native resources of the store's partition.
 
-        The fixed-length hex of the partition UUID precedes the store's name,
-        and no name continuing `vector_store_sqlite_` with a character other
-        than a hex digit shares the prefix.
+        The fixed-length hex of the partition UUID precedes the store's name.
+        Only names continuing `vector_store_sqlite_` with a hex digit can
+        share the prefix.
         """
         return f"vector_store_sqlite_{partition_uuid.hex}_{self._vector_store_name}"
 
@@ -909,6 +909,6 @@ class SQLiteVectorStore(VectorStore):
                         self._vector_store_name, partition_uuid, index_path
                     ) from e
 
-        # Every handle on a partition shares one engine: a call that
-        # awaited past another's keeps the engine cached first.
+        # Every handle on a partition shares one engine: concurrent calls
+        # that each build an engine all return the engine cached first.
         return self._search_engines.setdefault(partition_uuid, search_engine)

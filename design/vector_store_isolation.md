@@ -23,10 +23,11 @@ given that every backend has to be able to keep the promise.
   the partition's name is reserved, one for each partition created under the
   name (see [partition registry](partition_registry.md)). Every read, write,
   and delete of a handle is scoped to it.
-- A UUID is never minted again while it is registered, pending or live, or
-  its tombstone is queued, so a partition created again under a name starts
-  empty: no deleted partition's records are adopted by it or reclaimed out
-  from under it, whatever record UUIDs either partition used.
+- A UUID is never minted again while a pending or live partition holds it
+  or its tombstone is queued, so a partition created again under a name
+  starts empty: it adopts no deleted partition's records, and no deleted
+  partition's purge reclaims the new partition's records, whatever record
+  UUIDs either partition used.
 
 ## The guarantee
 
@@ -44,8 +45,8 @@ reads, replaces, or deletes another's.
 | Milvus | the partition UUID in the primary key, `"{partition_uuid}:{record_uuid}"` (see [Milvus](milvus_vector_store.md)) |
 | Qdrant | the point id is a UUIDv5 of the record UUID under the partition UUID, with the record UUID kept in the payload (see [Qdrant](qdrant_vector_store.md)) |
 
-A UUIDv5 carries 122 bits, and deriving one from a random partition UUID and any
-record UUID gives a caller no way to aim at another partition's point: a
+A UUIDv5 carries 122 bits, and deriving one from a random partition UUID and
+any record UUID gives a caller no way to aim at another partition's point: a
 SHA-1 collision needs control of both inputs.
 
 ### Other backends
@@ -85,6 +86,6 @@ backends was run). Every one can, almost always by scoping the id.
   and the write.
 - **Bare or reversible point ids on Qdrant.** A bare record UUID as the point
   id lets one partition's upsert replace another's point; a reversible
-  derivation lets anyone who learns two partition UUIDs compute a colliding UUID.
-  The [Qdrant](qdrant_vector_store.md) document has the analysis and the cost
-  of reading the record UUID from the payload.
+  derivation lets anyone who learns two partition UUIDs compute a colliding
+  UUID. The [Qdrant](qdrant_vector_store.md) document has the analysis and
+  the cost of reading the record UUID from the payload.

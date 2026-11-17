@@ -252,7 +252,7 @@ async def test_deleting_an_event_sessions_storage_deletes_its_partition_without_
     partition_registry.reserve.assert_not_awaited()
     vector_store.create_partition.assert_not_awaited()
     segment_store.create_partition.assert_not_awaited()
-    # Reclamation is the purge rounds'; the delete path never purges.
+    # Purge rounds reclaim the records; the delete path purges nothing.
     vector_store.purge_partition.assert_not_awaited()
     segment_store.purge_partition.assert_not_awaited()
 
@@ -314,7 +314,7 @@ def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _event_memory() -> NonCallableMagicMock:
-    """An event memory in which no partition holds any name until a creation, and every creation succeeds."""
+    """An event memory where no partition holds a name until the first creation, and every creation succeeds."""
     event_memory = create_autospec(EventMemory, instance=True)
     created = False
 

@@ -119,11 +119,11 @@ class BaseSegmentStore(DeclarativeBase):
 class PartitionRow(BaseSegmentStore):
     """One row per created partition.
 
-    It holds the configuration every handle on the partition uses, and,
-    while the partition is purged, how far the purge got: its walk deleted
-    the partition's segment rows keyed at or below purged_through as it
-    passed them; NULL until the purge's first full batch, and again once a
-    walk from it reaches the end. Dropping the partition deletes the row.
+    The row holds the configuration every handle on the partition uses and
+    the purge's cursor, purged_through: the current purge walk passed the
+    partition's segment rows keyed at or below the cursor, deleting them.
+    The cursor is NULL until a walk's first full batch, and again once the
+    walk reaches the end. Dropping the partition deletes the row.
     """
 
     __tablename__ = "segment_store_pt"
@@ -160,8 +160,7 @@ class SegmentRow(BaseSegmentStore):
     )
 
     # No foreign key to the partition's row: the purge deletes a partition's
-    # segments in bounded batches, and the drop deletes its row once the
-    # purge finds none.
+    # segments in bounded batches, and the drop deletes the row alone.
     __table_args__ = (
         Index(
             "segment_store_sg__pu_ev",
@@ -219,8 +218,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
         tracker: OperationTracker,
     ) -> None:
         """Initialize with a partition and the store's session factory."""
-        # Data rows are keyed by the partition's UUID: rows of another
-        # partition are invisible to this one.
+        # Data rows are keyed by the partition's UUID, so the handle reaches
+        # its partition's rows alone.
         self._partition_uuid = partition_uuid
         self._config = config
         self._payload_codec = payload_codec
@@ -801,9 +800,8 @@ class SQLAlchemySegmentStoreParams(BaseModel):
         purge_max_segments (int):
             Maximum number of segment rows purged per call. Their
             derivative links are deleted by cascade, so a call's
-            transaction also scales with the deployment's links per
-            segment; size the bound with that fan-out in mind
-            (default: 10000).
+            transaction scales with the deployment's links per segment;
+            size the bound with that fan-out in mind (default: 10000).
         partition_config (SegmentStorePartitionConfig):
             The configuration of each partition the store creates, recorded
             with the partition (default: plaintext payloads).
@@ -831,8 +829,8 @@ class SQLAlchemySegmentStoreParams(BaseModel):
         description=(
             "Maximum number of segment rows purged per call. Their "
             "derivative links are deleted by cascade, so a call's "
-            "transaction also scales with the deployment's links per "
-            "segment; size the bound with that fan-out in mind"
+            "transaction scales with the deployment's links per segment; "
+            "size the bound with that fan-out in mind"
         ),
     )
     partition_config: SegmentStorePartitionConfig = Field(
@@ -907,7 +905,8 @@ class SQLAlchemySegmentStore(SegmentStore):
                         )
                     )
             except IntegrityError:
-                # Created before: the same configuration makes this a repeat.
+                # A conflicting row means a repeat creation, which succeeds
+                # with the same configuration.
                 partition_row = await self._get_partition_row(partition_uuid)
                 if partition_row is None:
                     raise
@@ -939,12 +938,12 @@ class SQLAlchemySegmentStore(SegmentStore):
 
     @override
     async def purge_partition(self, partition_uuid: UUID) -> bool:
-        # One transaction per call: a call purges up to the bound and
-        # commits, or a raise rolls it back whole, cursor included, so a call
-        # that fails on contention is safe to repeat. Purgers of one
-        # partition serialize on its row's lock, so each reads the cursor
-        # its predecessor committed; on SQLite, which drops locking clauses,
-        # the call holds the write lock from BEGIN.
+        # One transaction per call: the call purges up to the bound and
+        # commits, or a raise rolls the whole call back, cursor included, so
+        # a call that fails on contention is safe to repeat. Purgers of one
+        # partition serialize on the partition row's lock, so each reads the
+        # cursor its predecessor committed; on SQLite, which drops locking
+        # clauses, the call holds the write lock from BEGIN.
         async with (
             self._tracker("purge_partition"),
             write_connection(self._engine) as connection,
@@ -975,8 +974,8 @@ class SQLAlchemySegmentStore(SegmentStore):
                 .limit(self._purge_max_segments)
                 .subquery()
             )
-            # Every decision below is the search's, not the delete's: another
-            # transaction may delete some of the batch first.
+            # Every decision below rests on what the search found, since
+            # another transaction may delete some of the batch first.
             found, last = 0, None
             batch_end = (
                 await connection.execute(
@@ -1009,9 +1008,8 @@ class SQLAlchemySegmentStore(SegmentStore):
 
             if purged_through is not None:
                 # The walk from the cursor reached the end. The next call
-                # searches from the partition's first key, so a write that
-                # landed behind the cursor is found before the purge answers
-                # that nothing remains.
+                # searches from the partition's first key, so a row written
+                # behind the cursor is found before a call returns False.
                 await connection.execute(
                     update(PartitionRow)
                     .where(PartitionRow.partition_uuid == partition_uuid)

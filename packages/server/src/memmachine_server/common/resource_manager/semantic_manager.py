@@ -68,11 +68,11 @@ _PARTITION_NAMESPACE = "semantic_memory"
 _PARTITION_NAME = "semantic_memory"
 """Semantic memory's one partition, which it never deletes."""
 _TOMBSTONE_RETENTION_SECONDS = 86400
-"""The retention of semantic memory's namespace, whose only tombstones are those of failed or canceled creations."""
+"""The retention of semantic memory's namespace, whose tombstones are those of failed or canceled creations."""
 
-# Attempts getting or creating the partition makes,
-# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before it gives up on a
-# partition that stays pending or a name it keeps losing.
+# The attempts `_get_or_create_partition` makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before giving up on a partition
+# that stays pending or a name other processes keep taking.
 _MAX_GET_OR_CREATE_ATTEMPTS = 10
 _GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
@@ -196,8 +196,7 @@ class SemanticResourceManager:
         )
 
         # Semantic memory owns this partition and creates it when the storage
-        # is built, through a registry in the database the storage already
-        # uses.
+        # is built, through a registry in the database the storage uses.
         partition_registry = await self._resource_manager.get_partition_registry(
             feature_store_name,
             partition_namespace=_PARTITION_NAMESPACE,
@@ -220,12 +219,12 @@ class SemanticResourceManager:
         Return the vector store's handle on semantic memory's partition, creating the partition if no partition holds its name.
 
         Read-then-create, retried a bounded number of times: a live partition
-        is returned; a pending one is another process's creation, so the call
-        waits for it; no partition means create, then read again. The call
-        also retries when a creation finds the name taken by another process
-        meanwhile or the partition deleted while the store created it, and
-        when the partition was deleted before the read after its creation or
-        before the store returned its handle.
+        is returned; a pending one is another process's creation, which the
+        call waits for; no partition means create, then read again. The call
+        retries when the creation finds the name taken or the partition
+        deleted while the store created it, and when the partition is deleted
+        before the read after the creation or before the store returns its
+        handle.
 
         Raises:
             PartitionPendingError:

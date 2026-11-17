@@ -104,7 +104,7 @@ def _plaintext_partition_config() -> SegmentStorePartitionConfig:
 async def _created(
     store: SQLAlchemySegmentStore, partition_uuid: UUID = PARTITION_UUID
 ) -> SQLAlchemySegmentStorePartition:
-    """Create a partition, with the store's plaintext config, and get a handle on it."""
+    """Create a partition with the store's plaintext config and get a handle on it."""
     await store.create_partition(partition_uuid)
     partition = await store.get_partition(partition_uuid)
     assert partition is not None
@@ -1416,7 +1416,7 @@ async def test_creating_again_with_a_different_config_raises_mismatch(
     assert exc_info.value.existing_config == _plaintext_partition_config()
     assert exc_info.value.requested_config == requested
 
-    # The partition itself is untouched: getting it still returns a handle.
+    # The partition is untouched: getting it still returns a handle.
     assert await store.get_partition(PARTITION_UUID) is not None
 
 
@@ -1504,7 +1504,7 @@ async def test_purge_keeps_the_foreign_key_enforced(
     pg_store: SQLAlchemySegmentStore,
     sqlalchemy_pg_engine: AsyncEngine,
 ) -> None:
-    """Purging one partition UUID must not drop the derivative-link foreign key."""
+    """Purging one partition UUID keeps the derivative-link foreign key."""
     await _created(pg_store, OTHER_PARTITION_UUID)
     await _created(pg_store)
 
@@ -1601,7 +1601,7 @@ async def test_purge_finds_nothing_only_when_its_search_finds_nothing(
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A batch another transaction deletes before the purge's delete leaves the purge answering that rows may remain."""
+    """A batch another transaction deletes before the purge's delete still makes the purge return True."""
     monkeypatch.setattr(store, "_purge_max_segments", 2)
     partition = await _created(store)
     segments = [_seg(ts_offset_seconds=index) for index in range(3)]
@@ -1621,7 +1621,7 @@ async def test_purge_advances_its_cursor_past_a_full_batch_another_transaction_s
     store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A full batch is the search's: the cursor advances though another transaction deleted part of the batch first."""
+    """The search decides a full batch: the cursor advances even when another transaction deleted part of the batch first."""
     monkeypatch.setattr(store, "_purge_max_segments", 2)
     partition = await _created(store)
     segments = [_seg(ts_offset_seconds=index) for index in range(5)]
@@ -1678,7 +1678,7 @@ async def test_a_failed_purge_call_leaves_nothing_half_done(
     """A purge call whose commit fails changes nothing; later calls finish.
 
     A call's deletions and its record of how far it got commit together or
-    not at all, so no row is ever skipped after a failure.
+    not at all, so no row is skipped after a failure.
     """
     partition = await _created(store)
     await partition.add_segments(

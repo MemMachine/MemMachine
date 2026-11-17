@@ -21,8 +21,8 @@ from memmachine_server.episodic_memory.event_memory.segment_store.data_types imp
 class SegmentStorePartition(ABC):
     """A handle on one partition's segments in a segment store.
 
-    Every operation reads and writes the partition it is bound to, and no
-    other, whether or not the partition is still live.
+    Every operation reads and writes the handle's partition alone, without
+    checking whether the partition was deleted.
     """
 
     @property
@@ -161,8 +161,8 @@ class SegmentStore(PartitionedStore):
 
     The store holds each partition's segments under the partition's UUID. A
     partition keeps the configuration it was created with, which every handle
-    on it uses: creating it again with another raises
-    SegmentStorePartitionConfigMismatchError.
+    on the partition uses. Creating the partition again with a different
+    configuration raises SegmentStorePartitionConfigMismatchError.
     """
 
     @abstractmethod

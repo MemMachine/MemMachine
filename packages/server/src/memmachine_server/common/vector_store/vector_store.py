@@ -25,10 +25,9 @@ class VectorStorePartition(ABC):
 
     All data operations are scoped to the partition: a record's UUID names it
     in this partition only, and the same UUID in another partition names
-    another record. The handle owns nothing: a caller builds one with
-    `VectorStore.get_partition`, drops it, and builds another at will. It
-    reads and writes its partition whether or not the partition is still
-    live.
+    another record. The handle owns nothing, so handles may be built with
+    `VectorStore.get_partition` and dropped at will. A handle reads and
+    writes its partition without checking whether the partition was deleted.
 
     An `upsert` or `delete` is durable once it returns; queries may not
     reflect it right away. A store that guarantees more states it.
@@ -179,7 +178,7 @@ class VectorStore(PartitionedStore):
             VectorStorePartition | None:
                 A handle bound to the partition, or None when the store finds
                 nothing under the UUID: the partition was never created, or
-                was dropped. A store may answer a handle without looking.
+                was dropped. A store may return a handle without checking.
         """
         raise NotImplementedError
 
