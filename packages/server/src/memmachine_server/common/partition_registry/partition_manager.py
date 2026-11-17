@@ -79,7 +79,8 @@ class PartitionManager:
             )
             await reservation.confirm()
         except BaseException:
-            # The cancel logs its failure; the creation's error is raised.
+            # The cancel logs an unexpected failure; the creation's error is
+            # raised.
             with contextlib.suppress(Exception):
                 await reservation.cancel()
             raise
@@ -128,14 +129,14 @@ class PartitionManager:
         """
         Run one purge round on the claimable tombstone that came due first.
 
-        The round claims the tombstone, purges the deleted partition from
-        every store and, once no store's purge finds records, drops it from
-        every store, then records on the claim whether the purge made progress
-        or is complete. A round that raises fails the claim and raises. An end
-        of a claim that has gone stale is logged, since a later claim decides
-        the tombstone. A canceled
-        round leaves its claim open: its tombstone is claimable again once
-        the claim's lease, and then the backoff, have passed.
+        The round claims the tombstone, purges the deleted partition from every
+        store and, once no store's purge finds records, drops it from every
+        store, then records on the claim whether the purge made progress or is
+        complete. A round that raises fails the claim and raises. An end of a
+        claim that has gone stale is logged, since a later claim decides the
+        tombstone. A canceled round leaves its claim open: its tombstone is
+        claimable again once the claim's lease, and then the backoff, have
+        passed.
 
         Returns:
             bool:
@@ -180,7 +181,7 @@ async def _end_claim(end: Awaitable[None]) -> None:
     try:
         await end
     except TombstoneClaimStaleError as stale:
-        logger.warning("Purge round ended no claim: %s", stale)
+        logger.warning("%s; the purge round ended no claim", stale)
 
 
 async def _on_every_store[T](

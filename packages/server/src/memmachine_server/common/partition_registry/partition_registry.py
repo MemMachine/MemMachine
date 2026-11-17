@@ -42,10 +42,9 @@ class Reservation(ABC):
     A pending partition's hold on its name.
 
     The partition is pending until the reservation is confirmed. `confirm`
-    and `cancel` act only on a pending partition: on a confirmed one they
-    raise PartitionAlreadyConfirmedError, and on a deleted one, canceled or
-    deleted by name, PartitionDeletedError. A cancel may follow a confirmation
-    that raised after it committed, and may race a deletion by name.
+    and `cancel` act only on a pending partition. A cancel may follow a
+    confirmation that raised after it committed, and may race a deletion by
+    name.
     """
 
     partition_name: str
@@ -76,15 +75,15 @@ class Reservation(ABC):
 
         The cancellation runs to completion in a shielded task of its own,
         even if the caller is canceled, and the task logs any failure other
-        than the two below, since a canceled caller stops awaiting it.
+        than PartitionAlreadyConfirmedError and PartitionDeletedError, since a
+        canceled caller stops awaiting it.
 
         Raises:
             PartitionAlreadyConfirmedError:
-                If the reservation was confirmed: only a deletion by name ends
-                a live partition.
+                If the reservation was confirmed, since only a deletion by
+                name ends a live partition.
             PartitionDeletedError:
-                If the partition was deleted: canceled already, or deleted by
-                name.
+                If the partition was canceled already or deleted by name.
             Exception:
                 Whatever else `_cancel` raised. A partition whose cancellation
                 committed nothing stays pending until it is deleted by name.
@@ -118,7 +117,8 @@ class Reservation(ABC):
         Called by `cancel`, in a task of its own. Conditional on the
         partition being pending under this reservation's UUID, so a confirmed
         partition, or one reserved since under the same name, stays. A call
-        that raises any other error either committed both writes or neither.
+        that fails for a reason not listed below either committed both writes
+        or neither.
 
         Raises:
             PartitionAlreadyConfirmedError:
@@ -167,9 +167,8 @@ class TombstoneClaim(ABC):
     deletion. Its holder ends it with `complete` when the partition's purge is
     complete, `progress` when the round purged records, or `fail` with a
     raised round's error. An end takes effect only while the claim is the
-    latest on its tombstone and has not ended; any other end changes nothing
-    and raises TombstoneClaimStaleError. Each claim counts an attempt without progress on the
-    tombstone. A claim never ended keeps its attempt, and its tombstone is
+    latest on its tombstone and has not ended; any other end changes nothing.
+    Each claim counts an attempt without progress on the tombstone. A claim never ended keeps its attempt, and its tombstone is
     claimable again once the claim's lease, and then the backoff, have passed,
     so a tombstone may be claimed again while an earlier round on it runs.
     """

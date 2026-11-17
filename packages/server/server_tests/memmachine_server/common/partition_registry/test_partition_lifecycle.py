@@ -562,7 +562,7 @@ async def test_every_store_drops_before_the_first_error_is_raised(
 async def _claimed_again(
     registry: SQLAlchemyPartitionRegistry, partition_uuid: UUID
 ) -> None:
-    """Advance the tombstone's generation, as a claim taken after the running round's lease and backoff does."""
+    """Advance the tombstone's generation, like a claim taken after the running round's lease and backoff."""
     async with registry._engine.begin() as connection:
         await connection.execute(
             update(PurgeQueueRow)

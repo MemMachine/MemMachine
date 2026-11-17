@@ -386,7 +386,7 @@ the first:
 | live | `PartitionAlreadyConfirmedError` | `PartitionAlreadyConfirmedError` |
 | gone: canceled, or deleted by name | `PartitionDeletedError` | `PartitionDeletedError` |
 
-When its conditional write matches nothing, a read in the same transaction
+When the conditional write matches nothing, a read in the same transaction
 tells a live partition from a gone one.
 
 **`claim_tombstone()`** and the claim's `complete`, `progress`, and `fail` are
@@ -413,8 +413,8 @@ afterwards.
   reservation, which frees the name and queues the partition's tombstone; a
   confirmation that committed before its failure was observed stands, since
   the cancel acts only on a pending partition and raises
-  `PartitionAlreadyConfirmedError`, which the manager suppresses as it does
-  every error of the cancel. The reservation's cancellation is shielded, so a
+  `PartitionAlreadyConfirmedError`, which the manager suppresses like every
+  other error of the cancel. The reservation's cancellation is shielded, so a
   cancellation of the creation does not cut it short. A partition whose cancel
   fails, or whose creator crashed, stays pending until it is deleted like any
   other.
