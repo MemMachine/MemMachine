@@ -343,8 +343,9 @@ is re-minted a bounded number of times, after which the reservation raises
 `PartitionCreateAttemptsExhaustedError`.
 
 **`Reservation.confirm()`** marks the row live with an `UPDATE` conditional on
-the reservation's UUID, which is unique, and on the row being pending; it
-raises `PartitionDeletedError` when it matches nothing. A creation whose
+the reservation's UUID, which is unique, and on the row being pending; when it
+matches nothing, it raises `PartitionAlreadyConfirmedError` for a live row and
+`PartitionDeletedError` for a gone one (see the table below). A creation whose
 partition was deleted while the stores created it matches nothing, so it
 cannot confirm a partition reserved under the name since.
 
@@ -373,7 +374,20 @@ reserved under the name since, nor its own partition once confirmed, even
 when the confirmation committed but its answer was lost: only a deletion by
 name ends a live partition. Racing deleters serialize on the row's write lock
 and the loser deletes nothing, on PostgreSQL and SQLite alike, so a deletion
-is idempotent and queues one tombstone.
+by name is idempotent and queues one tombstone.
+
+A reservation's `confirm` and `cancel` act only on its pending partition. In
+any other state they raise, so a repeat or a late call is never mistaken for
+the first:
+
+| Reservation's partition | `confirm` | `cancel` |
+|---|---|---|
+| pending | marks it live | deletes it and queues its tombstone |
+| live | `PartitionAlreadyConfirmedError` | `PartitionAlreadyConfirmedError` |
+| gone: canceled, or deleted by name | `PartitionDeletedError` | `PartitionDeletedError` |
+
+When its conditional write matches nothing, a read in the same transaction
+tells a live partition from a gone one.
 
 **`claim_tombstone()`** and the claim's `complete`, `progress`, and `fail` are
 described in [Deletion and purge](#deletion-and-purge) and
@@ -398,10 +412,12 @@ afterwards.
 - A store or confirmation that raises, or is canceled, cancels the
   reservation, which frees the name and queues the partition's tombstone; a
   confirmation that committed before its failure was observed stands, since
-  the cancel acts only on a pending partition. The reservation's cancellation
-  is shielded, so a cancellation of the creation does not cut it short. A
-  partition whose cancel fails, or whose creator crashed, stays pending until
-  it is deleted like any other.
+  the cancel acts only on a pending partition and raises
+  `PartitionAlreadyConfirmedError`, which the manager suppresses as it does
+  every error of the cancel. The reservation's cancellation is shielded, so a
+  cancellation of the creation does not cut it short. A partition whose cancel
+  fails, or whose creator crashed, stays pending until it is deleted like any
+  other.
 - A partition is confirmed only once every store has created it, so storage
   that cannot be created never goes live. Whatever a failed or interrupted
   creation leaves is recoverable: the partition's purge rounds reclaim it

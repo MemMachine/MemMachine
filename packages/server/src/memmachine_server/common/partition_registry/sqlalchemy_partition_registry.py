@@ -14,7 +14,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import override
+from typing import NoReturn, override
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, InstanceOf, field_validator
@@ -37,7 +37,7 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.orm import (
     DeclarativeBase,
     InstrumentedAttribute,
@@ -51,6 +51,7 @@ from memmachine_server.common.utils import ensure_tz_aware
 from .data_types import (
     _PARTITION_NAME_MAX_BYTES,
     _PARTITION_NAMESPACE_MAX_BYTES,
+    PartitionAlreadyConfirmedError,
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
     PartitionDeletedError,
@@ -388,11 +389,12 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
 
     @override
     async def _unregister(self, partition_name: str) -> None:
-        await _unregister_where(
-            self._engine,
-            self._partition_namespace,
-            PartitionRow.partition_name == partition_name,
-        )
+        async with write_connection(self._engine) as connection:
+            await _unregister_where(
+                connection,
+                self._partition_namespace,
+                PartitionRow.partition_name == partition_name,
+            )
 
     @override
     async def claim_tombstone(self) -> TombstoneClaim | None:
@@ -478,13 +480,14 @@ class _SQLAlchemyReservation(Reservation):
     engine: AsyncEngine = field(repr=False, compare=False)
     partition_namespace: str = field(repr=False)
 
+    # Each operation acts only on the pending row under the reservation's UUID;
+    # when it matches nothing, a read in its transaction tells a confirmed
+    # partition from a deleted one.
+
     @override
     async def confirm(self) -> None:
-        # Conditional on the UUID and on the row being pending, so a
-        # confirmation marks live only the pending partition this reservation
-        # reserved.
         async with write_connection(self.engine) as connection:
-            result = await connection.execute(
+            confirmed = await connection.execute(
                 update(PartitionRow)
                 .where(
                     PartitionRow.partition_namespace == self.partition_namespace,
@@ -494,20 +497,44 @@ class _SQLAlchemyReservation(Reservation):
                 )
                 .values(live=True)
             )
-        if result.rowcount != 1:
-            raise PartitionDeletedError(
-                self.partition_namespace, self.partition_name, self.partition_uuid
-            )
+            if confirmed.rowcount == 1:
+                return
+            live = await self._live(connection)
+        self._raise_for_state(live)
 
     @override
     async def _cancel(self) -> None:
-        # Conditional on the row being pending, like confirm, so a cancel
-        # after a confirmation that committed leaves the live partition.
-        await _unregister_where(
-            self.engine,
-            self.partition_namespace,
-            PartitionRow.partition_uuid == self.partition_uuid,
-            PartitionRow.live.is_(False),
+        async with write_connection(self.engine) as connection:
+            if await _unregister_where(
+                connection,
+                self.partition_namespace,
+                PartitionRow.partition_uuid == self.partition_uuid,
+                PartitionRow.live.is_(False),
+            ):
+                return
+            live = await self._live(connection)
+        self._raise_for_state(live)
+
+    async def _live(self, connection: AsyncConnection) -> bool | None:
+        """Whether the reservation's partition is live, or None when no partition holds its UUID."""
+        return (
+            await connection.execute(
+                select(PartitionRow.live).where(
+                    PartitionRow.partition_namespace == self.partition_namespace,
+                    PartitionRow.partition_name == self.partition_name,
+                    PartitionRow.partition_uuid == self.partition_uuid,
+                )
+            )
+        ).scalar_one_or_none()
+
+    def _raise_for_state(self, live: bool | None) -> NoReturn:
+        """Raise the error for a reservation whose partition is no longer pending."""
+        if live is None:
+            raise PartitionDeletedError(
+                self.partition_namespace, self.partition_name, self.partition_uuid
+            )
+        raise PartitionAlreadyConfirmedError(
+            self.partition_namespace, self.partition_name, self.partition_uuid
         )
 
 
@@ -636,34 +663,34 @@ class _SQLAlchemyRegistration(Registration):
 
 
 async def _unregister_where(
-    engine: AsyncEngine, partition_namespace: str, *conditions: ColumnElement[bool]
-) -> None:
+    connection: AsyncConnection,
+    partition_namespace: str,
+    *conditions: ColumnElement[bool],
+) -> bool:
     """
-    Delete the partition row in a namespace the conditions select, and queue its tombstone.
+    Delete the partition row in a namespace the conditions select, and queue its tombstone, in the connection's transaction; return whether a row was deleted.
 
-    One transaction, so the partition is unreachable once it commits. The
-    DELETE runs first and takes the row's write lock, so racing deleters
-    serialize on it and the loser finds no row and returns.
+    The partition is unreachable once the transaction commits. The DELETE runs
+    first and takes the row's write lock, so racing deleters serialize on it
+    and the loser finds no row.
     """
-    async with write_connection(engine) as connection:
-        row = (
-            await connection.execute(
-                delete(PartitionRow)
-                .where(
-                    PartitionRow.partition_namespace == partition_namespace, *conditions
-                )
-                .returning(PartitionRow.partition_uuid)
-            )
-        ).one_or_none()
-        if row is None:
-            return
+    row = (
         await connection.execute(
-            insert(PurgeQueueRow).values(
-                partition_uuid=row.partition_uuid,
-                partition_namespace=partition_namespace,
-                enqueued_at=func.now(),
-            )
+            delete(PartitionRow)
+            .where(PartitionRow.partition_namespace == partition_namespace, *conditions)
+            .returning(PartitionRow.partition_uuid)
         )
+    ).one_or_none()
+    if row is None:
+        return False
+    await connection.execute(
+        insert(PurgeQueueRow).values(
+            partition_uuid=row.partition_uuid,
+            partition_namespace=partition_namespace,
+            enqueued_at=func.now(),
+        )
+    )
+    return True
 
 
 def _has_elapsed(

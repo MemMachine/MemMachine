@@ -30,6 +30,9 @@ from memmachine_server.common.partition_registry import (
     PartitionPendingError,
     Registration,
 )
+from memmachine_server.common.partition_registry.data_types import (
+    PartitionAlreadyConfirmedError,
+)
 from memmachine_server.common.partition_registry.partition_registry import (
     Reservation,
 )
@@ -327,7 +330,7 @@ async def test_a_partition_is_pending_until_its_reservation_is_confirmed(
     live = await registry.resolve("c")
     assert live is not None
     assert live.partition_uuid == pending.partition_uuid
-    with pytest.raises(PartitionDeletedError):
+    with pytest.raises(PartitionAlreadyConfirmedError):
         await pending.confirm()
 
 
@@ -364,13 +367,17 @@ async def test_canceling_a_reservation_spares_the_name_reserved_since(
     await registry.unregister("c")
     since = await registry._reserve("c")
 
-    await old.cancel()
+    with pytest.raises(PartitionDeletedError):
+        await old.cancel()
     with pytest.raises(PartitionPendingError):
         await registry.resolve("c")
     assert await _queued(registry) == [old.partition_uuid]
 
     await since.cancel()
-    await since.cancel()
+    with pytest.raises(PartitionDeletedError):
+        await since.cancel()
+    with pytest.raises(PartitionDeletedError):
+        await since.confirm()
     assert await registry.resolve("c") is None
     assert sorted(await _queued(registry)) == sorted(
         [old.partition_uuid, since.partition_uuid]
@@ -382,12 +389,13 @@ async def test_canceling_a_confirmed_reservation_leaves_the_partition_live(
     sqlalchemy_engine, partition_namespace
 ):
     """Only a deletion by name ends a live partition, so a cancel after a
-    confirmation that committed takes nothing back."""
+    confirmation that committed raises and takes nothing back."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     reservation = await registry._reserve("c")
     await reservation.confirm()
 
-    await reservation.cancel()
+    with pytest.raises(PartitionAlreadyConfirmedError):
+        await reservation.cancel()
     live = await registry.resolve("c")
     assert live is not None
     assert live.partition_uuid == reservation.partition_uuid
@@ -1851,6 +1859,13 @@ async def test_mixed_operations_across_engines_finish_cleanly_and_strand_nothing
             await engine.dispose()
 
 
+# The error a reservation's confirm or cancel raises in each state other than pending.
+_RESERVATION_ERRORS: dict[str, type[Exception]] = {
+    "live": PartitionAlreadyConfirmedError,
+    "gone": PartitionDeletedError,
+}
+
+
 class _ModelCheckedRegistry:
     """A registry driven step by step beside a model of its contract.
 
@@ -1870,7 +1885,6 @@ class _ModelCheckedRegistry:
         self.partitions: dict[str, tuple[UUID, bool]] = {}
         self.backing_off: dict[UUID, bool] = {}
         self.reservations: list[Reservation] = []
-        self.confirmed: set[UUID] = set()
         self.registrations: list[Registration] = []
 
     async def reserve(self, name: str) -> None:
@@ -1884,34 +1898,39 @@ class _ModelCheckedRegistry:
         self.reservations.append(reservation)
 
     async def confirm(self, name: str) -> None:
-        unconfirmed = [
-            r for r in self.reservations if r.partition_uuid not in self.confirmed
-        ]
-        if not unconfirmed:
+        if not self.reservations:
             return
-        reservation = self.rng.choice(unconfirmed)
-        self.confirmed.add(reservation.partition_uuid)
-        if self.partitions.get(reservation.partition_name) != (
-            reservation.partition_uuid,
-            False,
-        ):
-            with pytest.raises(PartitionDeletedError):
-                await reservation.confirm()
+        reservation = self.rng.choice(self.reservations)
+        state = self._reservation_state(reservation)
+        if state == "pending":
+            await reservation.confirm()
+            self.partitions[reservation.partition_name] = (
+                reservation.partition_uuid,
+                True,
+            )
             return
-        await reservation.confirm()
-        self.partitions[reservation.partition_name] = (reservation.partition_uuid, True)
+        with pytest.raises(_RESERVATION_ERRORS[state]):
+            await reservation.confirm()
 
     async def cancel(self, name: str) -> None:
         if not self.reservations:
             return
         reservation = self.rng.choice(self.reservations)
-        await reservation.cancel()
-        if self.partitions.get(reservation.partition_name) == (
-            reservation.partition_uuid,
-            False,
-        ):
+        state = self._reservation_state(reservation)
+        if state == "pending":
+            await reservation.cancel()
             del self.partitions[reservation.partition_name]
             self.backing_off[reservation.partition_uuid] = False
+            return
+        with pytest.raises(_RESERVATION_ERRORS[state]):
+            await reservation.cancel()
+
+    def _reservation_state(self, reservation: Reservation) -> str:
+        """The model's state of a reservation's partition: pending, live, or gone."""
+        held = self.partitions.get(reservation.partition_name)
+        if held is None or held[0] != reservation.partition_uuid:
+            return "gone"
+        return "live" if held[1] else "pending"
 
     async def delete_partition(self, name: str) -> None:
         await self.registry.unregister(name)

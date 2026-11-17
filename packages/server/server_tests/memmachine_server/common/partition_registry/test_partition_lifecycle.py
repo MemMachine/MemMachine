@@ -337,10 +337,11 @@ async def test_a_canceled_confirmation_frees_the_name(registry, manager, monkeyp
 
 @pytest.mark.asyncio
 async def test_a_confirmation_that_committed_before_failing_stands(
-    registry, manager, monkeypatch
+    registry, manager, monkeypatch, caplog
 ):
     """The cancel acts only on a pending partition, so a creation whose
-    confirmation committed but whose reply was lost leaves the partition live."""
+    confirmation committed but whose reply was lost leaves the partition live,
+    and the cancel's PartitionAlreadyConfirmedError is not logged."""
     confirm = sqlalchemy_partition_registry._SQLAlchemyReservation.confirm
 
     async def commits_then_fails(reservation) -> None:
@@ -353,10 +354,11 @@ async def test_a_confirmation_that_committed_before_failing_stands(
             "confirm",
             commits_then_fails,
         )
-        with pytest.raises(ConnectionError):
+        with caplog.at_level(logging.ERROR), pytest.raises(ConnectionError):
             await manager.create_partition(NAME)
 
     assert await registry.resolve(NAME) is not None
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
 @pytest.mark.asyncio

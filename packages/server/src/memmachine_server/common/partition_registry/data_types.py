@@ -88,5 +88,21 @@ class PartitionDeletedError(Exception):
         )
 
 
+class PartitionAlreadyConfirmedError(Exception):
+    """Raised when a reservation's partition was confirmed already."""
+
+    def __init__(
+        self, partition_namespace: str, partition_name: str, partition_uuid: UUID
+    ) -> None:
+        """Initialize with the confirmed partition's namespace, name, and UUID."""
+        self.partition_namespace = partition_namespace
+        self.partition_name = partition_name
+        self.partition_uuid = partition_uuid
+        super().__init__(
+            f"Partition {partition_uuid} under name {partition_name!r} in "
+            f"namespace {partition_namespace!r} was confirmed already"
+        )
+
+
 class PartitionCreateAttemptsExhaustedError(Exception):
     """Raised when creating a partition gave up after repeated attempts that made no progress."""

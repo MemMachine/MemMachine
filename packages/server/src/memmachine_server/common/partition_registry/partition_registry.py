@@ -23,7 +23,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from uuid import UUID
 
-from .data_types import validate_partition_name
+from .data_types import (
+    PartitionAlreadyConfirmedError,
+    PartitionDeletedError,
+    validate_partition_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +41,11 @@ class Reservation(ABC):
     """
     A pending partition's hold on its name.
 
-    The partition is pending until the reservation is confirmed. A cancel may
-    follow a confirmation that raised after it committed, and may race a
-    deletion by name.
+    The partition is pending until the reservation is confirmed. `confirm`
+    and `cancel` act only on a pending partition: on a confirmed one they
+    raise PartitionAlreadyConfirmedError, and on a deleted one, canceled or
+    deleted by name, PartitionDeletedError. A cancel may follow a confirmation
+    that raised after it committed, and may race a deletion by name.
     """
 
     partition_name: str
@@ -54,28 +60,33 @@ class Reservation(ABC):
         confirmation or makes this call raise.
 
         Raises:
+            PartitionAlreadyConfirmedError:
+                If the reservation was confirmed already.
             PartitionDeletedError:
-                If the partition was deleted, or the reservation was
-                confirmed already.
+                If the partition was deleted.
         """
         raise NotImplementedError
 
     async def cancel(self) -> None:
         """
-        Cancel this reservation, unregistering its partition while it is pending and queuing the partition's UUID for purge.
+        Cancel this reservation, unregistering its pending partition and queuing the partition's UUID for purge.
 
-        The pending partition is unreachable when this returns. Canceling
-        leaves a confirmed reservation's partition live, since only a deletion
-        by name ends a live partition. A partition reserved since under the
-        same name is another partition and stays. Idempotent.
+        The partition is unreachable when this returns. A partition reserved
+        since under the same name is another partition and stays.
 
         The cancellation runs to completion in a shielded task of its own,
-        even if the caller is canceled, and the task logs its failure, since a
-        canceled caller stops awaiting it.
+        even if the caller is canceled, and the task logs any failure other
+        than the two below, since a canceled caller stops awaiting it.
 
         Raises:
+            PartitionAlreadyConfirmedError:
+                If the reservation was confirmed: only a deletion by name ends
+                a live partition.
+            PartitionDeletedError:
+                If the partition was deleted: canceled already, or deleted by
+                name.
             Exception:
-                Whatever `_cancel` raised. A partition whose cancellation
+                Whatever else `_cancel` raised. A partition whose cancellation
                 committed nothing stays pending until it is deleted by name.
         """
         cancellation = asyncio.create_task(self._cancel())
@@ -83,12 +94,17 @@ class Reservation(ABC):
 
         def finish(task: asyncio.Task[None]) -> None:
             _reservation_cancellations.discard(task)
-            if not task.cancelled() and task.exception() is not None:
+            if task.cancelled():
+                return
+            error = task.exception()
+            if error is not None and not isinstance(
+                error, (PartitionAlreadyConfirmedError, PartitionDeletedError)
+            ):
                 logger.error(
                     "Could not cancel the reservation of partition %r; it stays "
                     "pending until deleted",
                     self.partition_name,
-                    exc_info=task.exception(),
+                    exc_info=error,
                 )
 
         cancellation.add_done_callback(finish)
@@ -101,9 +117,14 @@ class Reservation(ABC):
 
         Called by `cancel`, in a task of its own. Conditional on the
         partition being pending under this reservation's UUID, so a confirmed
-        partition, or one reserved since under the same name, stays.
-        Idempotent. A call that raises either committed both writes or
-        neither.
+        partition, or one reserved since under the same name, stays. A call
+        that raises any other error either committed both writes or neither.
+
+        Raises:
+            PartitionAlreadyConfirmedError:
+                If the reservation's partition is live.
+            PartitionDeletedError:
+                If no partition holds the reservation's UUID.
         """
         raise NotImplementedError
 
