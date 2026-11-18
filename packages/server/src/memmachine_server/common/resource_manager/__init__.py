@@ -78,7 +78,8 @@ class CommonResourceManager(Protocol):
 
         The first call for a namespace in a database starts its registry, and
         runs the namespace's purge rounds over that call's `partitioned_stores`
-        in the background for as long as the resource manager is open.
+        in the background for as long as the resource manager is open, with the
+        namespace as their metrics prefix.
         """
         raise NotImplementedError
 

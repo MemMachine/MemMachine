@@ -184,7 +184,7 @@ class EventMemory:
         self._partition_manager = PartitionManager(
             params.partition_registry,
             [params.segment_store, params.vector_store],
-            metrics_factory=params.metrics_factory,
+            tracker=OperationTracker(params.metrics_factory, prefix="event_memory"),
         )
         store_schema = params.vector_store.store_schema
         self._schema_fields = frozenset(store_schema.indexed_properties)

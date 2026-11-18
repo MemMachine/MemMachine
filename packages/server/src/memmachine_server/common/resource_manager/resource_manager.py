@@ -19,7 +19,7 @@ from memmachine_server.common.episode_store.episode_sqlalchemy_store import (
     SqlAlchemyEpisodeStore,
 )
 from memmachine_server.common.language_model import LanguageModel
-from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import (
     PartitionedStore,
     PartitionManager,
@@ -242,7 +242,8 @@ class ResourceManagerImpl:
 
         Each call builds a registry. The first call for a namespace in a
         database starts its registry, and runs the namespace's purge rounds
-        over that call's `partitioned_stores` in the background until close().
+        over that call's `partitioned_stores` in the background until close(),
+        with the namespace as their metrics prefix.
         """
         registry = SQLAlchemyPartitionRegistry(
             SQLAlchemyPartitionRegistryParams(
@@ -263,10 +264,11 @@ class ResourceManagerImpl:
                                 PartitionManager(
                                     registry,
                                     partitioned_stores,
-                                    metrics_factory=(
+                                    tracker=OperationTracker(
                                         await ResourceManagerImpl.get_metrics_factory(
                                             "prometheus"
-                                        )
+                                        ),
+                                        prefix=partition_namespace,
                                     ),
                                 ),
                                 partition_namespace,

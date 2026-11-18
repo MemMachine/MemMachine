@@ -6,7 +6,7 @@ import logging
 from collections.abc import Awaitable, Iterable, Sequence
 from uuid import UUID
 
-from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+from memmachine_server.common.metrics_factory import OperationTracker
 
 from .data_types import TombstoneClaimStaleError
 from .partition_registry import PartitionRegistry, Registration
@@ -37,12 +37,12 @@ class PartitionManager:
         partition_registry: PartitionRegistry,
         partitioned_stores: Iterable[PartitionedStore],
         *,
-        metrics_factory: MetricsFactory | None = None,
+        tracker: OperationTracker,
     ) -> None:
-        """Initialize with the registry of the namespace, the stores that hold its partitions, and a factory for the metrics of its operations."""
+        """Initialize with the registry of the namespace, the stores that hold its partitions, and the tracker that times its operations."""
         self._partition_registry = partition_registry
         self._partitioned_stores = tuple(partitioned_stores)
-        self._tracker = OperationTracker(metrics_factory, prefix="partition_manager")
+        self._tracker = tracker
 
     async def create_partition(self, partition_name: str) -> None:
         """

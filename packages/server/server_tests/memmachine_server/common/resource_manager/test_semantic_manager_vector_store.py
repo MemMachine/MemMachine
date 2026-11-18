@@ -19,7 +19,7 @@ from memmachine_server.common.configuration import (
     SemanticMemoryStorageBackend,
 )
 from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import PartitionManager
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
     SQLAlchemyPartitionRegistry,
@@ -92,7 +92,10 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
         partitioned_stores=[vector_store],
     )
     partition_registry.resolve.assert_awaited_once_with("semantic_memory")
-    # The partition's lifecycle is timed with the factory.
+    # The partition's lifecycle is timed under semantic memory's prefix.
+    assert metrics_factory.get_histogram.call_args.args[0] == (
+        "semantic_memory_latency_seconds"
+    )
     [observation] = metrics_factory.get_histogram.return_value.observe.call_args_list
     assert observation.kwargs["labels"] == {
         "operation": "resolve_partition",
@@ -128,7 +131,11 @@ async def partition_registry(
 
 @pytest.fixture
 def partition_manager(partition_registry, partitioned_vector_store) -> PartitionManager:
-    return PartitionManager(partition_registry, [partitioned_vector_store])
+    return PartitionManager(
+        partition_registry,
+        [partitioned_vector_store],
+        tracker=OperationTracker(None, prefix="semantic_memory"),
+    )
 
 
 @pytest.fixture(autouse=True)

@@ -162,7 +162,7 @@ async def test_a_created_partition_is_gotten_by_its_name(
 
 
 @pytest.mark.asyncio
-async def test_partition_operations_are_timed_with_the_memorys_metrics_factory(
+async def test_partition_operations_are_timed_under_the_memorys_metrics_prefix(
     segment_store: SQLAlchemySegmentStore,
     vector_store: NonCallableMagicMock,
     partition_registry: SQLAlchemyPartitionRegistry,
@@ -182,7 +182,7 @@ async def test_partition_operations_are_timed_with_the_memorys_metrics_factory(
 
     await event_memory.create_partition(NAME)
 
-    assert "partition_manager_latency_seconds" in [
+    assert "event_memory_latency_seconds" in [
         histogram.args[0] for histogram in metrics_factory.get_histogram.call_args_list
     ]
     assert {"operation": "create_partition", "status": "ok"} in [

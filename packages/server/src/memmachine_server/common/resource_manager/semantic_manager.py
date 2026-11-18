@@ -14,6 +14,7 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ResourceNotReadyError
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.metrics_factory import OperationTracker
 from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionCreateAttemptsExhaustedError,
@@ -207,8 +208,9 @@ class SemanticResourceManager:
             PartitionManager(
                 partition_registry,
                 [vector_store],
-                metrics_factory=await self._resource_manager.get_metrics_factory(
-                    "prometheus"
+                tracker=OperationTracker(
+                    await self._resource_manager.get_metrics_factory("prometheus"),
+                    prefix=_PARTITION_NAMESPACE,
                 ),
             ),
             vector_store,

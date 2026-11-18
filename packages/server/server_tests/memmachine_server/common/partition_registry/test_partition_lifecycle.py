@@ -11,7 +11,7 @@ import pytest_asyncio
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from memmachine_server.common.metrics_factory import MetricsFactory
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
 from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionDeletedError,
@@ -31,6 +31,7 @@ from memmachine_server.common.partition_registry.sqlalchemy_partition_registry i
 from memmachine_server.common.sql import enable_sqlite_explicit_begin
 
 NAME = "p"
+_UNTIMED = OperationTracker(None, prefix="lifecycle")
 
 
 def _store() -> NonCallableMagicMock:
@@ -67,7 +68,7 @@ async def registry(tmp_path):
 
 @pytest.fixture
 def manager(registry, store) -> PartitionManager:
-    return PartitionManager(registry, [store])
+    return PartitionManager(registry, [store], tracker=_UNTIMED)
 
 
 async def _created(
@@ -477,7 +478,7 @@ async def test_a_round_with_nothing_due_calls_no_store(manager, store):
 
 @pytest.mark.asyncio
 async def test_a_partition_is_created_in_every_store(registry, store, other_store):
-    manager = PartitionManager(registry, [store, other_store])
+    manager = PartitionManager(registry, [store, other_store], tracker=_UNTIMED)
 
     partition_uuid = await _created(manager, registry)
 
@@ -489,7 +490,7 @@ async def test_a_partition_is_created_in_every_store(registry, store, other_stor
 async def test_every_store_finishes_creating_before_the_first_error_is_raised(
     registry, store, other_store
 ):
-    manager = PartitionManager(registry, [store, other_store])
+    manager = PartitionManager(registry, [store, other_store], tracker=_UNTIMED)
     finished = asyncio.Event()
 
     async def slow(partition_uuid: UUID) -> None:
@@ -513,7 +514,7 @@ async def test_every_store_finishes_creating_before_the_first_error_is_raised(
 async def test_a_purge_round_finds_records_when_any_store_does_and_drops_once_none_does(
     registry, store, other_store, in_store, in_other_store
 ):
-    manager = PartitionManager(registry, [store, other_store])
+    manager = PartitionManager(registry, [store, other_store], tracker=_UNTIMED)
     partition_uuid = await _created(manager, registry)
     await manager.delete_partition(NAME)
     store.purge_partition.return_value = in_store
@@ -534,7 +535,7 @@ async def test_a_purge_round_finds_records_when_any_store_does_and_drops_once_no
 async def test_every_store_purges_before_the_first_error_is_raised(
     registry, store, other_store
 ):
-    manager = PartitionManager(registry, [store, other_store])
+    manager = PartitionManager(registry, [store, other_store], tracker=_UNTIMED)
     partition_uuid = await _created(manager, registry)
     await manager.delete_partition(NAME)
     store.purge_partition.side_effect = ConnectionError("the store is down")
@@ -550,7 +551,7 @@ async def test_every_store_purges_before_the_first_error_is_raised(
 async def test_every_store_drops_before_the_first_error_is_raised(
     registry, store, other_store
 ):
-    manager = PartitionManager(registry, [store, other_store])
+    manager = PartitionManager(registry, [store, other_store], tracker=_UNTIMED)
     partition_uuid = await _created(manager, registry)
     await manager.delete_partition(NAME)
     store.drop_partition.side_effect = ConnectionError("the store is down")
@@ -676,7 +677,11 @@ async def test_a_raised_round_whose_claim_cannot_be_failed_raises_the_registrys_
 @pytest.mark.asyncio
 async def test_each_operation_is_timed_with_its_outcome(registry, store):
     metrics_factory = MagicMock(spec=MetricsFactory)
-    manager = PartitionManager(registry, [store], metrics_factory=metrics_factory)
+    manager = PartitionManager(
+        registry,
+        [store],
+        tracker=OperationTracker(metrics_factory, prefix="lifecycle"),
+    )
 
     await manager.create_partition(NAME)
     with pytest.raises(PartitionAlreadyExistsError):
@@ -690,9 +695,6 @@ async def test_each_operation_is_timed_with_its_outcome(registry, store):
     with pytest.raises(ConnectionError):
         await manager.run_purge_round()
 
-    assert metrics_factory.get_histogram.call_args.args[0] == (
-        "partition_manager_latency_seconds"
-    )
     assert [
         observation.kwargs["labels"]
         for observation in metrics_factory.get_histogram.return_value.observe.call_args_list
@@ -775,6 +777,7 @@ async def test_racing_creations_and_deletions_leave_each_created_partition_live_
                 ),
             ),
             [store],
+            tracker=_UNTIMED,
         )
         for engine in engines
     ]

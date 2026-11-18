@@ -588,7 +588,7 @@ async def test_one_namespace_in_two_databases_starts_a_registry_and_purge_rounds
 
 
 @pytest.mark.asyncio
-async def test_purge_rounds_are_timed_with_the_prometheus_metrics_factory(
+async def test_purge_rounds_are_timed_under_their_namespace_with_the_prometheus_metrics_factory(
     invalid_resource_manager, monkeypatch, tmp_path
 ):
     engine = _sqlite_engine(tmp_path / "registry.db")
@@ -614,6 +614,8 @@ async def test_purge_rounds_are_timed_with_the_prometheus_metrics_factory(
     assert await partition_manager.run_purge_round() is False
 
     get_metrics_factory.assert_awaited_with("prometheus")
+    # The namespace is the prefix of its purge rounds' metrics.
+    assert metrics_factory.get_histogram.call_args.args[0] == "a_latency_seconds"
     [observation] = metrics_factory.get_histogram.return_value.observe.call_args_list
     assert observation.kwargs["labels"] == {
         "operation": "run_purge_round",
