@@ -140,11 +140,11 @@ To see a complete example of a potential `cfg.yml` file, check out [GPU-based Sa
     | `short_term_memory.message_capacity` | The maximum character capacity for short-term memory.                     | `64000`      |
 
     The event backend serves every session with the vector store, segment
-    store, and embedder configured here, and a project cannot choose others.
-    Changing them does not move existing data: point them only at stores
-    that hold it, and rebuild the event memory's vectors before changing the
-    embedder. A deployment that configures no event memory can neither open
-    nor delete event sessions.
+    store, embedder, and reranker configured here, and a project cannot
+    choose others. Changing them does not move existing data: point them
+    only at stores that hold it, and rebuild the event memory's vectors
+    before changing the embedder. A deployment that configures no event
+    memory can neither open nor delete event sessions.
   </Accordion>
 
   <Accordion title="Retrieval Agent">

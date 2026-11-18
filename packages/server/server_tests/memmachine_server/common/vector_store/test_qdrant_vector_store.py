@@ -332,6 +332,35 @@ class TestUpsertAndQuery:
         all_results = list(await partition.query(query_vectors=[], limit=10))
         assert len(all_results) == 0
 
+    @pytest.mark.asyncio
+    async def test_a_cancelled_upsert_sends_no_request_after_the_cancellation(
+        self, any_qdrant_client, partition, monkeypatch
+    ):
+        """Cancelled while its request is in flight, the upsert raises the
+        cancellation and sends no further request; the server may still apply
+        the one it sent."""
+        records = [
+            _make_record(vector=_normalize([1.0, float(i), 0.0])) for i in range(3)
+        ]
+        in_flight = asyncio.Event()
+        sent: list[list[models.PointStruct]] = []
+        send = any_qdrant_client.upsert
+
+        async def send_and_signal(**kwargs):
+            sent.append(kwargs["points"])
+            in_flight.set()
+            return await send(**kwargs)
+
+        monkeypatch.setattr(any_qdrant_client, "upsert", send_and_signal)
+        upsert = asyncio.create_task(partition.upsert(records=records))
+        await in_flight.wait()
+
+        upsert.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await upsert
+        assert len(sent) == 1
+
 
 # A query, and vectors that each metric ranks in its own order, with no two
 # tied under any metric.
@@ -469,15 +498,15 @@ class _CurrentRegistration(Registration):
         return None
 
 
-def _partition_on(client: AsyncQdrantClient) -> QdrantVectorStorePartition:
-    """A handle on a given client, bound to a live incarnation."""
+def _partition_on(
+    client: AsyncQdrantClient, *, registration: Registration | None = None
+) -> QdrantVectorStorePartition:
+    """A handle on a given client, bound to a registration, by default a live one."""
     return QdrantVectorStorePartition(
         client=client,
         vector_store_name=VECTOR_STORE_NAME,
-        registration=_CurrentRegistration(
-            partition_key=NAME,
-            incarnation=uuid4(),
-        ),
+        registration=registration
+        or _CurrentRegistration(partition_key=NAME, incarnation=uuid4()),
         store_schema=VectorStoreSchema(
             vector_dimensions=VECTOR_DIM,
             similarity_metric=SimilarityMetric.COSINE,
@@ -558,6 +587,41 @@ async def test_an_upsert_that_fails_otherwise_is_not_sent_again(error: Exception
         await partition.upsert(records=records)
 
     client.upsert.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_upsert_sends_no_request_after_the_cancellation():
+    """Cancelled while the first half of a refused batch is in flight, the
+    upsert sends no further request and does not check the registration
+    again."""
+    sent: list[int] = []
+    in_flight = asyncio.Event()
+
+    async def refuse_then_hold(
+        *, collection_name: str, points: list[models.PointStruct], wait: bool
+    ) -> None:
+        sent.append(len(points))
+        if len(sent) == 1:
+            raise UnexpectedResponse(413, "", b"", httpx.Headers())
+        if len(sent) == 2:
+            in_flight.set()
+            await asyncio.Event().wait()
+
+    client = MagicMock(spec=AsyncQdrantClient)
+    client.upsert = AsyncMock(side_effect=refuse_then_hold)
+    registration = MagicMock(spec=Registration, partition_key=NAME, incarnation=uuid4())
+    registration.require_current = AsyncMock()
+    partition = _partition_on(client, registration=registration)
+    records = [_make_record(vector=_normalize([1.0, 0.0, 0.0])) for _ in range(4)]
+    upsert = asyncio.create_task(partition.upsert(records=records))
+    await in_flight.wait()
+
+    upsert.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await upsert
+    assert sent == [4, 2]
+    registration.require_current.assert_awaited_once()
 
 
 # ── Filters ──

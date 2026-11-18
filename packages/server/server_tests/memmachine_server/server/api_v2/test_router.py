@@ -175,6 +175,7 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
         "config": {
             "backend": "event",
             "embedder": "openai",
+            "reranker": "cohere",
             "vector_store": "vstore",
             "segment_store": "pgengine",
         },
@@ -191,6 +192,7 @@ def test_create_project_with_explicit_event_backend(client, mock_memmachine):
     body = response.json()
     assert body["config"]["backend"] == "event"
     assert body["config"]["embedder"] == ""
+    assert body["config"]["reranker"] == ""
     assert "vector_store" not in body["config"]
     assert "segment_store" not in body["config"]
 
