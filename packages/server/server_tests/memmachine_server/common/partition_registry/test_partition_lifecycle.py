@@ -488,21 +488,30 @@ async def test_a_partition_is_created_in_every_store(registry, store, other_stor
 
 @pytest.mark.asyncio
 async def test_every_store_finishes_creating_before_the_first_error_is_raised(
-    registry, store, other_store
+    registry, store, other_store, caplog
 ):
+    """The first store fails only after the second store has failed, and its
+    error is the one raised, so the manager waited for it, and it logs both."""
     manager = PartitionManager(registry, [store, other_store], tracker=_UNTIMED)
-    finished = asyncio.Event()
+    other_store_failed = asyncio.Event()
 
-    async def slow(partition_uuid: UUID) -> None:
-        await asyncio.sleep(0.05)
-        finished.set()
+    async def fails_after_the_other_store(partition_uuid: UUID) -> None:
+        await other_store_failed.wait()
+        raise RuntimeError("the backend refused")
 
-    store.create_partition.side_effect = RuntimeError("the backend refused")
-    other_store.create_partition.side_effect = slow
+    async def fails_at_once(partition_uuid: UUID) -> None:
+        other_store_failed.set()
+        raise ConnectionError("the other backend is down")
 
-    with pytest.raises(RuntimeError, match="refused"):
+    store.create_partition.side_effect = fails_after_the_other_store
+    other_store.create_partition.side_effect = fails_at_once
+
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="refused"):
         await manager.create_partition(NAME)
-    assert finished.is_set()
+    assert {type(r.exc_info[1]) for r in caplog.records if r.exc_info is not None} == {
+        RuntimeError,
+        ConnectionError,
+    }
     assert await registry.resolve(NAME) is None
 
 
