@@ -10,8 +10,8 @@ import hnswlib  # ty: ignore[unresolved-import]  # C extension, no py.typed
 import numpy as np
 
 from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.rw_locks import AsyncRWLock
 
+from .index_persistence import atomic_index_write, clear_stale_index_temp
 from .vector_search_engine import SearchMatch, SearchResult, VectorSearchEngine
 
 
@@ -86,8 +86,6 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         # which does not affect correctness (but may be suboptimal).
         self._known_labels: set[int] = set()
 
-        self._lock = AsyncRWLock()
-
     def _distance_to_score(self, distance: float) -> float:
         """Convert an hnswlib distance to a pure metric score."""
         match self._similarity_metric:
@@ -116,8 +114,7 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
     async def add(self, vectors: Mapping[int, Sequence[float]]) -> None:
         if not vectors:
             return
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_add, vectors)
+        await asyncio.to_thread(self._sync_add, vectors)
 
     def _sync_add(self, vectors: Mapping[int, Sequence[float]]) -> None:
         if not self._allow_replace_deleted:
@@ -169,10 +166,7 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
         if self._index.element_count == 0 or not vectors:
             return [SearchResult(matches=[]) for _ in vectors]
 
-        async with self._lock.read_lock():
-            return await asyncio.to_thread(
-                self._sync_search, vectors, limit, allowed_keys
-            )
+        return await asyncio.to_thread(self._sync_search, vectors, limit, allowed_keys)
 
     def _sync_search(
         self,
@@ -284,8 +278,7 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
 
     @override
     async def remove(self, keys: Iterable[int]) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_remove, keys)
+        await asyncio.to_thread(self._sync_remove, keys)
 
     def _sync_remove(self, keys: Iterable[int]) -> None:
         for key in keys:
@@ -294,21 +287,21 @@ class HnswlibVectorSearchEngine(VectorSearchEngine):
 
     @override
     async def save(self, path: str) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_save, path)
+        await asyncio.to_thread(self._sync_save, path)
 
     def _sync_save(self, path: str) -> None:
-        self._index.save_index(path)
+        with atomic_index_write(path) as temp_path:
+            self._index.save_index(temp_path)
         # Reconcile _known_labels with hnswlib's label_lookup_.
         if self._allow_replace_deleted:
             self._known_labels = {int(k) for k in self._index.get_ids_list()}
 
     @override
     async def load(self, path: str) -> None:
-        async with self._lock.write_lock():
-            await asyncio.to_thread(self._sync_load, path)
+        await asyncio.to_thread(self._sync_load, path)
 
     def _sync_load(self, path: str) -> None:
+        clear_stale_index_temp(path)
         self._index = hnswlib.Index(space=self._space, dim=self._num_dimensions)
         self._index.load_index(path, allow_replace_deleted=self._allow_replace_deleted)
         self._index.set_ef(self._ef_search)
