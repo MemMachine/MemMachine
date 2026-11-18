@@ -260,7 +260,15 @@ class ResourceManagerImpl:
                     self._partition_registry_purge_tasks.append(
                         asyncio.create_task(
                             _run_purge_rounds_forever(
-                                PartitionManager(registry, partitioned_stores),
+                                PartitionManager(
+                                    registry,
+                                    partitioned_stores,
+                                    metrics_factory=(
+                                        await ResourceManagerImpl.get_metrics_factory(
+                                            "prometheus"
+                                        )
+                                    ),
+                                ),
                                 partition_namespace,
                             )
                         )

@@ -20,6 +20,7 @@ from memmachine_server.common.configuration import (
     SemanticMemoryStorageBackend,
 )
 from memmachine_server.common.data_types import SimilarityMetric
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.partition_registry import PartitionManager
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
     SQLAlchemyPartitionRegistry,
@@ -48,6 +49,8 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
     resource_manager.get_sql_engine = AsyncMock(return_value=sqlalchemy_sqlite_engine)
     resource_manager.get_vector_store = AsyncMock(return_value=vector_store)
     resource_manager.get_partition_registry = AsyncMock(return_value=partition_registry)
+    metrics_factory = MagicMock(spec=MetricsFactory)
+    resource_manager.get_metrics_factory = AsyncMock(return_value=metrics_factory)
 
     manager = SemanticResourceManager(
         semantic_conf=SemanticMemoryConf(
@@ -90,6 +93,12 @@ async def test_semantic_manager_builds_vector_store_backend(sqlalchemy_sqlite_en
         partitioned_stores=[vector_store],
     )
     partition_registry.resolve.assert_awaited_once_with("semantic_memory")
+    # The partition's lifecycle is timed with the factory.
+    [observation] = metrics_factory.get_histogram.return_value.observe.call_args_list
+    assert observation.kwargs["labels"] == {
+        "operation": "resolve_partition",
+        "status": "ok",
+    }
     vector_store.get_partition.assert_awaited_once_with(registration.partition_uuid)
     assert storage._vector_partition is vector_store.get_partition.return_value
 

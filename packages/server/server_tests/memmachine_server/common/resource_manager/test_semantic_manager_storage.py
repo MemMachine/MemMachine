@@ -50,6 +50,7 @@ def _resources_without_models(engine: AsyncEngine) -> MagicMock:
     resources.get_sql_engine = AsyncMock(return_value=engine)
     resources.get_vector_store = AsyncMock(return_value=vector_store)
     resources.get_partition_registry = AsyncMock(return_value=partition_registry)
+    resources.get_metrics_factory = AsyncMock(return_value=None)
     resources.get_embedder = AsyncMock(
         side_effect=AssertionError("storage must not resolve an embedder")
     )

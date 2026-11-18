@@ -6,6 +6,8 @@ import logging
 from collections.abc import Awaitable, Iterable, Sequence
 from uuid import UUID
 
+from memmachine_server.common.metrics_factory import MetricsFactory, OperationTracker
+
 from .data_types import TombstoneClaimStaleError
 from .partition_registry import PartitionRegistry, Registration
 from .partitioned_store import PartitionedStore
@@ -34,10 +36,13 @@ class PartitionManager:
         self,
         partition_registry: PartitionRegistry,
         partitioned_stores: Iterable[PartitionedStore],
+        *,
+        metrics_factory: MetricsFactory | None = None,
     ) -> None:
-        """Initialize with the registry of the namespace and the stores that hold its partitions."""
+        """Initialize with the registry of the namespace, the stores that hold its partitions, and a factory for the metrics of its operations."""
         self._partition_registry = partition_registry
         self._partitioned_stores = tuple(partitioned_stores)
+        self._tracker = OperationTracker(metrics_factory, prefix="partition_manager")
 
     async def create_partition(self, partition_name: str) -> None:
         """
@@ -67,23 +72,24 @@ class PartitionManager:
             Exception:
                 Whatever a store raised while creating the partition.
         """
-        reservation = await self._partition_registry.reserve(partition_name)
-        try:
-            await _on_every_store(
-                "create",
-                reservation.partition_uuid,
-                [
-                    partitioned_store.create_partition(reservation.partition_uuid)
-                    for partitioned_store in self._partitioned_stores
-                ],
-            )
-            await reservation.confirm()
-        except BaseException:
-            # The cancel logs an unexpected failure; the creation's error is
-            # raised.
-            with contextlib.suppress(Exception):
-                await reservation.cancel()
-            raise
+        async with self._tracker("create_partition"):
+            reservation = await self._partition_registry.reserve(partition_name)
+            try:
+                await _on_every_store(
+                    "create",
+                    reservation.partition_uuid,
+                    [
+                        partitioned_store.create_partition(reservation.partition_uuid)
+                        for partitioned_store in self._partitioned_stores
+                    ],
+                )
+                await reservation.confirm()
+            except BaseException:
+                # The cancel logs an unexpected failure; the creation's error is
+                # raised.
+                with contextlib.suppress(Exception):
+                    await reservation.cancel()
+                raise
 
     async def resolve_partition(self, partition_name: str) -> Registration | None:
         """
@@ -106,7 +112,8 @@ class PartitionManager:
             PartitionPendingError:
                 If the partition registered under the name is pending.
         """
-        return await self._partition_registry.resolve(partition_name)
+        async with self._tracker("resolve_partition"):
+            return await self._partition_registry.resolve(partition_name)
 
     async def delete_partition(self, partition_name: str) -> None:
         """
@@ -123,7 +130,8 @@ class PartitionManager:
             ValueError:
                 If the partition name is invalid.
         """
-        await self._partition_registry.unregister(partition_name)
+        async with self._tracker("delete_partition"):
+            await self._partition_registry.unregister(partition_name)
 
     async def run_purge_round(self) -> bool:
         """
@@ -142,16 +150,17 @@ class PartitionManager:
             bool:
                 Whether a round ran: False when no tombstone is claimable.
         """
-        claim = await self._partition_registry.claim_tombstone()
-        if claim is None:
-            return False
-        try:
-            found_records = await self._purge_partition(claim.partition_uuid)
-        except Exception as error:
-            await _end_claim(claim.fail(error))
-            raise
-        await _end_claim(claim.progress() if found_records else claim.complete())
-        return True
+        async with self._tracker("run_purge_round"):
+            claim = await self._partition_registry.claim_tombstone()
+            if claim is None:
+                return False
+            try:
+                found_records = await self._purge_partition(claim.partition_uuid)
+            except Exception as error:
+                await _end_claim(claim.fail(error))
+                raise
+            await _end_claim(claim.progress() if found_records else claim.complete())
+            return True
 
     async def _purge_partition(self, partition_uuid: UUID) -> bool:
         """Purge a deleted partition from every store and, once no store's purge finds records, drop it from every store; return whether any store found records."""

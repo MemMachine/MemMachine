@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from unittest.mock import NonCallableMagicMock, create_autospec
+from unittest.mock import MagicMock, NonCallableMagicMock, create_autospec
 from uuid import UUID
 
 import pytest
@@ -10,6 +10,7 @@ import pytest_asyncio
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionDeletedError,
@@ -615,3 +616,38 @@ async def test_a_raised_round_whose_claim_went_stale_raises_its_own_error(
         if r.levelno == logging.WARNING and str(partition_uuid) in r.getMessage()
     ]
     assert await _queued(registry) == 1
+
+
+@pytest.mark.asyncio
+async def test_each_operation_is_timed_with_its_outcome(registry, store):
+    metrics_factory = MagicMock(spec=MetricsFactory)
+    manager = PartitionManager(registry, [store], metrics_factory=metrics_factory)
+
+    await manager.create_partition(NAME)
+    with pytest.raises(PartitionAlreadyExistsError):
+        await manager.create_partition(NAME)
+    await manager.resolve_partition(NAME)
+    await manager.delete_partition(NAME)
+    assert await manager.run_purge_round() is True
+    await manager.create_partition(NAME)
+    await manager.delete_partition(NAME)
+    store.purge_partition.side_effect = ConnectionError("the store is down")
+    with pytest.raises(ConnectionError):
+        await manager.run_purge_round()
+
+    assert metrics_factory.get_histogram.call_args.args[0] == (
+        "partition_manager_latency_seconds"
+    )
+    assert [
+        observation.kwargs["labels"]
+        for observation in metrics_factory.get_histogram.return_value.observe.call_args_list
+    ] == [
+        {"operation": "create_partition", "status": "ok"},
+        {"operation": "create_partition", "status": "error"},
+        {"operation": "resolve_partition", "status": "ok"},
+        {"operation": "delete_partition", "status": "ok"},
+        {"operation": "run_purge_round", "status": "ok"},
+        {"operation": "create_partition", "status": "ok"},
+        {"operation": "delete_partition", "status": "ok"},
+        {"operation": "run_purge_round", "status": "error"},
+    ]

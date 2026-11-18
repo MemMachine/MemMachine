@@ -1,13 +1,14 @@
 """Tests of event memory's partitions (creation, lookup, fencing, and purge) on a SQLite registry and segment store."""
 
 import datetime
-from unittest.mock import NonCallableMagicMock, create_autospec
+from unittest.mock import MagicMock, NonCallableMagicMock, create_autospec
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from memmachine_server.common.metrics_factory import MetricsFactory
 from memmachine_server.common.partition_registry import (
     PartitionAlreadyExistsError,
     PartitionDeletedError,
@@ -158,6 +159,36 @@ async def test_a_created_partition_is_gotten_by_its_name(
     segments = await segment_store.get_partition(_partition_uuid(created))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([event.uuid])
+
+
+@pytest.mark.asyncio
+async def test_partition_operations_are_timed_with_the_memorys_metrics_factory(
+    segment_store: SQLAlchemySegmentStore,
+    vector_store: NonCallableMagicMock,
+    partition_registry: SQLAlchemyPartitionRegistry,
+) -> None:
+    metrics_factory = MagicMock(spec=MetricsFactory)
+    event_memory = EventMemory(
+        EventMemoryParams(
+            segment_store=segment_store,
+            vector_store=vector_store,
+            partition_registry=partition_registry,
+            segmenter=TextSegmenter(),
+            deriver=WholeTextDeriver(),
+            embedder=FakeEmbedder(),
+            metrics_factory=metrics_factory,
+        )
+    )
+
+    await event_memory.create_partition(NAME)
+
+    assert "partition_manager_latency_seconds" in [
+        histogram.args[0] for histogram in metrics_factory.get_histogram.call_args_list
+    ]
+    assert {"operation": "create_partition", "status": "ok"} in [
+        observation.kwargs["labels"]
+        for observation in metrics_factory.get_histogram.return_value.observe.call_args_list
+    ]
 
 
 @pytest.mark.asyncio

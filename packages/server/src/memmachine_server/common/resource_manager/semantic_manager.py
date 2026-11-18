@@ -204,7 +204,14 @@ class SemanticResourceManager:
             partitioned_stores=[vector_store],
         )
         partition = await SemanticResourceManager._get_or_create_partition(
-            PartitionManager(partition_registry, [vector_store]), vector_store
+            PartitionManager(
+                partition_registry,
+                [vector_store],
+                metrics_factory=await self._resource_manager.get_metrics_factory(
+                    "prometheus"
+                ),
+            ),
+            vector_store,
         )
         storage = VectorStoreSemanticStorage(sql_engine, partition)
         await storage.startup()
