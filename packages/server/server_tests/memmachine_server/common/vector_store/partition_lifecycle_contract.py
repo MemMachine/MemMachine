@@ -9,7 +9,9 @@ tests, so each test uses fresh partition UUIDs and counts against the records
 the store held when the test began.
 """
 
+import asyncio
 import math
+import random
 from uuid import UUID, uuid4
 
 import pytest
@@ -186,3 +188,108 @@ class PartitionLifecycleContract:
 
         assert await _purge(store, partition_uuid) >= 1
         assert await self.count_stored(store) == baseline
+
+    @pytest.mark.asyncio
+    async def test_purges_racing_writes_to_live_partitions_reclaim_the_deleted_alone(
+        self, store
+    ):
+        """Two purgers for each deleted partition purge while live partitions
+        take upserts and deletes, and then until they find nothing. Each live
+        partition then holds what its writes leave, and each deleted partition
+        holds nothing."""
+        rng = random.Random(_RACE_SEED)
+        # Every partition holds records under the same record UUIDs, and the
+        # race writes under half of them in the live partitions.
+        pool = [uuid4() for _ in range(_RACE_POOL_SIZE)]
+        deleted_uuids = [uuid4() for _ in range(_RACE_PARTITIONS)]
+        deleted = [
+            await _created(store, partition_uuid) for partition_uuid in deleted_uuids
+        ]
+        live = [await _created(store, uuid4()) for _ in range(_RACE_PARTITIONS)]
+        for partition in deleted + live:
+            await partition.upsert(records=_records_under(rng, pool))
+        # A purge may miss a record written just before it, so the deleted
+        # partitions' records are settled before the race.
+        for partition in deleted:
+            await self.settle(partition)
+        steps = [_race_steps(rng, pool[: _RACE_POOL_SIZE // 2]) for _ in live]
+        writes_done = asyncio.Event()
+
+        async def write_all() -> None:
+            try:
+                await asyncio.gather(
+                    *(
+                        _write(partition, partition_steps)
+                        for partition, partition_steps in zip(live, steps, strict=True)
+                    )
+                )
+            finally:
+                writes_done.set()
+
+        async def purge_while_writing(partition_uuid: UUID) -> None:
+            while not writes_done.is_set():
+                await store.purge_partition(partition_uuid)
+            await _purge(store, partition_uuid)
+
+        await asyncio.gather(
+            write_all(),
+            *(
+                purge_while_writing(partition_uuid)
+                for partition_uuid in deleted_uuids
+                for _ in range(2)
+            ),
+        )
+
+        for partition, partition_steps in zip(live, steps, strict=True):
+            await self.settle(partition)
+            assert await self.stored_uuids(partition) == _held_after(
+                set(pool), partition_steps
+            )
+        for partition in deleted:
+            await self.settle(partition)
+            assert await self.stored_uuids(partition) == set()
+
+
+# The race's seeded writes, its partitions of each kind, and the record UUIDs
+# every partition holds.
+_RACE_SEED = 1031
+_RACE_STEPS = 12
+_RACE_PARTITIONS = 3
+_RACE_POOL_SIZE = 8
+
+
+def _records_under(rng: random.Random, record_uuids: list[UUID]) -> list[Record]:
+    """Records under the UUIDs, with seeded vectors."""
+    return [
+        Record(uuid=record_uuid, vector=_unit([1.0, rng.random(), rng.random()]))
+        for record_uuid in record_uuids
+    ]
+
+
+def _race_steps(
+    rng: random.Random, record_uuids: list[UUID]
+) -> list[tuple[list[Record], list[UUID]]]:
+    """Seeded writes to one partition, each step upserting records under some of the UUIDs and then deleting some of the UUIDs, held or not."""
+    return [
+        (
+            _records_under(rng, rng.sample(record_uuids, k=rng.randint(1, 3))),
+            rng.sample(record_uuids, k=rng.randint(1, 2)),
+        )
+        for _ in range(_RACE_STEPS)
+    ]
+
+
+def _held_after(
+    held: set[UUID], steps: list[tuple[list[Record], list[UUID]]]
+) -> set[UUID]:
+    """The record UUIDs a partition holding `held` holds after the steps."""
+    for upserts, deletes in steps:
+        held = (held | {record.uuid for record in upserts}) - set(deletes)
+    return held
+
+
+async def _write(partition, steps: list[tuple[list[Record], list[UUID]]]) -> None:
+    """Make the steps in order, each step's upsert before its delete."""
+    for upserts, deletes in steps:
+        await partition.upsert(records=upserts)
+        await partition.delete(record_uuids=deletes)

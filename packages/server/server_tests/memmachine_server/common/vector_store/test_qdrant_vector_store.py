@@ -9,6 +9,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
+import grpc
+import grpc.aio
 import httpx
 import pytest
 import pytest_asyncio
@@ -453,6 +455,40 @@ async def test_an_upsert_that_fails_otherwise_is_not_sent_again(error: Exception
         await partition.upsert(records=records)
 
     client.upsert.assert_awaited_once()
+
+
+# Errors other than the native collection's absence, one per transport.
+_PURGE_ERRORS = [
+    pytest.param(
+        UnexpectedResponse(500, "Internal Server Error", b"", httpx.Headers()),
+        id="rest",
+    ),
+    pytest.param(grpc.aio.AioRpcError(grpc.StatusCode.UNAVAILABLE), id="grpc"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", _PURGE_ERRORS)
+async def test_a_purge_raises_a_scroll_error_other_than_not_found(error: Exception):
+    client = MagicMock(spec=AsyncQdrantClient)
+    client.scroll = AsyncMock(side_effect=error)
+    store = QdrantVectorStore(_params(client))
+
+    with pytest.raises(type(error)):
+        await store.purge_partition(uuid4())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", _PURGE_ERRORS)
+async def test_a_purge_raises_a_delete_error(error: Exception):
+    """The scroll finds a point of the partition, and the filter delete fails."""
+    client = MagicMock(spec=AsyncQdrantClient)
+    client.scroll = AsyncMock(return_value=([models.Record(id=str(uuid4()))], None))
+    client.delete = AsyncMock(side_effect=error)
+    store = QdrantVectorStore(_params(client))
+
+    with pytest.raises(type(error)):
+        await store.purge_partition(uuid4())
 
 
 # ── Filters ──
@@ -1090,11 +1126,16 @@ class TestFilters:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("limit", [0, -1])
-    async def test_a_limit_that_is_not_positive_is_refused(self, partition, limit):
+    @pytest.mark.parametrize(
+        "query_vectors",
+        [[_normalize([1.0, 0.0, 0.0])], []],
+        ids=["one_vector", "no_vectors"],
+    )
+    async def test_a_limit_that_is_not_positive_is_refused(
+        self, partition, limit, query_vectors
+    ):
         with pytest.raises(ValueError, match="not positive"):
-            await partition.query(
-                query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=limit
-            )
+            await partition.query(query_vectors=query_vectors, limit=limit)
 
 
 class TestDelete:

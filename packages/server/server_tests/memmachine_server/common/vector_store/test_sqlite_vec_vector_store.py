@@ -935,11 +935,16 @@ class TestInputValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("limit", [0, -1])
-    async def test_a_limit_that_is_not_positive_is_refused(self, partition, limit):
+    @pytest.mark.parametrize(
+        "query_vectors",
+        [[_normalize([1.0, 0.0, 0.0])], []],
+        ids=["one_vector", "no_vectors"],
+    )
+    async def test_a_limit_that_is_not_positive_is_refused(
+        self, partition, limit, query_vectors
+    ):
         with pytest.raises(ValueError, match="not positive"):
-            await partition.query(
-                query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=limit
-            )
+            await partition.query(query_vectors=query_vectors, limit=limit)
 
 
 # ── Score semantics ──

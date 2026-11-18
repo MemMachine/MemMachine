@@ -1138,11 +1138,16 @@ class TestFilters:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("limit", [0, -1])
-    async def test_a_limit_that_is_not_positive_is_refused(self, partition, limit):
+    @pytest.mark.parametrize(
+        "query_vectors",
+        [[_normalize([1.0, 0.0, 0.0])], []],
+        ids=["one_vector", "no_vectors"],
+    )
+    async def test_a_limit_that_is_not_positive_is_refused(
+        self, partition, limit, query_vectors
+    ):
         with pytest.raises(ValueError, match="not positive"):
-            await partition.query(
-                query_vectors=[_normalize([1.0, 0.0, 0.0])], limit=limit
-            )
+            await partition.query(query_vectors=query_vectors, limit=limit)
 
 
 class TestFilterModel:
@@ -1730,6 +1735,57 @@ class TestPartitionIsolation:
 
         for partition, _ in own_records:
             await _purge(isolated, partition._partition_uuid)
+
+    @pytest.mark.asyncio
+    async def test_stores_of_two_names_keep_their_records_in_separate_storage(
+        self, store
+    ):
+        """Stores of two names share no storage, even on one client and under
+        one partition UUID and record UUID: purging the partition UUID in one
+        store leaves the other's records."""
+        other = await _started_store(
+            store._client, vector_store_name=f"{VECTOR_STORE_NAME}_other"
+        )
+        partition_uuid = uuid4()
+        await store.create_partition(partition_uuid)
+        await other.create_partition(partition_uuid)
+        mine = await store.get_partition(partition_uuid)
+        theirs = await other.get_partition(partition_uuid)
+        vector = _normalize([1.0, 0.0, 0.0])
+        my_records = [_make_record(vector=vector), _make_record(vector=vector)]
+        their_records = [
+            _make_record(uuid=my_records[0].uuid, vector=vector),
+            _make_record(vector=vector),
+        ]
+        await mine.upsert(records=my_records)
+        await theirs.upsert(records=their_records)
+        await _settle(mine)
+        await _settle(theirs)
+        assert sorted(
+            await _partition_uuid_records(
+                store._client, mine._collection_name, partition_uuid
+            )
+        ) == sorted(record.uuid for record in my_records)
+
+        await _purge(store, partition_uuid)
+
+        assert (
+            await _partition_uuid_records(
+                store._client, mine._collection_name, partition_uuid
+            )
+            == []
+        )
+        assert sorted(
+            await _partition_uuid_records(
+                other._client, theirs._collection_name, partition_uuid
+            )
+        ) == sorted(record.uuid for record in their_records)
+        [result] = await theirs.query(query_vectors=[vector], limit=10)
+        assert {match.record_uuid for match in result.matches} == {
+            record.uuid for record in their_records
+        }
+
+        await _purge(other, partition_uuid)
 
 
 class TestPurgeBatches:
