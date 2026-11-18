@@ -9,23 +9,16 @@ from neo4j import AsyncGraphDatabase
 from testcontainers.neo4j import Neo4jContainer
 
 from memmachine_server.common.data_types import SimilarityMetric
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Ordering,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.metrics_factory.prometheus_metrics_factory import (
     PrometheusMetricsFactory,
@@ -416,11 +409,7 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         embedding_name="embedding1",
         similarity_metric=SimilarityMetric.COSINE,
         limit=5,
-        property_filter=FilterComparison(
-            field="include?",
-            op="=",
-            value="yes",
-        ),
+        property_filter=Equals(field=Property("include?"), value="yes"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Node2"
@@ -431,15 +420,13 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         embedding_name="embedding1",
         similarity_metric=SimilarityMetric.COSINE,
         limit=5,
-        property_filter=FilterOr(
-            left=FilterComparison(
-                field="include?",
-                op="=",
-                value="yes",
-            ),
-            right=FilterIsNull(
-                field="include?",
-            ),
+        property_filter=Or(
+            (
+                Equals(field=Property("include?"), value="yes"),
+                IsNull(
+                    field=Property("include?"),
+                ),
+            )
         ),
     )
     assert len(results) == 2
@@ -461,11 +448,7 @@ async def test_search_similar_nodes(vector_graph_store, vector_graph_store_ann):
         embedding_name="embedding2",
         similarity_metric=SimilarityMetric.EUCLIDEAN,
         limit=5,
-        property_filter=FilterComparison(
-            field="include?",
-            op="=",
-            value="yes",
-        ),
+        property_filter=Equals(field=Property("include?"), value="yes"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Node2"
@@ -599,11 +582,7 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node1_uid,
-        node_property_filter=FilterComparison(
-            field="extra!",
-            op="=",
-            value="something",
-        ),
+        node_property_filter=Equals(field=Property("extra!"), value="something"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Node2"
@@ -635,11 +614,7 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node3_uid,
-        node_property_filter=FilterComparison(
-            field="marker?",
-            op="=",
-            value="A",
-        ),
+        node_property_filter=Equals(field=Property("marker?"), value="A"),
     )
     assert len(results) == 1
     assert results[0].properties["name"] == "Node3"
@@ -649,15 +624,13 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node3_uid,
-        node_property_filter=FilterOr(
-            left=FilterComparison(
-                field="marker?",
-                op="=",
-                value="A",
-            ),
-            right=FilterIsNull(
-                field="marker?",
-            ),
+        node_property_filter=Or(
+            (
+                Equals(field=Property("marker?"), value="A"),
+                IsNull(
+                    field=Property("marker?"),
+                ),
+            )
         ),
     )
     assert len(results) == 2
@@ -667,11 +640,7 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node3_uid,
-        edge_property_filter=FilterComparison(
-            field="extra",
-            op="=",
-            value=1,
-        ),
+        edge_property_filter=Equals(field=Property("extra"), value=1),
     )
     assert len(results) == 1
 
@@ -680,15 +649,13 @@ async def test_search_related_nodes(vector_graph_store):
         other_collection="Entity",
         this_collection="Entity",
         this_node_uid=node3_uid,
-        edge_property_filter=FilterOr(
-            left=FilterComparison(
-                field="extra",
-                op="=",
-                value=1,
-            ),
-            right=FilterIsNull(
-                field="extra",
-            ),
+        edge_property_filter=Or(
+            (
+                Equals(field=Property("extra"), value=1),
+                IsNull(
+                    field=Property("extra"),
+                ),
+            )
         ),
     )
     assert len(results) == 2
@@ -779,11 +746,7 @@ async def test_search_directional_nodes(vector_graph_store):
         order_ascending=[True],
         include_equal_start=True,
         limit=2,
-        property_filter=FilterComparison(
-            field="include?",
-            op="=",
-            value="yes",
-        ),
+        property_filter=Equals(field=Property("include?"), value="yes"),
     )
     assert len(results) == 2
     assert results[0].properties["name"] == "Event2"
@@ -1153,87 +1116,61 @@ async def test_search_matching_nodes(vector_graph_store):
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Robot",
-        property_filter=FilterIsNull(
-            field="none_value",
+        property_filter=IsNull(
+            field=Property("none_value"),
         ),
     )
     assert len(results) == 1
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Robot",
-        property_filter=FilterComparison(
-            field="none_value",
-            op="=",
-            value="something",
-        ),
+        property_filter=Equals(field=Property("none_value"), value="something"),
     )
     assert len(results) == 0
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="city",
-            op="=",
-            value="New York",
-        ),
+        property_filter=Equals(field=Property("city"), value="New York"),
     )
     assert len(results) == 2
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterAnd(
-            left=FilterComparison(
-                field="city",
-                op="=",
-                value="San Francisco",
-            ),
-            right=FilterComparison(
-                field="age!with$pecialchars",
-                op="=",
-                value=20,
-            ),
+        property_filter=And(
+            (
+                Equals(field=Property("city"), value="San Francisco"),
+                Equals(field=Property("age!with$pecialchars"), value=20),
+            )
         ),
     )
     assert len(results) == 0
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterAnd(
-            left=FilterComparison(
-                field="city",
-                op="=",
-                value="New York",
-            ),
-            right=FilterComparison(
-                field="age!with$pecialchars",
-                op="=",
-                value=30,
-            ),
+        property_filter=And(
+            (
+                Equals(field=Property("city"), value="New York"),
+                Equals(field=Property("age!with$pecialchars"), value=30),
+            )
         ),
     )
     assert len(results) == 1
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age!with$pecialchars",
-            op="=",
-            value=30,
-        ),
+        property_filter=Equals(field=Property("age!with$pecialchars"), value=30),
     )
     assert len(results) == 2
 
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterOr(
-            left=FilterComparison(
-                field="age!with$pecialchars",
-                op="=",
-                value=30,
-            ),
-            right=FilterIsNull(
-                field="age!with$pecialchars",
-            ),
+        property_filter=Or(
+            (
+                Equals(field=Property("age!with$pecialchars"), value=30),
+                IsNull(
+                    field=Property("age!with$pecialchars"),
+                ),
+            )
         ),
     )
     assert len(results) == 3
@@ -1241,26 +1178,20 @@ async def test_search_matching_nodes(vector_graph_store):
     # Should only include Alice.
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="title",
-            op="=",
-            value="Engineer",
-        ),
+        property_filter=Equals(field=Property("title"), value="Engineer"),
     )
     assert len(results) == 1
 
     # Should include Alice and all Person nodes without the "title" property.
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterOr(
-            left=FilterComparison(
-                field="title",
-                op="=",
-                value="Engineer",
-            ),
-            right=FilterIsNull(
-                field="title",
-            ),
+        property_filter=Or(
+            (
+                Equals(field=Property("title"), value="Engineer"),
+                IsNull(
+                    field=Property("title"),
+                ),
+            )
         ),
     )
     assert len(results) == 3
@@ -1307,64 +1238,44 @@ async def test_search_matching_nodes_extended_filters(vector_graph_store):
     # != on city
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="city",
-            op="!=",
-            value="New York",
-        ),
+        property_filter=Not(Equals(field=Property("city"), value="New York")),
     )
     assert len(results) == 2
 
     # > on age
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age",
-            op=">",
-            value=25,
-        ),
+        property_filter=Ordering(field=Property("age"), op=">", value=25),
     )
     assert len(results) == 2
 
     # < on age
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age",
-            op="<",
-            value=30,
-        ),
+        property_filter=Ordering(field=Property("age"), op="<", value=30),
     )
     assert len(results) == 1
 
     # >= on age
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age",
-            op=">=",
-            value=30,
-        ),
+        property_filter=Ordering(field=Property("age"), op=">=", value=30),
     )
     assert len(results) == 2
 
     # <= on age
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterComparison(
-            field="age",
-            op="<=",
-            value=25,
-        ),
+        property_filter=Ordering(field=Property("age"), op="<=", value=25),
     )
     assert len(results) == 1
 
     # In on city
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterIn(
-            field="city",
-            values=["San Francisco", "Los Angeles"],
+        property_filter=In(
+            field=Property("city"),
+            values=("San Francisco", "Los Angeles"),
         ),
     )
     assert len(results) == 2
@@ -1372,15 +1283,71 @@ async def test_search_matching_nodes_extended_filters(vector_graph_store):
     # Not
     results = await vector_graph_store.search_matching_nodes(
         collection="Person",
-        property_filter=FilterNot(
-            expr=FilterComparison(
-                field="city",
-                op="=",
-                value="New York",
-            )
-        ),
+        property_filter=Not(Equals(field=Property("city"), value="New York")),
     )
     assert len(results) == 2
+
+
+@pytest.mark.asyncio
+async def test_negation_is_the_complement(vector_graph_store):
+    """A node missing the compared property matches a negated condition."""
+    nodes = {
+        "alice": Node(
+            uid=str(uuid4()), properties={"age": 30, "city": "San Francisco"}
+        ),
+        "bob": Node(uid=str(uuid4()), properties={"age": 25, "city": "Los Angeles"}),
+        "charlie": Node(uid=str(uuid4()), properties={"city": "New York"}),
+        "david": Node(uid=str(uuid4()), properties={"age": 30, "city": "New York"}),
+        "erin": Node(uid=str(uuid4()), properties={"name": "erin"}),
+    }
+    await vector_graph_store.add_nodes(collection="Person", nodes=list(nodes.values()))
+    names = {node.uid: name for name, node in nodes.items()}
+
+    async def matching(property_filter):
+        results = await vector_graph_store.search_matching_nodes(
+            collection="Person", property_filter=property_filter
+        )
+        return {names[node.uid] for node in results}
+
+    older = Ordering(field=Property("age"), op=">", value=25)
+    in_new_york = Equals(field=Property("city"), value="New York")
+    for property_filter, admitted in [
+        (older, {"alice", "david"}),
+        (in_new_york, {"charlie", "david"}),
+        (IsNull(field=Property("age")), {"charlie", "erin"}),
+        (And((older, in_new_york)), {"david"}),
+        (Or((older, in_new_york)), {"alice", "charlie", "david"}),
+    ]:
+        assert await matching(property_filter) == admitted, property_filter
+        assert await matching(Not(property_filter)) == set(nodes) - admitted, (
+            property_filter
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_float_and_a_datetime_equal_only_themselves(vector_graph_store):
+    base = datetime(2024, 3, 1, 12, 0, 0, tzinfo=UTC)
+    readings = [
+        (score, base + timedelta(microseconds=index), str(uuid4()))
+        for index, score in enumerate([0.1, 0.30000000000000004, 0.3, 1e16 + 2.0])
+    ]
+    await vector_graph_store.add_nodes(
+        collection="Reading",
+        nodes=[
+            Node(uid=uid, properties={"score": score, "when": when})
+            for score, when, uid in readings
+        ],
+    )
+
+    for score, when, uid in readings:
+        by_score = await vector_graph_store.search_matching_nodes(
+            collection="Reading", property_filter=Equals(Property("score"), score)
+        )
+        by_when = await vector_graph_store.search_matching_nodes(
+            collection="Reading", property_filter=Equals(Property("when"), when)
+        )
+        assert [match.uid for match in by_score] == [uid]
+        assert [match.uid for match in by_when] == [uid]
 
 
 @pytest.mark.asyncio
@@ -1705,6 +1672,13 @@ async def test__create_vector_index_if_not_exists(
     updated_indexes = {record["name"] for record in records}
 
     assert len(updated_indexes) == len(existing_indexes) + 8
+
+
+def test_a_filter_on_a_system_field_is_refused():
+    with pytest.raises(ValueError, match="system field 'uid'"):
+        Neo4jVectorGraphStore._render_filter_expr(
+            "n", "filter_params", Equals(SystemField("uid"), "x")
+        )
 
 
 def test__sanitize_desanitize_name():

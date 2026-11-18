@@ -6,23 +6,15 @@ import pytest_asyncio
 from neo4j import AsyncGraphDatabase
 from testcontainers.neo4j import Neo4jContainer
 
-from memmachine_server.common.filter.filter_parser import (
-    And as FilterAnd,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Comparison as FilterComparison,
-)
-from memmachine_server.common.filter.filter_parser import (
-    In as FilterIn,
-)
-from memmachine_server.common.filter.filter_parser import (
-    IsNull as FilterIsNull,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Not as FilterNot,
-)
-from memmachine_server.common.filter.filter_parser import (
-    Or as FilterOr,
+from memmachine_server.common.filter import (
+    And,
+    Equals,
+    In,
+    IsNull,
+    Not,
+    Or,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.vector_graph_store.neo4j_vector_graph_store import (
     Neo4jVectorGraphStore,
@@ -399,11 +391,7 @@ async def test_search(declarative_memory):
     results = await declarative_memory.search(
         query="Who wrote the test?",
         max_num_episodes=10,
-        property_filter=FilterComparison(
-            field="project",
-            op="=",
-            value="memmachine",
-        ),
+        property_filter=Equals(field=Property("project"), value="memmachine"),
     )
     assert len(results) == 10
     assert _uid("episode1") in [result.uid for result in results]
@@ -412,11 +400,7 @@ async def test_search(declarative_memory):
     results = await declarative_memory.search(
         query="Who wrote the test?",
         max_num_episodes=4,
-        property_filter=FilterComparison(
-            field="length",
-            op="=",
-            value="short",
-        ),
+        property_filter=Equals(field=Property("length"), value="short"),
     )
 
     assert len(results) == 3
@@ -660,49 +644,33 @@ async def test_get_matching_episodes(declarative_memory):
     await declarative_memory.add_episodes(episodes)
 
     results = await declarative_memory.get_matching_episodes(
-        property_filter=FilterComparison(
-            field="project",
-            op="=",
-            value="memmachine",
-        ),
+        property_filter=Equals(field=Property("project"), value="memmachine"),
     )
     assert len(results) == 22
 
     results = await declarative_memory.get_matching_episodes(
-        property_filter=FilterAnd(
-            left=FilterComparison(
-                field="project",
-                op="=",
-                value="memmachine",
-            ),
-            right=FilterIsNull(
-                field="length",
-            ),
+        property_filter=And(
+            (
+                Equals(field=Property("project"), value="memmachine"),
+                IsNull(
+                    field=Property("length"),
+                ),
+            )
         ),
     )
     assert len(results) == 1
 
     results = await declarative_memory.get_matching_episodes(
-        property_filter=FilterComparison(
-            field="length",
-            op="=",
-            value="short",
-        )
+        property_filter=Equals(field=Property("length"), value="short")
     )
     assert len(results) == 2
 
     results = await declarative_memory.get_matching_episodes(
-        property_filter=FilterAnd(
-            left=FilterComparison(
-                field="project",
-                op="=",
-                value="memmachine",
-            ),
-            right=FilterComparison(
-                field="length",
-                op="=",
-                value="short",
-            ),
+        property_filter=And(
+            (
+                Equals(field=Property("project"), value="memmachine"),
+                Equals(field=Property("length"), value="short"),
+            )
         ),
     )
     assert len(results) == 1
@@ -833,6 +801,13 @@ async def test_delete_episodes(declarative_memory):
     assert all(episode not in all_episodes for episode in special_episodes)
 
 
+def test_a_filter_on_a_system_field_is_refused():
+    with pytest.raises(ValueError, match="system field 'project'"):
+        DeclarativeMemory._mangle_property_filter(
+            Equals(SystemField("project"), "memmachine")
+        )
+
+
 @requires_sentence_transformers
 def test_string_from_episode_context():
     now = datetime.now(tz=UTC)
@@ -919,11 +894,7 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
 
     # != on project: != 'memmachine' → episodes with project=other, testing
     results = await declarative_memory.get_matching_episodes(
-        property_filter=FilterComparison(
-            field="project",
-            op="!=",
-            value="memmachine",
-        ),
+        property_filter=Not(Equals(field=Property("project"), value="memmachine")),
     )
     result_uids = {r.uid for r in results}
     assert _uid("episode2") in result_uids
@@ -933,9 +904,9 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
 
     # In on project
     results = await declarative_memory.get_matching_episodes(
-        property_filter=FilterIn(
-            field="project",
-            values=["memmachine", "other"],
+        property_filter=In(
+            field=Property("project"),
+            values=("memmachine", "other"),
         ),
     )
     result_uids = {r.uid for r in results}
@@ -945,13 +916,7 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
 
     # Not: NOT length = 'short'
     results = await declarative_memory.get_matching_episodes(
-        property_filter=FilterNot(
-            expr=FilterComparison(
-                field="length",
-                op="=",
-                value="short",
-            )
-        ),
+        property_filter=Not(Equals(field=Property("length"), value="short")),
     )
     result_uids = {r.uid for r in results}
     assert _uid("episode1") not in result_uids
@@ -960,17 +925,11 @@ async def test_get_matching_episodes_extended_filters(declarative_memory):
 
     # Or: project = 'other' OR length = 'short'
     results = await declarative_memory.get_matching_episodes(
-        property_filter=FilterOr(
-            left=FilterComparison(
-                field="project",
-                op="=",
-                value="other",
-            ),
-            right=FilterComparison(
-                field="length",
-                op="=",
-                value="short",
-            ),
+        property_filter=Or(
+            (
+                Equals(field=Property("project"), value="other"),
+                Equals(field=Property("length"), value="short"),
+            )
         ),
     )
     result_uids = {r.uid for r in results}

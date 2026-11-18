@@ -8,13 +8,18 @@ import numpy as np
 import pytest
 
 from memmachine_server.common.episode_store import EpisodeStorage
-from memmachine_server.common.filter.filter_parser import parse_filter
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.semantic_memory.config_store.config_store import (
     SemanticConfigStorage,
 )
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_model import (
     SemanticCommandType,
+)
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
 )
 from server_tests.memmachine_server.semantic_memory.semantic_test_utils import (
     SpyEmbedder,
@@ -169,7 +174,9 @@ async def test_consolidation_threshold_not_reached(
     )
     features_before = await _collect_feature_set(
         semantic_storage,
-        filter_expr=parse_filter(filter_str),
+        filter_expr=parse_filter(
+            filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+        ),
     )
     count_before = len(features_before)
 
@@ -183,7 +190,9 @@ async def test_consolidation_threshold_not_reached(
     # Features should not be consolidated
     features_after = await _collect_feature_set(
         semantic_storage,
-        filter_expr=parse_filter(filter_str),
+        filter_expr=parse_filter(
+            filter_str, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+        ),
     )
 
     # Should have same or more features (no consolidation)
@@ -299,11 +308,15 @@ async def test_multiple_sets_processed_independently(
     filter_b = f"set_id IN ('user-b') AND category_name IN ('{semantic_type.name}')"
     features_a = await _collect_feature_set(
         semantic_storage,
-        filter_expr=parse_filter(filter_a),
+        filter_expr=parse_filter(
+            filter_a, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+        ),
     )
     features_b = await _collect_feature_set(
         semantic_storage,
-        filter_expr=parse_filter(filter_b),
+        filter_expr=parse_filter(
+            filter_b, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+        ),
     )
 
     await service.stop()

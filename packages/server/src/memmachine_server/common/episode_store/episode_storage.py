@@ -2,15 +2,31 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import AwareDatetime
 
+from memmachine_server.common.data_types import PropertyType
 from memmachine_server.common.episode_store.episode_model import (
     Episode,
     EpisodeEntry,
 )
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
+
+EPISODE_STORAGE_FILTER_FIELD_TYPES: dict[str, PropertyType] = {
+    "uid": str,
+    "id": str,
+    "session_key": str,
+    "session": str,
+    "producer_id": str,
+    "producer_role": str,
+    "produced_for_id": str,
+    "episode_type": str,
+    "content": str,
+    "created_at": datetime,
+}
+"""The type of each system field a filter may name on an episode storage."""
 
 
 class EpisodeStorage(ABC):

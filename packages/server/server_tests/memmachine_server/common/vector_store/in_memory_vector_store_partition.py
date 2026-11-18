@@ -2,22 +2,27 @@
 
 import math
 import operator
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
 from uuid import UUID
 
 from memmachine_server.common.data_types import (
     PropertyValue,
     SimilarityMetric,
 )
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
     IsNull,
     Not,
     Or,
+    Ordering,
+    Property,
+    SystemField,
 )
+from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.common.vector_store import (
     VectorStorePartition,
     VectorStoreSchema,
@@ -28,17 +33,16 @@ from memmachine_server.common.vector_store.data_types import (
     Record,
 )
 from memmachine_server.common.vector_store.utils import (
-    validate_declared_properties,
-    validate_supported_filter,
+    bind_filter,
+    bind_record,
+    validate_distinct_record_uuids,
 )
 
 # ---------------------------------------------------------------------------
 # Filter evaluation
 # ---------------------------------------------------------------------------
 
-_COMPARISON_OPS = {
-    "=": operator.eq,
-    "!=": operator.ne,
+_ORDERING_OPS = {
     ">": operator.gt,
     "<": operator.lt,
     ">=": operator.ge,
@@ -46,37 +50,73 @@ _COMPARISON_OPS = {
 }
 
 
-def _evaluate_comparison(prop: PropertyValue, op: str, value: PropertyValue) -> bool:
-    fn = _COMPARISON_OPS.get(op)
-    if fn is None:
-        raise ValueError(f"Unknown comparison op: {op!r}")
-    return bool(fn(prop, value))
+def _comparable(value: PropertyValue) -> PropertyValue:
+    return ensure_tz_aware(value) if isinstance(value, datetime) else value
 
 
-def evaluate_filter(expr: FilterExpr, properties: dict[str, PropertyValue]) -> bool:
-    """Evaluate a FilterExpr against a properties dict."""
+def _same_type(held: PropertyValue, value: PropertyValue) -> bool:
+    # A predicate matches only a value of the compared type, an int and a
+    # float being one numeric type; `bool` is an `int` at runtime and its own
+    # type here.
+    numbers = (int, float)
+    return type(held) is type(value) or (
+        type(held) in numbers and type(value) in numbers
+    )
+
+
+def evaluate_filter(
+    expr: FilterExpr,
+    properties: Mapping[str, PropertyValue],
+    system_fields: Mapping[str, PropertyValue] | None = None,
+) -> bool:
+    """
+    Evaluate a FilterExpr against a record's properties, by the language's semantics.
+
+    A system field compares the record's value in `system_fields`; one the
+    record does not have raises ValueError, as a store refuses a system field
+    it does not define.
+    """
     match expr:
-        case Comparison(field=field, op=op, value=value):
-            prop = properties.get(field)
-            if prop is None:
+        case Equals(field, value):
+            held = _held(field, properties, system_fields)
+            return (
+                held is not None
+                and _same_type(held, value)
+                and _comparable(held) == _comparable(value)
+            )
+        case Ordering(field, op, value):
+            held = _held(field, properties, system_fields)
+            if held is None or not _same_type(held, value):
                 return False
-            return _evaluate_comparison(prop, op, value)
-        case In(field=field, values=values):
-            return properties.get(field) in values
-        case IsNull(field=field):
-            return field not in properties
-        case And(left=left, right=right):
-            return evaluate_filter(left, properties) and evaluate_filter(
-                right, properties
+            return bool(_ORDERING_OPS[op](_comparable(held), _comparable(value)))
+        case In(field, values):
+            held = _held(field, properties, system_fields)
+            return any(
+                held is not None and _same_type(held, value) and held == value
+                for value in values
             )
-        case Or(left=left, right=right):
-            return evaluate_filter(left, properties) or evaluate_filter(
-                right, properties
-            )
-        case Not(expr=inner):
-            return not evaluate_filter(inner, properties)
-        case _:
-            raise TypeError(f"Unknown filter expression type: {type(expr)}")
+        case IsNull(field):
+            return _held(field, properties, system_fields) is None
+        case And(operands):
+            return all(evaluate_filter(o, properties, system_fields) for o in operands)
+        case Or(operands):
+            return any(evaluate_filter(o, properties, system_fields) for o in operands)
+        case Not(operand):
+            return not evaluate_filter(operand, properties, system_fields)
+
+
+def _held(
+    field: SystemField | Property,
+    properties: Mapping[str, PropertyValue],
+    system_fields: Mapping[str, PropertyValue] | None,
+) -> PropertyValue | None:
+    match field:
+        case Property(key=key):
+            return properties.get(key)
+        case SystemField(name=name):
+            if system_fields is None or name not in system_fields:
+                raise ValueError(f"No system field {name!r}")
+            return system_fields[name]
 
 
 # ---------------------------------------------------------------------------
@@ -134,11 +174,11 @@ class InMemoryVectorStorePartition(VectorStorePartition):
         self.records: dict[UUID, Record] = {}
 
     async def upsert(self, *, records: Iterable[Record]) -> None:
-        records = list(records)
-        for record in records:
-            validate_declared_properties(
-                record.properties, self._store_schema.indexed_properties
-            )
+        records = [
+            bind_record(record, self._store_schema.indexed_properties)
+            for record in records
+        ]
+        validate_distinct_record_uuids(record.uuid for record in records)
         for record in records:
             self.records[record.uuid] = Record(
                 uuid=record.uuid,
@@ -155,7 +195,7 @@ class InMemoryVectorStorePartition(VectorStorePartition):
         property_filter: FilterExpr | None = None,
     ) -> list[QueryResult]:
         if property_filter is not None:
-            validate_supported_filter(
+            property_filter = bind_filter(
                 property_filter, self._store_schema.indexed_properties
             )
 

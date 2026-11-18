@@ -6,9 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-)
+from memmachine_server.common.filter import FilterExpr
 
 from .data_types import (
     QueryResult,
@@ -38,8 +36,15 @@ class VectorStorePartition(ABC):
     A partition stores the properties its store's schema declares, typed
     and indexed for filtering during a search, and no others: a record or a
     filter naming an undeclared key is rejected, so an undeclared key never
-    exists in the store, neither stored write-only nor scanned for. Every
-    store evaluates the whole filter language during a search.
+    exists in the store, neither stored write-only nor scanned for. A
+    record's or a filter's value of another type than its key declares is
+    rejected too, so a backend compares a stored value only with a value of
+    its type; a record's or a filter's int for a float key is the float it
+    equals. Every store evaluates the whole filter language during a search.
+
+    A store keeps a datetime property's instant, taking a naive datetime as
+    UTC, and may drop its UTC offset. A filter compares datetime values by
+    their instant, for equality and ordering alike.
     """
 
     @abstractmethod
@@ -61,13 +66,17 @@ class VectorStorePartition(ABC):
 
         Raises:
             PropertyTypeMismatchError:
-                If a record's value is not of its key's declared type;
-                raised before anything is sent.
+                If a record's value is not of its key's declared type, an
+                int counting as a float, or is a float that is not finite
+                or an int outside 64 signed bits; raised before anything is
+                sent. An int for a float key is written as the float it
+                equals.
             UndeclaredPropertyKeyError:
                 If a record carries a key the store has not declared;
                 raised before anything is sent.
             ValueError:
-                If a record's vector does not have the store's dimensions.
+                If two records share a UUID, or a record's vector does not
+                have the store's dimensions; raised before anything is sent.
         """
         raise NotImplementedError
 
@@ -97,8 +106,10 @@ class VectorStorePartition(ABC):
                 similarity metric; a match scoring exactly the threshold is
                 returned (default: None).
             property_filter (FilterExpr | None):
-                Filter expression tree over declared keys, evaluated during
-                the search.
+                Filter expression tree over declared properties, each
+                compared with values of its key's declared type, evaluated
+                during the search; an int for a float key is the float it
+                equals. The filter is checked before anything is sent.
                 If None, no property filtering is applied
                 (default: None).
 
@@ -108,12 +119,19 @@ class VectorStorePartition(ABC):
                 ordered as in the input iterable.
 
         Raises:
+            PropertyTypeMismatchError:
+                If a filter value, or any value of a membership test, is not
+                of its key's declared type, an int counting as a float, or
+                is a float that is not finite or an int outside 64 signed
+                bits.
             UndeclaredPropertyKeyError:
                 If the filter names a key the store has not declared.
             ValueError:
                 If the limit is not positive, a query vector does not have
                 the store's dimensions or has a coordinate that is not
-                finite, or the score threshold is not finite.
+                finite, the score threshold is not finite, or the filter
+                names a system field or holds a membership test on a float
+                or datetime key.
         """
         raise NotImplementedError
 

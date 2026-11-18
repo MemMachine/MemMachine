@@ -10,7 +10,10 @@ from sqlalchemy import insert
 from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.filter.filter_parser import parse_filter
 from memmachine_server.common.vector_store import Record, VectorStoreSchema
-from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+    SemanticStorage,
+)
 from memmachine_server.semantic_memory.storage.vector_store_semantic_storage import (
     VectorSemanticFeature,
     VectorStoreSemanticStorage,
@@ -146,7 +149,10 @@ async def test_vector_search_returns_relational_features_in_similarity_order(
         results = [
             feature
             async for feature in storage.get_feature_set(
-                filter_expr=parse_filter("set_id IN (user)"),
+                filter_expr=parse_filter(
+                    "set_id IN (user)",
+                    system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+                ),
                 vector_search_opts=SemanticStorage.VectorSearchOpts(
                     query_embedding=np.array([0.9, 0.1], dtype=float),
                 ),
@@ -294,12 +300,19 @@ async def test_delete_feature_set_keeps_rows_when_vector_delete_fails(
         monkeypatch.setattr(vector_store_partition, "delete", unreachable)
         with pytest.raises(ConnectionError):
             await storage.delete_feature_set(
-                filter_expr=parse_filter("set_id IN (user)")
+                filter_expr=parse_filter(
+                    "set_id IN (user)",
+                    system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+                )
             )
         assert await storage.get_feature(feature_id) is not None
 
         monkeypatch.setattr(vector_store_partition, "delete", delete_vectors)
-        await storage.delete_feature_set(filter_expr=parse_filter("set_id IN (user)"))
+        await storage.delete_feature_set(
+            filter_expr=parse_filter(
+                "set_id IN (user)", system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+        )
         assert await storage.get_feature(feature_id) is None
         assert record_uuid not in vector_store_partition.records
     finally:
@@ -347,7 +360,10 @@ async def test_delete_feature_set_keeps_a_late_row_when_its_vector_delete_fails(
         monkeypatch.setattr(vector_store_partition, "delete", add_late_row_then_fail)
         with pytest.raises(ConnectionError):
             await storage.delete_feature_set(
-                filter_expr=parse_filter("set_id IN (user)")
+                filter_expr=parse_filter(
+                    "set_id IN (user)",
+                    system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+                )
             )
         assert await storage.get_feature(first_id) is None
         assert await storage.get_feature(late_ids[0]) is not None
@@ -355,7 +371,11 @@ async def test_delete_feature_set_keeps_a_late_row_when_its_vector_delete_fails(
         assert late_uuid in vector_store_partition.records
 
         monkeypatch.setattr(vector_store_partition, "delete", delete_vectors)
-        await storage.delete_feature_set(filter_expr=parse_filter("set_id IN (user)"))
+        await storage.delete_feature_set(
+            filter_expr=parse_filter(
+                "set_id IN (user)", system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES
+            )
+        )
         assert await storage.get_feature(late_ids[0]) is None
         assert late_uuid not in vector_store_partition.records
     finally:
@@ -395,7 +415,10 @@ async def test_delete_feature_set_deletes_a_row_that_stops_matching_with_its_vec
 
         monkeypatch.setattr(vector_store_partition, "delete", rename_then_delete)
         await storage.delete_feature_set(
-            filter_expr=parse_filter("category IN (default)")
+            filter_expr=parse_filter(
+                "category IN (default)",
+                system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+            )
         )
 
         assert await storage.get_feature(feature_id) is None
@@ -443,7 +466,10 @@ async def test_deleting_more_features_than_sqlite_binds_removes_every_vector_rec
             await storage.delete_all()
         else:
             await storage.delete_feature_set(
-                filter_expr=parse_filter("set_id IN (user)")
+                filter_expr=parse_filter(
+                    "set_id IN (user)",
+                    system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+                )
             )
 
         assert vector_store_partition.records == {}

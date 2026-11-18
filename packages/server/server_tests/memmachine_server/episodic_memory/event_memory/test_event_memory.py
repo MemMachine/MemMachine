@@ -10,20 +10,29 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 
-from memmachine_server.common.data_types import PropertyValue, SimilarityMetric
+from memmachine_server.common.data_types import (
+    PropertyType,
+    PropertyValue,
+    SimilarityMetric,
+)
 from memmachine_server.common.embedder import Embedder
-from memmachine_server.common.filter.filter_parser import (
+from memmachine_server.common.filter import (
     And,
-    Comparison,
+    Equals,
     FilterExpr,
     In,
     IsNull,
     Not,
     Or,
-    map_filter_fields,
+    Ordering,
+    Property,
+    SystemField,
 )
 from memmachine_server.common.property_keys import reserved_property_key
-from memmachine_server.common.vector_store import VectorStoreSchema
+from memmachine_server.common.vector_store import (
+    PropertyTypeMismatchError,
+    VectorStoreSchema,
+)
 from memmachine_server.common.vector_store.data_types import (
     Record,
 )
@@ -350,6 +359,70 @@ class TestEncodeEvents:
         # One segment, but multiple derivatives (one per sentence).
         assert len(fake_segment_store_partition.segments) == 1
         assert len(fake_vector_store_partition.records) > 1
+
+    async def test_a_declared_property_is_bound_before_any_write(
+        self,
+        fake_embedder: FakeEmbedder,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        """Both stores hold an int written to a float key as the float it equals."""
+        event_memory_partition, vector_store_partition = await _partition_declaring(
+            fake_embedder, fake_segment_store_partition, score=float
+        )
+
+        await event_memory_partition.encode_events(
+            [_make_event("thing", properties={"score": 3, "note": 1})]
+        )
+
+        [segment] = fake_segment_store_partition.segments.values()
+        [record] = vector_store_partition.records.values()
+        assert type(segment.properties["score"]) is float
+        assert segment.properties["score"] == 3.0
+        assert type(segment.properties["note"]) is int
+        assert type(_record_properties(record)["score"]) is float
+
+    async def test_a_declared_property_of_another_type_raises_before_any_write(
+        self,
+        fake_embedder: FakeEmbedder,
+        fake_segment_store_partition: InMemorySegmentStorePartition,
+    ):
+        event_memory_partition, vector_store_partition = await _partition_declaring(
+            fake_embedder, fake_segment_store_partition, score=float
+        )
+
+        with pytest.raises(PropertyTypeMismatchError, match="score"):
+            await event_memory_partition.encode_events(
+                [_make_event("thing", properties={"score": "high"})]
+            )
+
+        assert fake_segment_store_partition.segments == {}
+        assert vector_store_partition.records == {}
+
+
+async def _partition_declaring(
+    embedder: FakeEmbedder,
+    segment_store_partition: InMemorySegmentStorePartition,
+    **declared: PropertyType,
+) -> tuple[EventMemoryPartition, InMemoryVectorStorePartition]:
+    """A partition whose vector store declares `declared` too, and its vector store partition."""
+    store_schema = VectorStoreSchema(
+        vector_dimensions=embedder.dimensions,
+        similarity_metric=embedder.similarity_metric,
+        indexed_properties={
+            **EventMemory.expected_vector_store_indexed_properties(),
+            **declared,
+        },
+    )
+    vector_store_partition = InMemoryVectorStorePartition(store_schema=store_schema)
+    event_memory_partition = await open_event_memory_partition(
+        segment_store_partition=segment_store_partition,
+        vector_store_partition=vector_store_partition,
+        store_schema=store_schema,
+        segmenter=TextSegmenter(),
+        deriver=WholeTextDeriver(),
+        embedder=embedder,
+    )
+    return event_memory_partition, vector_store_partition
 
 
 # ===================================================================
@@ -812,12 +885,14 @@ class TestQueryWithFilter:
         result = await event_memory_partition.query(
             "thing",
             property_filter=And(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="m.episode_uid", op="=", value="e1"),
+                (
+                    Equals(field=Property("color"), value="red"),
+                    Equals(field=Property("episode_uid"), value="e1"),
+                )
             ),
         )
 
-        assert seen == [Comparison(field="episode_uid", op="=", value="e1")]
+        assert seen == [Equals(field=Property("episode_uid"), value="e1")]
         all_texts = {
             seg.block.text
             for scored in result.scored_segment_contexts
@@ -843,10 +918,18 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Comparison(field="timestamp", op=">=", value=_ts(5)),
+            property_filter=Ordering(
+                field=SystemField("timestamp"), op=">=", value=_ts(5)
+            ),
         )
 
-        assert seen == [Comparison(field=EVENT_TIMESTAMP_KEY, op=">=", value=_ts(5))]
+        assert seen == [
+            Ordering(
+                field=Property(EVENT_TIMESTAMP_KEY, datetime.datetime),
+                op=">=",
+                value=_ts(5),
+            )
+        ]
         all_texts = {
             seg.block.text
             for scored in result.scored_segment_contexts
@@ -870,8 +953,10 @@ class TestQueryWithFilter:
         await event_memory_partition.query(
             "thing",
             property_filter=Or(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="m.episode_uid", op="=", value="e1"),
+                (
+                    Equals(field=Property("color"), value="red"),
+                    Equals(field=Property("episode_uid"), value="e1"),
+                )
             ),
         )
 
@@ -882,36 +967,48 @@ class TestQueryWithFilter:
         [
             pytest.param(
                 Or(
-                    left=And(
-                        left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
-                    ),
-                    right=And(
-                        left=Comparison(field="m.color", op="=", value="blue"),
-                        right=Comparison(field="m.episode_uid", op="=", value="e2"),
-                    ),
+                    (
+                        And(
+                            (
+                                Equals(field=Property("color"), value="red"),
+                                Equals(field=Property("episode_uid"), value="e1"),
+                            )
+                        ),
+                        And(
+                            (
+                                Equals(field=Property("color"), value="blue"),
+                                Equals(field=Property("episode_uid"), value="e2"),
+                            )
+                        ),
+                    )
                 ),
                 Or(
-                    left=Comparison(field="episode_uid", op="=", value="e1"),
-                    right=Comparison(field="episode_uid", op="=", value="e2"),
+                    (
+                        Equals(field=Property("episode_uid"), value="e1"),
+                        Equals(field=Property("episode_uid"), value="e2"),
+                    )
                 ),
                 id="each arm of an or",
             ),
             pytest.param(
                 Not(
-                    expr=Or(
-                        left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
+                    Or(
+                        (
+                            Equals(field=Property("color"), value="red"),
+                            Equals(field=Property("episode_uid"), value="e1"),
+                        )
                     )
                 ),
-                Not(expr=Comparison(field="episode_uid", op="=", value="e1")),
+                Not(Equals(field=Property("episode_uid"), value="e1")),
                 id="a negated or",
             ),
             pytest.param(
                 Not(
-                    expr=And(
-                        left=Comparison(field="m.color", op="=", value="red"),
-                        right=Comparison(field="m.episode_uid", op="=", value="e1"),
+                    And(
+                        (
+                            Equals(field=Property("color"), value="red"),
+                            Equals(field=Property("episode_uid"), value="e1"),
+                        )
                     )
                 ),
                 None,
@@ -919,14 +1016,14 @@ class TestQueryWithFilter:
             ),
             pytest.param(
                 Not(
-                    expr=Or(
-                        left=Comparison(field="m.color", op="=", value="red"),
-                        right=Not(
-                            expr=Comparison(field="m.episode_uid", op="=", value="e1")
-                        ),
+                    Or(
+                        (
+                            Equals(field=Property("color"), value="red"),
+                            Not(Equals(field=Property("episode_uid"), value="e1")),
+                        )
                     )
                 ),
-                Not(expr=Not(expr=Comparison(field="episode_uid", op="=", value="e1"))),
+                Not(Not(Equals(field=Property("episode_uid"), value="e1"))),
                 id="a negation under a negated or",
             ),
         ],
@@ -955,7 +1052,7 @@ class TestQueryWithFilter:
         fake_segment_store_partition: InMemorySegmentStorePartition,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """A user key the partition declares is on the record, and its condition reaches the search under its bare name."""
+        """A user key the partition declares is on the record, and its condition reaches the search unchanged."""
         store_schema = VectorStoreSchema(
             vector_dimensions=fake_embedder.dimensions,
             similarity_metric=fake_embedder.similarity_metric,
@@ -981,15 +1078,17 @@ class TestQueryWithFilter:
         await event_memory_partition.query(
             "thing",
             property_filter=And(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="m.size", op="=", value=1),
+                (
+                    Equals(field=Property("color"), value="red"),
+                    Equals(field=Property("size"), value=1),
+                )
             ),
         )
 
         record = next(iter(vector_store_partition.records.values()))
         assert _record_properties(record)["color"] == "red"
         assert "size" not in _record_properties(record)
-        assert seen == [Comparison(field="color", op="=", value="red")]
+        assert seen == [Equals(field=Property("color"), value="red")]
 
     async def test_a_seed_the_filter_rejects_is_left_out_though_its_context_matches(
         self,
@@ -1009,7 +1108,7 @@ class TestQueryWithFilter:
             "thing",
             vector_search_limit=2,
             expand_context=1,
-            property_filter=Comparison(field="m.color", op="=", value="red"),
+            property_filter=Equals(field=Property("color"), value="red"),
         )
 
         seed_blocks = [
@@ -1026,7 +1125,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Comparison(field="m.color", op="=", value="red"),
+            property_filter=Equals(field=Property("color"), value="red"),
         )
         all_texts = {
             seg.block.text
@@ -1047,7 +1146,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Comparison(field="m.color", op="!=", value="red"),
+            property_filter=Not(Equals(field=Property("color"), value="red")),
         )
         all_texts = {
             seg.block.text
@@ -1067,7 +1166,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=In(field="m.color", values=["red", "green"]),
+            property_filter=In(field=Property("color"), values=("red", "green")),
         )
         all_texts = {
             seg.block.text
@@ -1087,7 +1186,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=IsNull(field="m.color"),
+            property_filter=IsNull(field=Property("color")),
         )
         all_texts = {
             seg.block.text
@@ -1107,8 +1206,10 @@ class TestQueryWithFilter:
         result = await event_memory_partition.query(
             "thing",
             property_filter=And(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Not(expr=IsNull(field="m.color")),
+                (
+                    Equals(field=Property("color"), value="red"),
+                    Not(IsNull(field=Property("color"))),
+                )
             ),
         )
         all_texts = {
@@ -1130,8 +1231,10 @@ class TestQueryWithFilter:
         result = await event_memory_partition.query(
             "thing",
             property_filter=Or(
-                left=Comparison(field="m.color", op="=", value="red"),
-                right=Comparison(field="m.color", op="=", value="blue"),
+                (
+                    Equals(field=Property("color"), value="red"),
+                    Equals(field=Property("color"), value="blue"),
+                )
             ),
         )
         all_texts = {
@@ -1152,7 +1255,7 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Not(expr=Comparison(field="m.color", op="=", value="red")),
+            property_filter=Not(Equals(field=Property("color"), value="red")),
         )
         all_texts = {
             seg.block.text
@@ -1172,17 +1275,67 @@ class TestQueryWithFilter:
 
         result = await event_memory_partition.query(
             "thing",
-            property_filter=Comparison(field="m.color", op="=", value="purple"),
+            property_filter=Equals(field=Property("color"), value="purple"),
         )
         assert result.scored_segment_contexts == []
+
+    async def test_a_system_field_other_than_the_timestamp_raises_before_the_query_is_embedded(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_embedder: FakeEmbedder,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        event = _make_event("hi", context=ProducerContext(producer="Alice"))
+        await event_memory_partition.encode_events([event])
+        embedded: list[Any] = []
+
+        async def spy(queries: list[Any], max_attempts: int = 1) -> list[list[float]]:
+            embedded.append(queries)
+            return []
+
+        monkeypatch.setattr(fake_embedder, "search_embed", spy)
+
+        with pytest.raises(ValueError, match=r"system field 'context\.producer'"):
+            await event_memory_partition.query(
+                "hi",
+                property_filter=Or(
+                    (
+                        Equals(Property("color"), "red"),
+                        Equals(SystemField("context.producer"), "Alice"),
+                    )
+                ),
+            )
+        assert embedded == []
+
+    async def test_a_typed_property_reaches_the_vector_store(
+        self,
+        event_memory_partition: EventMemoryPartition,
+        fake_vector_store_partition: InMemoryVectorStorePartition,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A declared key's condition reaches the search whatever type its reference carries."""
+        seen = _record_query_filters(fake_vector_store_partition, monkeypatch)
+        await event_memory_partition.encode_events(
+            [
+                _make_event("red thing", properties={"episode_uid": "e1"}),
+                _make_event("blue thing", properties={"episode_uid": "e2"}),
+            ]
+        )
+
+        texts = await _query_texts(
+            event_memory_partition, Equals(Property("episode_uid", str), "e1"), limit=10
+        )
+
+        assert seen == [Equals(Property("episode_uid", str), "e1")]
+        assert texts == {"red thing"}
 
 
 # ===================================================================
 # Queries with and without the vector store's part of the filter
 # ===================================================================
 
-_FIELDS_ON_THE_RECORD = ("m.d1", "m.d2", "m.d3")
-_FIELDS_ON_THE_SEGMENT_ONLY = ("m.u1", "m.u2")
+_KEYS_ON_THE_RECORD = ("d1", "d2", "d3")
+_KEYS_ON_THE_SEGMENT_ONLY = ("u1", "u2")
 
 
 @pytest_asyncio.fixture
@@ -1264,9 +1417,9 @@ class TestQueryWithAndWithoutThePart:
         properties_by_text = await _encode_random_events(
             declaring_event_memory_partition, rng, 24
         )
-        fields = (*_FIELDS_ON_THE_RECORD, *_FIELDS_ON_THE_SEGMENT_ONLY)
+        keys = (*_KEYS_ON_THE_RECORD, *_KEYS_ON_THE_SEGMENT_ONLY)
         for _ in range(300):
-            property_filter = random_filter(rng, fields, depth=4)
+            property_filter = random_filter(rng, keys, depth=4)
             with_part = await _query_texts(
                 declaring_event_memory_partition, property_filter, limit=24
             )
@@ -1275,13 +1428,10 @@ class TestQueryWithAndWithoutThePart:
                 without_part = await _query_texts(
                     declaring_event_memory_partition, property_filter, limit=24
                 )
-            segment_filter = map_filter_fields(
-                property_filter, InMemorySegmentStorePartition._normalize_segment_field
-            )
             expected = {
                 text
                 for text, properties in properties_by_text.items()
-                if evaluate_filter(segment_filter, properties)
+                if evaluate_filter(property_filter, properties)
             }
             assert with_part == without_part == expected, property_filter
 
@@ -1292,9 +1442,9 @@ class TestQueryWithAndWithoutThePart:
     ):
         rng = random.Random(1706)
         await _encode_random_events(declaring_event_memory_partition, rng, 24)
-        fields = (*_FIELDS_ON_THE_RECORD, *_FIELDS_ON_THE_SEGMENT_ONLY)
+        keys = (*_KEYS_ON_THE_RECORD, *_KEYS_ON_THE_SEGMENT_ONLY)
         for _ in range(300):
-            property_filter = random_filter(rng, fields, depth=4)
+            property_filter = random_filter(rng, keys, depth=4)
             with_part = await _query_texts(
                 declaring_event_memory_partition, property_filter, limit=4
             )
@@ -1373,19 +1523,19 @@ class TestQueryWithAConditionOnAnUndeclaredField:
 
         on_the_segment_only = await _query_texts(
             event_memory_partition,
-            Comparison(field="m.color", op="=", value="red"),
+            Equals(field=Property("color"), value="red"),
             limit=3,
             query="blue thing",
         )
         on_the_segment_only_with_every_seed = await _query_texts(
             event_memory_partition,
-            Comparison(field="m.color", op="=", value="red"),
+            Equals(field=Property("color"), value="red"),
             limit=11,
             query="blue thing",
         )
         on_the_record = await _query_texts(
             event_memory_partition,
-            Comparison(field="m.episode_uid", op="=", value="red"),
+            Equals(field=Property("episode_uid"), value="red"),
             limit=3,
             query="blue thing",
         )

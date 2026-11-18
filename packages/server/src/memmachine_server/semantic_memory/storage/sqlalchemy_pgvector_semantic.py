@@ -40,11 +40,7 @@ from sqlalchemy.orm import (
 from sqlalchemy.sql import Delete, Select, func
 
 from memmachine_server.common.errors import InvalidArgumentError, ResourceNotFoundError
-from memmachine_server.common.filter.filter_parser import (
-    FilterExpr,
-    demangle_user_metadata_key,
-    normalize_filter_field,
-)
+from memmachine_server.common.filter import FilterExpr, Property, SystemField
 from memmachine_server.common.filter.sql_filter_util import (
     FieldEncoding,
     compile_sql_filter,
@@ -52,6 +48,7 @@ from memmachine_server.common.filter.sql_filter_util import (
 from memmachine_server.common.utils import ensure_tz_aware
 from memmachine_server.semantic_memory.semantic_model import SemanticFeature, SetIdT
 from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
     FeatureIdT,
     SemanticStorage,
 )
@@ -192,6 +189,16 @@ async def apply_alembic_migrations(engine: AsyncEngine) -> None:
             command.upgrade(config, "head")
 
         await conn.run_sync(run_migrations)
+
+
+# The column of each system field not held under its own name.
+_SYSTEM_FIELD_ALIASES: dict[str, str] = {
+    "set": "set_id",
+    "category_name": "semantic_category_id",
+    "category": "semantic_category_id",
+    "tag": "tag_id",
+    "feature_name": "feature",
+}
 
 
 class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
@@ -691,37 +698,24 @@ class SqlAlchemyPgVectorSemanticStorage(SemanticStorage):
 
     def _resolve_feature_field_default(
         self,
-        field: str,
+        field: SystemField | Property,
     ) -> tuple[ColumnElement, FieldEncoding]:
         return self._resolve_feature_field(Feature, field)
 
     @staticmethod
     def _resolve_feature_field(
         table: type[Feature],
-        field: str,
+        field: SystemField | Property,
     ) -> tuple[ColumnElement, FieldEncoding]:
-        internal_name, is_user_property = normalize_filter_field(field)
-        if is_user_property:
-            key = demangle_user_metadata_key(internal_name)
-            return table.json_metadata[key], "json"
-
-        field_mapping: dict[str, ColumnElement] = {
-            "set_id": table.set_id.expression,
-            "set": table.set_id.expression,
-            "semantic_category_id": table.semantic_category_id.expression,
-            "category_name": table.semantic_category_id.expression,
-            "category": table.semantic_category_id.expression,
-            "tag_id": table.tag_id.expression,
-            "tag": table.tag_id.expression,
-            "feature": table.feature.expression,
-            "feature_name": table.feature.expression,
-            "value": table.value.expression,
-            "created_at": table.created_at.expression,
-            "updated_at": table.updated_at.expression,
-        }
-        if internal_name in field_mapping:
-            return field_mapping[internal_name], "column"
-        raise ValueError(f"Unknown filter field: {field!r}")
+        match field:
+            case Property(key=key):
+                return table.json_metadata[key], "json"
+            case SystemField(name=name):
+                if name not in SEMANTIC_STORAGE_FILTER_FIELD_TYPES:
+                    raise ValueError(f"Unknown filter field: {name!r}")
+                return table.__table__.c[
+                    _SYSTEM_FIELD_ALIASES.get(name, name)
+                ], "column"
 
     async def _load_feature_citations(
         self,

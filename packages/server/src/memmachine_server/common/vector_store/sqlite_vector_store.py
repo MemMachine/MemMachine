@@ -46,7 +46,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from memmachine_server.common.data_types import (
     SimilarityMetric,
 )
-from memmachine_server.common.filter.filter_parser import FilterExpr
+from memmachine_server.common.filter import FilterExpr
 from memmachine_server.common.sql import validate_engine_connections, write_session
 
 from .data_types import (
@@ -67,13 +67,14 @@ from .sqlite_properties import (
 )
 from .utils import (
     _PARTITION_KEY_MAX_BYTES,
-    validate_declared_properties,
+    bind_filter,
+    bind_record,
     validate_dimensions,
+    validate_distinct_record_uuids,
     validate_limit,
     validate_partition_key,
     validate_query_vector,
     validate_score_threshold,
-    validate_supported_filter,
 )
 from .vector_search_engine import VectorSearchEngine
 from .vector_store import VectorStore, VectorStoreParams, VectorStorePartition
@@ -302,12 +303,13 @@ class SQLiteVectorStorePartition(VectorStorePartition):
 
     @override
     async def upsert(self, *, records: Iterable[Record]) -> None:
-        records = list(records)
+        records = [
+            bind_record(record, self._store_schema.indexed_properties)
+            for record in records
+        ]
         for record in records:
-            validate_declared_properties(
-                record.properties, self._store_schema.indexed_properties
-            )
             validate_dimensions(record.vector, self._store_schema.vector_dimensions)
+        validate_distinct_record_uuids(record.uuid for record in records)
 
         async with write_session(self._create_session) as session:
             await self._require_current(session)
@@ -415,7 +417,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
         validate_score_threshold(score_threshold)
 
         if property_filter is not None:
-            validate_supported_filter(
+            property_filter = bind_filter(
                 property_filter, self._store_schema.indexed_properties
             )
 
@@ -459,9 +461,7 @@ class SQLiteVectorStorePartition(VectorStorePartition):
             sync_sqlalchemy_engine=self._sync_sqlalchemy_engine,
             records_table=self._records_table,
             filter_expression=compile_property_filter(
-                property_filter,
-                self._records_table,
-                self._store_schema.indexed_properties,
+                property_filter, self._records_table
             ),
         )
 

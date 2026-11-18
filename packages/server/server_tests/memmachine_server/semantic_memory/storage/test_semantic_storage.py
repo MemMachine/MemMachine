@@ -13,12 +13,23 @@ from memmachine_server.common.episode_store import (
     EpisodeStorage,
 )
 from memmachine_server.common.errors import InvalidArgumentError
-from memmachine_server.common.filter.filter_parser import FilterExpr, parse_filter
+from memmachine_server.common.filter import (
+    FilterExpr,
+    IsNull,
+    Not,
+    SystemField,
+)
+from memmachine_server.common.filter.filter_parser import (
+    parse_filter,
+)
 from memmachine_server.semantic_memory.semantic_model import FeatureIdT, SemanticFeature
 from memmachine_server.semantic_memory.storage.neo4j_semantic_storage import (
     Neo4jSemanticStorage,
 )
-from memmachine_server.semantic_memory.storage.storage_base import SemanticStorage
+from memmachine_server.semantic_memory.storage.storage_base import (
+    SEMANTIC_STORAGE_FILTER_FIELD_TYPES,
+    SemanticStorage,
+)
 
 
 def _uid(label: str) -> UUID:
@@ -26,7 +37,11 @@ def _uid(label: str) -> UUID:
 
 
 def _expr(spec: str | None) -> FilterExpr | None:
-    return parse_filter(spec) if spec else None
+    return (
+        parse_filter(spec, system_fields=SEMANTIC_STORAGE_FILTER_FIELD_TYPES)
+        if spec
+        else None
+    )
 
 
 async def _collect(iterator):
@@ -217,36 +232,6 @@ async def test_multiple_features(
     assert len(test_user_profile) == 2
     for i in range(len(test_user_profile)):
         assert test_user_profile[i].value == expected_test_user_profile[i]["value"]
-
-
-@pytest.mark.asyncio
-async def test_feature_value_comparison_filters(semantic_storage: SemanticStorage):
-    feature_ids: list[FeatureIdT] = [
-        await semantic_storage.add_feature(
-            set_id="cmp-user",
-            category_name="default",
-            feature="rank",
-            value=str(idx),
-            tag="numeric",
-            embedding=np.array([float(idx)], dtype=float),
-        )
-        for idx in range(1, 4)
-    ]
-
-    try:
-        greater_than_one = await _collect_feature_set(
-            semantic_storage,
-            filter_expr=_expr("value > '1'"),
-        )
-        assert {f.value for f in greater_than_one} == {"2", "3"}
-
-        up_to_two = await _collect_feature_set(
-            semantic_storage,
-            filter_expr=_expr("value <= '2'"),
-        )
-        assert {f.value for f in up_to_two} == {"1", "2"}
-    finally:
-        await semantic_storage.delete_features(feature_ids)
 
 
 @pytest.mark.asyncio
@@ -875,6 +860,79 @@ async def test_filter_by_metadata_nullity(semantic_storage: SemanticStorage):
         filter_expr=_expr("metadata.details IS NOT NULL"),
     )
     assert [feature.value for feature in not_null_results] == ["first"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", list(SEMANTIC_STORAGE_FILTER_FIELD_TYPES))
+async def test_a_filter_resolves_every_system_field(
+    semantic_storage: SemanticStorage, name: str
+):
+    if isinstance(semantic_storage, Neo4jSemanticStorage):
+        pytest.skip("Neo4j holds some system field names under no node property")
+    await semantic_storage.add_feature(
+        set_id="user",
+        category_name="default",
+        feature="note",
+        value="first",
+        tag="misc",
+        embedding=np.array([1.0], dtype=float),
+    )
+
+    features = await _collect_feature_set(
+        semantic_storage, filter_expr=Not(IsNull(SystemField(name)))
+    )
+    assert [feature.value for feature in features] == ["first"]
+
+
+@pytest.mark.asyncio
+async def test_metadata_numbers_compare_by_value(semantic_storage: SemanticStorage):
+    embed = np.array([1.0], dtype=float)
+    for value, number in (("three", 3), ("three and a half", 3.5), ("big", 2**53 + 1)):
+        await semantic_storage.add_feature(
+            set_id="user",
+            category_name="default",
+            feature="note",
+            value=value,
+            tag="misc",
+            metadata={"n": number},
+            embedding=embed,
+        )
+
+    async def values(spec: str) -> set[str]:
+        features = await _collect_feature_set(semantic_storage, filter_expr=_expr(spec))
+        return {feature.value for feature in features}
+
+    assert await values("m.n = 3.0") == {"three"}
+    assert await values("m.n = 3.5") == {"three and a half"}
+    assert await values("m.n > 3") == {"three and a half", "big"}
+    assert await values("m.n IN (3)") == {"three"}
+    assert await values("m.n > 9007199254740992.0") == {"big"}
+
+
+@pytest.mark.asyncio
+async def test_a_negation_is_the_complement(semantic_storage: SemanticStorage):
+    """A feature missing the compared metadata key matches a negated condition."""
+    embed = np.array([1.0], dtype=float)
+    for value, metadata in (("three", {"n": 3}), ("four", {"n": 4}), ("none", None)):
+        await semantic_storage.add_feature(
+            set_id="user",
+            category_name="default",
+            feature="note",
+            value=value,
+            tag="misc",
+            metadata=metadata,
+            embedding=embed,
+        )
+
+    async def values(spec: str) -> set[str]:
+        features = await _collect_feature_set(semantic_storage, filter_expr=_expr(spec))
+        return {feature.value for feature in features}
+
+    assert await values("m.n = 3") == {"three"}
+    assert await values("NOT m.n = 3") == {"four", "none"}
+    assert await values("m.n != 3") == {"four", "none"}
+    assert await values("NOT (m.n > 3 AND m.n < 10)") == {"three", "none"}
+    assert await values("NOT m.n IN (3, 4)") == {"none"}
 
 
 @pytest.mark.asyncio
@@ -1539,30 +1597,6 @@ async def test_filter_not_equal(semantic_storage: SemanticStorage):
         results = await _collect_feature_set(
             semantic_storage,
             filter_expr=_expr("value != '1'"),
-        )
-        assert {f.value for f in results} == {"2", "3"}
-    finally:
-        await semantic_storage.delete_features(feature_ids)
-
-
-@pytest.mark.asyncio
-async def test_filter_greater_equal(semantic_storage: SemanticStorage):
-    feature_ids: list[FeatureIdT] = [
-        await semantic_storage.add_feature(
-            set_id="ge-user",
-            category_name="default",
-            feature="rank",
-            value=str(idx),
-            tag="numeric",
-            embedding=np.array([float(idx)], dtype=float),
-        )
-        for idx in range(1, 4)
-    ]
-
-    try:
-        results = await _collect_feature_set(
-            semantic_storage,
-            filter_expr=_expr("value >= '2'"),
         )
         assert {f.value for f in results} == {"2", "3"}
     finally:
