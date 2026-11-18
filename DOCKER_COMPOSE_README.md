@@ -18,7 +18,7 @@ which vector store container starts. Exactly one runs:
 
 | `COMPOSE_PROFILES` | Long-term memory backend | Store started |
 |---|---|---|
-| `event` (default) | event memory (`vector_store` + `segment_store`) | Qdrant |
+| `event` (default) | event memory (`vector_store` + `event_memory_store`) | Qdrant |
 | `declarative` | declarative memory (`vector_graph_store`) | Neo4j |
 
 The choice must match `episodic_memory.long_term_memory` in `configuration.yml`.
@@ -153,7 +153,7 @@ docker-compose down -v
 
 ## Services
 
-- **PostgreSQL** (port 5432): Episodes, sessions, and semantic memory with pgvector; also the segment store for the `event` backend
+- **PostgreSQL** (port 5432): Episodes, sessions, and semantic memory with pgvector; also the event memory store for the `event` backend
 - **Qdrant** (ports 6333 REST, 6334 gRPC; `event` profile): Vector store for event long-term memory
 - **Neo4j** (ports 7474, 7687; `declarative` profile): Vector graph store for declarative long-term memory
 - **MemMachine** (port 8080): Main API server (uses pre-built `memmachine/memmachine` image)
