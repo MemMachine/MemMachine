@@ -92,12 +92,12 @@ class LongTermMemoryConfigResponse(BaseModel):
             description="VectorStore resource id (event backend only)",
         ),
     ]
-    segment_store: Annotated[
+    event_memory_store: Annotated[
         str | None,
         Field(
             default=None,
             description=(
-                "SQL engine resource id backing the segment store (event backend only)"
+                "SQL engine resource id backing the event memory store (event backend only)"
             ),
         ),
     ]
@@ -439,12 +439,12 @@ class UpdateLongTermMemorySpec(BaseModel):
             description="VectorStore resource id (event backend only)",
         ),
     ]
-    segment_store: Annotated[
+    event_memory_store: Annotated[
         str | None,
         Field(
             default=None,
             description=(
-                "SQL engine resource id backing the segment store (event backend only)"
+                "SQL engine resource id backing the event memory store (event backend only)"
             ),
         ),
     ]

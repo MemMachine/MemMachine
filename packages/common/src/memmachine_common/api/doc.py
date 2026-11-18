@@ -62,6 +62,8 @@ class SpecDoc:
     - Must refer to a reranker model defined in the system configuration.
     - If set to an empty string (default), the globally configured reranker will
       be used.
+    - Applies to the declarative backend only: an event-backed project uses the
+      reranker the server configures for event memory.
 
     Rerankers typically re-score retrieved documents to improve result quality.
     """

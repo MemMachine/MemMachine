@@ -200,30 +200,16 @@ class DeclarativeLongTermMemoryConf(BaseModel):
 
 class EventLongTermMemoryConf(BaseModel):
     """
-    A session's event-backend long-term memory (VectorStore + SegmentStore).
+    A session's event-backend long-term memory (VectorStore + EventMemoryStore).
 
-    Its vector store, segment store, and embedder are the deployment's.
+    Its vector store, event memory store, embedder, segmenter, deriver, and
+    reranker are the deployment's.
     """
 
     backend: Literal["event"] = "event"
     session_id: str = Field(
         ...,
         description="Session identifier",
-    )
-    reranker: str | None = Field(
-        default=None,
-        description=(
-            "ID of the Reranker instance. If None, embedding similarity scores "
-            "are used for ordering."
-        ),
-    )
-    segmenter: SegmenterConf = Field(
-        default_factory=PassthroughSegmenterConf,
-        description="Segmenter sub-configuration (default: passthrough)",
-    )
-    deriver: DeriverConf = Field(
-        default_factory=WholeTextDeriverConf,
-        description="Deriver sub-configuration (default: whole_text)",
     )
 
 
@@ -248,7 +234,7 @@ class LongTermMemoryConfPartial(BaseModel):
         description=(
             "Long-term memory backend. None or 'declarative' uses the legacy "
             "VectorGraphStore-backed declarative memory. 'event' uses the "
-            "VectorStore + SegmentStore event memory."
+            "VectorStore + EventMemoryStore event memory."
         ),
     )
     session_id: str | None = Field(
@@ -271,9 +257,9 @@ class LongTermMemoryConfPartial(BaseModel):
         default=None,
         description="ID of the VectorStore (event backend only)",
     )
-    segment_store: str | None = Field(
+    event_memory_store: str | None = Field(
         default=None,
-        description="ID of the SQL engine resource for the segment store (event backend only)",
+        description="ID of the SQL engine resource for the event memory store (event backend only)",
     )
     segmenter: SegmenterConf | None = Field(
         default=None,
@@ -311,8 +297,6 @@ class LongTermMemoryConfPartial(BaseModel):
         if backend == "declarative":
             return merge_partial_configs(self, other, DeclarativeLongTermMemoryConf)
 
-        # Event backend: synthesize defaults for sub-configs that the flat partial
-        # leaves None.
         merged = merge_partial_configs(
             LongTermMemoryConfPartial._force_backend(self, "event"),
             LongTermMemoryConfPartial._force_backend(other, "event"),

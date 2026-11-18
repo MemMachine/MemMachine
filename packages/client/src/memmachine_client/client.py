@@ -214,12 +214,14 @@ class MemMachineClient:
                      server's event memory embedder.
             reranker: Reranker model name to use (default: "").
                      Use "" to let server use its configured defaults, or specify a model name like "default".
+                     Declarative backend only: an event-backed project uses the
+                     server's event memory reranker.
             backend: Long-term-memory backend selector. ``None`` (default)
                 lets the server pick its configured default. Set to ``"event"``
-                for the VectorStore + SegmentStore event backend or
+                for the VectorStore + EventMemoryStore event backend or
                 ``"declarative"`` for the legacy VectorGraphStore backend.
                 An event-backed project uses the server's event memory: its
-                vector store, segment store, and embedder.
+                vector store, event memory store, embedder, and reranker.
             vector_graph_store: VectorGraphStore resource id (declarative
                 backend only). Use ``""`` to let the server pick its default.
             timeout: Request timeout in seconds (uses client default if not provided)
@@ -431,6 +433,8 @@ class MemMachineClient:
             reranker: Reranker model name to use (default: "").
                      Only used if project needs to be created.
                      Use "" to let server use its configured defaults, or specify a model name like "default".
+                     Declarative backend only: an event-backed project uses the
+                     server's event memory reranker.
             backend: Long-term-memory backend selector for the project being
                 created. Ignored if the project already exists. See
                 :py:meth:`create_project` for accepted values.
