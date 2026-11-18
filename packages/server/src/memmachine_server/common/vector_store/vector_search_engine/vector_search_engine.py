@@ -44,7 +44,9 @@ class VectorSearchEngine(ABC):
 
     Results are returned ordered from best to worst.
 
-    Safe for concurrent use from async tasks (single event loop).
+    Not safe for concurrent use; the owner serializes calls. Searches may run
+    concurrently with each other, and every other call runs alone.
+    `SQLiteVectorStore` holds a read-write lock per engine for this.
     Not safe across threads or processes.
     """
 
@@ -107,7 +109,18 @@ class VectorSearchEngine(ABC):
     @abstractmethod
     async def save(self, path: str) -> None:
         """
-        Persist the index to disk.
+        Publish the index at `path`, replacing whatever index is there.
+
+        Returning must mean a later `load` reads this index or the one it
+        replaced, never a half-written mixture of the two. It does *not* mean
+        the publication survives a power failure: implementations may publish
+        with an atomic rename, which a power failure can roll back after this
+        returns.
+
+        Callers must therefore treat a published index as possibly stale, but
+        never as corrupt. `SQLiteVectorStore` trims its pending-operation log
+        once this returns, so a rolled-back publication leaves records whose
+        vectors are missing from the index until they are re-upserted.
 
         Args:
             path (str):
