@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import (
     AsyncMock,
     MagicMock,
@@ -161,19 +160,28 @@ async def test_semantic_memory_creates_its_partition_once_and_then_gets_it(
 async def test_semantic_memory_waits_for_another_process_creating_its_partition(
     partition_registry, partition_manager, partitioned_vector_store, monkeypatch
 ):
-    monkeypatch.setattr(semantic_manager, "_GET_OR_CREATE_RETRY_DELAY_SECONDS", 0.05)
     pending = await partition_registry._reserve("semantic_memory")
+    resolve_partition = partition_manager.resolve_partition
+    lookups = 0
 
-    waiting = asyncio.create_task(
-        SemanticResourceManager._get_or_create_partition(
+    async def confirmed_before_the_third_lookup(partition_name: str):
+        nonlocal lookups
+        lookups += 1
+        if lookups == 3:
+            await pending.confirm()
+        return await resolve_partition(partition_name)
+
+    monkeypatch.setattr(
+        partition_manager, "resolve_partition", confirmed_before_the_third_lookup
+    )
+
+    assert (
+        await SemanticResourceManager._get_or_create_partition(
             partition_manager, partitioned_vector_store
         )
+        is sentinel.partition
     )
-    await asyncio.sleep(0.1)
-    assert not waiting.done()
-
-    await pending.confirm()
-    assert await waiting is sentinel.partition
+    assert lookups == 3
     partitioned_vector_store.get_partition.assert_awaited_once_with(
         pending.partition_uuid
     )
