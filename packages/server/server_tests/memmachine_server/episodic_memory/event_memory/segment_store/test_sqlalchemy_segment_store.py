@@ -1442,6 +1442,47 @@ async def test_an_unloadable_codec_config_creates_nothing(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_creates_of_one_partition_all_succeed_and_record_it_once(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """Racing creates of one partition with the same config all succeed."""
+    await asyncio.wait_for(
+        asyncio.gather(*(store.create_partition(PARTITION_UUID) for _ in range(8))),
+        60,
+    )
+
+    async with store._create_session() as session:
+        partition_uuids = (
+            (await session.execute(select(PartitionRow.partition_uuid))).scalars().all()
+        )
+    assert partition_uuids == [PARTITION_UUID]
+    partition = await store.get_partition(PARTITION_UUID)
+    assert partition is not None
+    assert partition.config == _plaintext_partition_config()
+
+
+@pytest.mark.asyncio
+async def test_a_create_whose_conflicting_row_is_dropped_before_it_reads_the_row_raises(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A create that cannot find the row its insert conflicted with raises and leaves the partition dropped."""
+    await store.create_partition(PARTITION_UUID)
+    read_partition_row = store._get_partition_row
+
+    async def dropped_first(partition_uuid: UUID) -> PartitionRow | None:
+        # Stands in for a drop that commits between the conflict and the read.
+        await store.drop_partition(partition_uuid)
+        return await read_partition_row(partition_uuid)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(store, "_get_partition_row", dropped_first)
+        with pytest.raises(IntegrityError):
+            await store.create_partition(PARTITION_UUID)
+    assert await store.get_partition(PARTITION_UUID) is None
+
+
+@pytest.mark.asyncio
 async def test_purge_removes_the_segments_and_their_links_and_the_drop_the_partition(
     store: SQLAlchemySegmentStore,
 ) -> None:
@@ -1531,69 +1572,78 @@ async def test_purge_keeps_the_foreign_key_enforced(
 
 @pytest.mark.asyncio
 async def test_purge_is_bounded_and_continues_after_its_cursor(
-    sqlalchemy_sqlite_engine: AsyncEngine,
+    store: SQLAlchemySegmentStore,
 ) -> None:
     """The configured bound governs every call, and each call picks up where the last stopped."""
-    store = SQLAlchemySegmentStore(
-        SQLAlchemySegmentStoreParams(
-            engine=sqlalchemy_sqlite_engine,
-            purge_max_segments=2,
-        )
+    bounded = SQLAlchemySegmentStore(
+        SQLAlchemySegmentStoreParams(engine=store._engine, purge_max_segments=2)
     )
-    await store.startup()
-    try:
-        partition = await _created(store)
-        segments = [_seg(ts_offset_seconds=index) for index in range(5)]
-        await partition.add_segments(_links(*segments))
-        ordered = sorted(segment.uuid for segment in segments)
+    partition = await _created(bounded)
+    segments = [_seg(ts_offset_seconds=index) for index in range(5)]
+    await partition.add_segments(_links(*segments))
+    ordered = sorted(segment.uuid for segment in segments)
 
-        assert await store.purge_partition(PARTITION_UUID) is True
-        assert await _row_counts(store, PARTITION_UUID) == (3, 3)
-        assert await _purge_cursor(store) == ordered[1]
+    assert await bounded.purge_partition(PARTITION_UUID) is True
+    assert await _row_counts(bounded, PARTITION_UUID) == (3, 3)
+    assert await _purge_cursor(bounded) == ordered[1]
 
-        assert await store.purge_partition(PARTITION_UUID) is True
-        assert await _row_counts(store, PARTITION_UUID) == (1, 1)
-        # The walk from the cursor reaches the end, and the cursor is cleared
-        # for a search from the first key.
-        assert await store.purge_partition(PARTITION_UUID) is True
-        assert await _row_counts(store, PARTITION_UUID) == (0, 0)
-        assert await _purge_cursor(store) is None
-        assert await store.purge_partition(PARTITION_UUID) is False
-    finally:
-        async with sqlalchemy_sqlite_engine.begin() as conn:
-            await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+    assert await bounded.purge_partition(PARTITION_UUID) is True
+    assert await _row_counts(bounded, PARTITION_UUID) == (1, 1)
+    # The walk from the cursor reaches the end, and the cursor is cleared
+    # for a search from the first key.
+    assert await bounded.purge_partition(PARTITION_UUID) is True
+    assert await _row_counts(bounded, PARTITION_UUID) == (0, 0)
+    assert await _purge_cursor(bounded) is None
+    assert await bounded.purge_partition(PARTITION_UUID) is False
 
 
 @pytest.mark.asyncio
 async def test_purge_finds_nothing_only_after_searching_from_the_first_key(
-    sqlalchemy_sqlite_engine: AsyncEngine,
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A segment written behind the cursor is purged before the purge finds nothing."""
-    store = SQLAlchemySegmentStore(
-        SQLAlchemySegmentStoreParams(
-            engine=sqlalchemy_sqlite_engine,
-            purge_max_segments=2,
-        )
+    monkeypatch.setattr(store, "_purge_max_segments", 2)
+    partition = await _created(store)
+    await partition.add_segments(
+        _links(*(_seg(ts_offset_seconds=index) for index in range(3)))
     )
-    await store.startup()
-    try:
-        partition = await _created(store)
-        await partition.add_segments(
-            _links(*(_seg(ts_offset_seconds=index) for index in range(3)))
-        )
+    assert await store.purge_partition(PARTITION_UUID) is True
+    assert await _purge_cursor(store) is not None
+
+    # A late write keyed below every key the purge has passed.
+    behind = _seg().model_copy(update={"uuid": UUID(int=1)})
+    await partition.add_segments(_links(behind))
+
+    while await store.purge_partition(PARTITION_UUID):
+        pass
+    assert await _row_counts(store, PARTITION_UUID) == (0, 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("full_batches", [1, 2])
+async def test_a_purge_of_whole_batches_clears_its_cursor_before_it_finds_nothing(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+    full_batches: int,
+) -> None:
+    """After the last full batch, one call clears the cursor, and the next finds nothing."""
+    monkeypatch.setattr(store, "_purge_max_segments", 2)
+    partition = await _created(store)
+    segments = [_seg(ts_offset_seconds=index) for index in range(2 * full_batches)]
+    await partition.add_segments(_links(*segments))
+    ordered = sorted(segment.uuid for segment in segments)
+
+    for batch in range(full_batches):
         assert await store.purge_partition(PARTITION_UUID) is True
-        assert await _purge_cursor(store) is not None
+        remaining = 2 * (full_batches - batch - 1)
+        assert await _row_counts(store, PARTITION_UUID) == (remaining, remaining)
+        assert await _purge_cursor(store) == ordered[2 * batch + 1]
 
-        # A late write keyed below every key the purge has passed.
-        behind = _seg().model_copy(update={"uuid": UUID(int=1)})
-        await partition.add_segments(_links(behind))
-
-        while await store.purge_partition(PARTITION_UUID):
-            pass
-        assert await _row_counts(store, PARTITION_UUID) == (0, 0)
-    finally:
-        async with sqlalchemy_sqlite_engine.begin() as conn:
-            await conn.run_sync(BaseSegmentStore.metadata.drop_all)
+    assert await store.purge_partition(PARTITION_UUID) is True
+    assert await _purge_cursor(store) is None
+    assert await store.purge_partition(PARTITION_UUID) is False
+    assert await _row_counts(store, PARTITION_UUID) == (0, 0)
 
 
 @pytest.mark.asyncio
@@ -1734,6 +1784,26 @@ async def test_purge_reclaims_a_write_that_lands_after_the_partition_is_dropped(
     assert await store.purge_partition(PARTITION_UUID) is True
     assert await _row_counts(store, PARTITION_UUID) == (0, 0)
     assert await store.purge_partition(PARTITION_UUID) is False
+
+
+@pytest.mark.asyncio
+async def test_purge_of_a_dropped_partition_deletes_at_most_the_bound_per_call(
+    store: SQLAlchemySegmentStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Segments written to a dropped partition are purged in bounded calls that leave the partition dropped."""
+    monkeypatch.setattr(store, "_purge_max_segments", 2)
+    partition = await _created(store)
+    await store.drop_partition(PARTITION_UUID)
+    await partition.add_segments(
+        _links(*(_seg(ts_offset_seconds=index) for index in range(5)))
+    )
+
+    for remaining in (3, 1, 0):
+        assert await store.purge_partition(PARTITION_UUID) is True
+        assert await _row_counts(store, PARTITION_UUID) == (remaining, remaining)
+    assert await store.purge_partition(PARTITION_UUID) is False
+    assert await store.get_partition(PARTITION_UUID) is None
 
 
 @pytest.mark.asyncio
