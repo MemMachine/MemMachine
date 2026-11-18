@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from datetime import timedelta
 from pathlib import Path
@@ -12,6 +12,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from memmachine_server.common.sql import (
+    enable_sqlite_explicit_begin,
+    write_connection,
+)
 from memmachine_server.common.sql_lease_lock import (
     LeaseLostError,
     LockAcquireTimeout,
@@ -22,10 +26,14 @@ from memmachine_server.common.sql_lease_lock._store import SQLLeaseStore, Stored
 
 
 @asynccontextmanager
-async def two_stores(path: Path) -> AsyncIterator[tuple[SQLLeaseStore, SQLLeaseStore]]:
+async def two_stores(
+    path: Path,
+) -> AsyncGenerator[tuple[SQLLeaseStore, SQLLeaseStore], None]:
     uri = f"sqlite+aiosqlite:///{path}"
     first_engine = create_async_engine(uri)
+    enable_sqlite_explicit_begin(first_engine)
     second_engine = create_async_engine(uri)
+    enable_sqlite_explicit_begin(second_engine)
     try:
         first = SQLLeaseStore(first_engine)
         second = SQLLeaseStore(second_engine)
@@ -34,6 +42,16 @@ async def two_stores(path: Path) -> AsyncIterator[tuple[SQLLeaseStore, SQLLeaseS
     finally:
         await first_engine.dispose()
         await second_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_startup_waits_for_another_connections_write(tmp_path: Path) -> None:
+    async with two_stores(tmp_path / "locks.db") as (first, second):
+        async with write_connection(first._engine):
+            startup = asyncio.create_task(second.startup())
+            await asyncio.sleep(0.2)
+            assert not startup.done()
+        await startup
 
 
 @pytest.mark.asyncio
@@ -131,6 +149,7 @@ async def test_database_error_is_not_reported_as_contention(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_public_service_validates_key_and_duration(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}")
+    enable_sqlite_explicit_begin(engine)
     try:
         service = SQLLeaseLockService(engine)
         await service.startup()
@@ -159,7 +178,9 @@ async def test_public_service_validates_key_and_duration(tmp_path: Path) -> None
 async def test_public_lease_renewal_and_release(tmp_path: Path) -> None:
     uri = f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}"
     first_engine = create_async_engine(uri)
+    enable_sqlite_explicit_begin(first_engine)
     second_engine = create_async_engine(uri)
+    enable_sqlite_explicit_begin(second_engine)
     try:
         first = SQLLeaseLockService(first_engine)
         second = SQLLeaseLockService(second_engine)
@@ -192,7 +213,9 @@ async def test_public_lease_renewal_and_release(tmp_path: Path) -> None:
 async def test_expired_public_handle_cannot_touch_replacement(tmp_path: Path) -> None:
     uri = f"sqlite+aiosqlite:///{tmp_path / 'locks.db'}"
     first_engine = create_async_engine(uri)
+    enable_sqlite_explicit_begin(first_engine)
     second_engine = create_async_engine(uri)
+    enable_sqlite_explicit_begin(second_engine)
     try:
         first = SQLLeaseLockService(first_engine)
         second = SQLLeaseLockService(second_engine)
@@ -222,8 +245,9 @@ async def test_expired_public_handle_cannot_touch_replacement(tmp_path: Path) ->
 @asynccontextmanager
 async def one_service(
     path: Path,
-) -> AsyncIterator[tuple[SQLLeaseLockService, AsyncEngine]]:
+) -> AsyncGenerator[tuple[SQLLeaseLockService, AsyncEngine], None]:
     engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+    enable_sqlite_explicit_begin(engine)
     try:
         service = SQLLeaseLockService(engine)
         await service.startup()

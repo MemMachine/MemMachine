@@ -38,6 +38,7 @@ from memmachine_server.server.api_v2.mcp import (
 )
 from memmachine_server.server.api_v2.router import RestError, load_v2_api_router
 from memmachine_server.server.diagnostics import dump_traceback, install_sigusr1_handler
+from memmachine_server.server.metrics import start_metrics_server
 from memmachine_server.server.middleware import (
     AccessLogMiddleware,
     RequestMetricsMiddleware,
@@ -115,6 +116,20 @@ def start_http() -> None:
         logger.info("Starting server with 1 worker")
     else:
         logger.info("Starting server with %d workers", workers)
+
+    metrics_port = config.server.metrics_port
+    if metrics_port is not None:
+        if workers > 1 and not os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+            # _prepare_multiproc_dir found the directory unwritable, and this
+            # process records none of the workers' metrics.
+            logger.warning(
+                "Not serving metrics on port %d: worker metrics are not aggregated",
+                metrics_port,
+            )
+        else:
+            # Started before uvicorn starts any worker: with several workers,
+            # it runs in the supervisor process, which serves no requests.
+            start_metrics_server(host=config.server.host, port=metrics_port)
 
     # Use uvicorn.run() to correctly handle multiprocessing with workers
     uvicorn.run(

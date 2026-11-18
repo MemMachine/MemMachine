@@ -494,7 +494,6 @@ def test_backend_flip_event_to_declarative_clears_event_fields(
             embedder="emb",
             vector_store="qdrant_vs",
             segment_store="sqlite_db",
-            properties_schema={"customer_tier": "str"},
         )
     )
 
@@ -514,11 +513,9 @@ def test_backend_flip_event_to_declarative_clears_event_fields(
     assert ltm.backend == "declarative"
     assert ltm.vector_store is None, "stale event field not cleared"
     assert ltm.segment_store is None, "stale event field not cleared"
-    assert ltm.properties_schema == {}, "stale event field not cleared"
     assert ltm.vector_graph_store == "neo4j"
     assert "vector_store=null" in message
     assert "segment_store=null" in message
-    assert "properties_schema={}" in message
 
 
 def test_backend_no_flip_preserves_cross_backend_fields(memory_resource_manager):
@@ -542,44 +539,3 @@ def test_backend_no_flip_preserves_cross_backend_fields(memory_resource_manager)
     assert ltm.vector_store == "qdrant_vs"
     assert ltm.segment_store == "sqlite_db"
     assert ltm.embedder == "new-emb"
-
-
-def test_properties_schema_unknown_type_name_rejected_at_api():
-    """An unknown type name in properties_schema must be rejected at the
-    spec layer with a 422-style ValidationError, not deferred to service-
-    locator wire-up (which would surface as a 500)."""
-    from memmachine_common.api.config_spec import UpdateLongTermMemorySpec
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError, match="unknown type names"):
-        UpdateLongTermMemorySpec.model_validate(
-            {"properties_schema": {"foo": "date"}}  # "date" not in allowed set
-        )
-
-    with pytest.raises(ValidationError, match="unknown type names"):
-        UpdateLongTermMemorySpec.model_validate(
-            {"properties_schema": {"foo": "integer"}}  # should be "int"
-        )
-
-    # Valid types pass.
-    spec = UpdateLongTermMemorySpec.model_validate(
-        {
-            "properties_schema": {
-                "a": "bool",
-                "b": "int",
-                "c": "float",
-                "d": "str",
-                "e": "datetime",
-            }
-        }
-    )
-    assert spec.properties_schema is not None
-
-
-def test_project_config_rejects_unknown_property_type_name():
-    """Same validation must apply to CreateProjectSpec / ProjectConfig."""
-    from memmachine_common.api.spec import ProjectConfig
-    from pydantic import ValidationError
-
-    with pytest.raises(ValidationError, match="unknown type names"):
-        ProjectConfig.model_validate({"properties_schema": {"foo": "bytes"}})

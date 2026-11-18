@@ -1,8 +1,9 @@
 """
-Diagnostics for debugging asyncio deadlocks and long-running tasks.
+Diagnostics for the server's asyncio event loop.
 
-On Unix, send SIGUSR1 to the server process to dump all asyncio task stacks
-and thread stacks to the log output:
+The loop's lag is reported as a metric. For debugging deadlocks and
+long-running tasks, on Unix, send SIGUSR1 to the server process to dump all
+asyncio task stacks and thread stacks to the log output:
 
     kill -SIGUSR1 <pid>
 
@@ -16,7 +17,11 @@ import sys
 import traceback
 from types import CoroutineType, FrameType
 
+from memmachine_server.common.metrics_factory import MetricsFactory
+
 logger = logging.getLogger(__name__)
+
+_EVENT_LOOP_LAG_SAMPLE_INTERVAL_SECONDS = 0.1
 
 
 def _format_task(task: asyncio.Task[object]) -> str:
@@ -88,3 +93,22 @@ def install_sigusr1_handler() -> None:
     if not hasattr(signal, "SIGUSR1"):
         return
     asyncio.get_running_loop().add_signal_handler(signal.SIGUSR1, dump_traceback)
+
+
+async def report_event_loop_lag(metrics_factory: MetricsFactory) -> None:
+    """Report, until cancelled, how late the running loop runs a timed callback.
+
+    Each sample schedules a wakeup _EVENT_LOOP_LAG_SAMPLE_INTERVAL_SECONDS out
+    and observes how long past that time the loop took to run it.
+    """
+    lag = metrics_factory.get_histogram(
+        "event_loop_lag_seconds",
+        "Time the event loop took to run a timed callback past its due time",
+    )
+    loop = asyncio.get_running_loop()
+    while True:
+        due = loop.time() + _EVENT_LOOP_LAG_SAMPLE_INTERVAL_SECONDS
+        await asyncio.sleep(_EVENT_LOOP_LAG_SAMPLE_INTERVAL_SECONDS)
+        # The loop may run a timer up to its clock resolution early, and a
+        # negative observation would shrink the histogram's sum.
+        lag.observe(max(0.0, loop.time() - due))
