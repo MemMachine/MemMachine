@@ -27,5 +27,10 @@ class Deriver(ABC):
             format_options (FormatOptions | None):
                 Options for formatting.
                 (default: None).
+
+        Returns:
+            list[Derivative]:
+                The derivatives, each with a UUID unique among all
+                derivatives ever derived.
         """
         raise NotImplementedError

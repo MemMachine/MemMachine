@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from asyncio import Lock
+from collections.abc import Awaitable, Callable
 
 from neo4j import AsyncDriver
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -42,12 +43,16 @@ from memmachine_server.episodic_memory.episodic_memory_manager import (
     EpisodicMemoryManager,
     EpisodicMemoryManagerParams,
 )
+from memmachine_server.episodic_memory.event_memory.event_memory import EventMemory
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_segment_store import (
     SQLAlchemySegmentStore,
     SQLAlchemySegmentStoreParams,
+)
+from memmachine_server.episodic_memory.long_term_memory.service_locator import (
+    event_memory_from_config,
 )
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_session_manager import (
@@ -61,6 +66,7 @@ _SEGMENT_STORE_PURGE_INTERVAL_SECONDS = 60.0
 _SEGMENT_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
 _VECTOR_STORE_PURGE_INTERVAL_SECONDS = 60.0
 _VECTOR_STORE_PURGE_BUSY_PAUSE_SECONDS = 1.0
+_EVENT_MEMORY_JOBS_INTERVAL_SECONDS = 1.0
 
 
 async def _purge_deleted_partitions_forever(store: SegmentStore) -> None:
@@ -117,6 +123,28 @@ async def _purge_deleted_vector_store_partitions_forever(
         )
 
 
+async def _run_event_memory_jobs_forever(
+    run_job: Callable[[], Awaitable[bool]], label: str
+) -> None:
+    """Run one kind of the EventMemory's background jobs for as long as the task runs.
+
+    A call that ran a job is followed by the next at once: a job's
+    transactions lock one row, and its embedder and vector store calls hold
+    none, so request serving gets the database between them. A call that
+    found none due is followed after the interval, and one that raised is
+    logged and retried a tick later. Other processes may run the same jobs
+    at the same time.
+    """
+    while True:
+        try:
+            ran = await run_job()
+        except Exception:
+            logger.exception("Event memory %s failed; retrying next tick", label)
+            ran = False
+        if not ran:
+            await asyncio.sleep(_EVENT_MEMORY_JOBS_INTERVAL_SECONDS)
+
+
 class ResourceManagerImpl:
     """Concrete resource manager for MemMachine services."""
 
@@ -145,6 +173,8 @@ class ResourceManagerImpl:
         self._episode_storage: EpisodeStorage | None = None
         self._semantic_manager: SemanticResourceManager | None = None
         self._segment_stores: dict[str, SegmentStore] = {}
+        self._event_memory: EventMemory | None = None
+        self._event_memory_jobs: list[asyncio.Task[None]] = []
         self._segment_store_purge_tasks: list[asyncio.Task[None]] = []
         # One sweeper per store, keyed by its vector store id and its name.
         self._vector_store_purge_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
@@ -155,6 +185,7 @@ class ResourceManagerImpl:
         self._episode_storage_lock = Lock()
         self._semantic_manager_lock = Lock()
         self._segment_store_lock = Lock()
+        self._event_memory_lock = Lock()
 
     async def build(self) -> None:
         """Build all configured resources in parallel."""
@@ -171,6 +202,14 @@ class ResourceManagerImpl:
 
     async def close(self) -> None:
         """Close resources and clean up state."""
+        # The EventMemory's background jobs use the stores closed below.
+        event_memory_jobs = self._event_memory_jobs
+        self._event_memory_jobs = []
+        self._event_memory = None
+        for event_memory_job in event_memory_jobs:
+            event_memory_job.cancel()
+        await asyncio.gather(*event_memory_jobs, return_exceptions=True)
+
         purge_tasks = list(self._segment_store_purge_tasks)
         self._segment_store_purge_tasks.clear()
         purge_tasks.extend(self._vector_store_purge_tasks.values())
@@ -255,6 +294,33 @@ class ResourceManagerImpl:
                         asyncio.create_task(_purge_deleted_partitions_forever(store))
                     )
         return self._segment_stores[name]
+
+    async def get_event_memory(self) -> EventMemory:
+        """Return the deployment's EventMemory, building it and starting its background jobs on first access.
+
+        Built from the episodic memory's long-term memory configuration.
+        """
+        if self._event_memory is None:
+            async with self._event_memory_lock:
+                if self._event_memory is None:
+                    event_memory = await event_memory_from_config(self)
+                    self._event_memory_jobs = [
+                        asyncio.create_task(
+                            _run_event_memory_jobs_forever(run_job, label)
+                        )
+                        for run_job, label in (
+                            (
+                                event_memory.index_pending_segments,
+                                "indexing of pending segments",
+                            ),
+                            (
+                                event_memory.purge_forgotten_segments,
+                                "purge of forgotten segments",
+                            ),
+                        )
+                    ]
+                    self._event_memory = event_memory
+        return self._event_memory
 
     async def get_embedder(self, name: str, validate: bool = False) -> Embedder:
         """Return an embedder by name."""

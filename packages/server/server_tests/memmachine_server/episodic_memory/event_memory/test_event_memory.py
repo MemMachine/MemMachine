@@ -453,7 +453,8 @@ class TestForgetEvents:
         assert len(fake_segment_store_partition.segments) == 1
         remaining_segment = next(iter(fake_segment_store_partition.segments.values()))
         assert remaining_segment.event_uuid == e1.uuid
-        assert len(fake_vector_store_partition.records) == 1
+        # The background work deletes e2's vectors from its tombstone.
+        assert len(fake_segment_store_partition.tombstones) == 1
 
     async def test_forget_empty_set(
         self,

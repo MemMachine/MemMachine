@@ -37,6 +37,7 @@ from memmachine_server.common.vector_store import (
     Record,
     VectorStore,
     VectorStorePartition,
+    VectorStorePartitionHandleStaleError,
 )
 from memmachine_server.common.vector_store.data_types import is_valid_identifier
 
@@ -55,9 +56,11 @@ from .data_types import (
 from .deriver import Deriver
 from .formatting import format_timestamp
 from .segment_store import (
+    IndexingJobClaim,
     SegmentStore,
     SegmentStorePartition,
     SegmentStorePartitionConfig,
+    SegmentStorePartitionHandleStaleError,
 )
 from .segmenter import Segmenter
 
@@ -95,6 +98,15 @@ class EventMemoryParams(BaseModel):
         metrics_factory (MetricsFactory | None):
             An instance of MetricsFactory for collecting usage metrics
             (default: None).
+        indexing_job_lease_seconds (int):
+            Seconds an ingest, or a claim, holds an indexing job before
+            another process may take over its write, on the segment store's
+            clock; it should exceed the longest embedding and the longest
+            write (default: 180).
+        tombstone_lease_seconds (int):
+            Seconds a claim holds a tombstone before another process may
+            take over its delete, on the segment store's clock; it should
+            exceed the longest delete (default: 300).
     """
 
     segment_store: InstanceOf[SegmentStore] = Field(
@@ -126,6 +138,24 @@ class EventMemoryParams(BaseModel):
         None,
         description="An instance of MetricsFactory for collecting usage metrics",
     )
+    indexing_job_lease_seconds: int = Field(
+        180,
+        gt=0,
+        description=(
+            "Seconds an ingest, or a claim, holds an indexing job before "
+            "another process may take over its write, on the segment store's "
+            "clock; it should exceed the longest embedding and the longest write"
+        ),
+    )
+    tombstone_lease_seconds: int = Field(
+        300,
+        gt=0,
+        description=(
+            "Seconds a claim holds a tombstone before another process may take "
+            "over its delete, on the segment store's clock; it should exceed the "
+            "longest delete"
+        ),
+    )
 
 
 class EventMemory:
@@ -134,6 +164,14 @@ class EventMemory:
 
     A partition key names one partition in each store, and must be valid
     in both. Handles on a partition read and write that pair only.
+
+    Its background jobs, which `index_pending_segments` and
+    `purge_forgotten_segments` each run one at a time, finish what its
+    partitions' ingests and forgets leave undone:
+    derivatives whose ingest stopped before the vector store had them, and
+    the deletes of forgotten derivatives from the vector store, once after
+    the forget and again after the segment store's retention. Any number of
+    processes may run them over the same stores at once.
     """
 
     @classmethod
@@ -213,12 +251,118 @@ class EventMemory:
         """
         Delete the partition from both stores. Idempotent.
 
+        The segment store's partition is deleted first. Its text is gone
+        then, no write can start on it, and the background work stops
+        taking up its indexing jobs and tombstones, whose vectors
+        the vector store's partition deletion removes.
+
         Args:
             partition_key (str):
                 The key of the partition to delete.
         """
-        await self._params.vector_store.delete_partition(partition_key)
         await self._params.segment_store.delete_partition(partition_key)
+        await self._params.vector_store.delete_partition(partition_key)
+
+    async def index_pending_segments(self) -> bool:
+        """
+        Write one pending segment's derivatives to the vector store, if its indexing job is due; whether one was.
+
+        A segment is pending while its indexing job stands: its ingest did
+        not write its derivatives. A write whose embedder or vector store
+        call fails is logged and recorded on the claim, which backs the job
+        off; a segment store failure raises. When and how often to call this
+        is the caller's policy. Safe to call from several processes at once
+        over the same stores.
+        """
+        claim = await self._params.segment_store.claim_indexing_job(
+            lease_seconds=self._params.indexing_job_lease_seconds,
+        )
+        if claim is None:
+            return False
+        try:
+            written = await self._write_pending_derivatives(claim)
+        except Exception as error:
+            logger.warning(
+                "Failed to write the derivatives of segment %s of partition %r "
+                "on attempt %d",
+                claim.segment_uuid,
+                claim.partition_key,
+                claim.attempt,
+                exc_info=True,
+            )
+            await self._params.segment_store.fail_indexing_job_claim(claim, error)
+            return True
+        if written:
+            await self._params.segment_store.finish_indexing_job_claim(claim)
+        return True
+
+    async def _write_pending_derivatives(self, claim: IndexingJobClaim) -> bool:
+        """Write a claim's derivatives to the vector store; whether the claim still held."""
+        vector_store_partition = await self._params.vector_store.open_partition(
+            claim.partition_key
+        )
+        derivatives = claim.derivatives
+        embeddings = await self._params.embedder.ingest_embed(
+            _derivative_texts(derivatives)
+        )
+        # Embedding comes before the renewal, which a forget of these
+        # derivatives follows, so only the upsert runs between the renewal
+        # and the requests it sends. The renewal also checks that the
+        # partition still exists after the vector store partition was opened
+        # under its key; since a partition leaves the segment store first,
+        # that vector store partition belongs to the claimed partition.
+        if not await self._params.segment_store.renew_indexing_job_claim(
+            claim,
+            lease_seconds=self._params.indexing_job_lease_seconds,
+        ):
+            return False
+        if vector_store_partition is None:
+            raise RuntimeError(
+                f"Partition {claim.partition_key!r} has no vector store partition"
+            )
+        await vector_store_partition.upsert(
+            records=[
+                _build_derivative_record(derivative, embedding, self._schema_fields)
+                for derivative, embedding in zip(derivatives, embeddings, strict=True)
+            ]
+        )
+        return True
+
+    async def purge_forgotten_segments(self) -> bool:
+        """
+        Delete one forgotten segment's derivatives from the vector store, for its tombstone's first or second delete, if one is due; whether one was.
+
+        A delete whose vector store call fails is logged and recorded on the
+        claim, which backs the tombstone off; a segment store failure
+        raises. When and how often to call this is the caller's policy. Safe
+        to call from several processes at once over the same stores.
+        """
+        claim = await self._params.segment_store.claim_tombstone(
+            lease_seconds=self._params.tombstone_lease_seconds
+        )
+        if claim is None:
+            return False
+        try:
+            vector_store_partition = await self._params.vector_store.open_partition(
+                claim.partition_key
+            )
+            # A partition without its vector store partition has no vectors
+            # left to delete.
+            if vector_store_partition is not None:
+                await vector_store_partition.delete(record_uuids=claim.derivative_uuids)
+        except Exception as error:
+            logger.warning(
+                "Failed to delete the tombstoned derivatives of segment %s of "
+                "partition %r on attempt %d",
+                claim.segment_uuid,
+                claim.partition_key,
+                claim.attempt,
+                exc_info=True,
+            )
+            await self._params.segment_store.fail_tombstone_claim(claim, error)
+            return True
+        await self._params.segment_store.finish_tombstone_claim(claim)
+        return True
 
     @staticmethod
     def string_from_segment_context(
@@ -478,6 +622,7 @@ class EventMemoryPartition:
         self._deriver = params.deriver
         self._embedder = params.embedder
         self._reranker = params.reranker
+        self._indexing_job_lease_seconds = params.indexing_job_lease_seconds
 
         self._tracker = OperationTracker(
             params.metrics_factory,
@@ -536,6 +681,13 @@ class EventMemoryPartition:
         """
         Encode events.
 
+        Returns once the events are stored with their segments and
+        derivatives, from which the background work finishes writing the
+        derivatives to the vector store. They are written before then
+        unless the write fails, which is logged and left to the background
+        work. When a written derivative is searchable is the vector store's
+        to say.
+
         Args:
             events (Iterable[Event]): The events to encode.
             format_options (FormatOptions | None):
@@ -546,6 +698,15 @@ class EventMemoryPartition:
             ValueError:
                 If any event supplies an illegal property key, or one of
                 the memory's own reserved keys.
+            SegmentStoreEventAlreadyExistsError:
+                If the partition already holds any of the events; nothing
+                is stored.
+            SegmentStorePartitionHandleStaleError:
+                If the partition was deleted before the events were stored,
+                or while their derivatives were written.
+            VectorStorePartitionHandleStaleError:
+                If the partition was deleted while the derivatives were
+                written.
         """
         async with self._tracker("encode_events"):
             await self._encode_events(events, format_options=format_options)
@@ -589,28 +750,28 @@ class EventMemoryPartition:
         ]
         t_derivation = time.monotonic()
 
-        derivative_texts: list[str] = []
-        for derivative in derivatives:
-            text = _extract_text(derivative.block)
-            if text is None:
-                raise NotImplementedError(
-                    f"Unsupported block type: {type(derivative.block).__name__}"
-                )
-            derivative_texts.append(text)
-
-        derivative_embeddings = await self._embedder.ingest_embed(derivative_texts)
+        derivative_embeddings = await self._embedder.ingest_embed(
+            _derivative_texts(derivatives)
+        )
         t_embedding = time.monotonic()
 
-        await self._segment_store_partition.add_segments(
+        # Embedding comes before the events are stored, which a forget of
+        # them follows, so only the upsert runs between the commit and the
+        # requests it sends.
+        await self._segment_store_partition.add_event_segments(
             {
-                segment: [derivative.uuid for derivative in segment_derivatives]
-                for segment, segment_derivatives in segments_to_derivatives.items()
-            }
+                event.uuid: segment_list
+                for event, segment_list in zip(events, segment_lists, strict=True)
+            },
+            derivatives,
+            lease_seconds=self._indexing_job_lease_seconds,
         )
         t_segment_store = time.monotonic()
 
         derivative_records = [
-            self._build_derivative_record(derivative, derivative_embedding)
+            _build_derivative_record(
+                derivative, derivative_embedding, self._schema_fields
+            )
             for derivative, derivative_embedding in zip(
                 derivatives,
                 derivative_embeddings,
@@ -618,9 +779,30 @@ class EventMemoryPartition:
             )
         ]
 
-        if derivative_records:
-            await self._vector_store_partition.upsert(records=derivative_records)
-        t_vector_store = time.monotonic()
+        # The events are accepted once stored: what follows only spares the
+        # background work, except a deletion of the partition meanwhile.
+        try:
+            if derivative_records:
+                await self._vector_store_partition.upsert(records=derivative_records)
+            t_vector_store = time.monotonic()
+
+            await self._segment_store_partition.delete_indexing_jobs(
+                segment.uuid for segment in segments
+            )
+        except (
+            SegmentStorePartitionHandleStaleError,
+            VectorStorePartitionHandleStaleError,
+        ):
+            raise
+        except Exception:
+            logger.warning(
+                "Failed to write the derivatives of %d encoded events; the "
+                "background work will write them later",
+                len(events),
+                exc_info=True,
+            )
+            return
+        t_indexing_job_deletion = time.monotonic()
 
         phase_durations = {
             "segmentation": t_segmentation - t_start,
@@ -628,6 +810,7 @@ class EventMemoryPartition:
             "embedding": t_embedding - t_derivation,
             "segment_store": t_segment_store - t_embedding,
             "vector_store": t_vector_store - t_segment_store,
+            "indexing_job_deletion": t_indexing_job_deletion - t_vector_store,
         }
 
         logger.debug(
@@ -636,7 +819,7 @@ class EventMemoryPartition:
                 f"{phase}={duration:.3f}s"
                 for phase, duration in phase_durations.items()
             ),
-            t_vector_store - t_start,
+            t_indexing_job_deletion - t_start,
         )
 
         if self._encode_events_phase_seconds is not None:
@@ -644,33 +827,6 @@ class EventMemoryPartition:
                 self._encode_events_phase_seconds.observe(
                     duration, labels={"phase": phase}
                 )
-
-    def _build_derivative_record(
-        self,
-        derivative: Derivative,
-        derivative_embedding: Sequence[float],
-    ) -> Record:
-        """Build a vector record from a derivative and its embedding.
-
-        The record carries the reserved timestamp and the properties the
-        vector store declares. Every other property stays on the
-        segment: the segment store holds them all and evaluates the whole
-        filter (see `query`).
-        """
-        properties: dict[str, PropertyValue] = {
-            EVENT_TIMESTAMP_KEY: derivative.timestamp,
-            **{
-                key: value
-                for key, value in derivative.properties.items()
-                if key in self._schema_fields
-            },
-        }
-
-        return Record(
-            uuid=derivative.uuid,
-            vector=list(derivative_embedding),
-            properties=properties,
-        )
 
     @classmethod
     def _to_vector_record_property(cls, field: str) -> str:
@@ -787,7 +943,8 @@ class EventMemoryPartition:
         for match in query_result.matches:
             segment_uuid = segments_by_derivatives.get(match.record_uuid)
             if segment_uuid is None:
-                # The derivative's segment is gone; its vector outlived it.
+                # The derivative is deleted; its forget's deletes have not
+                # reached its vector yet.
                 continue
             if segment_uuid not in seed_embedding_scores:
                 seed_embedding_scores[segment_uuid] = match.score
@@ -895,49 +1052,24 @@ class EventMemoryPartition:
         return await self._reranker.score(query, context_strings)
 
     async def forget_events(self, event_uuids: Iterable[UUID]) -> None:
-        """Forget events by their UUIDs."""
+        """
+        Forget events by their UUIDs.
+
+        When this returns, the events, their segments, and their
+        derivatives are deleted from the segment store. The background work
+        then deletes the derivatives' vectors from the vector store, and
+        again after the segment store's retention.
+
+        Args:
+            event_uuids (Iterable[UUID]):
+                The UUIDs of the events to forget.
+        """
         event_uuids = set(event_uuids)
         if not event_uuids:
             return
 
         async with self._tracker("forget_events"):
-            await self._forget_events(event_uuids)
-
-    async def _forget_events(self, event_uuids: set[UUID]) -> None:
-
-        # Snapshot segment UUIDs for these events.
-        segments_by_event = (
-            await self._segment_store_partition.get_segment_uuids_by_event_uuids(
-                event_uuids=event_uuids,
-            )
-        )
-        segment_uuids = {
-            segment_uuid
-            for event_segment_uuids in segments_by_event.values()
-            for segment_uuid in event_segment_uuids
-        }
-        if not segment_uuids:
-            return
-
-        # Get derivative UUIDs for those segments.
-        derivatives_by_segment = (
-            await self._segment_store_partition.get_derivative_uuids_by_segment_uuids(
-                segment_uuids=segment_uuids,
-            )
-        )
-        derivative_uuids = {
-            derivative_uuid
-            for segment_derivative_uuids in derivatives_by_segment.values()
-            for derivative_uuid in segment_derivative_uuids
-        }
-
-        # Delete from vector DB first, then segment store.
-        if derivative_uuids:
-            await self._vector_store_partition.delete(record_uuids=derivative_uuids)
-
-        await self._segment_store_partition.delete_segments(
-            segment_uuids=segment_uuids,
-        )
+            await self._segment_store_partition.delete_event_segments(event_uuids)
 
 
 def _extract_text(block: Block) -> str | None:
@@ -947,3 +1079,43 @@ def _extract_text(block: Block) -> str | None:
             return text
         case _:
             return None
+
+
+def _derivative_texts(derivatives: Iterable[Derivative]) -> list[str]:
+    """The text each derivative embeds."""
+    derivative_texts: list[str] = []
+    for derivative in derivatives:
+        text = _extract_text(derivative.block)
+        if text is None:
+            raise NotImplementedError(
+                f"Unsupported block type: {type(derivative.block).__name__}"
+            )
+        derivative_texts.append(text)
+    return derivative_texts
+
+
+def _build_derivative_record(
+    derivative: Derivative,
+    derivative_embedding: Sequence[float],
+    schema_fields: frozenset[str],
+) -> Record:
+    """Build a vector record from a derivative and its embedding.
+
+    The record carries the reserved timestamp and the properties the vector
+    store declares. Every other property stays on the segment: the segment
+    store holds them all and evaluates the whole filter (see `query`).
+    """
+    properties: dict[str, PropertyValue] = {
+        EVENT_TIMESTAMP_KEY: derivative.timestamp,
+        **{
+            key: value
+            for key, value in derivative.properties.items()
+            if key in schema_fields
+        },
+    }
+
+    return Record(
+        uuid=derivative.uuid,
+        vector=list(derivative_embedding),
+        properties=properties,
+    )
