@@ -362,6 +362,42 @@ class TestPersistence:
         result = await _search_one(engine2, _normalize([1, 0, 0]), limit=3)
         assert {m.key for m in result.matches} == {1, 3}
 
+    @pytest.mark.asyncio
+    async def test_save_leaves_no_temp_file(self, tmp_path: Path):
+        engine = HnswlibVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add({1: _normalize([1, 0, 0])})
+
+        path = tmp_path / "test.hnswlib"
+        await engine.save(str(path))
+
+        assert path.exists()
+        assert not (tmp_path / "test.hnswlib.tmp").exists()
+
+    @pytest.mark.asyncio
+    async def test_load_clears_stale_temp_file(self, tmp_path: Path):
+        engine = HnswlibVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine.add({1: _normalize([1, 0, 0]), 2: _normalize([0, 1, 0])})
+
+        path = tmp_path / "test.hnswlib"
+        await engine.save(str(path))
+
+        # A temp file left behind by a previously interrupted save.
+        stale_temp = tmp_path / "test.hnswlib.tmp"
+        stale_temp.write_text("STALE")
+
+        engine2 = HnswlibVectorSearchEngine(
+            num_dimensions=NDIM, similarity_metric=SimilarityMetric.COSINE
+        )
+        await engine2.load(str(path))
+
+        assert not stale_temp.exists()
+        result = await _search_one(engine2, _normalize([1, 0, 0]), limit=2)
+        assert {m.key for m in result.matches} == {1, 2}
+
 
 # -- allow_replace_deleted=True (slot reclamation) --
 
