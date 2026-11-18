@@ -36,6 +36,7 @@ from memmachine_server.common.partition_registry.data_types import (
 )
 from memmachine_server.common.partition_registry.partition_registry import (
     Reservation,
+    TombstoneClaim,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
     _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
@@ -959,6 +960,29 @@ async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backof
 
 
 @pytest.mark.asyncio
+async def test_a_second_abandoned_claim_backs_off_twice_as_long_after_its_lease(
+    sqlalchemy_engine, partition_namespace
+):
+    """Each claim counts an attempt, and its backoff after the lease doubles with the attempts: a minute after the second claim's lease."""
+    registry = await _registry(sqlalchemy_engine, partition_namespace)
+    partition_uuid = (await registry._reserve("a")).partition_uuid
+    await registry.unregister("a")
+    await _age_deletion(registry, partition_uuid)
+
+    assert await _abandon_claim(registry) == partition_uuid
+    await _age_claimable_at(registry, partition_uuid)
+    assert await _abandon_claim(registry) == partition_uuid
+    assert await _attempts(registry, partition_uuid) == 2
+
+    await _age_claimable_at(
+        registry, partition_uuid, PURGE_LEASE + timedelta(seconds=50)
+    )
+    assert await _round(registry, any_records_found=False) is None
+    await _age_claimable_at(registry, partition_uuid, timedelta(seconds=20))
+    assert await _round(registry, any_records_found=False) == partition_uuid
+
+
+@pytest.mark.asyncio
 async def test_rounds_that_never_end_dead_letter_the_tombstone(
     sqlalchemy_engine, partition_namespace, caplog
 ):
@@ -1095,8 +1119,15 @@ async def test_a_round_that_outlasted_its_lease_leaves_the_claim_after_it(
     assert await _round(registry, any_records_found=False) == partition_uuid
 
 
+def _end(claim: TombstoneClaim, end: str) -> Awaitable[None]:
+    """End the claim with the method named `end`, failing it with an error of its own."""
+    if end == "fail":
+        return claim.fail(RuntimeError("the backend refused"))
+    return getattr(claim, end)()
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("first_end", ["complete", "progress"])
+@pytest.mark.parametrize("first_end", ["complete", "progress", "fail"])
 @pytest.mark.parametrize("second_end", ["complete", "progress", "fail"])
 async def test_a_second_end_of_a_claim_changes_nothing(
     sqlalchemy_engine, partition_namespace, first_end, second_end
@@ -1108,21 +1139,24 @@ async def test_a_second_end_of_a_claim_changes_nothing(
     await _age_deletion(registry, partition_uuid)
     claim = await registry.claim_tombstone()
     assert claim is not None
-    await getattr(claim, first_end)()
+    await _end(claim, first_end)
 
-    second = (
-        claim.fail(RuntimeError("late"))
-        if second_end == "fail"
-        else getattr(claim, second_end)()
-    )
     with pytest.raises(TombstoneClaimStaleError):
-        await second
+        await _end(claim, second_end)
 
     if first_end == "complete":
         assert await _queued(registry) == []
-    else:
+    elif first_end == "progress":
         # Progress made the tombstone claimable at once, with no attempts.
         assert await _attempts(registry, partition_uuid) == 0
+        again = await registry.claim_tombstone()
+        assert again is not None
+        assert again.partition_uuid == partition_uuid
+    else:
+        # The failure counted the attempt and backs off from it.
+        assert await _attempts(registry, partition_uuid) == 1
+        assert await registry.claim_tombstone() is None
+        await _age_claimable_at(registry, partition_uuid, timedelta(seconds=30))
         again = await registry.claim_tombstone()
         assert again is not None
         assert again.partition_uuid == partition_uuid

@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import random
 from unittest.mock import MagicMock, NonCallableMagicMock, create_autospec
 from uuid import UUID
 
@@ -573,8 +574,11 @@ async def _claimed_again(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "found_records", [True, False], ids=["records found", "nothing found"]
+)
 async def test_a_round_whose_claim_went_stale_is_logged_and_counts(
-    registry, manager, store, caplog
+    registry, manager, store, caplog, found_records
 ):
     """A round whose tombstone was claimed again while it ran ends nothing; the manager logs the stale claim and counts the round as run."""
     partition_uuid = await _created(manager, registry)
@@ -582,7 +586,7 @@ async def test_a_round_whose_claim_went_stale_is_logged_and_counts(
 
     async def claimed_again(claimed: UUID) -> bool:
         await _claimed_again(registry, claimed)
-        return False
+        return found_records
 
     store.purge_partition.side_effect = claimed_again
     with caplog.at_level(logging.WARNING):
@@ -619,6 +623,57 @@ async def test_a_raised_round_whose_claim_went_stale_raises_its_own_error(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("found_records", "end"),
+    [(True, "progress"), (False, "complete")],
+    ids=["records found", "nothing found"],
+)
+async def test_a_round_whose_claim_cannot_be_ended_raises_and_keeps_its_tombstone(
+    registry, manager, store, monkeypatch, found_records, end
+):
+    """The registry's error ending the claim is raised, and the claim holds the tombstone until its lease passes."""
+    await manager.create_partition(NAME)
+    await manager.delete_partition(NAME)
+    store.purge_partition.return_value = found_records
+
+    async def unreachable(claim) -> None:
+        raise ConnectionError("the registry is unreachable")
+
+    monkeypatch.setattr(
+        sqlalchemy_partition_registry._SQLAlchemyTombstoneClaim, end, unreachable
+    )
+    with pytest.raises(ConnectionError, match="registry"):
+        await manager.run_purge_round()
+
+    assert await _queued(registry) == 1
+    assert await manager.run_purge_round() is False
+
+
+@pytest.mark.asyncio
+async def test_a_raised_round_whose_claim_cannot_be_failed_raises_the_registrys_error_after_its_own(
+    registry, manager, store, monkeypatch
+):
+    """The registry's error failing the claim is raised with the round's error as its context, and the claim holds the tombstone until its lease passes."""
+    await manager.create_partition(NAME)
+    await manager.delete_partition(NAME)
+    store_error = ConnectionError("the store is down")
+    store.purge_partition.side_effect = store_error
+
+    async def unreachable(claim, error: Exception) -> None:
+        raise TimeoutError("the registry is unreachable")
+
+    monkeypatch.setattr(
+        sqlalchemy_partition_registry._SQLAlchemyTombstoneClaim, "fail", unreachable
+    )
+    with pytest.raises(TimeoutError, match="registry") as raised:
+        await manager.run_purge_round()
+
+    assert raised.value.__context__ is store_error
+    assert await _queued(registry) == 1
+    assert await manager.run_purge_round() is False
+
+
+@pytest.mark.asyncio
 async def test_each_operation_is_timed_with_its_outcome(registry, store):
     metrics_factory = MagicMock(spec=MetricsFactory)
     manager = PartitionManager(registry, [store], metrics_factory=metrics_factory)
@@ -651,3 +706,100 @@ async def test_each_operation_is_timed_with_its_outcome(registry, store):
         {"operation": "delete_partition", "status": "ok"},
         {"operation": "run_purge_round", "status": "error"},
     ]
+
+
+async def _create_resolve_and_delete(manager: PartitionManager, seed: int) -> None:
+    """A seeded run of creations, resolutions, and deletions over a few names."""
+    rng = random.Random(seed)
+    for _ in range(40):
+        name = rng.choice(["a", "b", "c"])
+        choice = rng.random()
+        try:
+            if choice < 0.5:
+                await manager.create_partition(name)
+            elif choice < 0.7:
+                await manager.resolve_partition(name)
+            else:
+                await manager.delete_partition(name)
+        except (
+            ConnectionError,
+            PartitionAlreadyExistsError,
+            PartitionDeletedError,
+            PartitionPendingError,
+        ):
+            pass
+
+
+async def _live_and_queued(
+    registry: SQLAlchemyPartitionRegistry,
+) -> tuple[set[UUID], set[UUID]]:
+    """Answer the UUIDs of the live partitions named a, b, and c, and the UUIDs of the queued tombstones."""
+    live = set()
+    for name in ("a", "b", "c"):
+        registration = await registry.resolve(name)
+        if registration is not None:
+            live.add(registration.partition_uuid)
+    async with registry._engine.connect() as connection:
+        queued = set(
+            (await connection.execute(select(PurgeQueueRow.partition_uuid))).scalars()
+        )
+    return live, queued
+
+
+@pytest.mark.asyncio
+async def test_racing_creations_and_deletions_leave_each_created_partition_live_or_purged(
+    registry, manager, store
+):
+    """Managers on separate engines, as in separate processes, create, resolve,
+    and delete a few shared names at once, and the store refuses some
+    creations. Every operation ends in its result or a documented refusal.
+    Once they stop, every partition the store was asked to create is live or
+    queued for purging, and purge rounds drop each queued partition and no
+    live one."""
+
+    async def refuses_some(partition_uuid: UUID) -> None:
+        if partition_uuid.int % 4 == 0:
+            raise ConnectionError("the store refused")
+
+    store.create_partition.side_effect = refuses_some
+    engines = [create_async_engine(registry._engine.url) for _ in range(4)]
+    for engine in engines:
+        enable_sqlite_explicit_begin(engine)
+    managers = [
+        PartitionManager(
+            SQLAlchemyPartitionRegistry(
+                SQLAlchemyPartitionRegistryParams(
+                    engine=engine,
+                    partition_namespace="lifecycle",
+                    tombstone_retention_seconds=0,
+                ),
+            ),
+            [store],
+        )
+        for engine in engines
+    ]
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                *(
+                    _create_resolve_and_delete(churning, seed)
+                    for seed, churning in enumerate(managers)
+                )
+            ),
+            120,
+        )
+    finally:
+        for engine in engines:
+            await engine.dispose()
+
+    live, queued = await _live_and_queued(registry)
+    created = {call.args[0] for call in store.create_partition.await_args_list}
+    assert created == live | queued
+    assert not live & queued
+
+    for _ in range(1000):
+        if not await manager.run_purge_round():
+            break
+    dropped = {call.args[0] for call in store.drop_partition.await_args_list}
+    assert dropped == queued
+    assert await _queued(registry) == 0

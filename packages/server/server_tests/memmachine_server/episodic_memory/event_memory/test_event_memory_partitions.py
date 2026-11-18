@@ -213,17 +213,31 @@ async def test_getting_a_pending_partition_raises(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "created_again", [False, True], ids=["deleted", "deleted and created again"]
+)
 async def test_a_deleted_partitions_handle_refuses_every_operation(
     event_memory: EventMemory,
+    segment_store: SQLAlchemySegmentStore,
+    created_again: bool,
 ) -> None:
     partition = await _created(event_memory)
     event = _event("remember the milk")
     await partition.encode_events([event])
+    vector_records = dict(partition._vector_store_partition.records)
 
     await event_memory.delete_partition(NAME)
+    if created_again:
+        await event_memory.create_partition(NAME)
 
+    too_late = _event("too late")
     with pytest.raises(PartitionDeletedError):
-        await partition.encode_events([_event("too late")])
+        await partition.encode_events([too_late])
+    # The refused encode wrote nothing.
+    segments = await segment_store.get_partition(_partition_uuid(partition))
+    assert segments is not None
+    assert await segments.get_segment_uuids_by_event_uuids([too_late.uuid]) == {}
+    assert partition._vector_store_partition.records == vector_records
     with pytest.raises(PartitionDeletedError):
         await partition.query("milk")
     with pytest.raises(PartitionDeletedError):
