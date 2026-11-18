@@ -224,7 +224,9 @@ async def test_a_deleted_partitions_handle_refuses_every_operation(
     partition = await _created(event_memory)
     event = _event("remember the milk")
     await partition.encode_events([event])
-    vector_records = dict(partition._vector_store_partition.records)
+    vector_partition = partition._vector_store_partition
+    assert isinstance(vector_partition, InMemoryVectorStorePartition)
+    vector_records = dict(vector_partition.records)
 
     await event_memory.delete_partition(NAME)
     if created_again:
@@ -237,7 +239,7 @@ async def test_a_deleted_partitions_handle_refuses_every_operation(
     segments = await segment_store.get_partition(_partition_uuid(partition))
     assert segments is not None
     assert await segments.get_segment_uuids_by_event_uuids([too_late.uuid]) == {}
-    assert partition._vector_store_partition.records == vector_records
+    assert vector_partition.records == vector_records
     with pytest.raises(PartitionDeletedError):
         await partition.query("milk")
     with pytest.raises(PartitionDeletedError):
