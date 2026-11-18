@@ -9,7 +9,7 @@ from uuid import UUID
 
 import grpc
 import grpc.aio
-from pydantic import Field, InstanceOf
+from pydantic import BaseModel, ConfigDict, Field, InstanceOf, field_validator
 from pymilvus import AsyncMilvusClient, DataType
 from pymilvus.exceptions import MilvusException
 
@@ -87,21 +87,6 @@ _DECLARED_DATA_TYPES: dict[type[PropertyValue], DataType] = {
     str: DataType.VARCHAR,
     datetime: DataType.TIMESTAMPTZ,
 }
-
-# HNSW_SQ with explicit parameters, so every server builds the same index
-# whatever its version or AUTOINDEX configuration; partition-key isolation
-# needs the HNSW family. refine gives refine_k FP16 vectors to rescore
-# against.
-_VECTOR_INDEX_TYPE = "HNSW_SQ"
-_VECTOR_INDEX_PARAMS: dict[str, Any] = {
-    "M": 18,
-    "efConstruction": 240,
-    "sq_type": "SQ4U",
-    "refine": True,
-    "refine_type": "FP16",
-}
-# Candidates per result rescored against the half-precision vectors.
-_SEARCH_REFINE_K = 8
 
 
 def _expression_string_literal(value: str) -> str:
@@ -233,6 +218,7 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
         store_schema: VectorStoreSchema,
         tracker: OperationTracker,
         request_timeout_seconds: int,
+        search_params: dict[str, bool | int | float | str],
     ) -> None:
         """Initialize with a Milvus client and the registration the handle is bound to."""
         super().__init__(
@@ -244,6 +230,7 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
         self._client = client
         self._collection_name = collection_name
         self._request_timeout_seconds = request_timeout_seconds
+        self._search_params = search_params
 
     def _primary_id(self, record_uuid: UUID) -> str:
         """The primary key of a record: the incarnation and the record UUID.
@@ -330,7 +317,7 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
             data=query_vectors,
             filter=filter_expr,
             limit=limit,
-            search_params={"params": {"refine_k": _SEARCH_REFINE_K}},
+            search_params={"params": self._search_params},
             output_fields=[_RECORD_UUID_FIELD],
             anns_field=_VECTOR_FIELD,
             timeout=self._request_timeout_seconds,
@@ -371,6 +358,71 @@ class MilvusVectorStorePartition(RegistryBackedVectorStorePartition):
         _validate_every_key_accepted(result, len(primary_ids))
 
 
+class MilvusVectorIndex(BaseModel):
+    """
+    A vector index of the store's collection and the parameters its searches pass.
+
+    Milvus checks the parameters the index type takes when it creates the
+    index and when a search reaches an indexed segment, and ignores other
+    keys. The collection isolates partitions by key, which Milvus supports
+    for the HNSW family only, and the metric is the store's similarity
+    metric.
+
+    Attributes:
+        index_type (str):
+            The Milvus index type.
+        params (dict[str, bool | int | float | str]):
+            The index's build parameters, other than its type and metric
+            (default: empty).
+        search_params (dict[str, bool | int | float | str]):
+            The parameters every search of the index passes (default: empty).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    index_type: str = Field(..., description="The Milvus index type")
+    params: dict[str, bool | int | float | str] = Field(
+        default_factory=dict,
+        description="The index's build parameters, other than its type and metric",
+    )
+    search_params: dict[str, bool | int | float | str] = Field(
+        default_factory=dict,
+        description="The parameters every search of the index passes",
+    )
+
+    @field_validator("params")
+    @classmethod
+    def _reject_type_and_metric(
+        cls, params: dict[str, bool | int | float | str]
+    ) -> dict[str, bool | int | float | str]:
+        reserved = sorted(params.keys() & {"index_type", "metric_type"})
+        if reserved:
+            raise ValueError(
+                f"params sets {', '.join(reserved)}: the index type is the "
+                "index_type field and the metric is the store's similarity metric"
+            )
+        return params
+
+
+_DEFAULT_VECTOR_INDEX = MilvusVectorIndex(
+    index_type="HNSW_SQ",
+    params={
+        "M": 18,
+        "efConstruction": 240,
+        "sq_type": "SQ4U",
+        "refine": True,
+        "refine_type": "FP16",
+    },
+    search_params={"refine_k": 8},
+)
+"""The vector index unless one is configured.
+
+HNSW_SQ with explicit parameters, so every server builds the same index
+whatever its version or AUTOINDEX configuration. A search rescores
+refine_k candidates per result against the FP16 vectors refine keeps.
+"""
+
+
 class MilvusVectorStoreParams(RegistryBackedVectorStoreParams):
     """
     Parameters for MilvusVectorStore.
@@ -391,6 +443,12 @@ class MilvusVectorStoreParams(RegistryBackedVectorStoreParams):
             The most entities one purge round lists and deletes, at most the
             server's quotaAndLimits.limits.maxQueryResultWindow (default:
             10000).
+        vector_index (MilvusVectorIndex | None):
+            The vector index of the store's collection and the parameters
+            every search passes. Startup creates the index unless the
+            collection has one, in which case the collection keeps its
+            index; the search parameters apply to every query from startup
+            on (default: None, which selects HNSW_SQ).
     """
 
     client: InstanceOf[AsyncMilvusClient] = Field(
@@ -414,6 +472,15 @@ class MilvusVectorStoreParams(RegistryBackedVectorStoreParams):
         description=(
             "The most entities one purge round lists and deletes, at most the "
             "server's quotaAndLimits.limits.maxQueryResultWindow"
+        ),
+    )
+    vector_index: MilvusVectorIndex | None = Field(
+        None,
+        description=(
+            "The vector index of the store's collection and the parameters "
+            "every search passes. Startup creates the index unless the "
+            "collection has one, in which case the collection keeps its "
+            "index; the search parameters apply to every query from startup on"
         ),
     )
 
@@ -460,6 +527,11 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
         self._request_timeout_seconds = params.request_timeout_seconds
         self._max_varchar_length = params.max_varchar_length
         self._purge_batch_size = params.purge_batch_size
+        self._vector_index = (
+            params.vector_index
+            if params.vector_index is not None
+            else _DEFAULT_VECTOR_INDEX
+        )
 
     @override
     async def _prepare_storage(self) -> None:
@@ -469,11 +541,11 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
         index_params.add_index(
             field_name=_VECTOR_FIELD,
             index_name=_VECTOR_FIELD,
-            index_type=_VECTOR_INDEX_TYPE,
+            index_type=self._vector_index.index_type,
             metric_type=self._SIMILARITY_METRIC_TO_MILVUS_METRIC[
                 self._store_schema.similarity_metric
             ],
-            params=_VECTOR_INDEX_PARAMS,
+            params=self._vector_index.params,
         )
         for key in self._store_schema.indexed_properties:
             index_params.add_index(
@@ -586,6 +658,7 @@ class MilvusVectorStore(RegistryBackedVectorStore[MilvusVectorStorePartition]):
             store_schema=self._store_schema,
             tracker=self._tracker,
             request_timeout_seconds=self._request_timeout_seconds,
+            search_params=self._vector_index.search_params,
         )
 
     @override

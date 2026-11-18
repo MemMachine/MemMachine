@@ -104,6 +104,18 @@ resources:
         request_timeout_seconds: 30
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
         partition_registry: profile_storage    # relational database holding the partition registry
+        # Optional tuning of the collection, as qdrant_client's HnswConfigDiff,
+        # OptimizersConfigDiff and QuantizationConfig in YAML form. hnsw_config.m
+        # stays 0: the collection holds every partition and indexes per partition.
+        # hnsw_config:
+        #   payload_m: 16
+        #   ef_construct: 100
+        # optimizers_config:
+        #   indexing_threshold: 20000
+        # quantization_config:
+        #   scalar:
+        #     type: int8
+        #     always_ram: true
     # VectorStore for vector-backed semantic memory.
     # Wire it via `semantic_memory.vector_collection`.
     semantic_vector_store:
@@ -128,6 +140,16 @@ resources:
     #     # db_name: default
     #     partition_registry: profile_storage
     #     request_timeout_seconds: 30
+    #     # Optional vector index of the collection and its searches, as Milvus
+    #     # takes them for the index type. Partition-key isolation needs the HNSW
+    #     # family; unset selects HNSW_SQ.
+    #     # vector_index:
+    #     #   index_type: HNSW
+    #     #   params:
+    #     #     M: 16
+    #     #     efConstruction: 128
+    #     #   search_params:
+    #     #     ef: 128
     # semantic_vector_store:
     #   provider: milvus
     #   config:
