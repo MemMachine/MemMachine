@@ -434,6 +434,47 @@ async def test_get_or_create_gives_up_from_the_race_it_last_lost():
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_answers_the_partition_of_the_creator_that_took_the_name():
+    event_memory = _event_memory()
+    event_memory.get_partition.side_effect = [None, sentinel.winner]
+    event_memory.create_partition.side_effect = PartitionAlreadyExistsError(
+        "event_memory", "p"
+    )
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.winner
+    event_memory.create_partition.assert_awaited_once_with("p")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+@pytest.mark.parametrize(
+    "creation_error",
+    [
+        ConnectionError("the store is down"),
+        PartitionCreateAttemptsExhaustedError("the registry gave up on the name"),
+    ],
+    ids=["store_error", "registry_gave_up"],
+)
+async def test_get_or_create_raises_a_store_or_registry_failure_of_the_creation_without_retrying(
+    creation_error: Exception,
+):
+    """A creation that fails other than by finding the name taken or the partition deleted raises its error at once."""
+    event_memory = _event_memory()
+    event_memory.create_partition.side_effect = creation_error
+
+    with pytest.raises(type(creation_error)) as raised:
+        await service_locator._get_or_create_event_memory_partition(event_memory, "p")
+
+    assert raised.value is creation_error
+    event_memory.create_partition.assert_awaited_once_with("p")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
 async def test_get_or_create_creates_again_when_its_partition_is_gone_before_it_is_read():
     """A partition deleted and dropped between its creation and the read after it."""
     event_memory = _event_memory()
