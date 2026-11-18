@@ -13,8 +13,8 @@ partition's tombstone under a lease.
 A reservation holds a new partition's name until the reservation is
 confirmed or canceled. Resolving a name answers a `Registration`, whose
 `require_current` checks that the partition is still registered. A tombstone
-claim holds a deleted partition's tombstone until the claim is finished or
-failed. Each acts on one partition alone.
+claim holds a deleted partition's tombstone until its holder ends it with
+`complete`, `progress`, or `fail`. Each acts on one partition alone.
 """
 
 import asyncio
@@ -168,9 +168,10 @@ class TombstoneClaim(ABC):
     complete, `progress` when the round purged records, or `fail` with a
     raised round's error. An end takes effect only while the claim is the
     latest on its tombstone and has not ended; any other end changes nothing.
-    Each claim counts an attempt without progress on the tombstone. A claim never ended keeps its attempt, and its tombstone is
-    claimable again once the claim's lease, and then the backoff, have passed,
-    so a tombstone may be claimed again while an earlier round on it runs.
+    Each claim counts an attempt without progress on the tombstone. A claim
+    never ended keeps its attempt, and its tombstone is claimable again once
+    the claim's lease, and then the backoff, have passed, so a tombstone may
+    be claimed again while an earlier round on it runs.
     """
 
     partition_uuid: UUID
