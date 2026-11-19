@@ -72,7 +72,7 @@ stores address them by UUID.
   process serving it. It arbitrates creation, answers a live partition's
   registration, makes deletion one transaction, queues each deleted partition
   as a tombstone, and hands out claims on due tombstones under leases, with
-  backoff and dead-lettering. It knows partition names, UUIDs, and
+  backoff. It knows partition names, UUIDs, and
   tombstones, and nothing of the stores. `PartitionRegistry`
   (`common/partition_registry/`) is the ABC; its by-name methods check the
   name and run the catalog steps an implementation supplies, and
@@ -506,11 +506,9 @@ under a lease and works through its stores in two steps. It runs every store's
 `progress`, and the tombstone stays due. Once none finds any, it runs every
 store's `drop_partition` and records the claim `complete`, and the registry
 deletes the tombstone. A round that raises fails the claim, so the
-registry's backoff applies. After the registry's maximum of rounds without
-progress, the tombstone is dead-lettered: kept, with its UUID reserved, and
-skipped by claims; an error log reports it when its last round raised.
-Setting its `attempts_without_progress` back to 0 and its `claimable_at` to
-null returns it to the purge. A canceled round, like a purger that died, ends
+registry's backoff applies. A tombstone whose rounds keep failing is retried
+without end, at most the longest backoff after each failure, and its UUID
+stays reserved until a round completes it. A canceled round, like a purger that died, ends
 no claim: its attempt counts, and the tombstone is claimable again once the
 lease and then the backoff pass. A store keeps whatever progress its purge
 needs between calls, such as the segment store's cursor, in the partition's
@@ -523,14 +521,11 @@ progress clears it. The retention stays its own condition, computed from
 `enqueued_at` when the claim runs, so a change to it reaches every queued
 tombstone and no retry schedule can shorten it. The claim keeps its one index
 range, oldest deletion first, and skips tombstones whose `claimable_at` has
-not passed. Every write after a tombstone's insert is a claim's, except an
-operator's reset of a dead-lettered tombstone. Each write that ends a claim is
-matched on `claim_generation` and advances it, or deletes the tombstone, so it
-takes effect once, and only under the latest claim; any other end raises
-`TombstoneClaimStaleError`, which the partition manager logs (see
-[purge](vector_store_purge.md#the-lease)). The reset leaves the generation as
-it is, so a round still running can end its claim, which at most delays the
-tombstone by the base backoff.
+not passed. Every write after a tombstone's insert is a claim's. Each write
+that ends a claim is matched on `claim_generation` and advances it, or
+deletes the tombstone, so it takes effect once, and only under the latest
+claim; any other end raises `TombstoneClaimStaleError`, which the partition
+manager logs (see [purge](vector_store_purge.md#the-lease)).
 
 The retention is the namespace's. Event memory's configuration names its
 registry's database and its retention, and checks the retention's floor
@@ -668,8 +663,8 @@ differs where a store is remote:
   one level down: the segment store would take the registry's operations,
   with a purge round that calls back into its owner for the other stores.
   The registry then lives inside one data store, which drives its peers'
-  deletion; the remote-safe purge (leases, retention, backoff,
-  dead-lettering), which the segment store's single-transaction purge lacks,
+  deletion; the remote-safe purge (leases, retention, backoff), which the
+  segment store's single-transaction purge lacks,
   would be built again there; and a memory system without a segment store
   could not use it.
 - **Each owner sequences creation and purge itself**, holding the reservation
@@ -703,7 +698,7 @@ differs where a store is remote:
   handed back to another registry.
 - **A release for a canceled round's claim**, taking its attempt back and
   leaving the tombstone claimable at once, on the same columns. A canceled
-  round otherwise counts one attempt, toward dead-lettering too, and delays
+  round otherwise counts one attempt and delays
   its tombstone by the lease and the backoff, like a purger that died, so one
   rule covers every claim left unended.
 - **Namespaces fixed by each memory system.** A library user could then run

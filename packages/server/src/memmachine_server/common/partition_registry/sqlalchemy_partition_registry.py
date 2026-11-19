@@ -73,9 +73,6 @@ _MAX_MINT_ATTEMPTS = 10
 # The first SQLite with RETURNING, which the registry uses.
 _MIN_SQLITE_VERSION = (3, 35)
 
-# Purge attempts without progress a tombstone gets before it is dead-lettered.
-_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS = 10
-
 
 class BasePartitionRegistry(DeclarativeBase):
     """Base class for partition registry tables."""
@@ -255,11 +252,8 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
     Registries of different namespaces share the tables, keyed by namespace.
     No transaction stays open during a purge round.
 
-    After `_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS` attempts without progress, a
-    tombstone is dead-lettered: kept, holding its UUID, and skipped by
-    claims, with an error log if the last round raised. Setting its
-    `attempts_without_progress` to 0 and its `claimable_at` to NULL returns it
-    to the purge.
+    A tombstone whose purge rounds keep failing is retried without end, at
+    most `max_purge_retry_backoff_seconds` after each failure.
     """
 
     def __init__(self, params: SQLAlchemyPartitionRegistryParams) -> None:
@@ -413,8 +407,6 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
                     self._tombstone_retention_seconds,
                     since=PurgeQueueRow.enqueued_at,
                 ),
-                PurgeQueueRow.attempts_without_progress
-                < _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
                 or_(
                     PurgeQueueRow.claimable_at.is_(None),
                     PurgeQueueRow.claimable_at <= func.now(),
@@ -458,10 +450,9 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
             return None
         if row.attempts_without_progress > 1:
             logger.warning(
-                "Purge round on partition %s is attempt %d of %d",
+                "Purge round on partition %s is attempt %d",
                 row.partition_uuid,
                 row.attempts_without_progress,
-                _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
             )
         return _SQLAlchemyTombstoneClaim(
             partition_uuid=row.partition_uuid,
@@ -608,11 +599,8 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
 
     @override
     async def fail(self, error: Exception) -> None:
-        # A raise on the last attempt is reported, since claims skip the
-        # tombstone from then on.
         error.add_note(
-            f"Purge round on partition {self.partition_uuid}, attempt "
-            f"{self.attempt} of {_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS}"
+            f"Purge round on partition {self.partition_uuid}, attempt {self.attempt}"
         )
         async with write_connection(self.engine) as connection:
             ended = await connection.execute(
@@ -636,18 +624,6 @@ class _SQLAlchemyTombstoneClaim(TombstoneClaim):
             )
         if ended.rowcount != 1:
             raise TombstoneClaimStaleError(self.partition_uuid)
-        # Claims take only tombstones under the bound.
-        if self.attempt >= _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS:
-            logger.error(
-                "Purge of partition %s is dead-lettered after %d attempts "
-                "without progress: its data stays and it is no longer claimed. "
-                "Last error: %r. Set its attempts_without_progress to 0 and its "
-                "claimable_at to NULL in %s to retry it.",
-                self.partition_uuid,
-                self.attempt,
-                error,
-                PurgeQueueRow.__tablename__,
-            )
 
 
 async def _unregister_where(
@@ -722,11 +698,14 @@ def _purge_retry_backoff_seconds(
     max_seconds: int,
 ) -> ColumnElement[int]:
     """The purge retry backoff in seconds after `attempts` attempts, computed by the database: `base_seconds` doubled for each attempt after the first, at most `max_seconds`."""
-    # 1 << (a - 1) is 2 ** (a - 1) on both dialects. The shift is clamped at
-    # 0: an operator may reset a tombstone's attempts while a round on it
-    # runs, and PostgreSQL leaves a negative shift undefined.
+    # 1 << (a - 1) is 2 ** (a - 1) on both dialects. The shift stops at the
+    # first doubling that reaches `max_seconds`, so the backoff neither
+    # overflows nor wraps however many attempts a tombstone has had.
+    max_shift = 0
+    while base_seconds << max_shift < max_seconds:
+        max_shift += 1
     doublings = literal(1, Integer).op("<<")(
-        case((attempts > 0, attempts - 1), else_=0)
+        case((attempts > max_shift, max_shift), else_=attempts - 1)
     )
     smaller = func.min if dialect_name == "sqlite" else func.least
     return smaller(base_seconds * doublings, max_seconds, type_=Integer)

@@ -111,14 +111,15 @@ computes the colliding UUID directly
 an ingestion path that passes a caller's UUID through replaces the target's
 point, which then disappears from its partition.
 Partition UUIDs are not guarded as secrets: the registry logs them in its
-warnings and dead-letter errors, and they are in its tables and any backup, as
-record UUIDs are in any Qdrant snapshot. So a read-level leak plus an ordinary
-tenant account would become targeted deletion of other tenants' records, where
-UUIDv5 needs write access to a database. Any reversible keyed mapping,
-encryption included, has the same property. A reversible id is also not a
-proper UUID: an XOR of two version-4 UUIDs has version 0 and variant 0, and a
-UUIDv8 fixes 6 of its 128 bits, leaving 122 free, too few to hold an arbitrary
-record UUID's 122 random bits and 4 version bits reversibly.
+warnings and in the errors of failed rounds, and they are in its tables and
+any backup, as record UUIDs are in any Qdrant snapshot. So a read-level leak
+plus an ordinary tenant account would become targeted deletion of other
+tenants' records, where UUIDv5 needs write access to a database. Any
+reversible keyed mapping, encryption included, has the same property. A
+reversible id is also not a proper UUID: an XOR of two version-4 UUIDs has
+version 0 and variant 0, and a UUIDv8 fixes 6 of its 128 bits, leaving 122
+free, too few to hold an arbitrary record UUID's 122 random bits and 4 version
+bits reversibly.
 
 **Why not a conditional upsert.** Qdrant 1.16 added `update_filter`
 (qdrant/qdrant#7006): an upsert filtered on the writer's partition UUID

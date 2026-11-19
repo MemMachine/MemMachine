@@ -92,8 +92,8 @@ it until `False`. Each call runs one round, on the tombstone that came due
 first, in three steps:
 
 1. **Claim.** The registry's `claim_tombstone()` takes the oldest due
-   tombstone that is neither backing off, dead-lettered, nor held by another
-   claim, in one `UPDATE ... RETURNING` committed at once. The update counts
+   tombstone that is neither backing off nor held by another claim, in one
+   `UPDATE ... RETURNING` committed at once. The update counts
    an attempt without progress, sets the tombstone's `claimable_at` to when
    its lease and then the backoff will have passed, and increments its
    `claim_generation`. The tombstone is picked by one range on the
@@ -160,7 +160,7 @@ session sits idle in a transaction, holding back vacuum or meeting
   is assigned by the database too; a purger supplies neither a time nor an
   identity.
 
-### Failed rounds: backoff and dead-lettering
+### Failed rounds: backoff
 
 Each claim counts an attempt, `attempts_without_progress + 1`. A round that
 finds records and deletes them made progress, and resets the count to 0. So
@@ -175,20 +175,19 @@ never ended writes nothing.
   `min(base_purge_retry_backoff_seconds * 2^(a-1),
   max_purge_retry_backoff_seconds)` has passed since the failure: since the
   round raised, or, for a round that never ended, since its lease passed.
-  That is 30 s, 60 s, 120 s, and so on, at most 1 h. The tombstones behind it
+  That is 30 s, 60 s, 120 s, and so on, at most 1 h. The doubling stops once
+  it reaches the longest backoff, so the backoff neither overflows nor wraps
+  however many attempts a tombstone has had. The tombstones behind it
   are claimed meanwhile, so one failing tombstone does not hold the queue.
 - **Retries are logged.** A claim of a second or later attempt logs a warning
-  naming the partition and the attempt ("attempt 3 of 10"). Each log line
+  naming the partition and the attempt ("attempt 3"). Each log line
   is about the event at its time: nothing is logged later about an attempt
   that never ended.
-- **Dead-lettering.** After 10 attempts without progress, about 3 hours of
-  retries, claims skip the tombstone: it is kept, and its UUID reserved.
-  A last attempt that raises is reported by an error log naming the partition,
-  the last error, and the table. A last attempt whose purger died, or whose
-  round was canceled, goes unreported, since nothing runs on the tombstone
-  after it; its claim's warning, "attempt 10 of 10", is the last log line
-  about the tombstone. Setting its `attempts_without_progress` back
-  to 0 and its `claimable_at` to null returns it to the purge at once.
+- **No tombstone is given up on.** A tombstone whose rounds keep failing is
+  retried without end, at the longest backoff once it is reached: one round an
+  hour by default, a load too small to matter. Once the failing store
+  recovers, the next round purges the partition, with no operator step. Each
+  retry's warning and each failed round's error keep the tombstone visible.
 - The lease and the backoff are stored as `claimable_at` by the claim or
   failure that starts them, so a change to either reaches the claims and
   failures after it. The retention is applied from `enqueued_at` instead,
@@ -196,9 +195,6 @@ never ended writes nothing.
   and no write to `claimable_at` can shorten it. Both backoff durations are
   registry parameters in seconds with those defaults, so they can become
   configuration without changing the schema.
-
-A dead-letter bound, rather than retrying forever, makes a tombstone that
-never purges a visible problem instead of garbage that is quietly retried.
 
 ### Per-backend rounds
 
@@ -261,11 +257,12 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - **Count the backoff from when the tombstone came due**, with no new column.
   Measured: a tombstone due for days retries at once, its backoff spent before
   it first fails, so after an outage it fails as fast as before.
-- **An index on `(partition_namespace, enqueued_at,
-  attempts_without_progress)`.** It helps only skipping dead-lettered
-  tombstones, so the claim keeps `(partition_namespace, enqueued_at)`.
-- **A separate dead-letter table.** A counter on the queue row does the same
-  with no move between tables.
+- **Dead-letter a tombstone after a bound of attempts**, keeping it and
+  skipping it in claims until an operator resets it. At the default backoff, a
+  bound of 10 attempts is about 3 hours of failing rounds, so an outage that
+  long would leave every tombstone that came due during it unpurged until
+  someone resets each by hand, while retrying costs one round per tombstone
+  an hour. A bound can be added if a need for one appears.
 - **Count a round that never ended when a later claim finds its lease
   passed**, instead of counting every attempt in its claim. That claim would
   need the earlier claim's state and time after its own write replaced them,
@@ -318,12 +315,12 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 
 - Deleted records stay in the backend at least the retention: storage is
   reclaimed a day after deletion by default.
-- An operator watches for the dead-letter error log and for repeated retry
-  warnings. A dead-lettered tombstone's records stay until someone resets its
-  `attempts_without_progress` to 0 and its `claimable_at` to NULL.
+- An operator watches for repeated retry warnings and failed rounds' errors.
+  A tombstone whose rounds keep failing keeps its records until the cause is
+  fixed, and the next round after that purges them.
 - The purge loads the backend in rounds from every process's sweeper, and
   the rounds of different tombstones proceed in parallel.
 - A tombstone whose round died waits out the lease and the backoff, its
   attempt counted by its claim: a tombstone whose rounds keep killing their
-  purger is dead-lettered like one whose rounds keep raising, without the
-  error log.
+  purger is retried like one whose rounds keep raising, each retry logged by
+  its claim.

@@ -39,7 +39,6 @@ from memmachine_server.common.partition_registry.partition_registry import (
     TombstoneClaim,
 )
 from memmachine_server.common.partition_registry.sqlalchemy_partition_registry import (
-    _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS,
     PartitionRow,
     PurgeQueueRow,
     SQLAlchemyPartitionRegistry,
@@ -721,8 +720,7 @@ async def test_a_round_that_raises_keeps_the_tombstone_and_names_it_in_the_error
     assert [
         note
         for note in raised.value.__notes__
-        if str(partition_uuid) in note
-        and f"attempt 1 of {_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS}" in note
+        if str(partition_uuid) in note and "attempt 1" in note
     ]
     assert await _queued(registry) == [partition_uuid]
     assert await _attempts(registry, partition_uuid) == 1
@@ -798,9 +796,12 @@ async def test_the_backoff_stops_doubling_at_its_maximum(
 
 
 @pytest.mark.asyncio
-async def test_a_tombstone_whose_rounds_keep_failing_is_dead_lettered_and_reported(
-    sqlalchemy_engine, partition_namespace, caplog
+async def test_a_tombstone_whose_rounds_keep_failing_is_retried_at_the_longest_backoff(
+    sqlalchemy_engine, partition_namespace
 ):
+    """A tombstone is never given up on: after any number of failed rounds it
+    is claimed again once the longest backoff has passed, and the tombstones
+    behind it are claimed meanwhile."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     failing = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
@@ -809,47 +810,43 @@ async def test_a_tombstone_whose_rounds_keep_failing_is_dead_lettered_and_report
     await registry.unregister("b")
     await _age_deletion(registry, later)
 
-    with caplog.at_level(logging.ERROR):
-        for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS):
-            # Past its backoff, so it is the oldest tombstone claimable.
-            await _age_claimable_at(registry, failing, timedelta(days=1))
-            assert await _failing_round(registry) == failing
+    for _ in range(12):
+        # Past its backoff, so it is the oldest tombstone claimable.
+        await _age_claimable_at(registry, failing, timedelta(days=1))
+        assert await _failing_round(registry) == failing
 
-    assert [
-        r
-        for r in caplog.records
-        if r.levelno == logging.ERROR and str(failing) in r.getMessage()
-    ]
-    # Skipped from now on, but kept in the queue.
     assert await _round(registry, any_records_found=False) == later
-    assert await _round(registry, any_records_found=False) is None
-    assert await _queued(registry) == [failing]
+    assert await _round(registry, any_records_found=True) is None
+    # A minute short of the hour-long backoff, then a minute past it.
+    await _age_claimable_at(registry, failing, timedelta(minutes=59))
+    assert await _round(registry, any_records_found=True) is None
+    await _age_claimable_at(registry, failing, timedelta(minutes=2))
+    assert await _round(registry, any_records_found=True) == failing
 
 
 @pytest.mark.asyncio
-async def test_resetting_a_dead_lettered_tombstones_attempts_returns_it_to_the_purge(
+async def test_the_backoff_after_any_number_of_attempts_is_the_longest(
     sqlalchemy_engine, partition_namespace
 ):
-    """Setting the attempts without progress back to 0 and the claimable time
-    to NULL, as the dead-letter report says, makes the tombstone claimable at
-    once, right after its last failure."""
+    """The doubling stops at the longest backoff, so a tombstone that has
+    failed for years neither overflows the backoff nor retries at once."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
-    for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS):
-        await _age_claimable_at(registry, partition_uuid, timedelta(days=1))
-        assert await _failing_round(registry) == partition_uuid
-    assert await _round(registry, any_records_found=False) is None
-
     async with registry._engine.begin() as connection:
         await connection.execute(
             update(PurgeQueueRow)
             .where(PurgeQueueRow.partition_uuid == partition_uuid)
-            .values(attempts_without_progress=0, claimable_at=None)
+            .values(attempts_without_progress=100_000)
         )
 
-    assert await _round(registry, any_records_found=False) == partition_uuid
+    assert await _failing_round(registry) == partition_uuid
+
+    await _age_claimable_at(registry, partition_uuid, timedelta(minutes=59))
+    assert await _round(registry, any_records_found=True) is None
+    await _age_claimable_at(registry, partition_uuid, timedelta(minutes=2))
+    assert await _round(registry, any_records_found=True) == partition_uuid
 
 
 @pytest.mark.asyncio
@@ -861,7 +858,7 @@ async def test_a_round_that_finds_records_resets_the_attempts_without_progress(
     await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
-    for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS - 1):
+    for _ in range(3):
         await _failing_round(registry)
         await _age_claimable_at(registry, partition_uuid, timedelta(days=1))
     assert await _round(registry, any_records_found=True) == partition_uuid
@@ -885,41 +882,6 @@ async def test_a_canceled_round_keeps_its_attempt_and_its_claim(
     assert await _round(registry, any_records_found=False) is None
     await _age_claimable_at(registry, partition_uuid)
     assert await _round(registry, any_records_found=False) == partition_uuid
-
-
-@pytest.mark.asyncio
-async def test_a_round_failing_after_its_attempts_are_reset_backs_off_one_attempt(
-    sqlalchemy_engine, partition_namespace
-):
-    """A round that fails after an operator reset its tombstone's attempts
-    backs off like a first attempt, since the backoff clamps its shift at
-    zero."""
-    registry = await _registry(sqlalchemy_engine, partition_namespace)
-    partition_uuid = (await registry._reserve("a")).partition_uuid
-    await registry.unregister("a")
-    await _age_deletion(registry, partition_uuid)
-
-    held, holding = await _start_held_round(registry)
-    await _reset_attempts(registry, partition_uuid)
-    held.fail(RuntimeError("the backend refused"))
-    with pytest.raises(RuntimeError, match="the backend refused"):
-        await holding
-
-    assert await _round(registry, any_records_found=False) is None
-    await _age_claimable_at(registry, partition_uuid, timedelta(seconds=31))
-    assert await _round(registry, any_records_found=False) == partition_uuid
-
-
-async def _reset_attempts(
-    registry: SQLAlchemyPartitionRegistry, partition_uuid: UUID
-) -> None:
-    """Reset a tombstone's attempts and claimable time, as the dead-letter log instructs."""
-    async with registry._engine.begin() as connection:
-        await connection.execute(
-            update(PurgeQueueRow)
-            .where(PurgeQueueRow.partition_uuid == partition_uuid)
-            .values(attempts_without_progress=0, claimable_at=None)
-        )
 
 
 @pytest.mark.asyncio
@@ -954,7 +916,7 @@ async def test_a_round_that_never_ended_is_retried_once_its_lease_and_the_backof
         for r in caplog.records
         if r.levelno == logging.WARNING
         and str(partition_uuid) in r.getMessage()
-        and f"attempt 2 of {_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS}" in r.getMessage()
+        and "attempt 2" in r.getMessage()
     ]
     assert await _queued(registry) == []
 
@@ -983,35 +945,31 @@ async def test_a_second_abandoned_claim_backs_off_twice_as_long_after_its_lease(
 
 
 @pytest.mark.asyncio
-async def test_rounds_that_never_end_dead_letter_the_tombstone(
+async def test_rounds_that_never_end_keep_their_tombstone_claimable(
     sqlalchemy_engine, partition_namespace, caplog
 ):
-    """A tombstone whose rounds keep killing their purger is dead-lettered
-    like one whose rounds keep raising, each retry logged with its attempt."""
+    """A tombstone whose rounds keep killing their purger is retried like one
+    whose rounds keep raising, each retry logged with its attempt."""
     registry = await _registry(sqlalchemy_engine, partition_namespace)
     partition_uuid = (await registry._reserve("a")).partition_uuid
     await registry.unregister("a")
     await _age_deletion(registry, partition_uuid)
 
     with caplog.at_level(logging.WARNING):
-        for _ in range(_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS):
+        for _ in range(12):
             assert await _abandon_claim(registry) == partition_uuid
             await _age_claimable_at(registry, partition_uuid, timedelta(days=1))
 
-    assert (
-        await _attempts(registry, partition_uuid)
-        == _MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS
-    )
+    assert await _attempts(registry, partition_uuid) == 12
     assert [
         r
         for r in caplog.records
         if r.levelno == logging.WARNING
         and str(partition_uuid) in r.getMessage()
-        and f"attempt {_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS} of {_MAX_PURGE_ATTEMPTS_WITHOUT_PROGRESS}"
-        in r.getMessage()
+        and "attempt 12" in r.getMessage()
     ]
-    assert await _round(registry, any_records_found=False) is None
-    assert await _queued(registry) == [partition_uuid]
+    assert await _round(registry, any_records_found=False) == partition_uuid
+    assert await _queued(registry) == []
 
 
 @pytest.mark.asyncio

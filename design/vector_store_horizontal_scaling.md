@@ -46,7 +46,7 @@ Shared: contracts and choices made with every backend in mind.
 | Document | What it covers |
 |---|---|
 | [partition registry](partition_registry.md) | The SQL catalog that arbitrates which partitions exist and their UUIDs, reservations and registrations, handles and their fencing, creation races, and the registry's creation and purge rounds over its store. |
-| [purge](vector_store_purge.md) | Tombstones, the retention, the claim, backoff, dead-lettering, the sweeper. |
+| [purge](vector_store_purge.md) | Tombstones, the retention, the claim, backoff, the sweeper. |
 | [consistency](vector_store_consistency.md) | What a query sees of earlier writes, as the contract states it; why the contract has no `get`; asynchronous clients; how tests observe state. |
 | [isolation](vector_store_isolation.md) | Isolation between partitions, record UUIDs and their reuse, and whether other vector databases can meet the guarantee. |
 
