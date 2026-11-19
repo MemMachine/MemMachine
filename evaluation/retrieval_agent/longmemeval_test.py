@@ -257,14 +257,9 @@ async def longmemeval_delete(config_path: str, session_id: str):
     from evaluation.utils import agent_utils
 
     resource_manager = agent_utils.load_eval_config(config_path)
-    memory, _, _ = await agent_utils.init_memmachine_params(
-        resource_manager=resource_manager,
-        session_id=session_id,
-    )
-    _set_safe_embedder_request_limits(memory)
 
     print(f"Deleting episodes for session_id='{session_id}'...")
-    await memory.delete_session_episodes()
+    await agent_utils.delete_session_episodes(resource_manager, session_id)
     print("Completed LongMemEval delete.")
 
 

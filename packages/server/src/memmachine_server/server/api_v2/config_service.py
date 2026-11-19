@@ -70,7 +70,6 @@ def _ltm_config_response_from_partial(
             vector_graph_store=None,
             vector_store=None,
             segment_store=None,
-            properties_schema=None,
             enabled=enabled if enabled is not None else True,
         )
     return LongTermMemoryConfigResponse(
@@ -80,7 +79,6 @@ def _ltm_config_response_from_partial(
         vector_graph_store=ltm.vector_graph_store,
         vector_store=ltm.vector_store,
         segment_store=ltm.segment_store,
-        properties_schema=ltm.properties_schema,
         enabled=enabled if enabled is not None else True,
     )
 
@@ -197,9 +195,6 @@ def _handle_backend_change(
         if ltm.segment_store is not None:
             ltm.segment_store = None
             changes.append("episodic_memory.long_term_memory.segment_store=null")
-        if ltm.properties_schema:
-            ltm.properties_schema = {}
-            changes.append("episodic_memory.long_term_memory.properties_schema={}")
     if new_backend == "event" and ltm.vector_graph_store is not None:
         # Wipe declarative-only state when arriving at the event backend.
         ltm.vector_graph_store = None
@@ -256,11 +251,6 @@ def _apply_ltm_updates(
         ltm.segment_store = spec_ltm.segment_store
         changes.append(
             f"episodic_memory.long_term_memory.segment_store={spec_ltm.segment_store}"
-        )
-    if spec_ltm.properties_schema is not None:
-        ltm.properties_schema = spec_ltm.properties_schema
-        changes.append(
-            f"episodic_memory.long_term_memory.properties_schema={spec_ltm.properties_schema}"
         )
     return changes
 

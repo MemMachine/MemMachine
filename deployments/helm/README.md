@@ -151,7 +151,7 @@ resources:
   databases:
     db_postgres: { provider: postgres, config: { host, port, user, password: $POSTGRES_PASSWORD, ... } }
     db_neo4j:    { provider: neo4j,    config: { uri, username: $NEO4J_USER, password: $NEO4J_PASSWORD, pool, ... } }
-    event_vector_store: { provider: qdrant, config: { host, port, grpc_port, prefer_grpc, https, api_key: $QDRANT_API_KEY (only when a key is configured) } }
+    event_vector_store: { provider: qdrant, config: { host, port, grpc_port, prefer_grpc, https, partition_registry, api_key: $QDRANT_API_KEY (only when a key is configured) } }
   embedders:
     default_embedder: { provider, config: { model, api_key: $OPENAI_API_KEY, base_url, dimensions } }
   language_models:

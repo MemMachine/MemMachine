@@ -199,40 +199,22 @@ class DeclarativeLongTermMemoryConf(BaseModel):
 
 
 class EventLongTermMemoryConf(BaseModel):
-    """Event-backend long-term memory (VectorStore + SegmentStore)."""
+    """
+    A session's event-backend long-term memory (VectorStore + SegmentStore).
+
+    Its vector store, segment store, and embedder are the deployment's.
+    """
 
     backend: Literal["event"] = "event"
     session_id: str = Field(
         ...,
         description="Session identifier",
     )
-    vector_store: str = Field(
-        ...,
-        description="ID of the VectorStore instance backing the derivative index",
-    )
-    segment_store: str = Field(
-        ...,
-        description=(
-            "ID of the SQL engine resource backing the segment store. "
-            "The SegmentStore is constructed implicitly from the engine."
-        ),
-    )
-    embedder: str = Field(
-        ...,
-        description="ID of the Embedder instance for creating embeddings",
-    )
     reranker: str | None = Field(
         default=None,
         description=(
             "ID of the Reranker instance. If None, embedding similarity scores "
             "are used for ordering."
-        ),
-    )
-    properties_schema: dict[str, str] = Field(
-        default_factory=dict,
-        description=(
-            "User-defined filterable properties and their type names "
-            '(e.g. {"my_field": "str"}). Type names: bool, int, float, str, datetime.'
         ),
     )
     segmenter: SegmenterConf = Field(
@@ -292,10 +274,6 @@ class LongTermMemoryConfPartial(BaseModel):
     segment_store: str | None = Field(
         default=None,
         description="ID of the SQL engine resource for the segment store (event backend only)",
-    )
-    properties_schema: dict[str, str] | None = Field(
-        default=None,
-        description="User-defined filterable properties (event backend only)",
     )
     segmenter: SegmenterConf | None = Field(
         default=None,

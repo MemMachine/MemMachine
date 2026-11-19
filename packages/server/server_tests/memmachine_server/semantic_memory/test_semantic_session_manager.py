@@ -1033,3 +1033,25 @@ async def test_search_with_time_filter_str(
             search_filter=parse_filter(filter_str),
         )
     )
+
+
+async def test_project_deletion_set_ids_match_the_metadata_free_resolution(
+    mock_session_manager: SemanticSessionManager,
+    session_data,
+):
+    await mock_session_manager.create_set_type(
+        session_data=session_data, is_org_level=True, metadata_tags=[]
+    )
+    await mock_session_manager.create_set_type(
+        session_data=session_data, is_org_level=False, metadata_tags=[]
+    )
+
+    resolved = await mock_session_manager._get_set_ids_str_from_metadata(
+        session_data=session_data, metadata=None
+    )
+
+    assert set(
+        SemanticSessionManager.project_deletion_set_ids(
+            org_id=session_data.org_id, project_id=session_data.project_id
+        )
+    ) == set(resolved)
