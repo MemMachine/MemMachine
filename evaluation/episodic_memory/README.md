@@ -11,7 +11,7 @@ Ready to go? Follow these simple steps:
 
 **A.** All commands should be run from their respective tool directory (default `evaluation/episodic_memory/`).
 
-**B.** The path to your data file, `locomo10.json`, should be updated to match its location. By default, you can find it in `/memmachine/evaluation/data/`.
+**B.** Download `locomo10.json` as described in [Datasets](../README.md#datasets), and update `path/to/locomo10.json` in the commands below to match its location.
 
 **C.** Once you have performed step 1 below, you can repeat the benchmark run by performing steps 2-4.  Once are you finished performing the benchmark, run step 5.
 
