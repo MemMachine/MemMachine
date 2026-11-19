@@ -763,7 +763,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
     ) -> Select:
         """Select the `rows` whose `key_column` is one of `keys`.
 
-        `rows` selects from this partition's rows of one table.
+        `rows` selects from this partition's rows of one table. `keys` holds
+        each key once.
 
         On PostgreSQL the statement joins each key to a subquery of that
         key's rows, so it searches the index once per key and its cost

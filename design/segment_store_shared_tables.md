@@ -191,7 +191,7 @@ Measured on PostgreSQL 18.6 (0.6 to 6 million rows, statistics from
   events of a 5,000-segment tenant, at `random_page_cost` 1.1), so
   `plan_cache_mode = force_custom_plan` corrects only the listed tenants.
 - The cost of the scan grows in proportion to the tenant, and the cost of
-  the statement above with the number of keys alone: 2 to 3 µs of
+  the statement above with the number of keys alone: up to 3 µs of
   execution per key.
 
 For one key, the index on the partition UUID and the key answers in one
