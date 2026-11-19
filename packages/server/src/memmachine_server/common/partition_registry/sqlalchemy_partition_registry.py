@@ -167,7 +167,7 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
             round, or after the lease of a claim never ended, doubled for each
             further attempt without progress (default: 30).
         max_purge_retry_backoff_seconds (int):
-            The longest the purge retry backoff grows to (default: 3600).
+            The longest the purge retry backoff grows to (default: 86400).
     """
 
     engine: InstanceOf[AsyncEngine] = Field(
@@ -213,7 +213,7 @@ class SQLAlchemyPartitionRegistryParams(BaseModel):
         ),
     )
     max_purge_retry_backoff_seconds: int = Field(
-        3600, gt=0, description="The longest the purge retry backoff grows to"
+        86400, gt=0, description="The longest the purge retry backoff grows to"
     )
 
     @field_validator("engine")

@@ -175,7 +175,7 @@ never ended writes nothing.
   `min(base_purge_retry_backoff_seconds * 2^(a-1),
   max_purge_retry_backoff_seconds)` has passed since the failure: since the
   round raised, or, for a round that never ended, since its lease passed.
-  That is 30 s, 60 s, 120 s, and so on, at most 1 h. The doubling stops once
+  That is 30 s, 60 s, 120 s, and so on, at most 24 h. The doubling stops once
   it reaches the longest backoff, so the backoff neither overflows nor wraps
   however many attempts a tombstone has had. The tombstones behind it
   are claimed meanwhile, so one failing tombstone does not hold the queue.
@@ -184,8 +184,8 @@ never ended writes nothing.
   is about the event at its time: nothing is logged later about an attempt
   that never ended.
 - **No tombstone is given up on.** A tombstone whose rounds keep failing is
-  retried without end, at the longest backoff once it is reached: one round an
-  hour by default, a load too small to matter. Once the failing store
+  retried without end, at the longest backoff once it is reached: one round a
+  day by default, a load too small to matter. Once the failing store
   recovers, the next round purges the partition, with no operator step. Each
   retry's warning and each failed round's error keep the tombstone visible.
 - The lease and the backoff are stored as `claimable_at` by the claim or
@@ -258,11 +258,11 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
   Measured: a tombstone due for days retries at once, its backoff spent before
   it first fails, so after an outage it fails as fast as before.
 - **Dead-letter a tombstone after a bound of attempts**, keeping it and
-  skipping it in claims until an operator resets it. At the default backoff, a
-  bound of 10 attempts is about 3 hours of failing rounds, so an outage that
+  skipping it in claims until an operator resets it. A bound of 10 attempts
+  under a 1-hour cap is about 3 hours of failing rounds, so an outage that
   long would leave every tombstone that came due during it unpurged until
   someone resets each by hand, while retrying costs one round per tombstone
-  an hour. A bound can be added if a need for one appears.
+  a day. A bound can be added if a need for one appears.
 - **Count a round that never ended when a later claim finds its lease
   passed**, instead of counting every attempt in its claim. That claim would
   need the earlier claim's state and time after its own write replaced them,

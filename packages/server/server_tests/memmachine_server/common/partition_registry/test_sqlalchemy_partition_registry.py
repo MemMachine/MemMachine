@@ -810,15 +810,15 @@ async def test_a_tombstone_whose_rounds_keep_failing_is_retried_at_the_longest_b
     await registry.unregister("b")
     await _age_deletion(registry, later)
 
-    for _ in range(12):
+    for _ in range(14):
         # Past its backoff, so it is the oldest tombstone claimable.
-        await _age_claimable_at(registry, failing, timedelta(days=1))
+        await _age_claimable_at(registry, failing, timedelta(days=2))
         assert await _failing_round(registry) == failing
 
     assert await _round(registry, any_records_found=False) == later
     assert await _round(registry, any_records_found=True) is None
-    # A minute short of the hour-long backoff, then a minute past it.
-    await _age_claimable_at(registry, failing, timedelta(minutes=59))
+    # A minute short of the day-long backoff, then a minute past it.
+    await _age_claimable_at(registry, failing, timedelta(hours=23, minutes=59))
     assert await _round(registry, any_records_found=True) is None
     await _age_claimable_at(registry, failing, timedelta(minutes=2))
     assert await _round(registry, any_records_found=True) == failing
@@ -843,7 +843,7 @@ async def test_the_backoff_after_any_number_of_attempts_is_the_longest(
 
     assert await _failing_round(registry) == partition_uuid
 
-    await _age_claimable_at(registry, partition_uuid, timedelta(minutes=59))
+    await _age_claimable_at(registry, partition_uuid, timedelta(hours=23, minutes=59))
     assert await _round(registry, any_records_found=True) is None
     await _age_claimable_at(registry, partition_uuid, timedelta(minutes=2))
     assert await _round(registry, any_records_found=True) == partition_uuid
