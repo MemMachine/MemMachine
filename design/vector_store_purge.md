@@ -211,9 +211,15 @@ The store never schedules its own purge. The resource manager starts one
 sweeper task per partition registry the first time it builds the registry,
 running a partition manager over the stores passed to that first build,
 and `close()` cancels the sweepers. A sweeper calls `run_purge_round` again
-after 1 s when it ran a round and after 60 s when it ran none or raised; a
-round that raises is logged. Sweepers on other processes need no
-coordination: the claim arbitrates.
+after 1 s, whether it ran a round, found none due, or raised; a round that
+raises is logged. A tombstone whose round failed backs off on its own, so
+the sweeper's next call moves on to another. Sweepers on other processes
+need no coordination: the claim arbitrates. An idle call, whose claim finds
+nothing claimable, measured 0.75 ms on a SQLite file and 1.25 ms on
+PostgreSQL 16 in a container, and 11 ms and 9 ms with 100,000 tombstones
+backing off (2026-11-18). During a store outage, every round fails and each
+sweeper keeps claiming due tombstones a second apart, so each backs off; once
+the store recovers, each tombstone resumes when its backoff passes.
 
 ### Measured cost of the claim
 

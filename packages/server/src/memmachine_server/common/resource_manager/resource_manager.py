@@ -67,8 +67,7 @@ from memmachine_server.semantic_memory.storage.storage_base import SemanticStora
 
 logger = logging.getLogger(__name__)
 
-_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS = 60.0
-_PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS = 1.0
+_PARTITION_REGISTRY_PURGE_PAUSE_SECONDS = 1.0
 
 
 async def _run_purge_rounds_forever(
@@ -77,10 +76,11 @@ async def _run_purge_rounds_forever(
 ) -> None:
     """Run a partition namespace's purge rounds for as long as the task runs.
 
-    The next call follows after a short pause when a round ran, and after the
-    idle interval when none ran or the call raised; a raise is logged.
-    Sweepers in other processes may run the same namespace's purge rounds at
-    the same time.
+    The next call follows a short pause, whether the call ran a round, found
+    none due, or raised; a raise is logged. A tombstone whose round failed
+    backs off on its own, so the next call moves on to another. Sweepers in
+    other processes may run the same namespace's purge rounds at the same
+    time.
 
     A module-level coroutine on purpose: the event loop keeps a pending task
     alive while it sleeps, so the task pins whatever its frame references.
@@ -89,19 +89,12 @@ async def _run_purge_rounds_forever(
     """
     while True:
         try:
-            more = await partition_manager.run_purge_round()
+            await partition_manager.run_purge_round()
         except Exception:
             logger.exception(
-                "Purge round of partition namespace %r failed; retrying in %g s",
-                partition_namespace,
-                _PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS,
+                "Purge round of partition namespace %r failed", partition_namespace
             )
-            more = False
-        await asyncio.sleep(
-            _PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS
-            if more
-            else _PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS
-        )
+        await asyncio.sleep(_PARTITION_REGISTRY_PURGE_PAUSE_SECONDS)
 
 
 class ResourceManagerImpl:

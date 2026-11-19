@@ -284,7 +284,7 @@ def _partition_manager() -> NonCallableMagicMock:
 async def test_purge_rounds_tick_and_survive_failures(monkeypatch):
     """The background purge keeps running rounds past a failing one."""
     monkeypatch.setattr(
-        resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 0
+        resource_manager_module, "_PARTITION_REGISTRY_PURGE_PAUSE_SECONDS", 0
     )
     partition_manager = _partition_manager()
     calls = 0
@@ -311,39 +311,6 @@ async def test_purge_rounds_tick_and_survive_failures(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_purge_rounds_drain_a_backlog_without_waiting(monkeypatch):
-    """A round that ran means more may be due: the next comes after the
-    short busy pause, never the idle tick."""
-    monkeypatch.setattr(
-        resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 3600
-    )
-    monkeypatch.setattr(
-        resource_manager_module, "_PARTITION_REGISTRY_PURGE_BUSY_PAUSE_SECONDS", 0
-    )
-    partition_manager = _partition_manager()
-    calls = 0
-    drained = asyncio.Event()
-
-    async def backlogged_round() -> bool:
-        nonlocal calls
-        calls += 1
-        if calls >= 3:
-            drained.set()
-            return False
-        return True
-
-    partition_manager.run_purge_round.side_effect = backlogged_round
-
-    task = asyncio.create_task(
-        resource_manager_module._run_purge_rounds_forever(partition_manager, "ns")
-    )
-    await asyncio.wait_for(drained.wait(), 5)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-
-@pytest.mark.asyncio
 async def test_get_partition_registry_starts_each_namespace_once_with_its_purge_rounds(
     invalid_resource_manager, monkeypatch, tmp_path
 ):
@@ -351,7 +318,7 @@ async def test_get_partition_registry_starts_each_namespace_once_with_its_purge_
     over the stores that get is given, later gets start nothing more, and
     close() cancels the purges."""
     monkeypatch.setattr(
-        resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 3600
+        resource_manager_module, "_PARTITION_REGISTRY_PURGE_PAUSE_SECONDS", 3600
     )
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'registry.db'}")
     enable_sqlite_explicit_begin(engine)
@@ -671,7 +638,7 @@ async def test_purge_task_does_not_pin_the_manager(invalid_configure, monkeypatc
     resource manager that started it: a resource manager dropped without
     close() is collectable."""
     monkeypatch.setattr(
-        resource_manager_module, "_PARTITION_REGISTRY_PURGE_INTERVAL_SECONDS", 3600
+        resource_manager_module, "_PARTITION_REGISTRY_PURGE_PAUSE_SECONDS", 3600
     )
     manager = ResourceManagerImpl(invalid_configure)
     partition_manager = _partition_manager()
