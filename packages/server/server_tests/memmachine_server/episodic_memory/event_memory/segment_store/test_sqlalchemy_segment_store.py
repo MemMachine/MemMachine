@@ -652,81 +652,28 @@ async def test_context_comes_from_the_segments_nearest_the_seed(
 
 
 @pytest.mark.asyncio
-async def test_contexts_filter_by_context_producer(
+@pytest.mark.parametrize("field", ["context.producer", "context.context_type"])
+async def test_a_filter_on_the_context_is_refused(
     partition: SQLAlchemySegmentStorePartition,
+    field: str,
 ) -> None:
-    """`context.producer` is not a stored property; the filter just matches nothing.
-
-    Bare names that aren't `timestamp` are looked up as `_<name>` in the JSON
-    properties (matching EventMemory's `_to_vector_record_property` convention
-    for system fields). `context.producer` becomes `_context.producer`, which
-    isn't a stored key on any segment, so the filter returns no contexts.
-    """
-    ep = uuid4()
+    """The context is no property, and a filter field naming no property is refused."""
     s0 = _seg(
-        event_uuid=ep,
+        event_uuid=uuid4(),
         offset=0,
         ts_offset_seconds=0,
         context=ProducerContext(producer="Alice"),
     )
-    s1 = _seg(
-        event_uuid=ep,
-        offset=1,
-        ts_offset_seconds=1,
-        context=ProducerContext(producer="Bob"),
-    )
-    s2 = _seg(
-        event_uuid=ep,
-        offset=2,
-        ts_offset_seconds=2,
-        context=ProducerContext(producer="Alice"),
-    )
-    await partition.add_segments(_links(s0, s1, s2))
+    await partition.add_segments(_links(s0))
 
-    filt = Comparison(field="context.producer", op="=", value="Alice")
-    contexts = await partition.get_segment_contexts(
-        [s0.uuid],
-        max_backward_segments=5,
-        max_forward_segments=5,
-        property_filter=filt,
-    )
-    assert contexts == {}
-
-
-@pytest.mark.asyncio
-async def test_contexts_filter_by_context_type(
-    partition: SQLAlchemySegmentStorePartition,
-) -> None:
-    """`context.context_type` is not a stored property; filter matches nothing."""
-    ep = uuid4()
-    s0 = _seg(
-        event_uuid=ep,
-        offset=0,
-        ts_offset_seconds=0,
-        context=ProducerContext(producer="Alice"),
-    )
-    s1 = _seg(
-        event_uuid=ep,
-        offset=1,
-        ts_offset_seconds=1,
-        context=NullContext(),
-    )
-    s2 = _seg(
-        event_uuid=ep,
-        offset=2,
-        ts_offset_seconds=2,
-        context=ProducerContext(producer="Bob"),
-    )
-    await partition.add_segments(_links(s0, s1, s2))
-
-    filt = Comparison(field="context.context_type", op="=", value="producer")
-    contexts = await partition.get_segment_contexts(
-        [s0.uuid],
-        max_backward_segments=5,
-        max_forward_segments=5,
-        property_filter=filt,
-    )
-    assert contexts == {}
+    filt = Comparison(field=field, op="=", value="Alice")
+    with pytest.raises(ValueError, match="names no segment property"):
+        await partition.get_segment_contexts(
+            [s0.uuid],
+            max_backward_segments=5,
+            max_forward_segments=5,
+            property_filter=filt,
+        )
 
 
 @pytest.mark.asyncio
@@ -1039,6 +986,119 @@ async def test_get_derivative_uuids_by_segment_uuids_unknown(
 ) -> None:
     result = await partition.get_derivative_uuids_by_segment_uuids([uuid4()])
     assert result == {}
+
+
+# ===================================================================
+# get_segment_uuids_by_derivative_uuids
+# ===================================================================
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    seg = _seg()
+    d1, d2 = uuid4(), uuid4()
+    await partition.add_segments({seg: [d1, d2]})
+
+    result = await partition.get_segment_uuids_by_derivative_uuids([d1, d2])
+    assert result == {d1: seg.uuid, d2: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_agrees_with_the_forward_lookup(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Every derivative belongs to exactly one segment, so the two agree."""
+    segments = [_seg(offset=i, ts_offset_seconds=i) for i in range(3)]
+    links = {seg: [uuid4(), uuid4()] for seg in segments}
+    await partition.add_segments(links)
+
+    forward = await partition.get_derivative_uuids_by_segment_uuids(
+        [seg.uuid for seg in segments]
+    )
+    all_derivative_uuids = [
+        derivative_uuid
+        for derivative_uuids in forward.values()
+        for derivative_uuid in derivative_uuids
+    ]
+    backward = await partition.get_segment_uuids_by_derivative_uuids(
+        all_derivative_uuids
+    )
+
+    assert backward == {
+        derivative_uuid: segment_uuid
+        for segment_uuid, derivative_uuids in forward.items()
+        for derivative_uuid in derivative_uuids
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_empty(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    result = await partition.get_segment_uuids_by_derivative_uuids([])
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_omits_unknown(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """UUIDs the partition does not hold are omitted, not raised on."""
+    seg = _seg()
+    known = uuid4()
+    await partition.add_segments({seg: [known]})
+
+    unknown = uuid4()
+    result = await partition.get_segment_uuids_by_derivative_uuids([known, unknown])
+    assert result == {known: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_session_isolation(
+    store: SQLAlchemySegmentStore,
+) -> None:
+    """A derivative another partition owns is invisible here."""
+    other_partition = await store.open_or_create_partition(
+        "other_derivatives",
+        _plaintext_partition_config(),
+    )
+    other_seg = _seg()
+    other_derivative = uuid4()
+    await other_partition.add_segments({other_seg: [other_derivative]})
+
+    partition = await store.open_or_create_partition(
+        PARTITION_KEY,
+        _plaintext_partition_config(),
+    )
+    seg = _seg()
+    derivative = uuid4()
+    await partition.add_segments({seg: [derivative]})
+
+    result = await partition.get_segment_uuids_by_derivative_uuids(
+        [derivative, other_derivative]
+    )
+    assert result == {derivative: seg.uuid}
+
+
+@pytest.mark.asyncio
+async def test_get_segment_uuids_by_derivative_uuids_after_delete_segments(
+    partition: SQLAlchemySegmentStorePartition,
+) -> None:
+    """Deleting a segment takes its derivatives' mapping with it."""
+    kept, dropped = _seg(offset=0), _seg(offset=1)
+    kept_derivative, dropped_derivative = uuid4(), uuid4()
+    await partition.add_segments(
+        {kept: [kept_derivative], dropped: [dropped_derivative]}
+    )
+
+    await partition.delete_segments([dropped.uuid])
+
+    result = await partition.get_segment_uuids_by_derivative_uuids(
+        [kept_derivative, dropped_derivative]
+    )
+    assert result == {kept_derivative: kept.uuid}
 
 
 # ===================================================================
@@ -1561,6 +1621,8 @@ async def test_stale_handle_raises_after_delete(
     with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.get_derivative_uuids_by_segment_uuids([seg.uuid])
     with pytest.raises(SegmentStorePartitionHandleStaleError):
+        await partition.get_segment_uuids_by_derivative_uuids([uuid4()])
+    with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.delete_segments([seg.uuid])
     # The stale handle deleted nothing; the rows wait for the purge.
     assert await _row_counts(store, partition._incarnation) == (1, 1)
@@ -1581,13 +1643,15 @@ async def test_reads_check_liveness_inside_the_data_statement(
         "folded", _plaintext_partition_config()
     )
     seg = _seg()
-    await partition.add_segments(_links(seg))
+    derivative_uuids = [uuid4()]
+    await partition.add_segments({seg: derivative_uuids})
     recorded_statements.clear()
 
     await partition.get_segment_contexts([seg.uuid])
     await partition.get_segment_uuids_by_event_uuids([seg.event_uuid])
     await partition.get_derivative_uuids_by_segment_uuids([seg.uuid])
-    assert len(recorded_statements) == 3
+    await partition.get_segment_uuids_by_derivative_uuids(derivative_uuids)
+    assert len(recorded_statements) == 4
     assert all(
         "EXISTS (SELECT" in s and "segment_store_pt" in s for s in recorded_statements
     )
@@ -1745,7 +1809,8 @@ async def test_racing_purgers_never_retire_a_partly_purged_entry(
     A second purger that planned its batch from the entry as it stood
     before the first committed would delete nothing and retire the entry
     with rows left. PostgreSQL's claim lock makes it skip the entry; on
-    SQLite the claim is a write, so it waits until the first commits.
+    SQLite the call holds the write lock from BEGIN, so the second waits
+    until the first commits.
     """
     partition = await store.open_or_create_partition(
         "raced", _plaintext_partition_config()
@@ -2146,7 +2211,6 @@ async def test_concurrent_remote_delete_yields_single_queue_entry(
             await remote_session.execute(
                 insert(PurgeQueueRow).values(
                     incarnation=incarnation,
-                    partition_key="remote_del",
                     enqueued_at=func.now(),
                 )
             )
@@ -2353,7 +2417,6 @@ async def test_mint_detects_collision_with_concurrent_deletion(
         await remote_session.execute(
             insert(PurgeQueueRow).values(
                 incarnation=victim_incarnation,
-                partition_key="mint_victim",
                 enqueued_at=func.now(),
             )
         )
@@ -2446,14 +2509,13 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
     sqlite_store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """On SQLite the write fence opens the write transaction before checking.
+    """On SQLite the write fence checks inside the write transaction.
 
-    The driver defers BEGIN to the first data-modifying statement, so a
-    SELECT-only fence would run outside the write transaction: a delete and
-    a full purge could complete between the check and the insert, and the
-    write would then commit rows no queue entry tracks. The fence's no-op
-    registry UPDATE opens the write transaction first, so the racing
-    deletion must wait for the writer and the rows stay reclaimable.
+    A fence that ran outside it would let a delete and a full purge
+    complete between the check and the insert, and the write would then
+    commit rows no queue entry tracks. The write transaction holds the
+    write lock from BEGIN, so the racing deletion must wait for the writer
+    and the rows stay reclaimable.
     """
     partition = await sqlite_store.open_or_create_partition(
         "sqlite_fence", _plaintext_partition_config()
@@ -2513,8 +2575,8 @@ async def test_sqlite_write_racing_delete_cannot_orphan_rows(
         ).scalar_one()
     assert leftover_rows == 0, (
         "rows were committed under an incarnation the purge queue no "
-        "longer tracks: the SQLite fence did not open the write "
-        "transaction before checking"
+        "longer tracks: the SQLite fence checked outside the write "
+        "transaction"
     )
 
 
@@ -2786,22 +2848,6 @@ async def test_static_pool_engine_is_rejected(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_old_sqlite_runtime_is_rejected(
-    sqlalchemy_sqlite_engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Partition deletion depends on RETURNING; refuse an older SQLite loudly.
-
-    The store's own minimum is raised past the runtime rather than the
-    stdlib's version tuple being patched process-wide, which SQLAlchemy's
-    dialect also reads.
-    """
-    monkeypatch.setattr(sqlalchemy_segment_store, "_MIN_SQLITE_VERSION", (99, 0))
-    with pytest.raises(ValidationError, match="RETURNING"):
-        SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
-
-
-@pytest.mark.asyncio
 async def test_unsupported_dialect_engine_is_rejected(
     sqlalchemy_sqlite_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
@@ -2812,35 +2858,33 @@ async def test_unsupported_dialect_engine_is_rejected(
         SQLAlchemySegmentStoreParams(engine=sqlalchemy_sqlite_engine)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_windowed_read_raises_when_partition_dies_between_statements(
-    store: SQLAlchemySegmentStore,
+    pg_store: SQLAlchemySegmentStore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Seeds found, then deletion commits before the context statements.
 
     Each statement takes its own snapshot, so the context statements
     would return nothing; the read must raise rather than hand back
-    seeds with silently empty context.
+    seeds with silently empty context. On SQLite a read's statements
+    share one transaction, and so one snapshot, which a deletion cannot
+    change.
     """
-    partition = await store.open_or_create_partition(
+    partition = await pg_store.open_or_create_partition(
         "mid_read", _plaintext_partition_config()
     )
     segs = [_seg(ts_offset_seconds=i) for i in range(3)]
     await partition.add_segments(_links(*segs))
 
-    context_method = (
-        "_get_context_rows_loop"
-        if partition._is_sqlite
-        else "_get_context_rows_lateral"
-    )
-    original = getattr(partition, context_method)
+    original = partition._get_context_rows_lateral
 
     async def delete_then_read(*args, **kwargs):
-        await store.delete_partition("mid_read")
+        await pg_store.delete_partition("mid_read")
         return await original(*args, **kwargs)
 
-    monkeypatch.setattr(partition, context_method, delete_then_read)
+    monkeypatch.setattr(partition, "_get_context_rows_lateral", delete_then_read)
     with pytest.raises(SegmentStorePartitionHandleStaleError):
         await partition.get_segment_contexts(
             [segs[1].uuid], max_backward_segments=1, max_forward_segments=1
@@ -2889,7 +2933,7 @@ async def test_delete_partition_touches_only_registry_and_queue(
 # Coverage, as verified by ablating locks one at a time in
 # source-patched variants of both this store and the pre-overhaul
 # partitioned store:
-# - The writer's shared registry-row pin (_lock_partition_for_write)
+# - The writer's shared registry-row pin (_ensure_partition_live with pin)
 #   blocks partition deletion while a write transaction is in flight:
 #   test_write_pin_blocks_partition_delete fails with the pin ablated
 #   in either generation and passes with it present.
@@ -3358,7 +3402,6 @@ async def test_sqlite_mint_detects_collision_with_concurrent_deletion(
         await remote_session.execute(
             insert(PurgeQueueRow).values(
                 incarnation=victim_incarnation,
-                partition_key="sq_mint_victim",
                 enqueued_at=func.now(),
             )
         )

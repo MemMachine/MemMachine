@@ -98,9 +98,6 @@ class Project:
                 embedder="",
                 reranker="",
                 vector_graph_store="",
-                vector_store="",
-                segment_store="",
-                properties_schema={},
             )
         )
 

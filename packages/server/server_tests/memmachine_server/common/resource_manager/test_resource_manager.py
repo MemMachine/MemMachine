@@ -4,6 +4,7 @@ import asyncio
 import gc
 import weakref
 from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, create_autospec, patch
 
 import pytest
@@ -32,6 +33,7 @@ from memmachine_server.common.configuration.language_model_conf import (
     OpenAIResponsesLanguageModelConf,
 )
 from memmachine_server.common.configuration.reranker_conf import EmbedderRerankerConf
+from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.errors import (
     InvalidEmbedderError,
     InvalidLanguageModelError,
@@ -48,6 +50,7 @@ from memmachine_server.common.session_manager.session_data_manager import (
     SessionDataManager,
 )
 from memmachine_server.common.sql_lease_lock import SQLLeaseLockService
+from memmachine_server.common.vector_store import VectorStore, VectorStoreSchema
 from memmachine_server.episodic_memory.event_memory.segment_store import SegmentStore
 
 RERANKER_ID = "my_reranker"
@@ -378,3 +381,179 @@ async def test_purge_task_does_not_pin_the_manager(invalid_configure, monkeypatc
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.asyncio
+async def test_vector_store_purge_loop_ticks_and_survives_failures(monkeypatch):
+    """The background purge keeps driving the store past a failing call."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 0
+    )
+    store = create_autospec(VectorStore, instance=True)
+    calls = 0
+    third_call = asyncio.Event()
+
+    async def counting_purge() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("transient")
+        if calls == 3:
+            third_call.set()
+        return False
+
+    store.purge_deleted_partitions.side_effect = counting_purge
+
+    task = asyncio.create_task(
+        resource_manager_module._purge_deleted_vector_store_partitions_forever(
+            store, "Vector store s"
+        )
+    )
+    await asyncio.wait_for(third_call.wait(), 5)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert calls >= 3
+
+
+@pytest.mark.asyncio
+async def test_vector_store_purge_drains_backlog_without_waiting(monkeypatch):
+    """True from a purge call means more work: the next call comes after
+    the short busy pause, never the idle tick."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 3600
+    )
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_BUSY_PAUSE_SECONDS", 0
+    )
+    store = create_autospec(VectorStore, instance=True)
+    calls = 0
+    drained = asyncio.Event()
+
+    async def backlogged_purge() -> bool:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            return True
+        drained.set()
+        return False
+
+    store.purge_deleted_partitions.side_effect = backlogged_purge
+
+    task = asyncio.create_task(
+        resource_manager_module._purge_deleted_vector_store_partitions_forever(
+            store, "Vector store s"
+        )
+    )
+    await asyncio.wait_for(drained.wait(), 5)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert calls == 3
+
+
+_VECTOR_STORE: dict[str, Any] = {
+    "vector_store_name": "c",
+    "store_schema": VectorStoreSchema(
+        vector_dimensions=3,
+        similarity_metric=SimilarityMetric.COSINE,
+        indexed_properties={},
+    ),
+}
+
+
+@pytest.mark.asyncio
+async def test_get_vector_store_starts_one_sweeper_per_store(
+    invalid_resource_manager, monkeypatch
+):
+    """The first get of a store starts its purge loop; later gets of the
+    same store reuse it, and close() cancels it."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 3600
+    )
+    store = create_autospec(VectorStore, instance=True)
+    store.purge_deleted_partitions.return_value = False
+    monkeypatch.setattr(
+        invalid_resource_manager._database_manager,
+        "get_vector_store",
+        AsyncMock(return_value=store),
+    )
+    monkeypatch.setattr(
+        invalid_resource_manager._database_manager, "close", AsyncMock()
+    )
+
+    first = await invalid_resource_manager.get_vector_store("vs", **_VECTOR_STORE)
+    second = await invalid_resource_manager.get_vector_store("vs", **_VECTOR_STORE)
+    await asyncio.sleep(0)  # the loop makes its first call and parks in sleep
+
+    assert first is second is store
+    [task] = invalid_resource_manager._vector_store_purge_tasks.values()
+    assert store.purge_deleted_partitions.await_count == 1
+
+    # Bounded: close() waits for the sweepers it cancels.
+    await asyncio.wait_for(invalid_resource_manager.close(), 30)
+
+    assert task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_stores_of_two_names_on_one_vector_store_get_a_sweeper_each(
+    invalid_resource_manager, monkeypatch
+):
+    """Each store purges its own registry's deleted partitions."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 3600
+    )
+    stores = {}
+    for name in ("first", "second"):
+        stores[name] = create_autospec(VectorStore, instance=True)
+        stores[name].purge_deleted_partitions.return_value = False
+
+    async def get_vector_store(vector_store_id: str, *, vector_store_name: str, **_):
+        return stores[vector_store_name]
+
+    monkeypatch.setattr(
+        invalid_resource_manager._database_manager, "get_vector_store", get_vector_store
+    )
+    monkeypatch.setattr(
+        invalid_resource_manager._database_manager, "close", AsyncMock()
+    )
+
+    for name in stores:
+        await invalid_resource_manager.get_vector_store(
+            "vs", **{**_VECTOR_STORE, "vector_store_name": name}
+        )
+    await asyncio.sleep(0)  # each loop makes its first call and parks in sleep
+
+    assert len(invalid_resource_manager._vector_store_purge_tasks) == 2
+    for store in stores.values():
+        assert store.purge_deleted_partitions.await_count == 1
+
+    await asyncio.wait_for(invalid_resource_manager.close(), 30)
+
+
+@pytest.mark.asyncio
+async def test_vector_store_purge_task_does_not_pin_the_manager(
+    invalid_configure, monkeypatch
+):
+    """A pending purge task keeps its store alive, not the manager that
+    started it: a manager dropped without close() is collectable."""
+    monkeypatch.setattr(
+        resource_manager_module, "_VECTOR_STORE_PURGE_INTERVAL_SECONDS", 3600
+    )
+    manager = ResourceManagerImpl(invalid_configure)
+    store = create_autospec(VectorStore, instance=True)
+    store.purge_deleted_partitions.return_value = False
+    task = asyncio.create_task(
+        resource_manager_module._purge_deleted_vector_store_partitions_forever(
+            store, "Vector store s"
+        )
+    )
+    manager._vector_store_purge_tasks["vs", "c"] = task
+    manager_ref = weakref.ref(manager)
+    await asyncio.sleep(0)
+
+    del manager
+    gc.collect()
+
+    assert manager_ref() is None
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
