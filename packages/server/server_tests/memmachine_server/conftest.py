@@ -291,7 +291,7 @@ def real_llm_model(request):
 def pg_container():
     if not is_docker_available():
         pytest.skip("Docker is not available")
-    with PostgresContainer("pgvector/pgvector:pg16") as container:
+    with PostgresContainer("pgvector/pgvector:pg18") as container:
         yield container
 
 
