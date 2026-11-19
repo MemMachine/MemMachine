@@ -98,8 +98,8 @@ plus 300 seconds (see [purge](vector_store_purge.md)).
 
 ## Related work
 
-- The segment store's shared tables with incarnation-scoped keys ([its
-  design](segment_store_shared_tables.md)) are the model for the registry's
+- The event memory store's shared tables with incarnation-scoped keys ([its
+  design](event_memory_store_shared_tables.md)) are the model for the registry's
   incarnation logic.
 
 ## Deployment consequences
