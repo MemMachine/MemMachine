@@ -153,10 +153,13 @@ store requires of its engine), which stands in for the row locks.
 
 A statement that reads a partition's rows for a list of keys (seed segments
 by UUID, segments by event UUID, links by segment UUID or by derivative
-UUID) looks each key up on its own on PostgreSQL. The keys are one array
-parameter, and each joins a `LATERAL` subquery selecting that key's rows,
-whose `OFFSET 0` keeps the planner from merging it into the statement.
-`delete_segments` runs one `DELETE` per segment on every dialect.
+UUID) costs in proportion to the number of keys on PostgreSQL, whatever the
+partition's size. It is one statement: the keys are one array parameter,
+and each joins a `LATERAL` subquery selecting that key's rows, so the index
+is searched once per key, as an `IN` list searches it under a plan built
+for the partition. The subquery's `OFFSET 0` keeps the planner from merging
+it into the statement; it is a constant, which PostgreSQL plans no node
+for. `delete_segments` runs one `DELETE` per segment on every dialect.
 
 Given the keys as one `IN` list, PostgreSQL chooses between an index lookup
 per key and one scan of the partition's whole range of an index led by the
@@ -170,23 +173,26 @@ partitions. Where most tenants are small, it prices the scan below the
 lookups once the list holds more than a few keys, and on a large tenant the
 scan reads every row the tenant has.
 
-Measured on PostgreSQL 18.6 (1 to 6 million rows, statistics from
-`ANALYZE`, data in memory):
+Measured on PostgreSQL 18.6 (0.6 to 6 million rows, statistics from
+`ANALYZE`, data in memory; times are the server's mean execution time over
+1,500 executions):
 
-- With one 100,000-segment tenant among 1,000,000 tenants of one segment
-  each, the generic plan for the segments of 20 events read 100,681 blocks
-  in 82 ms; a lookup per key read 140 blocks in 0.2 ms. The seed read and
-  the link read by derivative UUID, both on the query path, did the same
-  (101,472 and 100,662 blocks).
+- With one 100,000-segment tenant among 500,000 tenants of one segment
+  each, the generic plan for the segments of 40 events read 100,748 blocks
+  in 61 ms; the statement above read 280 blocks in 0.09 ms, as the `IN`
+  list did under a plan built for the tenant. The seed read did the same
+  (101,471 blocks in 45 ms against 160 in 0.06 ms), and the link reads read
+  a tenant whole in a like distribution (about 100,700 blocks).
 - With one 1,000,000-segment tenant among 20,000 tenants of 48, the generic
-  plan for the segments of 5 events read 14,713 blocks in 51 ms against 20
-  blocks, and the seed read of 500 segments took 5.4 s against 3 ms.
+  plan read 14,713 blocks against 20 for the segments of 5 events, and
+  16,326 against 2,000 for 500 seed segments.
 - A plan built for the parameter values chose the scan as well for a large
   tenant outside the most common values (4,973 blocks against 80 for 20
   events of a 5,000-segment tenant, at `random_page_cost` 1.1), so
   `plan_cache_mode = force_custom_plan` corrects only the listed tenants.
 - The cost of the scan grows in proportion to the tenant, and the cost of
-  the lookups with the number of keys alone.
+  the statement above with the number of keys alone: 2 to 3 µs of
+  execution per key.
 
 For one key, the index on the partition UUID and the key answers in one
 lookup at any estimate, and no scan of the partition's range is priced
@@ -198,10 +204,13 @@ and generic plans, with and without statistics, at `random_page_cost` 4 and
 statement's text is also the same for any number of keys, so one prepared
 statement serves them all.
 
-Where a single scan is the better plan, the lookups cost more: about four
-blocks per key where the scan of a tenant of a few rows reads four in all,
-and up to four times the blocks for 500 keys of a 5,000-segment tenant.
-Both stay within a few milliseconds.
+Against an `IN` list under a plan built for the partition, the statement
+reads the same blocks up to 100 keys spread over a large tenant and about a
+third more at 500, in the same time to a third more. It costs more where
+the list's one scan passes the keys together: up to about two and a half
+times the time where the keys are neighbors in the index, and, for a tenant
+of 48 segments, whose whole range is one page, 44 µs against 17 for 40 keys
+and 0.3 ms against 0.03 for 500.
 
 Rewrites that keep the keys as one list (`= ANY` of an array, a plain join
 to the unnested array) leave the planner the same choice, and it chose the

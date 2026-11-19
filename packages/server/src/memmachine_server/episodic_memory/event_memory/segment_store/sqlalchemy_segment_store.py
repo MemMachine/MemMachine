@@ -765,15 +765,17 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
 
         `rows` selects from this partition's rows of one table.
 
-        On PostgreSQL the statement looks each key up on its own. Given the
-        keys as one list, the planner weighs an index lookup per key against
-        one scan of all the partition's rows, by the number of rows it
-        estimates the partition to hold. It has that number only for the
-        partitions its statistics list as most common, and a generic plan
-        has it for none, so for any other partition it uses the average
-        partition's. A partition far larger than the average then gets the
-        scan, which reads all of its rows. For one key, the planner prices
-        the lookup at or below the scan whatever it estimates.
+        On PostgreSQL the statement joins each key to a subquery of that
+        key's rows, so it searches the index once per key and its cost
+        follows the number of keys alone. Given the keys as one list, the
+        planner weighs an index lookup per key against one scan of all the
+        partition's rows, by the number of rows it estimates the partition
+        to hold. It has that number only for the partitions its statistics
+        list as most common, and a generic plan has it for none, so for any
+        other partition it uses the average partition's. A partition far
+        larger than the average then gets the scan, which reads all of its
+        rows. For one key, the planner prices the lookup at or below the
+        scan whatever it estimates.
         """
         if self._is_sqlite:
             return rows.where(key_column.in_(keys))
@@ -783,7 +785,8 @@ class SQLAlchemySegmentStorePartition(SegmentStorePartition):
             .render_derived(name="keys")
         )
         # The OFFSET keeps the planner from merging the subquery into the
-        # statement, where it would again weigh the keys as one list.
+        # statement, where it would again weigh the keys as one list. It is
+        # a constant zero, which PostgreSQL plans no node for.
         rows_of_key = (
             rows.where(key_column == key_table.c.key)
             .offset(literal_column("0"))
