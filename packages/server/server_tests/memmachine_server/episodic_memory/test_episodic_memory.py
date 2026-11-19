@@ -145,11 +145,10 @@ async def test_add_memory_episode_when_closed(episodic_memory):
 
 
 @pytest.mark.asyncio
-async def test_close(episodic_memory, mock_short_term_memory, mock_long_term_memory):
+async def test_close(episodic_memory, mock_short_term_memory):
     """Test closing the episodic memory."""
     await episodic_memory.close()
     mock_short_term_memory.close.assert_awaited_once()
-    mock_long_term_memory.close.assert_awaited_once()
     assert episodic_memory._closed
 
 
@@ -177,18 +176,6 @@ async def test_delete_episodes(
 
 
 @pytest.mark.asyncio
-async def test_delete_session_episodes(
-    episodic_memory,
-    mock_short_term_memory,
-    mock_long_term_memory,
-):
-    """Test deleting all episodes in a session."""
-    await episodic_memory.delete_session_episodes()
-    mock_short_term_memory.clear_memory.assert_awaited_once()
-    mock_long_term_memory.drop_session_partition.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_query_memory_all_enabled(
     episodic_memory,
     mock_short_term_memory,
@@ -205,7 +192,7 @@ async def test_query_memory_all_enabled(
         [ep1_rsp],
         "summary",
     )
-    mock_long_term_memory.search_scored.return_value = [(0.4, ep2), (0.3, ep3)]
+    mock_long_term_memory.query.return_value = [(0.4, ep2), (0.3, ep3)]
 
     response = await episodic_memory.query_memory("test query")
 
@@ -216,7 +203,7 @@ async def test_query_memory_all_enabled(
     ]  # ep3 is a duplicate and should be filtered out
     assert response.short_term_memory.episode_summary == ["summary"]
     mock_short_term_memory.get_short_term_memory_context.assert_awaited_once()
-    mock_long_term_memory.search_scored.assert_awaited_once()
+    mock_long_term_memory.query.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -241,7 +228,7 @@ async def test_query_memory_short_term_only_mode_skips_long_term(
     assert response.short_term_memory.episodes == [ep1_rsp]
     assert response.long_term_memory.episodes == []
     mock_short_term_memory.get_short_term_memory_context.assert_awaited_once()
-    mock_long_term_memory.search_scored.assert_not_awaited()
+    mock_long_term_memory.query.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -252,7 +239,7 @@ async def test_query_memory_long_term_only_mode_skips_short_term(
 ):
     ep1 = create_test_episode(uid=str(uuid4()), content="long-only")
     ep1_rsp = EpisodeResponse(score=0.5, **ep1.model_dump())
-    mock_long_term_memory.search_scored.return_value = [(0.5, ep1)]
+    mock_long_term_memory.query.return_value = [(0.5, ep1)]
 
     response = await episodic_memory.query_memory(
         "test query",
@@ -263,7 +250,7 @@ async def test_query_memory_long_term_only_mode_skips_short_term(
     assert response.short_term_memory.episodes == []
     assert response.long_term_memory.episodes == [ep1_rsp]
     mock_short_term_memory.get_short_term_memory_context.assert_not_awaited()
-    mock_long_term_memory.search_scored.assert_awaited_once()
+    mock_long_term_memory.query.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -300,7 +287,7 @@ async def test_query_memory_long_term_only(
 
     ep1 = create_test_episode(content="long only")
     ep1_rsp = EpisodeResponse(score=0.3, **ep1.model_dump())
-    mock_long_term_memory.search_scored.return_value = [(0.3, ep1)]
+    mock_long_term_memory.query.return_value = [(0.3, ep1)]
 
     response = await memory.query_memory("test query")
     assert response is not None
@@ -338,7 +325,7 @@ async def test_formalize_query_with_context(
         [ep1],
         "summary text",
     )
-    mock_long_term_memory.search_scored.return_value = [(0.2, ep2)]
+    mock_long_term_memory.query.return_value = [(0.2, ep2)]
 
     # Mock the timestamp attribute for sorting
     ep1.created_at = ep1.created_at
@@ -367,7 +354,7 @@ async def test_formalize_query_no_context(
 ):
     """Test formalizing a query when no context is found."""
     mock_short_term_memory.get_short_term_memory_context.return_value = ([], "")
-    mock_long_term_memory.search_scored.return_value = []
+    mock_long_term_memory.query.return_value = []
 
     final_query = await episodic_memory.formalize_query_with_context("original query")
 

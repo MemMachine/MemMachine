@@ -72,6 +72,8 @@ class SpecDoc:
     - Must refer to an embedder model defined in the system configuration.
     - If set to an empty string (default), the globally configured embedder will
       be used.
+    - Applies to the declarative backend only: an event-backed project uses the
+      embedder the server configures for event memory.
 
     Embedders generate vector embeddings for text to support semantic search and
     similarity operations.
@@ -187,6 +189,9 @@ class SpecDoc:
     MEMORY_METADATA = """
     Additional metadata associated with the message, represented as key-value
     pairs. Optional; defaults to an empty object.
+    Each key is lowercase letters, digits, and underscores, at most 32 bytes,
+    outside the reserved prefix `memmachine_`; a request with another key is
+    refused with 422.
     Retrieval operations may utilize this metadata for filtering.
     Use 'metadata.{key}' to filter based on specific metadata keys.
     """
@@ -205,7 +210,7 @@ class SpecDoc:
     ADD_MEMORY_RESULTS = "The list of results for each added memory message."
 
     TOP_K = """
-    The maximum number of memories to return in the search results.
+    The maximum number of memories to return in the search results; positive.
     """
 
     EXPAND_CONTEXT = """
