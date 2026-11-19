@@ -179,7 +179,7 @@ class ConfigurationWizard:
             embedder=self.EMBEDDER_NAME,
             reranker=self.RERANKER_NAME,
             vector_store=self.vector_store_id,
-            segment_store=self.SQLITE_DB_ID,
+            event_memory_store=self.SQLITE_DB_ID,
         )
 
     def _available_vector_store_choices(self) -> tuple[set[str], str, bool, bool]:
