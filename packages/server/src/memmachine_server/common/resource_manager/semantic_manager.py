@@ -14,8 +14,20 @@ from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ResourceNotReadyError
 from memmachine_server.common.language_model import LanguageModel
+from memmachine_server.common.metrics_factory import OperationTracker
+from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
+    PartitionDeletedError,
+    PartitionManager,
+    PartitionPendingError,
+)
 from memmachine_server.common.resource_manager import CommonResourceManager
-from memmachine_server.common.vector_store import VectorStoreSchema
+from memmachine_server.common.vector_store import (
+    VectorStore,
+    VectorStorePartition,
+    VectorStoreSchema,
+)
 from memmachine_server.semantic_memory.config_store.caching_semantic_config_storage import (
     CachingSemanticConfigStorage,
 )
@@ -52,7 +64,18 @@ _VECTOR_STORE_NAME = "semantic_memory"
 
 Fixed, because the name locates the store's data.
 """
-_VECTOR_STORE_PARTITION_KEY = "semantic_memory"
+_PARTITION_NAMESPACE = "semantic_memory"
+"""The partition namespace semantic memory owns, the same in every deployment."""
+_PARTITION_NAME = "semantic_memory"
+"""Semantic memory's one partition, which it never deletes."""
+_TOMBSTONE_RETENTION_SECONDS = 86400
+"""The retention of semantic memory's namespace, whose tombstones are those of failed or canceled creations."""
+
+# The attempts `_get_or_create_partition` makes,
+# _GET_OR_CREATE_RETRY_DELAY_SECONDS apart, before giving up on a partition
+# that stays pending or a name other processes keep taking.
+_MAX_GET_OR_CREATE_ATTEMPTS = 10
+_GET_OR_CREATE_RETRY_DELAY_SECONDS = 1
 
 
 class SemanticResourceManager:
@@ -173,14 +196,88 @@ class SemanticResourceManager:
             ),
         )
 
-        # The manager owns this partition and provisions it when the storage is
-        # built.
-        vector_partition = await vector_store.open_or_create_partition(
-            _VECTOR_STORE_PARTITION_KEY
+        # Semantic memory owns this partition and creates it when the storage
+        # is built, through a registry in the database the storage uses.
+        partition_registry = await self._resource_manager.get_partition_registry(
+            feature_store_name,
+            partition_namespace=_PARTITION_NAMESPACE,
+            tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
+            partitioned_stores=[vector_store],
         )
-        storage = VectorStoreSemanticStorage(sql_engine, vector_partition)
+        partition = await SemanticResourceManager._get_or_create_partition(
+            PartitionManager(
+                partition_registry,
+                [vector_store],
+                tracker=OperationTracker(
+                    await self._resource_manager.get_metrics_factory("prometheus"),
+                    prefix=_PARTITION_NAMESPACE,
+                ),
+            ),
+            vector_store,
+        )
+        storage = VectorStoreSemanticStorage(sql_engine, partition)
         await storage.startup()
         return storage
+
+    @staticmethod
+    async def _get_or_create_partition(
+        partition_manager: PartitionManager,
+        vector_store: VectorStore,
+    ) -> VectorStorePartition:
+        """
+        Return the vector store's handle on semantic memory's partition, creating the partition if no partition holds its name.
+
+        Read-then-create, retried a bounded number of times: a live partition
+        is returned; a pending one is another process's creation, which the
+        call waits for; no partition means create, then read again. The call
+        retries when the creation finds the name taken or the partition
+        deleted while the store created it, and when the partition is deleted
+        before the read after the creation or before the store returns its
+        handle.
+
+        Raises:
+            PartitionPendingError:
+                If the partition was another process's creation and still
+                pending at the last attempt.
+            PartitionCreateAttemptsExhaustedError:
+                If the attempts ran out with the last one losing the name or
+                the partition to another process, or if the registry gave up
+                after repeated attempts to reserve the free name failed.
+        """
+        pending_error: PartitionPendingError | None = None
+        lost_race: PartitionAlreadyExistsError | PartitionDeletedError | None = None
+        for attempt in range(_MAX_GET_OR_CREATE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(_GET_OR_CREATE_RETRY_DELAY_SECONDS)
+            try:
+                registration = await partition_manager.resolve_partition(
+                    _PARTITION_NAME
+                )
+                if registration is None:
+                    await partition_manager.create_partition(_PARTITION_NAME)
+                    registration = await partition_manager.resolve_partition(
+                        _PARTITION_NAME
+                    )
+            except PartitionPendingError as err:
+                pending_error = err
+                continue
+            except (PartitionAlreadyExistsError, PartitionDeletedError) as err:
+                pending_error = None
+                lost_race = err
+                continue
+            pending_error = None
+            if registration is None:
+                continue
+            partition = await vector_store.get_partition(registration.partition_uuid)
+            if partition is not None:
+                return partition
+        # The last lookup found the partition pending.
+        if pending_error is not None:
+            raise pending_error
+        raise PartitionCreateAttemptsExhaustedError(
+            f"Getting or creating semantic memory's partition made no progress "
+            f"after {_MAX_GET_OR_CREATE_ATTEMPTS} attempts"
+        ) from lost_race
 
     async def get_semantic_config_storage(self) -> SemanticConfigStorage:
         database = self._conf.config_database

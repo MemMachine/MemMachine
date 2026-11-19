@@ -20,6 +20,7 @@ episodic_memory:
     # reranker: my_reranker_id              # optional; omit to use embedding scores
     # vector_store: event_vector_store      # references resources.databases (a sqlite_vector_store, qdrant, etc.)
     # segment_store: profile_storage        # references a relational DB; segment store is created from it
+    # partition_registry: profile_storage   # a relational DB holding the registry of event memory's partitions
     # segmenter:                            # optional — defaults to passthrough
     #   type: passthrough                   # or: text (with max_chunk_length)
     # deriver:                              # optional — defaults to whole-text deriver
@@ -104,7 +105,6 @@ resources:
         https: false
         request_timeout_seconds: 30
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
-        partition_registry: profile_storage    # relational database holding the partition registry
     # VectorStore for vector-backed semantic memory.
     # Wire it via `semantic_memory.vector_collection`.
     semantic_vector_store:
@@ -117,7 +117,6 @@ resources:
         https: false
         request_timeout_seconds: 30
         # api_key: <YOUR_QDRANT_API_KEY>   # required for Qdrant Cloud
-        partition_registry: profile_storage    # relational database holding the partition registry
     #
     # Alternative: Milvus. Point uri at a Milvus server, or at Zilliz Cloud
     # with token/db_name.
@@ -127,7 +126,6 @@ resources:
     #     uri: http://localhost:19530
     #     # token: $MILVUS_TOKEN
     #     # db_name: default
-    #     partition_registry: profile_storage
     #     request_timeout_seconds: 30
     # semantic_vector_store:
     #   provider: milvus
@@ -135,7 +133,6 @@ resources:
     #     uri: http://localhost:19530
     #     # token: $MILVUS_TOKEN
     #     # db_name: default
-    #     partition_registry: profile_storage
     #     request_timeout_seconds: 30
     #
     # Alternative: a local file-backed SQLite vector store. Single-writer; OK

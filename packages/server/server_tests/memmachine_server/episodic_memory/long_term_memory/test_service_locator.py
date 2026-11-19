@@ -1,6 +1,8 @@
 """Unit tests for service_locator helpers."""
 
-from unittest.mock import NonCallableMagicMock, create_autospec
+from datetime import UTC, datetime
+from unittest.mock import NonCallableMagicMock, create_autospec, sentinel
+from uuid import uuid4
 
 import pytest
 
@@ -15,6 +17,15 @@ from memmachine_server.common.data_types import SimilarityMetric
 from memmachine_server.common.embedder import Embedder
 from memmachine_server.common.episode_store import EpisodeStorage
 from memmachine_server.common.errors import ConfigurationError
+from memmachine_server.common.partition_registry import (
+    PartitionAlreadyExistsError,
+    PartitionCreateAttemptsExhaustedError,
+    PartitionDeletedError,
+    PartitionPendingError,
+    PartitionRegistry,
+    Registration,
+    validate_partition_name,
+)
 from memmachine_server.common.reranker import Reranker
 from memmachine_server.common.resource_manager import CommonResourceManager
 from memmachine_server.common.vector_graph_store import VectorGraphStore
@@ -27,15 +38,12 @@ from memmachine_server.episodic_memory.declarative_memory.data_types import (
     Episode as DeclarativeMemoryEpisode,
 )
 from memmachine_server.episodic_memory.event_memory.event_memory import (
+    EventMemory,
     EventMemoryPartition,
 )
 from memmachine_server.episodic_memory.event_memory.segment_store import (
     SegmentStore,
     SegmentStorePartition,
-)
-from memmachine_server.episodic_memory.event_memory.segment_store.utils import (
-    PARTITION_KEY_MAX_BYTES,
-    validate_partition_key,
 )
 from memmachine_server.episodic_memory.long_term_memory import service_locator
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
@@ -43,72 +51,30 @@ from memmachine_server.episodic_memory.long_term_memory.service_locator import (
     event_backend_indexed_properties,
     event_backend_vector_store,
     long_term_memory_from_config,
-    partition_key_for_session,
+    partition_name_for_session,
 )
 
 
-def _is_valid_partition_key(value: str) -> bool:
-    try:
-        validate_partition_key(value)
-    except ValueError:
-        return False
-    return True
+def test_a_session_id_the_name_rule_accepts_is_the_partition_name():
+    for session_id in ("abc_123", "Session-Mixed-Case-123", "org/project", "日本語"):
+        assert partition_name_for_session(session_id) == session_id
 
 
-def test_partition_key_passes_through_when_already_valid():
-    assert partition_key_for_session("abc_123") == "abc_123"
-    assert partition_key_for_session("session_42") == "session_42"
+@pytest.mark.parametrize(
+    "session_id", ["", "nul\x00", "a" * 256], ids=["empty", "nul", "too_long"]
+)
+def test_a_session_id_the_name_rule_refuses_is_hashed(session_id: str):
+    name = partition_name_for_session(session_id)
+
+    assert name != session_id
+    validate_partition_name(name)
+    assert partition_name_for_session(session_id) == name
 
 
-def test_partition_key_hashes_when_session_id_invalid():
-    # Hyphens, uppercase, and other non-`[a-z0-9_]` chars trigger hashing.
-    key = partition_key_for_session("Session-Mixed-Case-123")
-    assert key != "Session-Mixed-Case-123"
-    assert _is_valid_partition_key(key)
-    assert len(key) == PARTITION_KEY_MAX_BYTES
-
-
-def test_partition_key_hashes_when_too_long():
-    long_id = "a" * 64
-    key = partition_key_for_session(long_id)
-    assert _is_valid_partition_key(key)
-    assert len(key) == PARTITION_KEY_MAX_BYTES
-    assert key != long_id
-
-
-def test_partition_key_hashes_trailing_newline():
-    """`$` matches before a trailing newline; the store's validator decides."""
-    key = partition_key_for_session("abc\n")
-    assert key != "abc\n"
-    assert _is_valid_partition_key(key)
-
-
-def test_partition_key_is_deterministic():
-    """Same session_id always produces the same partition_key."""
-    sid = "abc-123-uuid-shaped"
-    assert partition_key_for_session(sid) == partition_key_for_session(sid)
-
-
-def test_partition_key_distinct_inputs_produce_distinct_outputs():
-    a = partition_key_for_session("abc-123-different-input-1")
-    b = partition_key_for_session("abc-123-different-input-2")
-    assert a != b
-
-
-def test_partition_key_handles_unicode():
-    # UTF-8 multi-byte input forces hashing because non-ASCII chars don't
-    # match `[a-z0-9_]`.
-    key = partition_key_for_session("日本語_セッション")
-    assert _is_valid_partition_key(key)
-
-
-def test_partition_key_empty_string_passthrough():
-    """Empty session_id has length 0 but does not match `[a-z0-9_]+` (requires +)."""
-    # The regex `^[a-z0-9_]+$` requires at least one char, so empty string
-    # should be hashed (deterministic 32-hex digest).
-    key = partition_key_for_session("")
-    assert _is_valid_partition_key(key)
-    assert len(key) == PARTITION_KEY_MAX_BYTES
+def test_distinct_hashed_session_ids_name_distinct_partitions():
+    assert partition_name_for_session("a" * 256) != partition_name_for_session(
+        "b" * 256
+    )
 
 
 @pytest.mark.asyncio
@@ -121,6 +87,7 @@ async def test_every_backend_and_embedder_name_the_one_event_store():
                 backend="event",
                 vector_store=vector_store,
                 segment_store="ss",
+                partition_registry="pr",
                 embedder=embedder_id,
             )
         )
@@ -135,15 +102,12 @@ async def test_every_backend_and_embedder_name_the_one_event_store():
 def _deployment_resource_manager(
     deployment: LongTermMemoryConfPartial | None,
 ) -> NonCallableMagicMock:
-    """A resource manager whose deployment configures `deployment` and whose stores open autospec partitions."""
+    """A resource manager whose deployment configures `deployment`, whose registry resolves every name, and whose stores answer autospec handles."""
     vector_store = create_autospec(VectorStore, instance=True)
     vector_store.store_schema = VectorStoreSchema(
         vector_dimensions=3,
         similarity_metric=SimilarityMetric.COSINE,
         indexed_properties=event_backend_indexed_properties(),
-    )
-    vector_store.open_or_create_partition.return_value = create_autospec(
-        VectorStorePartition, instance=True
     )
     embedder = create_autospec(Embedder, instance=True)
     embedder.dimensions = 3
@@ -153,13 +117,22 @@ def _deployment_resource_manager(
     resource_manager.config.episodic_memory = EpisodicMemoryConfPartial(
         long_term_memory=deployment
     )
-    resource_manager.get_vector_store.return_value = vector_store
-    resource_manager.get_segment_store.return_value = create_autospec(
-        SegmentStore, instance=True
+    vector_store.get_partition.return_value = create_autospec(
+        VectorStorePartition, instance=True
     )
-    resource_manager.get_segment_store.return_value.open_or_create_partition.return_value = create_autospec(
+    vector_store.purge_partition.return_value = False
+    resource_manager.get_vector_store.return_value = vector_store
+    segment_store = create_autospec(SegmentStore, instance=True)
+    segment_store.get_partition.return_value = create_autospec(
         SegmentStorePartition, instance=True
     )
+    segment_store.purge_partition.return_value = False
+    resource_manager.get_segment_store.return_value = segment_store
+    registration = create_autospec(Registration, instance=True)
+    registration.partition_uuid = uuid4()
+    partition_registry = create_autospec(PartitionRegistry, instance=True)
+    partition_registry.resolve.return_value = registration
+    resource_manager.get_partition_registry.return_value = partition_registry
     resource_manager.get_embedder.return_value = embedder
     resource_manager.get_episode_storage.return_value = create_autospec(
         EpisodeStorage, instance=True
@@ -169,29 +142,43 @@ def _deployment_resource_manager(
 
 
 _DEPLOYMENT = LongTermMemoryConfPartial(
-    backend="event", vector_store="vs", segment_store="ss", embedder="e"
+    backend="event",
+    vector_store="vs",
+    segment_store="ss",
+    partition_registry="pr",
+    embedder="e",
 )
 
 
 @pytest.mark.asyncio
-async def test_event_params_opens_the_session_partition_in_the_event_store():
-    """The session's partition is opened in the deployment's event store.
-
-    Opening creates the partition when it is absent; the vector store's
-    registry arbitrates creation across processes, so a worker that loses
-    the race to another opens the winner's partition instead of failing
-    the request.
-    """
+async def test_event_params_get_the_session_partition_from_the_event_store():
+    """Event memory resolves the session's partition in the deployment's registry and gets its handles from the deployment's segment and vector stores."""
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
     config = EventLongTermMemoryConf(session_id="raced")
 
     long_term_memory = await long_term_memory_from_config(config, resource_manager)
 
+    segment_store = resource_manager.get_segment_store.return_value
     vector_store = resource_manager.get_vector_store.return_value
     partition = long_term_memory._memory
     assert isinstance(partition, EventMemoryPartition)
     assert partition.similarity_metric is SimilarityMetric.COSINE
-    vector_store.open_or_create_partition.assert_awaited_once_with("raced")
+    partition_registry = resource_manager.get_partition_registry.return_value
+    partition_registry.resolve.assert_awaited_once_with("raced")
+    partition_uuid = partition_registry.resolve.return_value.partition_uuid
+    segment_store.get_partition.assert_awaited_once_with(partition_uuid)
+    vector_store.get_partition.assert_awaited_once_with(partition_uuid)
+    assert partition._segment_store_partition is (
+        segment_store.get_partition.return_value
+    )
+    assert partition._vector_store_partition is vector_store.get_partition.return_value
+    registry_call = resource_manager.get_partition_registry.await_args
+    assert registry_call is not None
+    assert registry_call.args == ("pr",)
+    assert registry_call.kwargs["partition_namespace"] == "event_memory"
+    assert registry_call.kwargs["tombstone_retention_seconds"] == 86400
+    # The namespace's purge rounds run over the stores the partition is in.
+    assert registry_call.kwargs["partitioned_stores"] == [segment_store, vector_store]
     resource_manager.get_vector_store.assert_awaited_once_with(
         "vs",
         vector_store_name="event_memory",
@@ -250,21 +237,35 @@ async def test_event_params_refuses_a_session_of_a_deployment_without_event_memo
 
 
 @pytest.mark.asyncio
-async def test_deleting_an_event_sessions_storage_deletes_its_partitions_without_opening_them():
-    """A session's partitions are deleted by key, so deleting creates none."""
+async def test_deleting_an_event_sessions_storage_deletes_its_partition_without_getting_or_creating_it():
+    """A session's partition is deleted by name, without getting or creating it."""
     resource_manager = _deployment_resource_manager(_DEPLOYMENT)
     config = EventLongTermMemoryConf(session_id="s")
 
     await delete_long_term_memory_storage(config, resource_manager)
 
+    partition_registry = resource_manager.get_partition_registry.return_value
     vector_store = resource_manager.get_vector_store.return_value
     segment_store = resource_manager.get_segment_store.return_value
-    vector_store.delete_partition.assert_awaited_once_with("s")
-    segment_store.delete_partition.assert_awaited_once_with("s")
-    vector_store.open_or_create_partition.assert_not_awaited()
-    segment_store.open_or_create_partition.assert_not_awaited()
-    # Reclamation is the sweeper's; the delete path never purges.
-    segment_store.purge_deleted_partitions.assert_not_awaited()
+    partition_registry.unregister.assert_awaited_once_with("s")
+    partition_registry.resolve.assert_not_awaited()
+    partition_registry.reserve.assert_not_awaited()
+    vector_store.create_partition.assert_not_awaited()
+    segment_store.create_partition.assert_not_awaited()
+    # Purge rounds reclaim the records; the delete path purges nothing.
+    vector_store.purge_partition.assert_not_awaited()
+    segment_store.purge_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_event_memory_without_a_registry_database_is_refused():
+    resource_manager = _deployment_resource_manager(
+        _DEPLOYMENT.model_copy(update={"partition_registry": None})
+    )
+    config = EventLongTermMemoryConf(session_id="s")
+
+    with pytest.raises(ConfigurationError, match="no event memory"):
+        await long_term_memory_from_config(config, resource_manager)
 
 
 @pytest.mark.asyncio
@@ -305,3 +306,183 @@ async def test_deleting_a_declarative_sessions_storage_deletes_its_episodes(
     declarative_memory.get_matching_episodes.assert_awaited_once_with()
     (deleted,) = declarative_memory.delete_episodes.await_args.args
     assert list(deleted) == ["a", "b"]
+
+
+@pytest.fixture
+def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service_locator, "_GET_OR_CREATE_RETRY_DELAY_SECONDS", 0)
+
+
+def _event_memory() -> NonCallableMagicMock:
+    """An event memory where no partition holds a name until the first creation, and every creation succeeds."""
+    event_memory = create_autospec(EventMemory, instance=True)
+    created = False
+
+    async def get_partition(partition_name: str) -> object:
+        return sentinel.created if created else None
+
+    async def create_partition(partition_name: str) -> None:
+        nonlocal created
+        created = True
+
+    event_memory.get_partition.side_effect = get_partition
+    event_memory.create_partition.side_effect = create_partition
+    return event_memory
+
+
+def _pending() -> PartitionPendingError:
+    return PartitionPendingError("event_memory", "p", datetime.now(UTC))
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_answers_a_live_partition_without_creating():
+    event_memory = _event_memory()
+    event_memory.get_partition.side_effect = [sentinel.live]
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.live
+    event_memory.create_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_creates_the_partition_when_no_partition_holds_the_name():
+    event_memory = _event_memory()
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.created
+    event_memory.create_partition.assert_awaited_once_with("p")
+    assert event_memory.get_partition.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_waits_for_a_pending_partition():
+    event_memory = _event_memory()
+    event_memory.get_partition.side_effect = [_pending(), _pending(), sentinel.live]
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.live
+    assert event_memory.get_partition.await_count == 3
+    event_memory.create_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_reports_a_partition_that_stays_pending():
+    event_memory = _event_memory()
+    pending = _pending()
+    event_memory.get_partition.side_effect = pending
+
+    with pytest.raises(PartitionPendingError) as still_pending:
+        await service_locator._get_or_create_event_memory_partition(event_memory, "p")
+
+    assert still_pending.value is pending
+    assert (
+        event_memory.get_partition.await_count
+        == service_locator._MAX_GET_OR_CREATE_ATTEMPTS
+    )
+    event_memory.create_partition.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_creates_again_after_a_deletion_during_creation():
+    event_memory = _event_memory()
+    create_partition = event_memory.create_partition.side_effect
+    attempts = 0
+
+    async def deleted_once(partition_name: str) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PartitionDeletedError("event_memory", "p", uuid4())
+        await create_partition(partition_name)
+
+    event_memory.create_partition.side_effect = deleted_once
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.created
+    assert event_memory.create_partition.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_gives_up_from_the_race_it_last_lost():
+    event_memory = _event_memory()
+    lost = PartitionAlreadyExistsError("event_memory", "p")
+    event_memory.create_partition.side_effect = lost
+
+    with pytest.raises(
+        PartitionCreateAttemptsExhaustedError, match="no progress"
+    ) as gave_up:
+        await service_locator._get_or_create_event_memory_partition(event_memory, "p")
+
+    assert gave_up.value.__cause__ is lost
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_answers_the_partition_of_the_creator_that_took_the_name():
+    event_memory = _event_memory()
+    event_memory.get_partition.side_effect = [None, sentinel.winner]
+    event_memory.create_partition.side_effect = PartitionAlreadyExistsError(
+        "event_memory", "p"
+    )
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.winner
+    event_memory.create_partition.assert_awaited_once_with("p")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+@pytest.mark.parametrize(
+    "creation_error",
+    [
+        ConnectionError("the store is down"),
+        PartitionCreateAttemptsExhaustedError("the registry gave up on the name"),
+    ],
+    ids=["store_error", "registry_gave_up"],
+)
+async def test_get_or_create_raises_a_store_or_registry_failure_of_the_creation_without_retrying(
+    creation_error: Exception,
+):
+    """A creation that fails other than by finding the name taken or the partition deleted raises its error at once."""
+    event_memory = _event_memory()
+    event_memory.create_partition.side_effect = creation_error
+
+    with pytest.raises(type(creation_error)) as raised:
+        await service_locator._get_or_create_event_memory_partition(event_memory, "p")
+
+    assert raised.value is creation_error
+    event_memory.create_partition.assert_awaited_once_with("p")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("no_retry_delay")
+async def test_get_or_create_creates_again_when_its_partition_is_gone_before_it_is_read():
+    """A partition deleted and dropped between its creation and the read after it."""
+    event_memory = _event_memory()
+    event_memory.get_partition.side_effect = [None, None, None, sentinel.created]
+
+    partition = await service_locator._get_or_create_event_memory_partition(
+        event_memory, "p"
+    )
+
+    assert partition is sentinel.created
+    assert event_memory.create_partition.await_count == 2

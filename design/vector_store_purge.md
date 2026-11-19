@@ -1,6 +1,7 @@
-# Vector store: tombstones and purge
+# Partition registry: tombstones and purge
 
-Part of [vector store horizontal scaling](vector_store_horizontal_scaling.md).
+Part of the [partition registry](partition_registry.md) design, for every
+partitioned store.
 
 ## Problem
 
@@ -11,50 +12,57 @@ process serves a backend:
 - A write in flight during the deletion, from a handle in another process,
   lands after it and outlives it.
 - One delete of a large tenant is one burst of work the backend applies at
-  once, stalling other tenants (measured below).
+  once, stalling other tenants (measured in the
+  [Qdrant](qdrant_vector_store.md#purge) and
+  [Milvus](milvus_vector_store.md#purge) documents).
 - Nothing records that a deletion is incomplete, so a crash part way through
   leaves records no one will ever reclaim.
 
 ## Design
 
-Deletion is logical and immediate; reclamation is physical, deferred, bounded,
-and retried.
+Deletion is logical and immediate; reclamation is physical, deferred, and
+retried.
 
 ### Tombstones
 
-`unregister` removes the partition's row and queues the incarnation's
+`delete_partition` removes the partition's row and queues the partition's
 *tombstone* in one transaction (see [partition
-registry](vector_store_partition_registry.md)). The partition is unreachable
-when it commits. Its records stay in the backend until purge rounds reclaim
-them.
+registry](partition_registry.md)). The partition is unreachable once the
+transaction commits. Its records stay in the backend until purge rounds
+reclaim them.
 
-A tombstone becomes *due* once `tombstone_retention_seconds` (per backend, in
-`QdrantConf` or `MilvusConf`, for every store on it; 86,400, one day, unless
-configured) has passed since its deletion.
+A tombstone becomes *due* once the partition namespace's
+`tombstone_retention_seconds` has passed since its deletion. Event memory
+sets it in `episodic_memory.long_term_memory`, 86,400 (one day) unless
+configured; semantic memory fixes it in its code.
 
 - **Why wait.** A write that passed its liveness check before the deletion
   committed can land after it, and the backend cannot refuse it. Every such
   write has landed once the longest a request can be in flight has passed;
   `request_timeout_seconds` (30 unless configured) bounds the client's part.
-- **What a round sees.** A round lists the incarnation's records with the
+- **What a round sees.** A round lists the partition's records with the
   store's own reads, which may lag writes by a delay the store states (see
   [consistency](vector_store_consistency.md)): at most `common.gracefulTime`
-  (5 s by default) on Milvus at Bounded. The retention exceeds that delay too,
-  so a round that runs after it and finds nothing proves the incarnation empty. A round that lists
-  records an earlier round deleted, before the deletion is reflected, deletes
-  them again: a repeated round, never a wrong result.
-- **The retention decides nothing about validity.** A stale write is refused
-  by the handle's check after it; the retention only has to outlast any write
-  in flight. A write that lands after its tombstone is gone stays under a dead
-  incarnation no partition reads: leaked storage, never a wrong result.
-- **The configuration enforces a floor of 10 × `request_timeout_seconds` +
-  300 s.** The request timeout is the only part of a write's time in flight
-  the store knows. Neither Qdrant nor Milvus bounds how long a received write
-  can wait before it is applied (their queues are bounded by count), both can
-  apply a write after its client has given up, and Milvus's read delay
-  (`common.gracefulTime`) is server configuration a client cannot read. These
-  take seconds to minutes when no process is paused; the default retention, a
-  day, also covers a process paused between its liveness check and its write.
+  (5 s by default) on Milvus at Bounded. The retention exceeds that delay
+  too, so a round, which runs after the retention, proves the partition
+  empty when it finds nothing. A round that lists records an earlier round
+  deleted, before the deletion is reflected, deletes them again: a repeated
+  round, never a wrong result.
+- **The retention decides nothing about validity.** A stale write is
+  reported by its owner's check after it; the retention only has to outlast
+  any write in flight. A write that lands after its tombstone is gone stays
+  in a deleted partition no handle reads: leaked storage, never a wrong
+  result.
+- **The configuration enforces a floor of 10 × the vector store's
+  `request_timeout_seconds` + 300 s** on event memory's retention when its
+  vector store is Qdrant or Milvus. The request timeout is the only part of
+  a write's time in flight the store knows. Neither Qdrant nor Milvus bounds
+  how long a received write can wait before it is applied (their queues are
+  bounded by count), both can apply a write after its client has given up,
+  and Milvus's read delay (`common.gracefulTime`) is server configuration a
+  client cannot read. These delays take seconds to minutes when no process
+  is paused; the default retention, a day, also covers a process paused
+  between its liveness check and its write.
 - **Only the database's clock is used.** The queue stores the deletion's time,
   `enqueued_at`, written by the database's `now()`. The retention is applied
   by the database's own arithmetic when a claim is decided (`now() - interval`
@@ -62,152 +70,171 @@ configured) has passed since its deletion.
   same text form as `CURRENT_TIMESTAMP` so stamps and cutoff compare in time
   order). A changed retention therefore reaches every tombstone already
   queued, and no client clock enters a decision.
-- An incarnation is never re-minted while its tombstone exists, so no new
-  partition can adopt, or have reclaimed out from under it, a dead life's
-  records.
+- A UUID is never minted again while its tombstone exists, so no new
+  partition can adopt a deleted partition's records, and no purge can
+  reclaim a new partition's records.
 
 ### The purge round
 
-`VectorStore.purge_deleted_partitions()` is part of the contract: each call
-does a bounded amount of work and returns whether it ran a round, `False` once
-nothing is due, so a caller drains the queue by calling it until `False`. On
-Qdrant and Milvus a call is one round on the tombstone that came due first;
-both SQLite stores, whose deletion reclaims physically, return `False`.
+`purge_partition(partition_uuid)` and `drop_partition(partition_uuid)` are
+part of every store's contract (`PartitionedStore`): a purge call deletes
+some or all of a deleted partition's records from storage the partition
+shares with other partitions, and returns False only when it finds none; a
+drop removes the storage the partition keeps for itself. Qdrant and Milvus
+purge records (per backend, below) and have nothing to drop; both SQLite
+vector stores find nothing to purge and drop the partition's tables at once;
+the segment store purges its rows in bounded batches, and its drop deletes
+the partition's row (see [its design](segment_store_shared_tables.md)).
 
-`run_purge_round()` runs one round:
+`PartitionManager.run_purge_round()` returns whether it ran a round, `False`
+once no due tombstone is claimable, so a caller drains the queue by calling
+it until `False`. Each call runs one round, on the tombstone that came due
+first, in three steps:
 
-1. **Claim.** One `UPDATE ... RETURNING`, committed at once, takes the oldest
-   due tombstone that is neither backing off, dead-lettered, nor held by another
-   claim: it counts an attempt without progress, stamps the tombstone's
-   `claimed_at` with the database's `now()`, and increments its
+1. **Claim.** The registry's `claim_tombstone()` takes the oldest due
+   tombstone that is neither backing off nor held by another claim, in one
+   `UPDATE ... RETURNING` committed at once. The update counts
+   an attempt without progress, sets the tombstone's `claimable_at` to when
+   its lease and then the backoff will have passed, and increments its
    `claim_generation`. The tombstone is picked by one range on the
-   `(vector_store_name, enqueued_at)` index, `LIMIT 1`. On PostgreSQL the pick
-   is `FOR UPDATE SKIP LOCKED`, so a concurrent claim skips a row another claim
-   is taking and purgers on every process split a backlog without coordinating.
-   SQLite drops the locking clause; there the claim's write serializes claims,
-   for one statement.
-2. **Round.** The registry calls the store's round with the tombstone's
-   incarnation, with no transaction open. The round looks for records under
-   the incarnation in the store's native collection, deletes what it finds (per
-   backend, below), and returns whether it found any.
-3. **Record.** In a short transaction: a round that found nothing removes the
-   tombstone, which frees the incarnation; a round that found records ends its
-   claim, keeping the tombstone due, and resets its attempts without
-   progress.
+   `(partition_namespace, enqueued_at)` index, `LIMIT 1`. On PostgreSQL the
+   pick is `FOR UPDATE SKIP LOCKED`, so a concurrent claim skips a row another
+   claim is taking and purgers on every process split a backlog without
+   coordinating. SQLite drops the locking clause; there the claim's
+   one-statement write serializes claims.
+2. **Round.** With no transaction open, the manager runs every store's
+   `purge_partition` on the tombstone's partition, and once none finds
+   anything, every store's `drop_partition` (see [partition
+   registry](partition_registry.md#deletion-and-purge)).
+3. **Record.** In a short transaction, a round that found nothing calls the
+   claim's `complete`, which removes the tombstone and frees the UUID; a round
+   that found records calls `progress`, which ends its claim, keeping the
+   tombstone due, and resets its attempts without progress. A round that
+   raised ends with the claim's `fail`; a canceled round, like one whose
+   purger died, ends nothing.
 
 ### The lease
 
-A claim holds its tombstone until its round ends, or until
-`purge_lease_seconds` (a registry parameter; 300, five minutes, by default)
-has passed since `claimed_at` on the database clock. No transaction is open
-while the round runs, so no lock is held across its remote calls. On SQLite,
-whose write lock covers the whole database file, every store sharing the
-database can write during a round. On PostgreSQL, no session sits idle in a
-transaction, holding back vacuum or meeting
+A claim holds its tombstone until its round ends, or, for a round that never
+ends, until `purge_lease_seconds` (a registry parameter; 300, five minutes, by
+default) and then the backoff for its attempt have passed on the database
+clock. No transaction is open while the round runs, so no lock is held across
+its remote calls. On SQLite, whose write lock covers the whole database file,
+every store sharing the database can write during a round. On PostgreSQL, no
+session sits idle in a transaction, holding back vacuum or meeting
 `idle_in_transaction_session_timeout`.
 
 - **The lease spreads work; correctness does not rest on it.** A round is safe
-  to repeat and to run on two purgers at once, and a round that finds the
-  incarnation empty after the retention has finished its purge, under any
-  claim. The lease lets purgers split a backlog, each taking a different
-  tombstone, where without it they would all take the oldest. A repeated round
-  costs Qdrant a scroll and a filter-delete that matches nothing; on Milvus it
-  repeats a listing and deletes keys already deleted.
-- **A cancelled round takes back its attempt; a round whose purger died
-  keeps it.** A cancelled round ends its claim and takes back the attempt its
-  claim counted, in a write shielded from the cancellation, so its tombstone
-  is claimable at once. A round whose purger died writes nothing after its
-  claim, which already counted the attempt; its tombstone is claimed again
-  once the lease, and then the backoff, have passed.
+  to repeat and to run on two purgers at once. The lease lets purgers split a
+  backlog, each taking a different tombstone, where without it they would all
+  take the oldest. A repeated round costs Qdrant a scroll and a filter-delete
+  that matches nothing; on Milvus it repeats a listing and deletes keys
+  already deleted.
+- **A round that is canceled, or whose purger died, keeps its attempt.**
+  Neither writes anything after its claim, which already counted the
+  attempt; its tombstone is claimed again once the lease, and then the
+  backoff, have passed.
 - **The lease should exceed a round.** A round's remote calls run one after
   another, each bounded by the store's request timeout. A round that outlasts
-  its lease may run beside a later round on the same tombstone, which is
-  harmless but repeats work. When it ends, it logs a warning naming the
-  incarnation and the lease. The measured rounds take about 100 ms per Milvus
-  batch and, on Qdrant, whose single filter-delete makes the longest round,
-  about 1.3 s per million points (see the per-backend documents).
-- **The generation fences the claim's own writes.** A round ends its claim,
-  dates its failure, or resets the attempts, only while the tombstone's
-  `claim_generation` is still its claim's. So a round that outlasted its lease
-  neither ends the claim taken after it, which would let a third purger in
-  during that claim's round, nor records an outcome against it. A round that
-  found nothing removes the tombstone under any claim: what it found holds
-  whoever found it. The fence covers the registry's writes only: the backend
-  cannot condition a delete on a value held in the registry's database, so a
-  round that outlasted its lease still sends its deletes, which reach only its
-  own dead incarnation.
-- **The lease runs on the database's clock.** `claimed_at` is the database's
-  `now()`, and the lease is applied by the database's arithmetic when a claim
-  is decided, as the retention and the backoff are, so a changed lease reaches
-  claims already held. The generation is assigned by the database too; a
-  purger supplies neither a time nor an identity.
+  its lease and backoff may run beside a later round on the same tombstone,
+  which is harmless but repeats work. When the earlier round ends, its end
+  raises `TombstoneClaimStaleError`, which the partition manager logs as a
+  warning naming the partition. The measured rounds take about 100 ms per
+  Milvus batch and, on Qdrant, whose single filter-delete makes the longest
+  round, about 1.3 s per million points (see the per-backend documents).
+- **The generation fences the claim's own writes.** A round completes the
+  purge, records progress, or records a failure only while the tombstone's
+  `claim_generation` is still its claim's, and each of those writes advances
+  the generation or deletes the tombstone, so a claim ends once; any other end
+  raises `TombstoneClaimStaleError`. A round that outlasted its lease
+  therefore neither ends the claim taken after it, which would let a third
+  purger in during that claim's round, nor records an outcome against it; when
+  it found nothing, the current claim's round finds nothing too and completes
+  the purge. The fence covers the registry's writes only: the backend cannot
+  condition a delete on a value held in the registry's database, so a round
+  that outlasted its lease still sends its deletes, which reach only its own
+  deleted partition.
+- **The lease runs on the database's clock.** The registry takes every time
+  it schedules or compares from the database's `now()`: a claim's
+  `claimable_at` and retention cutoff, and a failure's backoff. The generation
+  is assigned by the database too; a purger supplies neither a time nor an
+  identity.
 
-### Failed rounds: backoff and dead-lettering
+### Failed rounds: backoff
 
 Each claim counts an attempt, `attempts_without_progress + 1`. A round that
 finds records and deletes them made progress, and resets the count to 0. So
 every round that does not finish uses an attempt, whether it raised or its
 purger died, as job queues count attempts when work is taken. A round that
 raises ends its claim, while the claim is the latest, and sets
-`last_failed_at = now()` on the database clock; its error carries a note naming
-the incarnation and the attempt. A round that never ended writes nothing.
+`claimable_at` to when the backoff will have passed, on the database clock;
+its error carries a note naming the partition and the attempt. A round that
+never ended writes nothing.
 
 - **Backoff.** After its a-th attempt fails, a tombstone is claimed again once
   `min(base_purge_retry_backoff_seconds * 2^(a-1),
-  max_purge_retry_backoff_seconds)` has passed since the failure: since
-  `last_failed_at` for a round that raised, and since its lease passed for one
-  that never ended. That is 30 s, 60 s, 120 s, and so on, at most 1 h. The
-  tombstones behind it are claimed meanwhile, so one failing tombstone does
-  not hold the queue.
+  max_purge_retry_backoff_seconds)` has passed since the failure: since the
+  round raised, or, for a round that never ended, since its lease passed.
+  That is 30 s, 60 s, 120 s, and so on, at most 24 h. The doubling stops once
+  it reaches the longest backoff, so the backoff neither overflows nor wraps
+  however many attempts a tombstone has had. The tombstones behind it
+  are claimed meanwhile, so one failing tombstone does not hold the queue.
 - **Retries are logged.** A claim of a second or later attempt logs a warning
-  naming the incarnation and the attempt ("attempt 3 of 10"). Each log line
+  naming the partition and the attempt ("attempt 3"). Each log line
   is about the event at its time: nothing is logged later about an attempt
   that never ended.
-- **Dead-lettering.** After 10 attempts without progress, about 3 hours of
-  retries, claims skip the tombstone: it is kept, and its incarnation reserved.
-  A last attempt that raises is reported by an error log naming the incarnation,
-  the last error, and the table. A last attempt whose purger died is not, since
-  nothing runs on the tombstone after it; its claim's warning, "attempt 10 of
-  10", is the last line about it. Setting its `attempts_without_progress` back
-  to 0 returns it to the purge at once.
-- The backoff is computed from recorded facts (the attempts, and when the last
-  failure raised or its claim was taken), not stored as a time to retry at. Both
-  durations are registry parameters in seconds with those defaults, so they can
-  become configuration without changing the schema.
-
-A dead-letter bound, rather than retrying forever, makes a tombstone that
-never purges a visible problem instead of garbage that is quietly retried.
+- **No tombstone is given up on.** A tombstone whose rounds keep failing is
+  retried without end, at the longest backoff once it is reached: one round a
+  day by default, a load too small to matter. Once the failing store
+  recovers, the next round purges the partition, with no operator step. Each
+  retry's warning and each failed round's error keep the tombstone visible.
+- The lease and the backoff are stored as `claimable_at` by the claim or
+  failure that starts them, so a change to either reaches the claims and
+  failures after it. The retention is applied from `enqueued_at` instead,
+  when a claim is decided, so a change to it reaches every queued tombstone,
+  and no write to `claimable_at` can shorten it. Both backoff durations are
+  registry parameters in seconds with those defaults, so they can become
+  configuration without changing the schema.
 
 ### Per-backend rounds
 
 Each backend deletes the way it measured best: Qdrant with one filter-delete
-of the whole incarnation per round, Milvus in bounded batches listed by the
-incarnation. The measurements are in the [Qdrant](qdrant_vector_store.md) and
-[Milvus](milvus_vector_store.md) documents. A native collection that is gone
-holds nothing: the round finds nothing, and the tombstone goes.
+of the whole partition per round, Milvus in bounded batches listed by the
+partition's UUID. The measurements are in the
+[Qdrant](qdrant_vector_store.md) and [Milvus](milvus_vector_store.md)
+documents. A native collection that is gone holds nothing: the store's purge
+finds nothing there.
 
 ### The sweeper
 
 The store never schedules its own purge. The resource manager starts one
-sweeper task per vector store the first time it hands the store out, and
-`close()` cancels them. A sweeper calls `purge_deleted_partitions()` again
-after 1 s when it ran a round and after 60 s when nothing was due; a round that
-raises is logged and retried a tick later. Sweepers on other
-processes need no coordination: the claim arbitrates.
+sweeper task per partition registry the first time it builds the registry,
+running a partition manager over the stores passed to that first build,
+and `close()` cancels the sweepers. A sweeper calls `run_purge_round` again
+after 1 s, whether it ran a round, found none due, or raised; a round that
+raises is logged. A tombstone whose round failed backs off on its own, so
+the sweeper's next call moves on to another. Sweepers on other processes
+need no coordination: the claim arbitrates. An idle call, whose claim finds
+nothing claimable, measured 0.75 ms on a SQLite file and 1.25 ms on
+PostgreSQL 16 in a container, and 11 ms and 9 ms with 100,000 tombstones
+backing off (2026-11-18). During a store outage, every round fails and each
+sweeper keeps claiming due tombstones a second apart, so each backs off; once
+the store recovers, each tombstone resumes when its backoff passes.
 
 ### Measured cost of the claim
 
 Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 2 CPUs and SQLite in a file.
 
-- Backoff (the claim of #1734's commit 96a8b5bf6, which this registry ports;
-  PostgreSQL 18.6 and SQLite 3.50.4; 1,000,000 tombstones not yet due; median
-  of 50 calls): a call that claims nothing reads each due tombstone that is
-  backing off and none that is not yet due. It took 1.5 / 2.9 / 20 ms on
-  PostgreSQL and 1.0 / 4.5 / 40 ms on SQLite with 1k / 10k / 100k tombstones
-  backing off, and 1.3 ms on PostgreSQL and 0.7 ms on SQLite with none due.
-- Interference (the lease of #1734's commit 503687c35, whose rounds cost the
-  same database time as 96a8b5bf6's; 20,000 live registry rows and 20,000 due
+- Backoff (a claim computing the backoff from a recorded `last_failed_at`,
+  the alternative below; PostgreSQL 18.6 and SQLite 3.50.4; 1,000,000
+  tombstones not yet due; median of 50 calls): a call that claims nothing
+  reads each due tombstone that is backing off and none that is not yet due.
+  It took 1.5 / 2.9 / 20 ms on PostgreSQL and 1.0 / 4.5 / 40 ms on SQLite
+  with 1k / 10k / 100k tombstones backing off, and 1.3 ms on PostgreSQL and
+  0.7 ms on SQLite with none due.
+- Interference (rounds of the same claim, with its lease computed from a
+  recorded `claimed_at`; 20,000 live registry rows and 20,000 due
   tombstones; 16 interactive workers checking handles' liveness beside two
   sweepers, three phases each): on PostgreSQL 16, with rounds back to back
   (about 520 per second) or of 20 ms (about 70 per second), interactive
@@ -226,15 +253,22 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
   untried ones. Rejected: it retains a failing tombstone's records indefinitely
   while the queue has other work, and hides the failure. The backoff gives the
   tombstones behind it their turn without reordering the queue.
-- **A `retry_at` column.** Rejected in favor of computing from recorded facts,
-  so a changed backoff reaches tombstones already failing.
+- **Compute the lease and the backoff when a claim is decided**, from a
+  recorded `claimed_at` and `last_failed_at`, so a changed lease or backoff
+  reaches claims already held and tombstones already failing. Rejected: the
+  claim's condition then branches on whether a claim is open and on when the
+  last round raised, while a stored `claimable_at` is one comparison. Both
+  durations are short, so a change still takes effect within one lease or
+  backoff.
 - **Count the backoff from when the tombstone came due**, with no new column.
   Measured: a tombstone due for days retries at once, its backoff spent before
   it first fails, so after an outage it fails as fast as before.
-- **An index on `(enqueued_at, attempts_without_progress)`.** It helps only
-  skipping dead-lettered tombstones, so the claim keeps `(enqueued_at)`.
-- **A separate dead-letter table.** A counter on the queue row does the same
-  with no move between tables.
+- **Dead-letter a tombstone after a bound of attempts**, keeping it and
+  skipping it in claims until an operator resets it. A bound of 10 attempts
+  under a 1-hour cap is about 3 hours of failing rounds, so an outage that
+  long would leave every tombstone that came due during it unpurged until
+  someone resets each by hand, while retrying costs one round per tombstone
+  a day. A bound can be added if a need for one appears.
 - **Count a round that never ended when a later claim finds its lease
   passed**, instead of counting every attempt in its claim. That claim would
   need the earlier claim's state and time after its own write replaced them,
@@ -260,18 +294,18 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 - **A token the purger mints for each claim**, in place of the generation.
   Either fences the claim's writes; the generation needs nothing from the
   purger, since the database assigns it.
-- **Fence the tombstone's removal too.** An incarnation found empty after the
-  retention needs no more rounds, whoever found it, so the fence would only
-  discard the finding and repeat the round.
-- **Store when the lease ends (`claimed_until`).** Rejected, as `retry_at` is,
-  in favor of computing from the recorded `claimed_at`, so a changed lease
-  reaches claims already held.
-- **A progress cursor on the tombstone**, as the segment store's queue keeps.
-  Qdrant's round deletes the whole incarnation at once and leaves nothing to
-  resume. Milvus lists the incarnation's keys by its field, and its rounds
-  stayed flat to the end of a 1M purge, where the segment store's batches
-  needed the cursor to avoid stepping over every row already purged; listing
-  Milvus keys by primary-key range, which a cursor needs, measured no faster.
+- **Remove the tombstone under any claim.** A partition found empty after
+  the retention needs no more rounds, whoever found it, so a stale round's
+  finding could end the purge and save the current claim's round. But that
+  one write would escape the fence every other end follows, and the round it
+  saves happens only after a lease was outlasted.
+- **A progress cursor on the tombstone**, like the segment store's cursor in
+  its partition's row. Qdrant's round deletes the whole partition at once
+  and leaves nothing to resume. Milvus lists the partition's keys by the
+  partition UUID field, and its rounds stayed flat to the end of a 1M purge,
+  where the segment store's batches needed the cursor to avoid stepping over
+  every row already purged; listing Milvus keys by primary-key range, which
+  a cursor needs, measured no faster.
   A cursor would also make the round carry a backend-specific position.
 - **A lock service keyed by name.** It locks a key the caller already knows,
   while the claim picks the oldest due tombstone no claim holds, in one
@@ -287,12 +321,12 @@ Measured 2026-10-06 on AC power, against PostgreSQL in a container capped at
 
 - Deleted records stay in the backend at least the retention: storage is
   reclaimed a day after deletion by default.
-- An operator watches for the dead-letter error log and for repeated retry
-  warnings. A dead-lettered tombstone's records stay until someone resets its
-  `attempts_without_progress`.
-- The purge loads the backend in bounded rounds from every process's sweeper,
-  and the rounds of different tombstones proceed in parallel.
+- An operator watches for repeated retry warnings and failed rounds' errors.
+  A tombstone whose rounds keep failing keeps its records until the cause is
+  fixed, and the next round after that purges them.
+- The purge loads the backend in rounds from every process's sweeper, and
+  the rounds of different tombstones proceed in parallel.
 - A tombstone whose round died waits out the lease and the backoff, its
   attempt counted by its claim: a tombstone whose rounds keep killing their
-  purger is dead-lettered like one whose rounds keep raising, without the
-  error log.
+  purger is retried like one whose rounds keep raising, each retry logged by
+  its claim.
