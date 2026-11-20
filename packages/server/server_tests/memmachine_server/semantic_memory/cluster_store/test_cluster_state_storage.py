@@ -28,7 +28,7 @@ async def sqlite_cluster_state_storage(sqlalchemy_sqlite_engine):
         await conn.run_sync(BaseClusterStore.metadata.create_all)
 
     storage = ClusterStateStorageSqlAlchemy(sqlalchemy_sqlite_engine)
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     yield storage
 
@@ -43,7 +43,7 @@ async def pg_cluster_state_storage(sqlalchemy_pg_engine):
         await conn.run_sync(BaseClusterStore.metadata.create_all)
 
     storage = ClusterStateStorageSqlAlchemy(sqlalchemy_pg_engine)
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     yield storage
 
@@ -54,7 +54,7 @@ async def pg_cluster_state_storage(sqlalchemy_pg_engine):
 @pytest_asyncio.fixture
 async def in_memory_cluster_state_storage():
     storage = InMemoryClusterStateStorage()
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     yield storage
     await storage.delete_all()

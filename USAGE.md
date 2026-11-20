@@ -62,7 +62,7 @@ After installation, users can run the server:
 
 # Create the schema of the configured databases, before the first start and
 # again after every upgrade, with no server running.
-memmachine-server migrate
+memmachine-server prepare
 
 # Start the server.
 memmachine-server

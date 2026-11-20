@@ -118,7 +118,7 @@ After installing `memmachine-server`:
 ```bash
 # Create the schema of the configured databases, before the first start and
 # again after every upgrade, with no server running
-memmachine-server migrate
+memmachine-server prepare
 
 # Run server
 memmachine-server

@@ -136,7 +136,7 @@ services:
       - ./configuration.yml:/app/configuration.yml:rw,Z
       - memmachine_logs:/tmp/memory_logs
     depends_on:
-      memmachine-migrate:
+      memmachine-prepare:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/api/v2/health"]
@@ -149,13 +149,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  # Creates or updates every configured store's schema, then exits; the
+  # Prepares every configured store's schema, then exits; the
   # application starts only once it has succeeded.
-  memmachine-migrate:
+  memmachine-prepare:
     image: ${MEMMACHINE_IMAGE:-memmachine/memmachine}
     pull_policy: ${PULL_POLICY:-always}
-    container_name: memmachine-migrate
-    command: ["memmachine-server", "migrate"]
+    container_name: memmachine-prepare
+    command: ["memmachine-server", "prepare"]
     restart: "no"
     environment: *memmachine-environment
     volumes: *memmachine-volumes

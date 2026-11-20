@@ -268,7 +268,7 @@ async def _event_memory_partition_registry(
     )
 
 
-async def migrate_event_memory_storage(
+async def prepare_event_memory_storage(
     resource_manager: InstanceOf[CommonResourceManager],
 ) -> None:
     """
@@ -285,9 +285,9 @@ async def migrate_event_memory_storage(
     deployment = resource_manager.config.episodic_memory.long_term_memory
     assert deployment is not None
     assert deployment.partition_registry is not None
-    await resource_manager.migrate_segment_store(segment_store_id)
+    await resource_manager.prepare_segment_store(segment_store_id)
     embedder = await resource_manager.get_embedder(embedder_id)
-    await resource_manager.migrate_vector_store(
+    await resource_manager.prepare_vector_store(
         vector_store_id,
         vector_store_name=_EVENT_MEMORY_VECTOR_STORE_NAME,
         store_schema=_event_backend_store_schema(embedder),
@@ -297,7 +297,7 @@ async def migrate_event_memory_storage(
         partition_namespace=_EVENT_MEMORY_PARTITION_NAMESPACE,
         tombstone_retention_seconds=deployment.tombstone_retention_seconds,
     )
-    await partition_registry.migrate()
+    await partition_registry.prepare()
 
 
 def deployment_event_memory_ids(configuration: Configuration) -> tuple[str, str, str]:

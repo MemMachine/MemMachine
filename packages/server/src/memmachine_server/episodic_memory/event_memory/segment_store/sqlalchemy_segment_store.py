@@ -877,8 +877,8 @@ class SQLAlchemySegmentStore(SegmentStore):
     # Lifecycle
 
     @override
-    async def migrate(self) -> None:
-        async with self._tracker("migrate"), self._engine.begin() as connection:
+    async def prepare(self) -> None:
+        async with self._tracker("prepare"), self._engine.begin() as connection:
             await connection.run_sync(BaseSegmentStore.metadata.create_all)
 
     @override

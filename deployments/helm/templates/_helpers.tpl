@@ -29,7 +29,7 @@ qdrant-secret
 
 {{/*
 memmachine.appEnv and memmachine.appVolumeMounts
-The environment and mounts of the server container and of the migrate init
+The environment and mounts of the server container and of the prepare init
 container, so both read the same configuration.
 */}}
 {{- define "memmachine.appEnv" -}}

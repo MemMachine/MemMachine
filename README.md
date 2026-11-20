@@ -100,7 +100,7 @@ MemMachine includes a native **Model Context Protocol (MCP)** server for seamles
 
 ```bash
 # Create the schema of the configured databases first, as for the server
-memmachine-server migrate
+memmachine-server prepare
 
 # Stdio mode (for Claude Desktop)
 memmachine-mcp-stdio

@@ -1,4 +1,4 @@
-"""`memmachine-server migrate`: the setup step that creates every configured store's durable resources."""
+"""`memmachine-server prepare`: the setup step that creates every configured store's durable resources."""
 
 import re
 import sqlite3
@@ -84,10 +84,10 @@ def _tables(path: Path) -> set[str]:
         return {name for (name,) in rows}
 
 
-def test_migrate_command_creates_every_selectable_store(
+def test_prepare_command_creates_every_selectable_store(
     configuration_path, monkeypatch
 ):
-    monkeypatch.setattr(sys, "argv", ["memmachine-server", "migrate"])
+    monkeypatch.setattr(sys, "argv", ["memmachine-server", "prepare"])
 
     app.main()
 
@@ -108,17 +108,17 @@ def test_migrate_command_creates_every_selectable_store(
 
 @pytest.mark.asyncio
 async def test_a_rerun_changes_nothing(configuration_path):
-    await app.migrate()
+    await app.prepare()
     before = _tables(configuration_path.parent / "memmachine.db")
 
-    await app.migrate()
+    await app.prepare()
 
     assert _tables(configuration_path.parent / "memmachine.db") == before
 
 
 @pytest.mark.asyncio
-async def test_stores_start_on_what_migrate_created_without_ddl(configuration_path):
-    await app.migrate()
+async def test_stores_start_on_what_prepare_created_without_ddl(configuration_path):
+    await app.prepare()
     statements: list[str] = []
 
     def record(_connection, _cursor, statement, _parameters, _context, _many):

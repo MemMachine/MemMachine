@@ -18,7 +18,7 @@ class SessionDataManager(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the manager's missing durable resources.
 

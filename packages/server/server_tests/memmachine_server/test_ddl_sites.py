@@ -1,7 +1,7 @@
 """Schema changes in the server's source happen only where they were placed on purpose.
 
 Each site that changes schema is found with the function it is written in,
-and that function must be listed below: a store's `migrate`, a helper
+and that function must be listed below: a store's `prepare`, a helper
 listed with it, or a request-path function that creates or drops what one
 partition, session, or semantic set needs. A new site fails this test until
 it is listed. The test checks where each site is written, not which
@@ -29,20 +29,20 @@ _DDL_ATTRIBUTES = {
     "add_collection_field",
 }
 
-_MIGRATE = {
+_PREPARE = {
     (
         "common/episode_store/episode_sqlalchemy_store.py",
-        "SqlAlchemyEpisodeStore.migrate",
+        "SqlAlchemyEpisodeStore.prepare",
     ),
     (
         "common/partition_registry/sqlalchemy_partition_registry.py",
-        "SQLAlchemyPartitionRegistry.migrate",
+        "SQLAlchemyPartitionRegistry.prepare",
     ),
     (
         "common/session_manager/session_data_manager_sql_impl.py",
-        "SessionDataManagerSQL.migrate",
+        "SessionDataManagerSQL.prepare",
     ),
-    # Conversions of older session tables, which only migrate runs.
+    # Conversions of older session tables, which only `prepare` runs.
     (
         "common/session_manager/session_data_manager_sql_impl.py",
         "SessionDataManagerSQL._add_status_column",
@@ -51,11 +51,11 @@ _MIGRATE = {
         "common/session_manager/session_data_manager_sql_impl.py",
         "SessionDataManagerSQL._migrate_pickle_to_json",
     ),
-    ("common/sql_lease_lock/_store.py", "SQLLeaseStore.migrate"),
-    ("common/vector_store/sqlite_vector_store.py", "SQLiteVectorStore.migrate"),
+    ("common/sql_lease_lock/_store.py", "SQLLeaseStore.prepare"),
+    ("common/vector_store/sqlite_vector_store.py", "SQLiteVectorStore.prepare"),
     (
         "episodic_memory/event_memory/segment_store/sqlalchemy_segment_store.py",
-        "SQLAlchemySegmentStore.migrate",
+        "SQLAlchemySegmentStore.prepare",
     ),
     (
         "common/vector_store/qdrant_vector_store.py",
@@ -71,7 +71,7 @@ _MIGRATE = {
     ),
     (
         "common/vector_graph_store/nebula_graph_vector_graph_store.py",
-        "NebulaGraphVectorGraphStore.migrate",
+        "NebulaGraphVectorGraphStore.prepare",
     ),
     (
         "semantic_memory/storage/sqlalchemy_pgvector_semantic.py",
@@ -83,19 +83,19 @@ _MIGRATE = {
     ),
     (
         "semantic_memory/storage/vector_store_semantic_storage.py",
-        "VectorStoreSemanticStorage.migrate",
+        "VectorStoreSemanticStorage.prepare",
     ),
     (
         "semantic_memory/storage/neo4j_semantic_storage.py",
-        "Neo4jSemanticStorage.migrate",
+        "Neo4jSemanticStorage.prepare",
     ),
     (
         "semantic_memory/config_store/config_store_sqlalchemy.py",
-        "SemanticConfigStorageSqlAlchemy.migrate",
+        "SemanticConfigStorageSqlAlchemy.prepare",
     ),
     (
         "semantic_memory/cluster_store/cluster_store_sqlalchemy.py",
-        "ClusterStateStorageSqlAlchemy.migrate",
+        "ClusterStateStorageSqlAlchemy.prepare",
     ),
 }
 
@@ -217,4 +217,4 @@ def test_every_ddl_site_is_placed():
         visitor.visit(ast.parse(path.read_text()))
         found |= {(relative, qualname) for qualname in visitor.sites}
 
-    assert found - (_MIGRATE | _REQUEST_PATH | _TEST_HELPERS) == set()
+    assert found - (_PREPARE | _REQUEST_PATH | _TEST_HELPERS) == set()

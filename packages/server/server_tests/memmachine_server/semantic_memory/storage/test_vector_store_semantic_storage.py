@@ -58,7 +58,7 @@ async def test_older_than_compares_instants_not_wall_clocks(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         await storage.add_history_to_set(
@@ -83,7 +83,7 @@ async def test_add_update_delete_feature_keeps_the_vector_store_partition_in_syn
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -126,7 +126,7 @@ async def test_vector_search_returns_relational_features_in_similarity_order(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         await storage.add_feature(
@@ -171,7 +171,7 @@ async def test_vector_records_carry_no_properties(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -205,7 +205,7 @@ async def test_an_update_without_an_embedding_leaves_the_vector_record_alone(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -239,7 +239,7 @@ async def test_an_update_reads_nothing_back_from_the_vector_store(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -281,7 +281,7 @@ async def test_delete_feature_set_keeps_rows_when_vector_delete_fails(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -323,7 +323,7 @@ async def test_delete_feature_set_keeps_a_late_row_when_its_vector_delete_fails(
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         first_id = await storage.add_feature(
@@ -380,7 +380,7 @@ async def test_delete_feature_set_deletes_a_row_that_stops_matching_with_its_vec
     storage = VectorStoreSemanticStorage(
         sqlalchemy_sqlite_engine, vector_store_partition
     )
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         feature_id = await storage.add_feature(
@@ -422,7 +422,7 @@ async def test_deleting_more_features_than_sqlite_binds_removes_every_vector_rec
     deletion: str,
 ):
     storage = VectorStoreSemanticStorage(sqlalchemy_engine, vector_store_partition)
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         vector_uuids = [uuid4() for _ in range(_MANY_FEATURES)]

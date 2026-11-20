@@ -159,7 +159,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
     def _create_session(self) -> AsyncSession:
         return self._session_factory()
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         try:
             async with self._engine.begin() as conn:
                 if conn.dialect.name == "postgresql":
@@ -178,7 +178,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
                 await conn.run_sync(BaseEpisodeStore.metadata.create_all)
         except (OperationalError, socket.gaierror) as err:
             raise ConfigurationError(
-                "Failed to connect to the database while migrating, please check your configuration."
+                "Failed to connect to the database while preparing, please check your configuration."
             ) from err
 
     async def startup(self) -> None:

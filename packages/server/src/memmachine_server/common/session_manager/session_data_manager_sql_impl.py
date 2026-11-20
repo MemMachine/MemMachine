@@ -132,7 +132,7 @@ class SessionDataManagerSQL(SessionDataManager):
         columns = inspector.get_columns(table_name, schema=schema)
         return all(column["name"] != "status" for column in columns)
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """Create the session tables, converting older ones: pickled parameters to JSON, and a missing status column added."""
 
         def _check_pickle_migration_needed(conn: Connection) -> bool:

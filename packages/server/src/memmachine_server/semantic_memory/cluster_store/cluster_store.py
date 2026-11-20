@@ -12,7 +12,7 @@ from memmachine_server.semantic_memory.semantic_model import SetIdT
 class ClusterStateStorage(Protocol):
     """Contract for persisting clustering state per semantic set."""
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the storage's missing durable resources.
 

@@ -364,7 +364,7 @@ def sqlalchemy_engine(request):
 @pytest_asyncio.fixture
 async def pgvector_semantic_storage(sqlalchemy_pg_engine):
     storage = SqlAlchemyPgVectorSemanticStorage(sqlalchemy_pg_engine)
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     yield storage
     await storage.delete_all()
@@ -374,7 +374,7 @@ async def pgvector_semantic_storage(sqlalchemy_pg_engine):
 @pytest_asyncio.fixture
 async def in_memory_semantic_storage():
     store = InMemorySemanticStorage()
-    await store.migrate()
+    await store.prepare()
     await store.startup()
     yield store
     await store.cleanup()
@@ -418,7 +418,7 @@ async def neo4j_driver(neo4j_container):
 @pytest_asyncio.fixture
 async def neo4j_semantic_storage(neo4j_driver):
     storage = Neo4jSemanticStorage(neo4j_driver)
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     await storage.delete_all()
     yield storage
@@ -501,7 +501,7 @@ def semantic_storage(request):
 async def semantic_config_storage(sqlalchemy_engine: AsyncEngine):
     engine = sqlalchemy_engine
     storage = SemanticConfigStorageSqlAlchemy(engine)
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
 
     yield storage
@@ -514,7 +514,7 @@ async def semantic_config_storage(sqlalchemy_engine: AsyncEngine):
 async def sql_db_episode_storage(sqlalchemy_engine: AsyncEngine):
     engine = sqlalchemy_engine
     storage = SqlAlchemyEpisodeStore(engine)
-    await storage.migrate()
+    await storage.prepare()
     await storage.startup()
     try:
         await storage.delete_episode_messages()

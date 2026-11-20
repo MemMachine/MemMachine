@@ -381,13 +381,13 @@ class DatabaseManager:
             f"VectorGraphStore '{name}' not found in neo4j_confs or nebula_graph_confs"
         )
 
-    async def migrate_graph_stores(self) -> None:
+    async def prepare_graph_stores(self) -> None:
         """Create the missing durable resources of every configured graph store."""
         # A Neo4j graph store creates its indexes as its labels grow, so only
         # NebulaGraph stores have anything to create ahead of use.
         for name in self.conf.nebula_graph_confs:
             graph_store = await self.get_vector_graph_store(name)
-            await graph_store.migrate()
+            await graph_store.prepare()
 
     @staticmethod
     async def validate_neo4j_driver(name: str, driver: AsyncDriver) -> None:
@@ -958,7 +958,7 @@ class DatabaseManager:
                 self.vector_stores[key] = store
             return store
 
-    async def migrate_vector_store(
+    async def prepare_vector_store(
         self,
         vector_store_id: str,
         *,
@@ -972,7 +972,7 @@ class DatabaseManager:
             vector_store_name,
             store_schema,
         )
-        await store.migrate()
+        await store.prepare()
 
     def _vector_store_conf(
         self, vector_store_id: str

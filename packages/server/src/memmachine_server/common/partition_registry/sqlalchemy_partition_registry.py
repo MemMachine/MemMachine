@@ -266,7 +266,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
         self._max_purge_retry_backoff_seconds = params.max_purge_retry_backoff_seconds
 
     @override
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         async with self._engine.begin() as connection:
             await connection.run_sync(BasePartitionRegistry.metadata.create_all)
 

@@ -17,7 +17,7 @@ class EpisodeStorage(ABC):
     """Abstract interface for persisting and retrieving episodic history."""
 
     @abstractmethod
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the storage's missing durable resources.
 

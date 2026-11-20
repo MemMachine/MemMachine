@@ -49,8 +49,8 @@ class CountCachingEpisodeStorage(EpisodeStorage):
         self._count_cache: dict[str, _CacheEntry] = {}
         self._lock = asyncio.Lock()
 
-    async def migrate(self) -> None:
-        await self._wrapped.migrate()
+    async def prepare(self) -> None:
+        await self._wrapped.prepare()
 
     async def startup(self) -> None:
         await self._wrapped.startup()

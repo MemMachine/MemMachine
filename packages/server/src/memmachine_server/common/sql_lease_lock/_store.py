@@ -57,7 +57,7 @@ class SQLLeaseStore:
             raise ValueError("SQL lease locks require PostgreSQL or SQLite")
         self._engine = engine
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """Create the lock and durable fencing counter tables."""
         # It reads the schema before it writes, and on SQLite a transaction
         # that has read cannot wait for another connection's write lock.

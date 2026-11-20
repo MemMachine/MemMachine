@@ -109,21 +109,21 @@ class SemanticResourceManager:
 
         await asyncio.gather(*tasks)
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create semantic memory's missing durable resources.
 
-        Its storage and its config store are each migrated when configured,
+        Its storage and its config store are each prepared when configured,
         whether or not semantic memory is enabled. Run it with no server
         using them, before semantic memory starts.
         """
         if self._conf.storage_configured():
             if self._conf.storage_backend == SemanticMemoryStorageBackend.VECTOR_STORE:
-                await self._migrate_vector_store_semantic_storage()
+                await self._prepare_vector_store_semantic_storage()
             else:
-                await (await self._construct_semantic_storage()).migrate()
+                await (await self._construct_semantic_storage()).prepare()
         if self._conf.config_database:
-            await (await self._build_semantic_config_storage()).migrate()
+            await (await self._build_semantic_config_storage()).prepare()
 
     async def get_semantic_storage(self) -> SemanticStorage:
         """Return the semantic storage, building and starting it on first use.
@@ -176,13 +176,13 @@ class SemanticResourceManager:
             )
             return Neo4jSemanticStorage(neo4j_engine)
 
-    async def _migrate_vector_store_semantic_storage(self) -> None:
+    async def _prepare_vector_store_semantic_storage(self) -> None:
         (
             feature_store_name,
             vector_store_id,
             store_schema,
         ) = await self._vector_store_semantic_resources()
-        await self._resource_manager.migrate_vector_store(
+        await self._resource_manager.prepare_vector_store(
             vector_store_id,
             vector_store_name=_VECTOR_STORE_NAME,
             store_schema=store_schema,
@@ -192,14 +192,14 @@ class SemanticResourceManager:
             partition_namespace=_PARTITION_NAMESPACE,
             tombstone_retention_seconds=_TOMBSTONE_RETENTION_SECONDS,
         )
-        await partition_registry.migrate()
+        await partition_registry.prepare()
         vector_store = await self._resource_manager.get_vector_store(
             vector_store_id,
             vector_store_name=_VECTOR_STORE_NAME,
             store_schema=store_schema,
         )
         # The storage's partition is created here, so starting the storage
-        # finds it; a registry built for migrating runs no purge rounds.
+        # finds it; a registry built for preparing runs no purge rounds.
         partition = await SemanticResourceManager._get_or_create_partition(
             PartitionManager(
                 partition_registry,
@@ -215,7 +215,7 @@ class SemanticResourceManager:
             feature_store_name,
             validate=True,
         )
-        await VectorStoreSemanticStorage(sql_engine, partition).migrate()
+        await VectorStoreSemanticStorage(sql_engine, partition).prepare()
 
     async def _get_vector_store_semantic_storage(self) -> SemanticStorage:
         (

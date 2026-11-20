@@ -61,7 +61,7 @@ class CommonResourceManager(Protocol):
         """Return the store of one name on a configured vector store."""
         raise NotImplementedError
 
-    async def migrate_vector_store(
+    async def prepare_vector_store(
         self,
         vector_store_id: str,
         *,
@@ -75,7 +75,7 @@ class CommonResourceManager(Protocol):
         """Return the segment store by name."""
         raise NotImplementedError
 
-    async def migrate_segment_store(self, name: str) -> None:
+    async def prepare_segment_store(self, name: str) -> None:
         """Create the missing durable resources of the segment store by name."""
         raise NotImplementedError
 

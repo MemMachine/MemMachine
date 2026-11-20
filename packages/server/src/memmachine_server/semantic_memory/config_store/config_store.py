@@ -16,7 +16,7 @@ from memmachine_server.semantic_memory.semantic_model import (
 class SemanticConfigStorage(Protocol):
     """Contract for persisting and retrieving semantic memory configuration."""
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the storage's missing durable resources.
 

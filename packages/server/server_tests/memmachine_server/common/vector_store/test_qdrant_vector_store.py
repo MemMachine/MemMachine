@@ -146,7 +146,7 @@ def _params(client, **overrides) -> QdrantVectorStoreParams:
 @pytest_asyncio.fixture
 async def store(any_qdrant_client):
     s = QdrantVectorStore(_params(any_qdrant_client))
-    await s.migrate()
+    await s.prepare()
     await s.startup()
     yield s
 
@@ -291,7 +291,7 @@ class TestSimilarityMetrics:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
-        await store.migrate()
+        await store.prepare()
         await store.startup()
         partition = await _created(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
@@ -341,7 +341,7 @@ class TestSimilarityMetrics:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
-        await store.migrate()
+        await store.prepare()
         await store.startup()
         partition = await _created(store)
         records = [_make_record(vector=vector) for vector in _METRIC_VECTORS]
@@ -1233,7 +1233,7 @@ class TestPartitionIsolation:
                 ),
             )
         )
-        await store.migrate()
+        await store.prepare()
         await store.startup()
         partition_a = await _created(store)
         partition_b = await _created(store)
@@ -1284,7 +1284,7 @@ class TestPartitionIsolation:
         other = QdrantVectorStore(
             _params(store._client, vector_store_name=f"{VECTOR_STORE_NAME}_other")
         )
-        await other.migrate()
+        await other.prepare()
         await other.startup()
         partition_uuid = uuid4()
         await store.create_partition(partition_uuid)
@@ -1371,7 +1371,7 @@ class TestPurge:
         dropped = QdrantVectorStore(
             _params(any_qdrant_client, vector_store_name="dropped_native")
         )
-        await dropped.migrate()
+        await dropped.prepare()
         await dropped.startup()
         partition = await _created(dropped)
         await partition.upsert(
@@ -1576,7 +1576,7 @@ class TestAgainstAModel:
                 store_schema=_schema(indexed_properties=_MODEL_INDEXED_PROPERTIES),
             )
         )
-        await store.migrate()
+        await store.prepare()
         await store.startup()
         rng = random.Random(_MODEL_SEED)
         run = _ModelRun(store, rng, sorted(uuid4() for _ in range(_MODEL_POOL_SIZE)))
@@ -1624,7 +1624,7 @@ class TestMetrics:
         mock_factory.get_histogram.return_value = mock_histogram
 
         store = QdrantVectorStore(_params(qdrant_client, metrics_factory=mock_factory))
-        await store.migrate()
+        await store.prepare()
         await store.startup()
 
         partition_uuid = uuid4()
@@ -1666,12 +1666,12 @@ class TestCollectionProvisioningAcrossWorkers:
     ):
         """A collection that exists without its indexes still gets them.
 
-        A migration retried after one died between the two calls finds the
+        A preparation retried after one died between the two calls finds the
         collection there and creates the indexes it lacks.
         """
         native = "raced"
 
-        # Stand in for a migration that got as far as the collection and no further.
+        # Stand in for a preparation that got as far as the collection and no further.
         await qdrant_client.create_collection(
             collection_name=native,
             vectors_config=models.VectorParams(
@@ -1680,7 +1680,7 @@ class TestCollectionProvisioningAcrossWorkers:
         )
 
         store = QdrantVectorStore(_params(qdrant_client, vector_store_name=native))
-        await store.migrate()
+        await store.prepare()
         try:
             info = await qdrant_client.get_collection(native)
             indexed = set(info.payload_schema or {})
@@ -1716,7 +1716,7 @@ class TestStrictMode:
     @pytest.mark.asyncio
     async def test_the_collection_is_strict(self, qdrant_client):
         store = QdrantVectorStore(_params(qdrant_client))
-        await store.migrate()
+        await store.prepare()
         await store.startup()
         info = await qdrant_client.get_collection(VECTOR_STORE_NAME)
         assert info.config.strict_mode_config is not None
@@ -1741,7 +1741,7 @@ class TestStrictMode:
     async def test_a_predicate_of_another_type_matches_nothing(self, qdrant_client):
         """The store answers a mistyped leaf itself; the server would refuse it."""
         store = QdrantVectorStore(_params(qdrant_client))
-        await store.migrate()
+        await store.prepare()
         await store.startup()
         partition = await _created(store)
         held = _make_record(vector=_normalize([1.0, 0.0, 0.0]), properties={"age": 5})
@@ -1770,7 +1770,7 @@ class TestStrictModeIsRequested:
     """Local mode does not record strict mode, so the request itself is checked."""
 
     @pytest.mark.asyncio
-    async def test_migrate_creates_the_collection_strict(self, monkeypatch):
+    async def test_prepare_creates_the_collection_strict(self, monkeypatch):
         client = AsyncQdrantClient(location=":memory:")
         requested: dict[str, models.StrictModeConfig | None] = {}
         original = client.create_collection
@@ -1781,7 +1781,7 @@ class TestStrictModeIsRequested:
 
         monkeypatch.setattr(client, "create_collection", recording_create_collection)
         store = QdrantVectorStore(_params(client))
-        await store.migrate()
+        await store.prepare()
 
         assert set(requested) == {VECTOR_STORE_NAME}
         config = requested[VECTOR_STORE_NAME]

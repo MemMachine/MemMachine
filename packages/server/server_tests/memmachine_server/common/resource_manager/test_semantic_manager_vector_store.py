@@ -125,7 +125,7 @@ async def partition_registry(
             tombstone_retention_seconds=0,
         ),
     )
-    await registry.migrate()
+    await registry.prepare()
     await registry.startup()
     return registry
 

@@ -1,7 +1,7 @@
 # memmachine-deployment.yaml
 # Deploys the MemMachine application server (1 replica).
 # Init containers block startup until PostgreSQL and the long-term memory
-# store accept connections, then run `memmachine-server migrate`. The main
+# store accept connections, then run `memmachine-server prepare`. The main
 # container mounts:
 #   - memmachine-config ConfigMap → /app/configuration.yml  (app config)
 #   - memmachine-env-config ConfigMap → /app/.env           (env vars)
@@ -15,7 +15,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: 1
-  # The migrate init container runs while no server does: Recreate stops
+  # The prepare init container runs while no server does: Recreate stops
   # the old pod before the new one starts.
   strategy:
     type: Recreate
@@ -46,10 +46,10 @@ spec:
 
         # Creates or updates every configured store's schema before the
         # server starts.
-        - name: migrate
+        - name: prepare
           image: {{ .Values.memmachine.image }}:{{ .Values.memmachine.tag }}
           imagePullPolicy: {{ .Values.memmachine.pullPolicy }}
-          command: ["memmachine-server", "migrate"]
+          command: ["memmachine-server", "prepare"]
           env:
             {{- include "memmachine.appEnv" . | nindent 12 }}
           volumeMounts:

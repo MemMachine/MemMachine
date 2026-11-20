@@ -1252,7 +1252,7 @@ class NebulaGraphVectorGraphStore(VectorGraphStore):
 
         logger.info("Deleted all data from graph, schema preserved")
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """Create the schema, the graph type, and the graph, unless they exist."""
         await self._client.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema_name}")
         await self._client.execute(f"SESSION SET SCHEMA {self._schema_name}")

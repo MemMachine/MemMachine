@@ -177,12 +177,12 @@ class SQLLeaseLockService:
         """
         self._store = SQLLeaseStore(engine)
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """Create the service's missing SQL tables and fencing counter, before `startup`."""
-        await self._store.migrate()
+        await self._store.prepare()
 
     async def startup(self) -> None:
-        """Start the service on the tables `migrate` created."""
+        """Start the service on the tables `prepare` created."""
         await self._store.startup()
 
     async def try_acquire(self, key: str, *, lease_duration: timedelta) -> Lease | None:

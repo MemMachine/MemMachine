@@ -307,7 +307,7 @@ def milvus_client(request):
 async def _started_store(client: AsyncMilvusClient, **overrides) -> MilvusVectorStore:
     """A started store."""
     vector_store = MilvusVectorStore(_params(client, **overrides))
-    await vector_store.migrate()
+    await vector_store.prepare()
     await vector_store.startup()
     return vector_store
 
@@ -351,9 +351,9 @@ async def test_every_request_carries_the_timeout(store, monkeypatch):
         spies[name] = MagicMock(wraps=getattr(store._client, name))
         monkeypatch.setattr(store._client, name, spies[name])
 
-    # A collection of its own, so migrate creates it through the spies.
+    # A collection of its own, so `prepare` creates it through the spies.
     timed = MilvusVectorStore(_params(store._client, vector_store_name="timed"))
-    await timed.migrate()
+    await timed.prepare()
     await timed.startup()
     partition = await _created(timed)
     vector = _normalize([1.0, 0.0, 0.0])
@@ -404,7 +404,7 @@ class TestPartitionLifecycle:
     async def test_a_preparation_that_failed_part_way_is_as_if_never_attempted(
         self, store, monkeypatch, failing_step
     ):
-        """The next migration and startup complete what a failed one left behind."""
+        """The next preparation and startup complete what a failed one left behind."""
         partial = MilvusVectorStore(
             _params(
                 store._client,
@@ -417,7 +417,7 @@ class TestPartitionLifecycle:
             raise pymilvus.MilvusException(message=f"{failing_step} refused")
 
         async def prepare() -> None:
-            await partial.migrate()
+            await partial.prepare()
             await partial.startup()
 
         with monkeypatch.context() as patch:
@@ -450,7 +450,7 @@ class TestPartitionLifecycle:
         digit_first = MilvusVectorStore(
             _params(store._client, vector_store_name="0_digit_first")
         )
-        await digit_first.migrate()
+        await digit_first.prepare()
         await digit_first.startup()
         partition = await _created(digit_first)
         await _purge(digit_first, partition._partition_uuid)
@@ -1298,7 +1298,7 @@ class TestScores:
                 store_schema=_schema(similarity_metric=metric),
             )
         )
-        await scored.migrate()
+        await scored.prepare()
         await scored.startup()
         partition = await _created(scored)
         record = _make_record(vector=[1.2, 1.6, 0.0])

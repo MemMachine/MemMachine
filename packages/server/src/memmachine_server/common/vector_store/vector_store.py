@@ -156,7 +156,7 @@ class VectorStore(PartitionedStore):
         raise NotImplementedError
 
     @abstractmethod
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the store's missing durable resources.
 
@@ -167,7 +167,7 @@ class VectorStore(PartitionedStore):
 
     @abstractmethod
     async def startup(self) -> None:
-        """Start the store on the durable resources `migrate` created, creating none."""
+        """Start the store on the durable resources `prepare` created, creating none."""
         raise NotImplementedError
 
     @abstractmethod

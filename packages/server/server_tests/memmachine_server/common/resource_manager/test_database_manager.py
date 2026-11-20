@@ -868,7 +868,7 @@ async def test_a_sqlite_vector_store_engine_takes_the_write_lock_at_begin(tmp_pa
         sqlite_vector_store_confs={"vs1": SQLiteVectorStoreConf(path=str(path))}
     )
     builder = DatabaseManager(conf)
-    await builder.migrate_vector_store("vs1", **_STORE)
+    await builder.prepare_vector_store("vs1", **_STORE)
     await builder.get_vector_store("vs1", **_STORE)
     other = create_async_engine(
         f"sqlite+aiosqlite:///{path}", connect_args={"timeout": 0.2}
@@ -897,7 +897,7 @@ async def test_a_sqlite_vector_store_engine_enforces_foreign_keys(tmp_path):
     )
     builder = DatabaseManager(conf)
     try:
-        await builder.migrate_vector_store("vs1", **_STORE)
+        await builder.prepare_vector_store("vs1", **_STORE)
         await builder.get_vector_store("vs1", **_STORE)
         engine = builder.vector_store_sql_engines["vs1"]
         async with engine.connect() as connection:

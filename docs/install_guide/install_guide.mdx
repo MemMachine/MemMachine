@@ -340,10 +340,10 @@ You're ready to go! Run these commands from the directory where you've installed
 First, create the schema of the databases your configuration names. Run this once the databases are up, before the first start, and again after every upgrade with no server running:
 
 ```
-memmachine-server migrate
+memmachine-server prepare
 ```
 
-Upgrading databases from a release before `memmachine-server migrate` existed is not supported: start from new databases.
+Upgrading databases from a release before `memmachine-server prepare` existed is not supported: start from new databases.
 
 Now you can start the MemMachine server:
 

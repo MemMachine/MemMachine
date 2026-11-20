@@ -673,7 +673,7 @@ class SQLiteVectorStore(VectorStore):
         return self._store_schema
 
     @override
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         async with self._sqlalchemy_engine.begin() as connection:
             await connection.run_sync(BaseSQLiteVectorStore.metadata.create_all)
 

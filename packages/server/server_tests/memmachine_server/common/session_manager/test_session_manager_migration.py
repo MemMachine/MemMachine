@@ -65,7 +65,7 @@ async def test_migrate_pickle_to_json(sqlalchemy_engine: AsyncEngine) -> None:
     # Initialize the SessionDataManagerSQL
     # This should trigger the migration in migrate
     manager = SessionDataManagerSQL(sqlalchemy_engine)
-    await manager.migrate()
+    await manager.prepare()
 
     # Verify the migration
     # 1. Check that we can retrieve the session info (which implies successful JSON deserialization)
@@ -132,7 +132,7 @@ async def test_migrate_add_status_column(sqlalchemy_engine: AsyncEngine) -> None
     # Initialize the SessionDataManagerSQL
     # This should trigger the migration in migrate
     manager = SessionDataManagerSQL(sqlalchemy_engine)
-    await manager.migrate()
+    await manager.prepare()
 
     # Verify the migration
     # 1. Check that we can retrieve the session info and status is active

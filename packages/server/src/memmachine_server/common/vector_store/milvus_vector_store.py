@@ -510,8 +510,8 @@ class MilvusVectorStore(VectorStore):
         return self._store_schema
 
     @override
-    async def migrate(self) -> None:
-        async with self._tracker("migrate"):
+    async def prepare(self) -> None:
+        async with self._tracker("prepare"):
             await self._prepare_storage()
 
     @override
@@ -526,7 +526,7 @@ class MilvusVectorStore(VectorStore):
 
     async def _prepare_storage(self) -> None:
         """Prepare the collection every partition lives in, with its indexes, each step idempotent."""
-        # Each step runs when it is missing, so the next migration completes
+        # Each step runs when it is missing, so the next preparation completes
         # one that failed part way.
         index_params = self._client.prepare_index_params()
         index_params.add_index(
@@ -633,7 +633,7 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection migrate prepared.
+        # Every partition lives in the collection `prepare` created.
         return
 
     @override
@@ -678,5 +678,5 @@ class MilvusVectorStore(VectorStore):
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection migrate prepared.
+        # Every partition lives in the collection `prepare` created.
         return

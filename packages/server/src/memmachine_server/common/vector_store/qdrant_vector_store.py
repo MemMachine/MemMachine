@@ -523,8 +523,8 @@ class QdrantVectorStore(VectorStore):
         return self._store_schema
 
     @override
-    async def migrate(self) -> None:
-        async with self._tracker("migrate"):
+    async def prepare(self) -> None:
+        async with self._tracker("prepare"):
             await self._prepare_storage()
 
     @override
@@ -600,7 +600,7 @@ class QdrantVectorStore(VectorStore):
 
     @override
     async def create_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection migrate prepared.
+        # Every partition lives in the collection `prepare` created.
         return
 
     @override
@@ -652,5 +652,5 @@ class QdrantVectorStore(VectorStore):
 
     @override
     async def drop_partition(self, partition_uuid: UUID) -> None:
-        # Every partition lives in the collection migrate prepared.
+        # Every partition lives in the collection `prepare` created.
         return

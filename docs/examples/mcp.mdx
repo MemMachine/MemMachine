@@ -15,7 +15,7 @@ Server API using `curl` commands. It can also be found in our [Quick Start Guide
 First, ensure your stand alone MCP server is up and running. You can use these sample commands to create the schema of the configured databases, then start it:
 
 ```
-MEMORY_CONFIG=config.yml uv run memmachine-server migrate
+MEMORY_CONFIG=config.yml uv run memmachine-server prepare
 MEMORY_CONFIG=config.yml uv run memmachine-mcp-http --host localhost --port 8080
 ```
 
@@ -250,7 +250,7 @@ The desktop app starts the MCP server itself, so create the schema of the config
 the first start and again after every upgrade, with no server running:
 
 ```
-MEMORY_CONFIG=config.yml uv run memmachine-server migrate
+MEMORY_CONFIG=config.yml uv run memmachine-server prepare
 ```
 
 ```

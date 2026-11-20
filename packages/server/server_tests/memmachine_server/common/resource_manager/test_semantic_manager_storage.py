@@ -150,7 +150,7 @@ async def test_pgvector_store_before_data_migrations_is_migrated_and_deleted_fro
         resources,
     )
 
-    await manager.migrate()
+    await manager.prepare()
     storage = await manager.get_semantic_storage()
 
     head = ScriptDirectory.from_config(_alembic_config()).get_current_head()

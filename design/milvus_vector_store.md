@@ -52,7 +52,7 @@ registry](partition_registry.md),
   with, so a changed `max_varchar_length` applies to native collections
   created afterward. A declared property's field name is its key, at most 32
   bytes, under `_p_`, within `proxy.maxNameLength` (255 unless configured).
-- **Migration converges:** `migrate` creates the collection and its indexes
+- **Preparation converges:** `prepare` creates the collection and its indexes
   (named by their fields) only when missing. `startup` loads the collection,
   a no-op when it is loaded already.
 - **A delete raises unless Milvus accepted every key sent.** Milvus counts the

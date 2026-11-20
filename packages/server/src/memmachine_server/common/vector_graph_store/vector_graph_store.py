@@ -285,7 +285,7 @@ class VectorGraphStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the store's missing durable resources.
 

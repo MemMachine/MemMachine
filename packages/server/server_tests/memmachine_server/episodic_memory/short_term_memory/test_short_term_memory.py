@@ -52,7 +52,7 @@ class MockShortTermMemoryDataManager(SessionDataManager):
         self.data = {}
         self.tables_created = False
 
-    async def migrate(self):
+    async def prepare(self):
         pass
 
     async def create_tables(self):

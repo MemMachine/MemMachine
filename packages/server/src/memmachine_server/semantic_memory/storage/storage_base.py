@@ -24,7 +24,7 @@ class SemanticStorage(ABC):
     backend_name: str | None = None
 
     @abstractmethod
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the storage's missing durable resources.
 

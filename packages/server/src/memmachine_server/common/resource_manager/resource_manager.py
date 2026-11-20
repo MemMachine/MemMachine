@@ -60,7 +60,7 @@ from memmachine_server.episodic_memory.event_memory.segment_store.sqlalchemy_seg
     SQLAlchemySegmentStoreParams,
 )
 from memmachine_server.episodic_memory.long_term_memory.service_locator import (
-    migrate_event_memory_storage,
+    prepare_event_memory_storage,
 )
 from memmachine_server.semantic_memory.semantic_memory import SemanticService
 from memmachine_server.semantic_memory.semantic_session_manager import (
@@ -154,20 +154,20 @@ class ResourceManagerImpl:
 
         # TODO: Build semantic storage, episodic storage, and session data storage lazily when actually used
 
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the missing durable resources of every store the configuration names.
 
         Run it with no server using the configured databases, before one
-        starts. Each store is migrated without being started, except the
+        starts. Each store is prepared without being started, except the
         stores semantic memory opens to create its own partition.
         """
-        await (await self._build_session_data_manager()).migrate()
-        await (await self._build_sql_lock_service()).migrate()
-        await (await self._build_episode_storage()).migrate()
-        await migrate_event_memory_storage(self)
-        await self._database_manager.migrate_graph_stores()
-        await (await self.get_semantic_manager()).migrate()
+        await (await self._build_session_data_manager()).prepare()
+        await (await self._build_sql_lock_service()).prepare()
+        await (await self._build_episode_storage()).prepare()
+        await prepare_event_memory_storage(self)
+        await self._database_manager.prepare_graph_stores()
+        await (await self.get_semantic_manager()).prepare()
 
     async def close(self) -> None:
         """Close resources and clean up state."""
@@ -221,7 +221,7 @@ class ResourceManagerImpl:
             store_schema=store_schema,
         )
 
-    async def migrate_vector_store(
+    async def prepare_vector_store(
         self,
         vector_store_id: str,
         *,
@@ -229,7 +229,7 @@ class ResourceManagerImpl:
         store_schema: VectorStoreSchema,
     ) -> None:
         """Create the missing durable resources of the store of one name on a configured vector store, without starting it."""
-        await self._database_manager.migrate_vector_store(
+        await self._database_manager.prepare_vector_store(
             vector_store_id,
             vector_store_name=vector_store_name,
             store_schema=store_schema,
@@ -245,9 +245,9 @@ class ResourceManagerImpl:
                     self._segment_stores[name] = store
         return self._segment_stores[name]
 
-    async def migrate_segment_store(self, name: str) -> None:
+    async def prepare_segment_store(self, name: str) -> None:
         """Create the missing durable resources of a segment store, without starting it."""
-        await (await self._build_segment_store(name)).migrate()
+        await (await self._build_segment_store(name)).prepare()
 
     async def _build_segment_store(self, name: str) -> SegmentStore:
         return SQLAlchemySegmentStore(

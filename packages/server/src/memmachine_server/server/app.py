@@ -227,7 +227,7 @@ def _prepare_multiproc_dir() -> None:
         )
 
 
-async def migrate() -> None:
+async def prepare() -> None:
     """
     Create the missing durable resources of every store the configuration can select.
 
@@ -235,7 +235,7 @@ async def migrate() -> None:
     """
     resource_manager = ResourceManagerImpl(load_configuration())
     try:
-        await resource_manager.migrate()
+        await resource_manager.prepare()
     finally:
         await resource_manager.close()
     logger.info("Every configured store's missing durable resources are created.")
@@ -275,7 +275,7 @@ def main() -> None:
     )
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser(
-        "migrate",
+        "prepare",
         help=(
             "Create the missing durable resources of every configured store, "
             "then exit; run it before starting servers"
@@ -288,8 +288,8 @@ def main() -> None:
         sys.stdout.write(f"{get_version()}\n")
         sys.exit(0)
 
-    if args.command == "migrate":
-        asyncio.run(migrate())
+    if args.command == "prepare":
+        asyncio.run(prepare())
         return
 
     if args.with_config_api:

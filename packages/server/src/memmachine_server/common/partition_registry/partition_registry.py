@@ -235,7 +235,7 @@ class PartitionRegistry(ABC):
     """
 
     @abstractmethod
-    async def migrate(self) -> None:
+    async def prepare(self) -> None:
         """
         Create the registry's missing durable resources.
 
@@ -247,7 +247,7 @@ class PartitionRegistry(ABC):
 
     @abstractmethod
     async def startup(self) -> None:
-        """Start the registry on the durable resources `migrate` created."""
+        """Start the registry on the durable resources `prepare` created."""
         raise NotImplementedError
 
     async def reserve(self, partition_name: str) -> Reservation:

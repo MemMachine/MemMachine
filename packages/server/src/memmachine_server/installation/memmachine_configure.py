@@ -512,7 +512,7 @@ def main() -> None:
         logger.info("MemMachine setup complete.")
         logger.info(
             "Once the configured databases are running, use 'memmachine-server "
-            "migrate' to create their schema, then 'memmachine-server' to start "
+            "prepare' to create their schema, then 'memmachine-server' to start "
             "the API server."
         )
     except KeyboardInterrupt:
