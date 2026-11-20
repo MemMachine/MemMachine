@@ -1,9 +1,9 @@
 """SQLAlchemy implementation of the episode storage layer."""
 
 import logging
-import socket
 from collections.abc import Iterable
 from datetime import UTC
+from pathlib import Path
 from typing import Any, TypeVar, overload
 from uuid import UUID
 
@@ -26,7 +26,6 @@ from sqlalchemy import (
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects import postgresql as pg_dialect
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.sql import Select
@@ -41,7 +40,6 @@ from memmachine_server.common.episode_store.episode_storage import (
     EpisodeStorage,
 )
 from memmachine_server.common.errors import (
-    ConfigurationError,
     InvalidArgumentError,
 )
 from memmachine_server.common.filter.filter_parser import (
@@ -58,6 +56,7 @@ from memmachine_server.common.metrics_factory import (
     OperationTracker,
     timed,
 )
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.sql import write_session
 from memmachine_server.common.utils import ensure_tz_aware
 
@@ -137,6 +136,13 @@ class Episode(BaseEpisodeStore):
         )
 
 
+EPISODE_STORE_LINEAGE = Lineage(
+    name="episode_store",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BaseEpisodeStore.metadata,
+)
+
+
 class SqlAlchemyEpisodeStore(EpisodeStorage):
     """SQLAlchemy episode store implementation."""
 
@@ -160,26 +166,7 @@ class SqlAlchemyEpisodeStore(EpisodeStorage):
         return self._session_factory()
 
     async def prepare(self) -> None:
-        try:
-            async with self._engine.begin() as conn:
-                if conn.dialect.name == "postgresql":
-                    try:
-                        async with conn.begin_nested():
-                            await conn.run_sync(
-                                lambda sync_conn: _EPISODE_PG_ENUM.create(
-                                    sync_conn, checkfirst=True
-                                )
-                            )
-                    except (IntegrityError, ProgrammingError):
-                        logger.debug(
-                            "episode_type enum already exists (concurrent creation); continuing"
-                        )
-
-                await conn.run_sync(BaseEpisodeStore.metadata.create_all)
-        except (OperationalError, socket.gaierror) as err:
-            raise ConfigurationError(
-                "Failed to connect to the database while preparing, please check your configuration."
-            ) from err
+        await upgrade_lineage(self._engine, EPISODE_STORE_LINEAGE)
 
     async def startup(self) -> None:
         pass

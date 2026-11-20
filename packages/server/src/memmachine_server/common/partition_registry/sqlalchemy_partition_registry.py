@@ -14,6 +14,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import NoReturn, override
 from uuid import UUID, uuid4
 
@@ -45,6 +46,7 @@ from sqlalchemy.orm import (
     mapped_column,
 )
 
+from memmachine_server.common.schema_migration import Lineage, upgrade_lineage
 from memmachine_server.common.sql import validate_engine_connections, write_connection
 from memmachine_server.common.utils import ensure_tz_aware
 
@@ -136,6 +138,13 @@ class PurgeQueueRow(BasePartitionRegistry):
     __table_args__ = (
         Index("partition_registry_gc__ns_ea", "partition_namespace", "enqueued_at"),
     )
+
+
+PARTITION_REGISTRY_LINEAGE = Lineage(
+    name="partition_registry",
+    versions=Path(__file__).parent / "migrations",
+    metadata=BasePartitionRegistry.metadata,
+)
 
 
 class _RegistryInsertRejectedError(Exception):
@@ -267,8 +276,7 @@ class SQLAlchemyPartitionRegistry(PartitionRegistry):
 
     @override
     async def prepare(self) -> None:
-        async with self._engine.begin() as connection:
-            await connection.run_sync(BasePartitionRegistry.metadata.create_all)
+        await upgrade_lineage(self._engine, PARTITION_REGISTRY_LINEAGE)
 
     @override
     async def startup(self) -> None:

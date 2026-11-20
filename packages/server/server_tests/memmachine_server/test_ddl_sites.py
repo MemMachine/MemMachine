@@ -31,33 +31,6 @@ _DDL_ATTRIBUTES = {
 
 _PREPARE = {
     (
-        "common/episode_store/episode_sqlalchemy_store.py",
-        "SqlAlchemyEpisodeStore.prepare",
-    ),
-    (
-        "common/partition_registry/sqlalchemy_partition_registry.py",
-        "SQLAlchemyPartitionRegistry.prepare",
-    ),
-    (
-        "common/session_manager/session_data_manager_sql_impl.py",
-        "SessionDataManagerSQL.prepare",
-    ),
-    # Conversions of older session tables, which only `prepare` runs.
-    (
-        "common/session_manager/session_data_manager_sql_impl.py",
-        "SessionDataManagerSQL._add_status_column",
-    ),
-    (
-        "common/session_manager/session_data_manager_sql_impl.py",
-        "SessionDataManagerSQL._migrate_pickle_to_json",
-    ),
-    ("common/sql_lease_lock/_store.py", "SQLLeaseStore.prepare"),
-    ("common/vector_store/sqlite_vector_store.py", "SQLiteVectorStore.prepare"),
-    (
-        "episodic_memory/event_memory/segment_store/sqlalchemy_segment_store.py",
-        "SQLAlchemySegmentStore.prepare",
-    ),
-    (
         "common/vector_store/qdrant_vector_store.py",
         "QdrantVectorStore._prepare_storage",
     ),
@@ -169,8 +142,12 @@ _TEST_HELPERS = {
 }
 
 
-def _is_revision(relative: str) -> bool:
-    return "/alembic_pg/" in relative
+def _is_revision_or_runner(relative: str) -> bool:
+    return (
+        "/migrations/" in relative
+        or "/alembic_pg/" in relative
+        or relative.startswith("common/schema_migration/")
+    )
 
 
 class _DDLSites(ast.NodeVisitor):
@@ -211,7 +188,7 @@ def test_every_ddl_site_is_placed():
     found = set()
     for path in _SOURCE.rglob("*.py"):
         relative = path.relative_to(_SOURCE).as_posix()
-        if _is_revision(relative):
+        if _is_revision_or_runner(relative):
             continue
         visitor = _DDLSites()
         visitor.visit(ast.parse(path.read_text()))
